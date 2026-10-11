@@ -162,7 +162,9 @@ impl Game {
     pub fn tile_workable(&self, c: CityId, idx: u8) -> bool {
         let Some((x, y)) = self.radius_tile(c, idx) else { return false };
         let t = self.map.tile(x, y);
-        if !t.explored_by(self.city(c).owner) && idx != 0 {
+        // the computer players know the whole map; the human works only what was explored
+        let owner = self.city(c).owner;
+        if idx != 0 && !t.explored_by(owner) && self.player(owner).human {
             return false;
         }
         if t.worked_by.is_some() && t.worked_by != Some(c) {
@@ -171,7 +173,6 @@ impl Game {
         if idx != 0 && t.city.is_some() {
             return false;
         }
-        let owner = self.city(c).owner;
         if self.all_units().any(|u| (u.x, u.y) == (x, y) && u.owner != owner && u.is_military()) {
             return false;
         }
@@ -370,6 +371,28 @@ impl Game {
         f * 7 + s * 3 + t * 2
     }
 
+    /// A city without any trade pays no upkeep and learns nothing: swap its least valuable
+    /// worker onto the best ocean / river / road tile, as long as the city keeps growing (or
+    /// loses no food by it).
+    fn ensure_trade(&mut self, c: CityId) {
+        let slot = self.city(c).owner;
+        let yields = |g: &Game, idx: u8| g.radius_tile(c, idx).map(|(x, y)| g.tile_yield(slot, x, y, Some(c))).unwrap_or((0, 0, 0));
+        if self.city_yield(c).trade > 0 {
+            return;
+        }
+        let city = self.city(c);
+        let worst = (1..21u8).filter(|i| city.works(*i)).min_by_key(|i| self.tile_value(c, *i));
+        let best = (1..21u8).filter(|i| !city.works(*i) && self.tile_workable(c, *i) && yields(self, *i).2 > 0).max_by_key(|i| self.tile_value(c, *i));
+        let (Some(w), Some(b)) = (worst, best) else { return };
+        let food_change = yields(self, b).0 - yields(self, w).0;
+        if food_change >= 0 || self.city_yield(c).food_surplus() + food_change > 0 {
+            self.release_tile(c, w);
+            let (x, y) = self.radius_tile(c, b).unwrap();
+            self.map.get_mut(x, y).unwrap().worked_by = Some(c);
+            self.city_mut(c).set_worked(b, true);
+        }
+    }
+
     /// Automatically assign workers (food first, then shields, then trade).
     pub fn auto_assign(&mut self, c: CityId) {
         let size = self.city(c).size as usize;
@@ -383,27 +406,10 @@ impl Game {
         }
         self.city_mut(c).worked = 0;
         self.city_mut(c).specialists.clear();
-        let mut cands: Vec<(u8, i32)> = Vec::new();
-        for idx in 1..21u8 {
-            if !self.tile_workable(c, idx) {
-                continue;
-            }
-            cands.push((idx, self.tile_value(c, idx)));
+        for _ in 0..size {
+            self.add_worker(c);
         }
-        cands.sort_by(|a, b| b.1.cmp(&a.1));
-        let mut assigned = 0;
-        for (idx, _) in cands {
-            if assigned >= size {
-                break;
-            }
-            let (x, y) = self.radius_tile(c, idx).unwrap();
-            self.map.get_mut(x, y).unwrap().worked_by = Some(c);
-            self.city_mut(c).set_worked(idx, true);
-            assigned += 1;
-        }
-        for _ in assigned..size {
-            self.city_mut(c).specialists.push(Specialist::Entertainer);
-        }
+        self.ensure_trade(c);
     }
 
     /// Put one more citizen to work on the best free tile (or make an entertainer).
@@ -489,6 +495,10 @@ impl Game {
             } else {
                 self.add_worker(c);
             }
+        }
+        // the human's own layout is left alone
+        if !self.player(self.city(c).owner).human {
+            self.ensure_trade(c);
         }
     }
 
@@ -937,5 +947,50 @@ mod tests {
         g.fix_workers(c);
         let city = g.city(c);
         assert_eq!(city.workers() as usize + city.specialists.len(), 2);
+    }
+
+    /// Rebuild the fixture city's radius: `centre` under the city, ocean at radius index 4,
+    /// plain grassland elsewhere (no trade without the ocean).
+    fn island_radius(g: &mut Game, c: CityId, centre: Terrain) {
+        for idx in 0..21u8 {
+            let (x, y) = g.radius_tile(c, idx).unwrap();
+            let t = g.map.get_mut(x, y).unwrap();
+            t.terrain = match idx {
+                0 => centre,
+                4 => Terrain::Ocean,
+                _ => Terrain::Grassland,
+            };
+            t.flags = 0;
+            t.special = false;
+            t.shield = false;
+        }
+    }
+
+    #[test]
+    fn only_the_human_needs_explored_tiles() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        let (x, y) = g.radius_tile(c, 9).unwrap();
+        g.map.get_mut(x, y).unwrap().explored &= !(1 << slot);
+        assert!(!g.tile_workable(c, 9));
+        g.player_mut(slot).human = false;
+        assert!(g.tile_workable(c, 9));
+    }
+
+    #[test]
+    fn a_city_without_trade_works_the_ocean_unless_it_stops_growing() {
+        let (mut g, c) = fixture();
+        g.city_mut(c).size = 2;
+        // a hills centre (2 food, no trade) leaves room: one worker moves to the ocean and the
+        // city still grows
+        island_radius(&mut g, c, Terrain::Hills);
+        g.auto_assign(c);
+        assert!(g.city(c).works(4));
+        assert!(g.city_yield(c).trade > 0 && g.city_yield(c).food_surplus() > 0);
+        // a forest centre: the ocean would stop growth, so the city keeps farming
+        island_radius(&mut g, c, Terrain::Forest);
+        g.auto_assign(c);
+        assert!(!g.city(c).works(4));
+        assert!(g.city_yield(c).food_surplus() > 0);
     }
 }
