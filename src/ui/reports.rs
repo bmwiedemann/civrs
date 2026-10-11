@@ -7,7 +7,8 @@
 //! the red/green dotted page border of the save/load pages.
 
 use crate::assets::Palette;
-use crate::gfx::text::{draw_text, text_width};
+use crate::assets::fonts::GLYPH_SPACING;
+use crate::gfx::text::{draw_text, ink_width};
 use crate::gfx::{Rect, Surface, TextStyle};
 use crate::platform::{Event, Key, MouseButton};
 use crate::ui::context::UiContext;
@@ -54,35 +55,13 @@ pub fn col(ctx: &UiContext, rgb: [u8; 3]) -> u8 {
     ctx.sp.pal.nearest(rgb)
 }
 
-/// The report pages draw the standard font with one extra pixel between glyphs.
-pub const SPACING: i32 = 1;
-
 fn spaced_run(fb: &mut Surface, ctx: &UiContext, colour: u8, x: i32, y: i32, s: &str) -> i32 {
-    let font = ctx.fonts.get(FONT);
-    let cell_w = font.cell_width();
-    let mut cx = x;
-    for ch in s.chars() {
-        let c = crate::assets::fonts::char_to_byte(ch);
-        let Some(g) = font.glyph(c).or_else(|| font.glyph(b'?')) else { continue };
-        for (r, bits) in g.rows.iter().enumerate() {
-            if *bits == 0 {
-                continue;
-            }
-            for col in 0..cell_w {
-                if bits & (0x8000 >> col) != 0 {
-                    fb.put(cx + col, y + r as i32, colour);
-                }
-            }
-        }
-        cx += g.advance as i32 + SPACING;
-    }
-    cx - SPACING
+    draw_text(fb, &ctx.fonts, &TextStyle::new(FONT, colour), x, y, s) - GLYPH_SPACING
 }
 
-/// Width of `s` in the spaced report font.
+/// Width of `s` in the report font.
 pub fn width(ctx: &UiContext, s: &str) -> i32 {
-    let n = s.chars().count() as i32;
-    text_width(&ctx.fonts, FONT, s) + (n - 1).max(0) * SPACING
+    ink_width(&ctx.fonts, FONT, s)
 }
 
 /// Spaced report text; returns the x after the last glyph.

@@ -438,6 +438,13 @@ fn idle_attackers(g: &Game, slot: Slot) -> usize {
     g.all_units().filter(|u| u.owner == slot && u.is_land() && u.info().role == AiRole::Attack && u.carried_by.is_none() && own_city_at(g, slot, u.pos()).is_some()).count()
 }
 
+/// No city site left near the civilisation's cities. "Full" is judged from the cities able to
+/// produce Settlers (size 3+); a fresh size-1 colony next to open land does not count.
+pub fn home_full(g: &Game, slot: Slot) -> bool {
+    let cities = g.cities_of(slot);
+    !cities.is_empty() && cities.iter().filter(|c| g.city(**c).size >= 3 || cities.len() == 1).all(|c| best_city_site(g, slot, g.city(*c).pos(), SITE_RADIUS).is_none())
+}
+
 /// Evaluate the overseas plan for `slot` this turn.
 pub fn plan(g: &Game, slot: Slot) -> Plan {
     let mut plan = Plan::default();
@@ -450,9 +457,7 @@ pub fn plan(g: &Game, slot: Slot) -> Plan {
     if ports.is_empty() {
         return plan;
     }
-    // "full" is judged from the cities able to produce Settlers (size 3+); a fresh size-1
-    // colony next to open land does not stop the expeditions
-    plan.home_full = cities.iter().filter(|c| g.city(**c).size >= 3 || cities.len() == 1).all(|c| best_city_site(g, slot, g.city(*c).pos(), SITE_RADIUS).is_none());
+    plan.home_full = home_full(g, slot);
     if idle_attackers(g, slot) >= INVASION_ARMY {
         plan.invasion = g
             .enemies_of(slot)

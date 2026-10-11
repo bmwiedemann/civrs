@@ -182,6 +182,8 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
         let mut ctx = civrs::ui::context::UiContext::new(dir, std::env::temp_dir().join("civrs-headless"))?;
         let setup = civrs::game::GameSetup { seed, ..Default::default() };
         let mut game = civrs::game::Game::new(setup, None);
+        // previews compare against plain captures: no CIVILIZATION NOTE hints on top
+        game.hints_shown = u32::MAX;
         if !matches!(parts[0], "map" | "mapall") {
             // reports want a city: found one with the first human Settlers
             let slot = game.human_slot;
@@ -256,7 +258,7 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
             }
             "spaceship" => civrs::ui::spaceship_ui::arrival_screen(&ctx, 1),
             "news" => civrs::ui::eventpics::over_map(civrs::ui::eventpics::travelers_report(vec!["Babylonian civilization".into(), "destroyed by Romans!".into()])),
-            "rednote" => civrs::ui::eventpics::over_map(civrs::ui::eventpics::red_note(vec!["This function may only be performed by Settler units.".into()])),
+            "rednote" => civrs::ui::eventpics::over_map(civrs::ui::dialogs::error_screen(&ctx, &civrs::game::RuleError::Settlers).ok_or("no ERROR.TXT section")?),
             "nuke" => civrs::ui::eventpics::over_map(civrs::ui::eventpics::nuke_animation(200, 104)),
             "f1" | "f2" | "f3" | "f4" | "f5" | "f6" | "f7" | "f8" | "f9" | "f10" | "f11" | "f12" => {
                 let n: u8 = parts[0][1..].parse().unwrap_or(1);

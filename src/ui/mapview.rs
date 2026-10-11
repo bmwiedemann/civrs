@@ -49,6 +49,8 @@ enum Pending {
     QuitConfirm,
     RevolutionConfirm,
     Error,
+    /// A note in front of the founding animation of the first city.
+    CityFounded(crate::game::CityId),
 }
 
 pub struct MapView {
@@ -67,6 +69,10 @@ pub struct MapView {
     /// Show the FIRSTMOVE hint when the view first appears.
     pub first_turn_hint: bool,
     auto_end: u32,
+    /// Events taken from the game but not yet shown (one dialog at a time).
+    queued: std::collections::VecDeque<crate::game::GameEvent>,
+    /// Active unit and tile last checked for Settlers advice.
+    hint_checked: Option<(UnitId, (i32, i32))>,
 }
 
 impl Default for MapView {
@@ -91,6 +97,8 @@ impl MapView {
             status_line: String::new(),
             first_turn_hint: false,
             auto_end: 0,
+            queued: Default::default(),
+            hint_checked: None,
         }
     }
 
@@ -243,12 +251,9 @@ impl MapView {
                     _ => Transition::None,
                 };
                 // show any events (huts, captures)
-                let events = ctx.game_mut().take_events();
-                for e in events {
-                    if let Some(s) = self.event_screen(ctx, &e) {
-                        self.pending = Pending::Event;
-                        return Transition::Push(s);
-                    }
+                if let Some(s) = self.next_event_screen(ctx) {
+                    self.pending = Pending::Event;
+                    return Transition::Push(s);
                 }
                 if matches!(t, Transition::None) {
                     let g = ctx.game();
@@ -579,12 +584,9 @@ impl MapView {
                 }
             }
         }
-        let events = ctx.game_mut().take_events();
-        for e in events {
-            if let Some(s) = dialogs::screen_for_event(ctx, &e) {
-                self.pending = Pending::Event;
-                return Transition::Push(s);
-            }
+        if let Some(s) = self.next_event_screen(ctx) {
+            self.pending = Pending::Event;
+            return Transition::Push(s);
         }
         self.activate_next(ctx);
         Transition::None
@@ -859,10 +861,16 @@ impl Screen for MapView {
         }
         if self.first_turn_hint {
             self.first_turn_hint = false;
-            if let Some(s) = dialogs::screen_for_event(ctx, &crate::game::GameEvent::Hint("FIRSTMOVE".into())) {
+            // the start tile gets no BUILDCITY note on top of this one
+            self.hint_checked = ctx.game().active_unit.map(|id| (id, ctx.game().unit(id).pos()));
+            if let Some(s) = ctx.game_mut().hint("FIRSTMOVE").and_then(|e| dialogs::screen_for_event(ctx, &e)) {
                 self.pending = Pending::Event;
                 return Transition::Push(s);
             }
+        }
+        if let Some(s) = self.settler_advice(ctx) {
+            self.pending = Pending::Event;
+            return Transition::Push(s);
         }
         if self.mode == Mode::Processing {
             return self.process(ctx);
@@ -905,12 +913,9 @@ impl Screen for MapView {
             }
             Pending::Event | Pending::Error => {
                 // events produced while the dialog was up (audiences, unit actions)
-                let events = ctx.game_mut().take_events();
-                for e in events {
-                    if let Some(s) = self.event_screen(ctx, &e) {
-                        self.pending = Pending::Event;
-                        return Transition::Push(s);
-                    }
+                if let Some(s) = self.next_event_screen(ctx) {
+                    self.pending = Pending::Event;
+                    return Transition::Push(s);
                 }
                 if self.mode == Mode::Processing {
                     Transition::None
@@ -963,8 +968,17 @@ impl Screen for MapView {
                                 if !name.trim().is_empty() {
                                     ctx.game_mut().city_mut(c).name = name.trim().to_string();
                                 }
-                                let _ = ctx.game_mut().take_events();
+                                // FIRSTPRODUCT comes before the founding animation
+                                let note = ctx.game_mut().take_events().into_iter().find_map(|e| match e {
+                                    crate::game::GameEvent::Hint(_) => dialogs::screen_for_event(ctx, &e),
+                                    _ => None,
+                                });
                                 self.activate_next(ctx);
+                                self.hint_checked = ctx.game().active_unit.map(|id| (id, ctx.game().unit(id).pos()));
+                                if let Some(n) = note {
+                                    self.pending = Pending::CityFounded(c);
+                                    return Transition::Push(n);
+                                }
                                 self.pending = Pending::Event;
                                 return Transition::Push(crate::ui::cityfounded::city_founded(c));
                             }
@@ -977,6 +991,10 @@ impl Screen for MapView {
                             return self.error(ctx, &e);
                         }
                         self.activate_next(ctx);
+                        if let Some(s) = self.next_event_screen(ctx) {
+                            self.pending = Pending::Event;
+                            return Transition::Push(s);
+                        }
                     }
                     _ => {}
                 }
@@ -986,15 +1004,16 @@ impl Screen for MapView {
                 if result == DialogResult::No {
                     let slot = ctx.game().human_slot;
                     ctx.game_mut().revolution(slot);
-                    let events = ctx.game_mut().take_events();
-                    for e in events {
-                        if let Some(s) = dialogs::screen_for_event(ctx, &e) {
-                            self.pending = Pending::Event;
-                            return Transition::Push(s);
-                        }
+                    if let Some(s) = self.next_event_screen(ctx) {
+                        self.pending = Pending::Event;
+                        return Transition::Push(s);
                     }
                 }
                 Transition::None
+            }
+            Pending::CityFounded(c) => {
+                self.pending = Pending::Event;
+                Transition::Push(crate::ui::cityfounded::city_founded(c))
             }
             Pending::QuitConfirm => {
                 if result == DialogResult::No {
@@ -1189,6 +1208,39 @@ impl MapView {
     }
 
     /// Event dialog with map-view specific preparation (centre on nuclear strikes).
+    /// Queue the game's new events and return the dialog for the first one that has one.
+    fn next_event_screen(&mut self, ctx: &mut UiContext) -> Option<Box<dyn Screen>> {
+        let events = ctx.game_mut().take_events();
+        self.queued.extend(events);
+        while let Some(e) = self.queued.pop_front() {
+            if let Some(s) = self.event_screen(ctx, &e) {
+                return Some(s);
+            }
+        }
+        None
+    }
+
+    /// MINING / IRRIGATE / ROAD / BUILDCITY note when an idle Settlers reaches a new tile.
+    fn settler_advice(&mut self, ctx: &mut UiContext) -> Option<Box<dyn Screen>> {
+        if self.mode != Mode::Normal || !matches!(self.pending, Pending::None) || self.runner.is_some() {
+            return None;
+        }
+        let id = ctx.game().active_unit?;
+        let at = (id, ctx.game().unit_opt(id)?.pos());
+        if self.hint_checked == Some(at) {
+            return None;
+        }
+        self.hint_checked = Some(at);
+        // a new game opens with FIRSTMOVE; the start tile gets no BUILDCITY on top of it
+        if ctx.game().turn == 0 {
+            if let Some(e) = ctx.game_mut().hint("FIRSTMOVE") {
+                return dialogs::screen_for_event(ctx, &e);
+            }
+        }
+        let e = ctx.game_mut().settler_hint(id)?;
+        dialogs::screen_for_event(ctx, &e)
+    }
+
     fn event_screen(&mut self, ctx: &mut UiContext, e: &crate::game::GameEvent) -> Option<Box<dyn Screen>> {
         if let crate::game::GameEvent::NuclearStrike { at, .. } = e {
             self.vx = (at.0 - VIEW_W / 2).clamp(0, MAP_W as i32 - VIEW_W);

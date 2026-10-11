@@ -11,6 +11,7 @@ pub mod diplomacy;
 pub mod economy;
 pub mod events;
 pub mod happiness;
+pub mod hints;
 pub mod map;
 pub mod mapgen;
 pub mod movement;
@@ -174,6 +175,10 @@ pub struct Game {
     pub apollo_built: bool,
     /// Units on this tile are being observed by the human (for "enemy moves" animation).
     pub last_combat: Option<((i32, i32), (i32, i32), bool)>,
+    /// Instant-advice hints already shown (bit = index in `hints::HINTS`); stored after the
+    /// game body in version-2 saves.
+    #[serde(skip)]
+    pub hints_shown: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -248,6 +253,7 @@ impl Game {
             nukes_enabled: false,
             apollo_built: false,
             last_combat: None,
+            hints_shown: 0,
         };
         game.place_starting_units(&slots);
         game.refresh_all_vision();
@@ -452,7 +458,7 @@ impl Game {
         }
         for c in self.all_cities() {
             if c.owner == slot {
-                spots.push((c.x, c.y, 2));
+                spots.push((c.x, c.y, 1));
             }
         }
         for (x, y, r) in spots {
@@ -500,7 +506,10 @@ impl Game {
     }
 
     pub fn push_event(&mut self, e: GameEvent) {
+        let (before, after) = self.hints_for_event(&e);
+        self.events.extend(before);
         self.events.push_back(e);
+        self.events.extend(after);
     }
 
     pub fn take_events(&mut self) -> Vec<GameEvent> {
@@ -582,7 +591,8 @@ impl Game {
             t.set(tile_flags::POLLUTION, false);
         }
         self.auto_assign(id);
-        self.map.explore(owner, x, y, 2);
+        // a city sees only its 3x3 block (14_city_screen / 26_turn_12 captures)
+        self.map.explore(owner, x, y, 1);
         id
     }
 

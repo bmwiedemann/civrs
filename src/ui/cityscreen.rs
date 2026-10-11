@@ -11,7 +11,7 @@ use crate::rules::{self, improvement_ids};
 use crate::ui::city_draw::*;
 use crate::ui::context::UiContext;
 use crate::ui::screen::{DialogResult, Screen, Transition};
-use crate::ui::tilerender::{draw_city, draw_terrain};
+use crate::ui::tilerender::{draw_city, draw_fog_edges, draw_terrain};
 use crate::ui::widgets::{draw_styled_panel, MenuDialog, MessageBox, PanelStyle, TextInput, YesNo};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -57,7 +57,10 @@ const P_SUPPORT: Rect = Rect::new(2, 67, 123, 38);
 const P_MAP: Rect = Rect::new(127, 23, 82, 82);
 const P_IMP: Rect = Rect::new(211, 1, 107, 97);
 const P_FOOD: Rect = Rect::new(2, 106, 91, 92);
-const FOOD_BOX: Rect = Rect::new(20, 114, 73, 84);
+/// Dark interior of the FOOD STORAGE panel; the stippled storage box sits at its left edge,
+/// (size+1) icons wide and ten rows high (a size-1 city: (3,115)-(19,196)).
+const FOOD_AREA: Rect = Rect::new(3, 114, 90, 84);
+const FOOD_ROWS: i32 = 10;
 const P_TABS: Rect = Rect::new(95, 105, 133, 93);
 const TAB_RECTS: [Rect; 4] = [Rect::new(95, 106, 33, 8), Rect::new(129, 106, 31, 8), Rect::new(161, 106, 32, 8), Rect::new(194, 106, 32, 8)];
 const TAB_LABELS: [&str; 4] = ["INFO", "HAPPY", "MAP", "VIEW"];
@@ -416,15 +419,19 @@ impl CityScreen {
         let slot = c.owner;
         for dy in -2..=2 {
             for dx in -2..=2 {
+                // the corners are outside the city radius: the panel shows through
+                if dx * dx == 4 && dy * dy == 4 {
+                    continue;
+                }
                 let (tx, ty) = (c.x + dx, c.y + dy);
                 let px = MAP_ORIGIN.0 + (dx + 2) * 16;
                 let py = MAP_ORIGIN.1 + (dy + 2) * 16;
-                let r = Rect::new(px, py, 16, 16);
+                // unexplored (and off-map) squares leave the panel background, as in the original
                 if !crate::game::Map::in_bounds(tx, ty) || !g.explored(slot, tx, ty) {
-                    fb.fill_rect(r, BLACK);
                     continue;
                 }
                 draw_terrain(fb, ctx, g, tx, ty, px, py);
+                draw_fog_edges(fb, ctx, g, slot, tx, ty, px, py);
                 if (dx, dy) != (0, 0) {
                     if let Some(other) = g.city_at(tx, ty) {
                         draw_city(fb, ctx, g, other, px, py);
@@ -473,13 +480,22 @@ impl CityScreen {
     fn draw_food(&self, fb: &mut Surface, ctx: &UiContext) {
         panel(fb, P_FOOD);
         header(fb, ctx, Rect::new(P_FOOD.x, P_FOOD.y, P_FOOD.w, 8), "FOOD STORAGE");
-        fb.fill_rect(FOOD_BOX, BORDER);
+        fb.fill_rect(FOOD_AREA, BORDER);
         let c = ctx.game().city(self.city);
-        let rows = c.size as i32 + 1;
-        let pitch = (82 / rows).clamp(1, 8);
+        let cols = c.size as i32 + 1;
+        // 8 px per icon column, squeezed once the box would leave the panel
+        let max_w = FOOD_AREA.w - 1;
+        let pitch_x = 8.min((max_w - 9) / (cols - 1).max(1)).max(1);
+        let w = if cols > 1 { (cols - 1) * pitch_x + 9 } else { 9 };
+        let store = Rect::new(FOOD_AREA.x, FOOD_AREA.y + 1, w.min(max_w), FOOD_AREA.h - 2);
+        fill_stipple(fb, store);
         let n = c.food.clamp(0, c.granary_size());
         for k in 0..n {
-            icon(fb, ctx, ICON_FOOD, FOOD_BOX.x + 1 + (k % 10) * 7, FOOD_BOX.y + 1 + (k / 10) * pitch, None);
+            let (col, row) = (k % cols, k / cols);
+            if row >= FOOD_ROWS {
+                break;
+            }
+            icon(fb, ctx, ICON_FOOD, store.x + 1 + col * pitch_x, store.y + 1 + row * 8, None);
         }
     }
 

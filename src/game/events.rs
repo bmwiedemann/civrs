@@ -113,6 +113,8 @@ pub enum GameEvent {
     /// The engine needs a decision from the human; `TurnRunner` turns this into a
     /// `TurnStep::Decision` in order with the surrounding events.
     NeedsDecision(Decision),
+    /// Advisor hint about a tile worked by `city` (HELP.TXT `$US` = the city's name).
+    HintAt { section: String, city: CityId },
 }
 
 /// A choice the engine needs from the human player before continuing.

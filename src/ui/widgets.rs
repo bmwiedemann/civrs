@@ -560,7 +560,8 @@ impl Screen for YesNo {
     }
 }
 
-/// Green "CIVILIZATION NOTE" hint box (tiny font) at the top of the map area.
+/// Green "CIVILIZATION NOTE" hint box (tiny font) at the top of the map area: (56,16)-(264,..),
+/// black title, text lines as broken in HELP.TXT from x 64 on a 6-px pitch.
 pub struct NoteBox {
     pub lines: Vec<String>,
     guard: u32,
@@ -570,16 +571,13 @@ pub struct NoteBox {
 
 impl NoteBox {
     pub fn new(lines: Vec<String>) -> NoteBox {
-        NoteBox { lines, guard: 2, rect: Rect::new(112, 8, 200, 40), wrapped: Vec::new() }
+        NoteBox { lines, guard: 2, rect: Rect::new(56, 16, 209, 41), wrapped: Vec::new() }
     }
 }
 
 impl Screen for NoteBox {
     fn on_enter(&mut self, ctx: &mut UiContext) {
-        let text = self.lines.join(" ").to_ascii_uppercase();
-        self.wrapped = wrap(&ctx.fonts, 1, 192, &text);
-        let lh = ctx.fonts.get(1).line_height();
-        self.rect = Rect::new(112, 8, 200, 6 + (self.wrapped.len() as i32 + 1) * lh);
+        (self.rect, self.wrapped) = note_layout(ctx, &self.lines);
     }
     fn update(&mut self, _ctx: &mut UiContext) -> Transition {
         self.guard = self.guard.saturating_sub(1);
@@ -596,14 +594,33 @@ impl Screen for NoteBox {
     }
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
         let cols = draw_styled_panel(fb, ctx, self.rect, PanelStyle::Green);
-        let lh = ctx.fonts.get(1).line_height();
-        let mut y = self.rect.y + 3;
-        crate::gfx::text::draw_text_centered(fb, &ctx.fonts, &TextStyle::new(1, cols.title), self.rect.x + self.rect.w / 2, y, "--- CIVILIZATION NOTE ---");
+        draw_note_text(fb, ctx, self.rect, &self.wrapped, cols.text);
+    }
+}
+
+/// Box and text lines of a CIVILIZATION NOTE (green hint or red error) for HELP.TXT /
+/// ERROR.TXT lines: the file's own line breaks are kept (it hyphenates by hand, and its
+/// longest lines run up to the right border); only a line made longer by a substituted city
+/// name is wrapped.
+pub fn note_layout(ctx: &UiContext, lines: &[String]) -> (Rect, Vec<String>) {
+    const W: i32 = 209;
+    let mut wrapped: Vec<String> = lines.iter().flat_map(|l| wrap(&ctx.fonts, 1, W - 7, &l.to_ascii_uppercase())).collect();
+    while wrapped.last().is_some_and(|l| l.is_empty()) {
+        wrapped.pop();
+    }
+    let lh = ctx.fonts.get(1).line_height();
+    (Rect::new(56, 16, W, 11 + wrapped.len() as i32 * lh), wrapped)
+}
+
+/// Black centred title, then the text lines from 8 px in, all on the tiny font's 6-px pitch.
+pub fn draw_note_text(fb: &mut Surface, ctx: &UiContext, r: Rect, lines: &[String], colour: u8) {
+    let lh = ctx.fonts.get(1).line_height();
+    let mut y = r.y + 3;
+    crate::gfx::text::draw_text_centered(fb, &ctx.fonts, &TextStyle::new(1, theme::BLACK), r.x + r.w / 2, y, "--- CIVILIZATION NOTE ---");
+    y += lh;
+    for l in lines {
+        draw_text(fb, &ctx.fonts, &TextStyle::new(1, colour), r.x + 8, y, l);
         y += lh;
-        for l in &self.wrapped {
-            draw_text(fb, &ctx.fonts, &TextStyle::new(1, cols.text), self.rect.x + 4, y, l);
-            y += lh;
-        }
     }
 }
 

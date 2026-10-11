@@ -368,8 +368,10 @@ pub fn set_rates(g: &mut Game, slot: Slot) {
     let broke = p.gold < 30 && g.income(slot) < 0;
     let mut tax = if broke { 70 } else { 50 };
     let max = g.max_rate(slot) as i32;
-    tax = tax.min(max);
     lux = lux.min(max);
+    // leaving Anarchy (0/100/0) the luxuries are still high: tax + lux must not exceed 100 or
+    // the request is refused and the rates never come down
+    tax = tax.min(max).min(100 - lux);
     // science is the remainder and must respect the cap too
     let mut sci = 100 - tax - lux;
     while sci > max {
@@ -388,4 +390,27 @@ pub fn set_rates(g: &mut Game, slot: Slot) {
 fn peek(g: &Game, n: u32) -> u32 {
     let mut r = g.rng.clone();
     r.below(n)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::GameSetup;
+
+    #[test]
+    fn rates_recover_after_anarchy() {
+        let mut g = Game::new(GameSetup { seed: 5, ..Default::default() }, None);
+        let slot = 2;
+        g.player_mut(slot).govt = Govt::Anarchy;
+        set_rates(&mut g, slot);
+        assert_eq!((g.player(slot).tax, g.player(slot).lux), (0, 100));
+        // what clamp_rates leaves when Anarchy gives way to Monarchy (max 70)
+        g.player_mut(slot).govt = Govt::Monarchy;
+        g.clamp_rates(slot);
+        assert_eq!((g.player(slot).tax, g.player(slot).lux), (30, 70));
+        for _ in 0..10 {
+            set_rates(&mut g, slot);
+        }
+        assert_eq!((g.player(slot).tax, g.player(slot).lux), (50, 0));
+    }
 }

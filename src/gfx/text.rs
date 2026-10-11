@@ -1,7 +1,7 @@
 //! Bitmap text rendering using the FONTS.CV fonts.
 
 use super::surface::{Rect, Surface};
-use crate::assets::fonts::{char_to_byte, Font, FontSet};
+use crate::assets::fonts::{char_to_byte, Font, FontSet, GLYPH_SPACING};
 
 #[derive(Clone, Copy, Debug)]
 pub struct TextStyle {
@@ -23,28 +23,34 @@ impl TextStyle {
 fn draw_glyph_run(dst: &mut Surface, font: &Font, colour: u8, x: i32, y: i32, s: &str) -> i32 {
     let mut cx = x;
     let cell_w = font.cell_width();
-    for ch in s.chars() {
+    let n = s.chars().count();
+    for (i, ch) in s.chars().enumerate() {
         let c = char_to_byte(ch);
         if let Some(g) = font.glyph(c) {
+            // The original blanks the spacing column in front of every glyph, which wipes the
+            // pixels a few glyphs ('t', 'u', '-') carry beyond their advance width, except
+            // after the last glyph of a string.
+            let w = if i + 1 < n { cell_w.min(g.advance as i32) } else { cell_w };
             for (r, bits) in g.rows.iter().enumerate() {
                 if *bits == 0 {
                     continue;
                 }
-                for col in 0..cell_w {
+                for col in 0..w {
                     if bits & (0x8000 >> col) != 0 {
                         dst.put(cx + col, y + r as i32, colour);
                     }
                 }
             }
-            cx += g.advance as i32;
+            cx += g.advance as i32 + GLYPH_SPACING;
         } else {
-            cx += font.advance_of('?') as i32;
+            cx += font.advance_of('?') as i32 + GLYPH_SPACING;
         }
     }
     cx
 }
 
-/// Draw text; returns the x position after the last glyph.
+/// Draw text; returns the x position after the last glyph (including its trailing spacing
+/// column, so runs can be chained).
 pub fn draw_text(dst: &mut Surface, fonts: &FontSet, st: &TextStyle, x: i32, y: i32, s: &str) -> i32 {
     let font = fonts.get(st.font);
     if let Some(sh) = st.shadow {
@@ -53,17 +59,24 @@ pub fn draw_text(dst: &mut Surface, fonts: &FontSet, st: &TextStyle, x: i32, y: 
     draw_glyph_run(dst, font, st.colour, x, y, s)
 }
 
+/// Advance width of `s`, including the spacing column after the last glyph.
 pub fn text_width(fonts: &FontSet, font: usize, s: &str) -> i32 {
     fonts.get(font).width(s)
 }
 
+/// Width of `s` without the trailing spacing column.
+pub fn ink_width(fonts: &FontSet, font: usize, s: &str) -> i32 {
+    (text_width(fonts, font, s) - GLYPH_SPACING).max(0)
+}
+
 pub fn draw_text_centered(dst: &mut Surface, fonts: &FontSet, st: &TextStyle, cx: i32, y: i32, s: &str) -> i32 {
+    // the original centres on the full advance width, trailing spacing column included
     let w = text_width(fonts, st.font, s);
     draw_text(dst, fonts, st, cx - w / 2, y, s)
 }
 
 pub fn draw_text_right(dst: &mut Surface, fonts: &FontSet, st: &TextStyle, right_x: i32, y: i32, s: &str) -> i32 {
-    let w = text_width(fonts, st.font, s);
+    let w = ink_width(fonts, st.font, s);
     draw_text(dst, fonts, st, right_x - w, y, s)
 }
 
@@ -80,7 +93,7 @@ pub fn wrap(fonts: &FontSet, font: usize, max_w: i32, s: &str) -> Vec<String> {
             cur = word.to_string();
         } else {
             let candidate = format!("{cur} {word}");
-            if f.width(&candidate) <= max_w {
+            if f.width(&candidate) - GLYPH_SPACING <= max_w {
                 cur = candidate;
             } else {
                 lines.push(std::mem::take(&mut cur));
@@ -88,9 +101,9 @@ pub fn wrap(fonts: &FontSet, font: usize, max_w: i32, s: &str) -> Vec<String> {
             }
         }
         // hard-split overlong words
-        while f.width(&cur) > max_w && cur.chars().count() > 1 {
+        while f.width(&cur) - GLYPH_SPACING > max_w && cur.chars().count() > 1 {
             let mut split_at = cur.chars().count() - 1;
-            while split_at > 1 && f.width(&cur.chars().take(split_at).collect::<String>()) > max_w {
+            while split_at > 1 && f.width(&cur.chars().take(split_at).collect::<String>()) - GLYPH_SPACING > max_w {
                 split_at -= 1;
             }
             let head: String = cur.chars().take(split_at).collect();

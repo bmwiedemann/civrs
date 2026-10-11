@@ -3,7 +3,8 @@
 //! from captures of the original (SP257 palette indices).
 
 use crate::game::{Slot, Specialist};
-use crate::gfx::text::{draw_text, text_width};
+use crate::assets::fonts::GLYPH_SPACING;
+use crate::gfx::text::{draw_text, ink_width};
 use crate::gfx::{Rect, Surface, TextStyle};
 use crate::rules::SLOT_COLOURS;
 use crate::ui::context::UiContext;
@@ -45,21 +46,13 @@ pub fn panel(fb: &mut Surface, r: Rect) {
     fb.rect_outline(r, BORDER);
 }
 
-/// Small-caps text as the original spaces it: one extra pixel between letters.
+/// Small-caps text; returns the x after the last glyph.
 pub fn small_text(fb: &mut Surface, ctx: &UiContext, x: i32, y: i32, colour: u8, s: &str) -> i32 {
-    let st = TextStyle::new(SMALL, colour);
-    let mut cx = x;
-    let mut buf = [0u8; 4];
-    for ch in s.chars() {
-        cx = draw_text(fb, &ctx.fonts, &st, cx, y, ch.encode_utf8(&mut buf)) + 1;
-    }
-    cx - 1
+    draw_text(fb, &ctx.fonts, &TextStyle::new(SMALL, colour), x, y, s) - GLYPH_SPACING
 }
 
 pub fn small_text_width(ctx: &UiContext, s: &str) -> i32 {
-    let mut buf = [0u8; 4];
-    let n = s.chars().count() as i32;
-    s.chars().map(|ch| text_width(&ctx.fonts, SMALL, ch.encode_utf8(&mut buf))).sum::<i32>() + (n - 1).max(0)
+    ink_width(&ctx.fonts, SMALL, s)
 }
 
 pub fn small_text_centered(fb: &mut Surface, ctx: &UiContext, cx: i32, y: i32, colour: u8, s: &str) -> i32 {

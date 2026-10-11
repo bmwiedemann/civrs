@@ -52,6 +52,10 @@ pub fn weight(g: &Game, slot: Slot, a: AdvanceId) -> i32 {
     if matches!(a, adv::MAP_MAKING | adv::NAVIGATION | adv::POTTERY) && civ.expansionist > 0 {
         w += 2;
     }
+    // boxed in on the home landmass with a harbour: ships are the only way to grow
+    if a == adv::MAP_MAKING && g.cities_of(slot).iter().any(|c| g.map.is_coastal(g.city(*c).x, g.city(*c).y)) && crate::ai::naval_ai::home_full(g, slot) {
+        w += 12;
+    }
     // governments: everyone wants out of Despotism; peaceful civs want Republic/Democracy
     if a == adv::MONARCHY && p.govt == Govt::Despotism {
         w += 6;

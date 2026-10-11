@@ -5,6 +5,9 @@
 //! at `o-6`, `height` at `o-4`. The bitmap holds `height+1` rows, each row being the glyph
 //! strip for all characters (`n * bpr` bytes). Bits are MSB-first (leftmost pixel).
 
+/// Blank columns the original draws after every glyph; the width table holds ink widths only.
+pub const GLYPH_SPACING: i32 = 1;
+
 #[derive(Clone, Debug)]
 pub struct Glyph {
     /// Horizontal advance in pixels (may exceed the cell width).
@@ -30,13 +33,10 @@ impl Font {
         self.glyphs.get((c - self.first) as usize)
     }
 
-    /// Width of a string in pixels (sum of advances; unknown chars use the advance of '?').
+    /// Width of a string in pixels: sum of advances (unknown chars use the advance of '?'),
+    /// each followed by a `GLYPH_SPACING` column.
     pub fn width(&self, s: &str) -> i32 {
-        let mut w = 0;
-        for ch in s.chars() {
-            w += self.advance_of(ch) as i32;
-        }
-        w
+        s.chars().map(|ch| self.advance_of(ch) as i32 + GLYPH_SPACING).sum()
     }
 
     pub fn advance_of(&self, ch: char) -> u8 {

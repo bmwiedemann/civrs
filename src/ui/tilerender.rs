@@ -53,6 +53,11 @@ pub mod sp {
     pub fn explosion(frame: u8) -> Rect {
         cell((frame % 8) as i32, 6)
     }
+    /// Dotted black fringe along one side of an explored tile next to unexplored land
+    /// (0 = N, 1 = E, 2 = S, 3 = W).
+    pub fn fog_edge(side: usize) -> Rect {
+        cell(5 + side as i32, 8)
+    }
     pub fn citizen(idx: u8) -> Rect {
         // two 8px figures per cell starting at cell (0,8)
         Rect::new((idx as i32) * 8, 8 * 16, 8, 16)
@@ -225,6 +230,7 @@ pub fn draw_tile(fb: &mut Surface, ctx: &UiContext, game: &Game, slot: Slot, x: 
         return;
     }
     draw_terrain(fb, ctx, game, x, y, px, py);
+    draw_fog_edges(fb, ctx, game, slot, x, y, px, py);
     if let Some(c) = game.city_at(x, y) {
         draw_city(fb, ctx, game, c, px, py);
     }
@@ -236,6 +242,17 @@ pub fn draw_tile(fb: &mut Surface, ctx: &UiContext, game: &Game, slot: Slot, x: 
             if game.city_at(x, y).is_none() || game.city(game.city_at(x, y).unwrap()).owner != game.unit(top).owner {
                 draw_unit(fb, ctx, game, top, px, py, units.len() > 1);
             }
+        }
+    }
+}
+
+/// Fringe the sides of explored tile (x,y) that border unexplored tiles (off-map counts as
+/// explored).
+pub fn draw_fog_edges(fb: &mut Surface, ctx: &UiContext, game: &Game, slot: Slot, x: i32, y: i32, px: i32, py: i32) {
+    for (side, (dx, dy)) in [(0, -1), (1, 0), (0, 1), (-1, 0)].into_iter().enumerate() {
+        let (nx, ny) = (x + dx, y + dy);
+        if Map::in_bounds(nx, ny) && !game.explored(slot, nx, ny) {
+            blit_sprite(fb, &ctx.sp.surf, sp::fog_edge(side), px, py);
         }
     }
 }

@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 pub const MAGIC: [u8; 4] = *b"CIVR";
-pub const VERSION: u16 = 1;
+/// 2: the game body is followed by `Game::hints_shown` (u32 LE); version 1 saves still load.
+pub const VERSION: u16 = 2;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -52,6 +53,7 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     data.extend_from_slice(&MAGIC);
     data.extend_from_slice(&VERSION.to_le_bytes());
     data.extend_from_slice(&body);
+    data.extend_from_slice(&g.hints_shown.to_le_bytes());
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -62,10 +64,16 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
         return Err(SaveError::Format("not a civrs save".into()));
     }
     let ver = u16::from_le_bytes([data[4], data[5]]);
-    if ver != VERSION {
+    if ver == 0 || ver > VERSION {
         return Err(SaveError::Format(format!("unsupported version {ver}")));
     }
-    bincode::deserialize(&data[6..]).map_err(|e| SaveError::Format(e.to_string()))
+    let mut rest = &data[6..];
+    let mut g: Game = bincode::deserialize_from(&mut rest).map_err(|e| SaveError::Format(e.to_string()))?;
+    if ver >= 2 {
+        let bits: [u8; 4] = rest.get(..4).and_then(|b| b.try_into().ok()).ok_or_else(|| SaveError::Format("missing hint flags".into()))?;
+        g.hints_shown = u32::from_le_bytes(bits);
+    }
+    Ok(g)
 }
 
 #[derive(Clone, Debug)]

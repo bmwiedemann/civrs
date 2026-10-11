@@ -5,7 +5,7 @@
 //! "CIVILIZATION NOTE" error box.
 
 use crate::assets::Palette;
-use crate::gfx::text::{draw_text, draw_text_centered, text_width, wrap};
+use crate::gfx::text::{draw_text, text_width, wrap};
 use crate::gfx::{Rect, Surface, TextStyle};
 use crate::platform::{Event, Key};
 use crate::rules::advance_ids as adv;
@@ -467,8 +467,8 @@ impl Screen for NewsBox {
 
 // ---- red note ---------------------------------------------------------------------------------
 
-/// Red "CIVILIZATION NOTE" box (errors): box (40,16)-(264,..), border 247,85,85, fill
-/// 130,32,20, white upper-case tiny text at a 7-px pitch.
+/// Red "CIVILIZATION NOTE" box (errors): the green note's layout with border 247,85,85 and
+/// fill 130,32,20.
 pub struct RedNote {
     pub lines: Vec<String>,
     rect: Rect,
@@ -477,15 +477,12 @@ pub struct RedNote {
 }
 
 pub fn red_note(lines: Vec<String>) -> Box<dyn Screen> {
-    Box::new(RedNote { lines, rect: Rect::new(40, 16, 225, 56), wrapped: Vec::new(), dismiss: Dismiss::new() })
+    Box::new(RedNote { lines, rect: Rect::new(56, 16, 209, 41), wrapped: Vec::new(), dismiss: Dismiss::new() })
 }
 
 impl Screen for RedNote {
     fn on_enter(&mut self, ctx: &mut UiContext) {
-        let text = self.lines.join(" ").to_ascii_uppercase();
-        self.wrapped = wrap(&ctx.fonts, 1, 215, &text);
-        let h = 6 + (self.wrapped.len() as i32 + 1) * 7;
-        self.rect = Rect::new(40, 16, 225, h.max(24));
+        (self.rect, self.wrapped) = crate::ui::widgets::note_layout(ctx, &self.lines);
     }
     fn update(&mut self, _ctx: &mut UiContext) -> Transition {
         self.dismiss.tick();
@@ -505,13 +502,7 @@ impl Screen for RedNote {
         let white = pal.nearest([235, 235, 235]);
         fb.fill_rect(self.rect, fill);
         fb.rect_outline(self.rect, border);
-        let mut y = self.rect.y + 3;
-        draw_text_centered(fb, &ctx.fonts, &TextStyle::new(1, white), self.rect.x + self.rect.w / 2, y, "--- CIVILIZATION NOTE ---");
-        y += 7;
-        for l in &self.wrapped {
-            draw_text(fb, &ctx.fonts, &TextStyle::new(1, white), self.rect.x + 4, y, l);
-            y += 7;
-        }
+        crate::ui::widgets::draw_note_text(fb, ctx, self.rect, &self.wrapped, white);
     }
 }
 

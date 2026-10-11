@@ -129,12 +129,14 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             if !g.options.instant_advice {
                 return None;
             }
-            let lines = ctx.texts.help.section(section).map(|l| l.to_vec()).unwrap_or_default();
-            if lines.is_empty() {
-                None
-            } else {
-                Some(Box::new(crate::ui::widgets::NoteBox::new(paragraphs(&lines))))
+            note(ctx, section, &Vars::default())
+        }
+        GameEvent::HintAt { section, city } => {
+            if !g.options.instant_advice {
+                return None;
             }
+            let us = g.city_opt(*city).map(|c| c.name.clone()).unwrap_or_default();
+            note(ctx, section, &Vars { us, ..Default::default() })
         }
         GameEvent::News { section, rplc1, rplc2 } => {
             let lines = ctx.texts.king.section(section).map(|l| l.to_vec()).unwrap_or_default();
@@ -221,6 +223,15 @@ pub fn reply_for(d: &Decision, r: &crate::ui::screen::DialogResult) -> crate::ga
         (_, DialogResult::No) => DecisionReply::No,
         _ => DecisionReply::Choice(0),
     }
+}
+
+/// Green CIVILIZATION NOTE for a HELP.TXT section.
+fn note(ctx: &UiContext, section: &str, v: &Vars) -> Option<Box<dyn Screen>> {
+    let lines = ctx.texts.help.section(section).map(|l| l.to_vec()).unwrap_or_default();
+    if lines.is_empty() {
+        return None;
+    }
+    Some(Box::new(crate::ui::widgets::NoteBox::new(paragraphs(&substitute(&lines, v)))))
 }
 
 /// Dialog for a rule error (ERROR.TXT section or plain message): red "CIVILIZATION NOTE".
