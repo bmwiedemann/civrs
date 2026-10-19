@@ -10,6 +10,7 @@ use crate::gfx::{Rect, Surface, TextStyle};
 use crate::platform::{Event, Key};
 use crate::rules::advance_ids as adv;
 use crate::ui::context::UiContext;
+use crate::ui::reveal::Reveal;
 use crate::ui::screen::{DialogResult, Screen, Transition};
 use crate::ui::theme;
 
@@ -120,11 +121,18 @@ pub struct PicScreen {
     pub caption_width: i32,
     pub font: usize,
     dismiss: Dismiss,
+    /// Pixel dissolve from the previous screen, when wanted.
+    reveal: Option<Reveal>,
 }
 
 impl PicScreen {
     pub fn new(pic: &str, lines: Vec<String>) -> PicScreen {
-        PicScreen { pic: pic.to_string(), lines, caption_pos: None, caption_width: 220, font: 0, dismiss: Dismiss::new() }
+        PicScreen { pic: pic.to_string(), lines, caption_pos: None, caption_width: 220, font: 0, dismiss: Dismiss::new(), reveal: None }
+    }
+    /// Dissolve the picture in over the previous screen (driver `duration`).
+    pub fn with_dissolve(mut self, ctx: &UiContext, duration: u32) -> Self {
+        self.reveal = Some(Reveal::new(ctx, duration));
+        self
     }
     pub fn with_caption_pos(mut self, x: i32, y: i32) -> Self {
         self.caption_pos = Some((x, y));
@@ -146,23 +154,34 @@ impl Screen for PicScreen {
         Transition::None
     }
     fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
-        if self.dismiss.closes(ev) {
-            Transition::Pop(DialogResult::Done)
-        } else {
+        if !self.dismiss.closes(ev) {
             Transition::None
+        } else if let Some(r) = self.reveal.as_mut().filter(|r| !r.done()) {
+            r.finish();
+            Transition::None
+        } else {
+            Transition::Pop(DialogResult::Done)
         }
     }
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
-        let pic = ctx.pic(&self.pic);
-        fb.blit(&pic.surf, 0, 0);
         let pal = ctx.pic_pal(&self.pic);
+        let mut content = Surface::screen();
+        let pic = ctx.pic(&self.pic);
+        content.blit(&pic.surf, 0, 0);
         match self.caption_pos {
             Some((x, y)) => {
-                draw_caption(fb, ctx, &pal, x, y, self.caption_width, &self.lines, self.font);
+                draw_caption(&mut content, ctx, &pal, x, y, self.caption_width, &self.lines, self.font);
             }
             None => {
-                draw_caption_centred(fb, ctx, &pal, 4, self.caption_width, &self.lines, self.font);
+                draw_caption_centred(&mut content, ctx, &pal, 4, self.caption_width, &self.lines, self.font);
             }
+        }
+        match self.reveal.as_mut() {
+            Some(r) => {
+                let old = ctx.palette;
+                r.draw(fb, &content, &old, &pal);
+            }
+            None => fb.blit(&content, 0, 0),
         }
     }
     fn palette(&self, ctx: &UiContext) -> Palette {

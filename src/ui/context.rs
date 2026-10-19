@@ -61,6 +61,8 @@ pub struct UiContext {
     pub hof: crate::save::HallOfFame,
     pub save_dir: std::path::PathBuf,
     pub skip_intro: bool,
+    /// Skip timed transitions such as the pixel dissolve (headless previews).
+    pub instant: bool,
     pub quit_requested: bool,
     /// Map tile the map view should centre on (set by FindCity).
     pub center_request: Option<(i32, i32)>,
@@ -92,6 +94,7 @@ impl UiContext {
             hof,
             save_dir,
             skip_intro: false,
+            instant: false,
             quit_requested: false,
             center_request: None,
         })

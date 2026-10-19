@@ -1,25 +1,51 @@
-//! "ROME founded: 4000 BC." animation: wagons rolling over the meadow, then the city screen.
+//! "ROME founded: 4000 BC." animation: the meadow dissolves in (driver duration 10, as in
+//! the original) while wagons roll over it, then the city screen.
 
 use crate::game::CityId;
 use crate::gfx::text::draw_text_centered;
 use crate::gfx::{Rect, Surface, TextStyle};
 use crate::platform::Event;
 use crate::ui::context::UiContext;
+use crate::ui::reveal::Reveal;
 use crate::ui::screen::{DialogResult, Screen, Transition};
 
 pub struct CityFounded {
     city: CityId,
     t: u64,
     done: bool,
+    reveal: Option<Reveal>,
 }
 
+/// Driver duration of the dissolve (overlay call site: `push 10; push 1; call dissolve`).
+const DISSOLVE: u32 = 10;
+
 pub fn city_founded(c: CityId) -> Box<dyn Screen> {
-    Box::new(CityFounded { city: c, t: 0, done: false })
+    Box::new(CityFounded { city: c, t: 0, done: false, reveal: None })
 }
 
 const FRAMES: [Rect; 4] = [Rect::new(0, 0, 49, 16), Rect::new(0, 16, 49, 16), Rect::new(0, 32, 49, 16), Rect::new(0, 48, 49, 16)];
 
 impl CityFounded {
+    /// The meadow, the wagons at time `t` and the "founded" line.
+    fn render(fb: &mut Surface, ctx: &UiContext, city: CityId, t: u64) {
+        let hill = ctx.pic("HILL");
+        fb.blit(&hill.surf, 0, 0);
+        let wag = ctx.pic("SETTLERS");
+        let key = wag.surf.get(0, 70);
+        let frame = FRAMES[((t / 6) % 4) as usize];
+        let x = 60 + (t as i32 * 2) % 260;
+        for i in 0..3 {
+            fb.blit_part(&wag.surf, frame, x - i * 40, 120 + i * 8, Some(key));
+        }
+        let g = ctx.game();
+        if let Some(c) = g.city_opt(city) {
+            let text = format!("{} founded: {}.", c.name, crate::rules::year_text(crate::rules::year_for_turn(c.founded_turn)));
+            let pal = ctx.pic_pal("HILL");
+            let black = pal.nearest([0, 0, 0]);
+            draw_text_centered(fb, &ctx.fonts, &TextStyle::new(3, black), 160, 2, &text);
+        }
+    }
+
     fn finish(&mut self) -> Transition {
         if self.done {
             return Transition::None;
@@ -47,22 +73,11 @@ impl Screen for CityFounded {
         Transition::Pop(DialogResult::Done)
     }
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
-        let hill = ctx.pic("HILL");
-        fb.blit(&hill.surf, 0, 0);
-        let wag = ctx.pic("SETTLERS");
-        let key = wag.surf.get(0, 70);
-        let frame = FRAMES[((self.t / 6) % 4) as usize];
-        let x = 60 + (self.t as i32 * 2) % 260;
-        for i in 0..3 {
-            fb.blit_part(&wag.surf, frame, x - i * 40, 120 + i * 8, Some(key));
-        }
-        let g = ctx.game();
-        if let Some(c) = g.city_opt(self.city) {
-            let text = format!("{} founded: {}.", c.name, crate::rules::year_text(crate::rules::year_for_turn(c.founded_turn)));
-            let pal = ctx.pic_pal("HILL");
-            let black = pal.nearest([0, 0, 0]);
-            draw_text_centered(fb, &ctx.fonts, &TextStyle::new(3, black), 160, 2, &text);
-        }
+        let reveal = self.reveal.get_or_insert_with(|| Reveal::new(ctx, DISSOLVE));
+        let mut content = Surface::screen();
+        Self::render(&mut content, ctx, self.city, self.t);
+        let old = ctx.palette;
+        reveal.draw(fb, &content, &old, &ctx.pic_pal("HILL"));
     }
     fn palette(&self, ctx: &UiContext) -> crate::assets::Palette {
         ctx.pic_pal("HILL")

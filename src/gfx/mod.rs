@@ -1,5 +1,6 @@
 //! Software rendering into a 320x200 8-bit indexed framebuffer.
 
+pub mod dissolve;
 pub mod surface;
 pub mod text;
 

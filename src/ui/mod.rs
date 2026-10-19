@@ -22,6 +22,7 @@ pub mod pedia_entry;
 pub mod report_advisors;
 pub mod report_world;
 pub mod reports;
+pub mod reveal;
 pub mod screen;
 pub mod setup;
 pub mod spaceship_ui;

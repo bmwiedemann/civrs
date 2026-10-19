@@ -1,12 +1,14 @@
 //! The palace: HILL.PIC meadow with the palace composed from CASTLE{level}.PIC parts
 //! (row 0 = castle/classical style, row 1 = oriental style) and CBRUSH hedges / statues in
-//! the foreground for the higher levels.
+//! the foreground for the higher levels. The view dissolves in (driver duration 20, as in
+//! the original).
 
 use crate::assets::Palette;
 use crate::gfx::{Rect, Surface};
 use crate::platform::Event;
 use crate::ui::context::UiContext;
 use crate::ui::eventpics::{draw_caption_centred, Dismiss};
+use crate::ui::reveal::Reveal;
 use crate::ui::screen::{DialogResult, Screen, Transition};
 
 /// Column spans of the CASTLE sheets (x0, width); both rows share them.
@@ -20,12 +22,15 @@ pub fn castle_part(style: u8, cell: usize) -> Rect {
 
 /// Baseline of the palace on the hill.
 const GROUND: i32 = 150;
+/// Driver duration of the dissolve (overlay call site: `push 20; push 1; call dissolve`).
+const DISSOLVE: u32 = 20;
 
 pub struct PalaceScreen {
     level: u8,
     style: u8,
     lines: Vec<String>,
     dismiss: Dismiss,
+    reveal: Reveal,
 }
 
 /// The palace of the human player with an optional caption (PalaceAddition text).
@@ -38,7 +43,7 @@ pub fn palace_screen(ctx: &UiContext, lines: Vec<String>) -> Box<dyn Screen> {
             (p.palace_level.min(4), p.palace_parts.first().copied().unwrap_or(0) % 2)
         })
         .unwrap_or((0, 0));
-    Box::new(PalaceScreen { level, style, lines, dismiss: Dismiss::new() })
+    Box::new(PalaceScreen { level, style, lines, dismiss: Dismiss::new(), reveal: Reveal::new(ctx, DISSOLVE) })
 }
 
 /// Palace shown after a "palace addition" event, with the KING.TXT PALACE text.
@@ -93,20 +98,26 @@ impl Screen for PalaceScreen {
         Transition::None
     }
     fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
-        if self.dismiss.closes(ev) {
+        if !self.dismiss.closes(ev) {
+            Transition::None
+        } else if self.reveal.done() {
             Transition::Pop(DialogResult::Done)
         } else {
+            self.reveal.finish();
             Transition::None
         }
     }
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
-        let hill = ctx.pic("HILL");
-        fb.blit(&hill.surf, 0, 0);
         let pal = ctx.pic_pal("HILL");
-        draw_palace(fb, ctx, &pal, self.level, self.style);
+        let mut content = Surface::screen();
+        let hill = ctx.pic("HILL");
+        content.blit(&hill.surf, 0, 0);
+        draw_palace(&mut content, ctx, &pal, self.level, self.style);
         if !self.lines.is_empty() {
-            draw_caption_centred(fb, ctx, &pal, 4, 260, &self.lines, 0);
+            draw_caption_centred(&mut content, ctx, &pal, 4, 260, &self.lines, 0);
         }
+        let old = ctx.palette;
+        self.reveal.draw(fb, &content, &old, &pal);
     }
     fn palette(&self, ctx: &UiContext) -> Palette {
         ctx.pic_pal("HILL")

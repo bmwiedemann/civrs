@@ -13,11 +13,15 @@ use crate::rules;
 use crate::ui::context::UiContext;
 use crate::ui::diplomacy_ui::{face_rect, king_index};
 use crate::ui::eventpics::{Dismiss, PicScreen};
+use crate::ui::reveal::Reveal;
 use crate::ui::screen::{DialogResult, Screen, Transition};
 use crate::ui::wonderscreen::blit_scaled;
 
 /// Inner frame of the SLAM1 wall plaque.
 const PLAQUE: Rect = Rect::new(17, 148, 288, 37);
+/// Driver duration of the dissolve into the score wall (overlay call site, after the
+/// "... destroy the ... civilization!" plaque line: `push 30; push 1; call dissolve`).
+const DISSOLVE: u32 = 30;
 
 /// The screen (chain) for a game end reason.
 pub fn end_screen(ctx: &UiContext, reason: EndReason) -> Box<dyn Screen> {
@@ -26,7 +30,7 @@ pub fn end_screen(ctx: &UiContext, reason: EndReason) -> Box<dyn Screen> {
     match reason {
         EndReason::Destroyed => {
             let lines = vec![format!("The {civ} civilization has been destroyed!"), format!("{leader}, your reign is over.")];
-            Box::new(Chain { screen: Box::new(PicScreen::new("SAD", lines).with_caption_pos(20, 20)), next: Some(arch_screen(ctx)) })
+            Box::new(Chain { screen: Box::new(PicScreen::new("SAD", lines).with_caption_pos(20, 20).with_dissolve(ctx, DISSOLVE)), next: Some(arch_screen(ctx)) })
         }
         EndReason::Spaceship(slot) => crate::ui::spaceship_ui::arrival_screen(ctx, slot),
         EndReason::Conquest => {
@@ -107,6 +111,7 @@ pub struct ScoreWall {
     king: u8,
     dismiss: Dismiss,
     recorded: bool,
+    reveal: Reveal,
 }
 
 impl ScoreWall {
@@ -120,7 +125,7 @@ impl ScoreWall {
             lines.push(format!("Your rating: {}.", g.rating_name(me)));
             lines.push("Your final score has been entered into the Hall of Fame.".into());
         }
-        ScoreWall { lines, king, dismiss: Dismiss::new(), recorded: false }
+        ScoreWall { lines, king, dismiss: Dismiss::new(), recorded: false, reveal: Reveal::new(ctx, DISSOLVE) }
     }
 }
 
@@ -143,16 +148,38 @@ impl Screen for ScoreWall {
         Transition::None
     }
     fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
-        if self.dismiss.closes(ev) {
+        if !self.dismiss.closes(ev) {
+            Transition::None
+        } else if self.reveal.done() {
             Transition::Pop(DialogResult::Done)
         } else {
+            self.reveal.finish();
             Transition::None
         }
     }
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
+        let pal = ctx.pic_pal("SLAM1");
+        let mut content = Surface::screen();
+        self.render(&mut content, ctx, &pal);
+        let old = ctx.palette;
+        self.reveal.draw(fb, &content, &old, &pal);
+    }
+    fn palette(&self, ctx: &UiContext) -> Palette {
+        ctx.pic_pal("SLAM1")
+    }
+    fn draws_parent(&self) -> bool {
+        false
+    }
+    fn wants_cursor(&self) -> bool {
+        false
+    }
+}
+
+impl ScoreWall {
+    /// The wall with the portrait, name plate and plaque text.
+    fn render(&self, fb: &mut Surface, ctx: &UiContext, pal: &Palette) {
         let wall = ctx.pic("SLAM1");
         fb.blit(&wall.surf, 0, 0);
-        let pal = ctx.pic_pal("SLAM1");
         // framed portrait (SLAM2 face strip, enlarged 2x) hanging on the wall
         let faces = ctx.pic("SLAM2");
         let face_pal = ctx.pic_pal("SLAM2");
@@ -186,14 +213,5 @@ impl Screen for ScoreWall {
                 y += 8;
             }
         }
-    }
-    fn palette(&self, ctx: &UiContext) -> Palette {
-        ctx.pic_pal("SLAM1")
-    }
-    fn draws_parent(&self) -> bool {
-        false
-    }
-    fn wants_cursor(&self) -> bool {
-        false
     }
 }

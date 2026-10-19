@@ -1,22 +1,30 @@
-//! Opening sequence: "A MICROPROSE PRESENTATION", the logo over the galaxy, the credits one line
-//! at a time, then the main menu (logo on black with the brown menu box).
+//! Opening sequence: "A MICROPROSE PRESENTATION", the logo over the galaxy, the galaxy
+//! dissolving away pixel by pixel (the driver's dissolve, duration 20 like the original) to
+//! leave the title screen, the credits one line at a time, then the main menu (logo on black
+//! with the brown menu box).
 
 use crate::gfx::text::draw_text_centered;
 use crate::gfx::{Rect, Surface, TextStyle};
 use crate::platform::Event;
 use crate::rules::MAIN_MENU;
 use crate::ui::context::UiContext;
+use crate::ui::reveal::Reveal;
 use crate::ui::screen::{DialogResult, Screen, Transition};
 use crate::ui::widgets::{MenuDialog, PanelStyle};
 
 /// Logo lettering area inside LOGO.PIC and where it is drawn.
 const LOGO_SRC: Rect = Rect::new(0, 56, 320, 90);
 const LOGO_Y: i32 = 56;
+/// Driver duration of the dissolve from the galaxy to the title screen (overlay call site:
+/// `push 20; push 1; call dissolve`).
+const LOGO_DISSOLVE: u32 = 20;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
     Presentation,
     Logo,
+    /// The galaxy dissolves away around the logo.
+    Fade,
     Credits,
     Menu,
 }
@@ -28,6 +36,7 @@ pub struct TitleScreen {
     menu_up: bool,
     pending_shortcut: Option<usize>,
     skip_to_menu: bool,
+    reveal: Option<Reveal>,
 }
 
 impl Default for TitleScreen {
@@ -38,11 +47,11 @@ impl Default for TitleScreen {
 
 impl TitleScreen {
     pub fn new() -> TitleScreen {
-        TitleScreen { phase: Phase::Presentation, t: 0, credit: 0, menu_up: false, pending_shortcut: None, skip_to_menu: false }
+        TitleScreen { phase: Phase::Presentation, t: 0, credit: 0, menu_up: false, pending_shortcut: None, skip_to_menu: false, reveal: None }
     }
 
     pub fn at_menu() -> TitleScreen {
-        TitleScreen { phase: Phase::Menu, t: 0, credit: 0, menu_up: false, pending_shortcut: None, skip_to_menu: false }
+        TitleScreen { phase: Phase::Menu, t: 0, credit: 0, menu_up: false, pending_shortcut: None, skip_to_menu: false, reveal: None }
     }
 
     fn credit_lines(ctx: &UiContext) -> Vec<String> {
@@ -100,7 +109,15 @@ impl Screen for TitleScreen {
             }
             Phase::Logo => {
                 if self.t > 240 {
+                    self.phase = Phase::Fade;
+                    self.reveal = Some(Reveal::new(ctx, LOGO_DISSOLVE));
+                    self.t = 0;
+                }
+            }
+            Phase::Fade => {
+                if self.reveal.as_ref().is_none_or(|r| r.done()) {
                     self.phase = Phase::Credits;
+                    self.reveal = None;
                     self.t = 0;
                     self.credit = 0;
                 }
@@ -161,8 +178,18 @@ impl Screen for TitleScreen {
     }
 
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
-        fb.fill(0);
         let pal = self.palette(ctx);
+        if self.phase == Phase::Fade {
+            // the previous frame (galaxy and logo) stays in `fb` and dissolves into the title
+            let mut title = Surface::screen();
+            let logo = ctx.pic("LOGO");
+            title.blit_part(&logo.surf, LOGO_SRC, 0, LOGO_Y, Some(0));
+            if let Some(r) = self.reveal.as_mut() {
+                r.draw(fb, &title, &pal, &pal);
+            }
+            return;
+        }
+        fb.fill(0);
         match self.phase {
             Phase::Presentation => {
                 let c = pal.nearest([219, 190, 130]);
@@ -182,6 +209,7 @@ impl Screen for TitleScreen {
                     }
                 }
             }
+            Phase::Fade => unreachable!(),
             Phase::Menu => {
                 let logo = ctx.pic("LOGO");
                 fb.blit_part(&logo.surf, LOGO_SRC, 0, LOGO_Y, Some(0));

@@ -180,6 +180,9 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
         let turns: u32 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
         let dir = AssetDir::locate(Some(assets.root()))?;
         let mut ctx = civrs::ui::context::UiContext::new(dir, std::env::temp_dir().join("civrs-headless"))?;
+        // previews show the finished screen, not a frame of its dissolve (CIVRS_TRANSITIONS=1
+        // keeps the dissolve, for checking it frame by frame with CIVRS_FRAMES)
+        ctx.instant = std::env::var("CIVRS_TRANSITIONS").is_err();
         let setup = civrs::game::GameSetup { seed, ..Default::default() };
         let mut game = civrs::game::Game::new(setup, None);
         // previews compare against plain captures: no CIVILIZATION NOTE hints on top
@@ -208,7 +211,7 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
         }
         // the city screen needs a city: found one with the human's first settler
         let mut city = None;
-        if parts.first() == Some(&"city") {
+        if matches!(parts.first(), Some(&"city" | &"founded")) {
             let slot = game.human_slot;
             let id = game.units_of(slot).into_iter().find(|id| game.unit(*id).kind == civrs::rules::unit_ids::SETTLERS).ok_or("no settler")?;
             city = Some(game.found_city(id).map_err(|e| format!("{e:?}"))?);
@@ -226,6 +229,7 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
                 Some(e) => civrs::ui::civilopedia::entry_screen(e, turns as usize),
                 None => return Err(format!("unknown civilopedia entry code {seed}").into()),
             },
+            "founded" => civrs::ui::cityfounded::city_founded(city.unwrap()),
             "city" => match parts.get(3) {
                 Some(start) => civrs::ui::cityscreen::city_screen_at(city.unwrap(), start),
                 None => civrs::ui::cityscreen::city_screen(city.unwrap()),
