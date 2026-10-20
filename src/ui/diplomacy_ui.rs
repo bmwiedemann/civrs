@@ -183,6 +183,19 @@ impl AudienceScreen {
     }
 }
 
+impl AudienceScreen {
+    /// CIV.EXE plays the war drums (ID 33) over the anthem for demands, threats and
+    /// declarations of war.
+    fn war_drums(&self, ctx: &UiContext) {
+        use crate::game::diplomacy::Proposal::*;
+        if let Some(st) = &self.state {
+            if matches!(st.proposal, Cancel | Tribute | TakeCiv | Provoke | Reject | Rid | Mobilize) {
+                ctx.audio.play(crate::audio::Sound::WarDrums);
+            }
+        }
+    }
+}
+
 impl Screen for AudienceScreen {
     fn on_enter(&mut self, ctx: &mut UiContext) {
         if self.state.is_none() {
@@ -190,6 +203,15 @@ impl Screen for AudienceScreen {
             self.state = Some(st);
         }
         self.layout(ctx);
+        let civ = ctx.game().player(self.ai).civ;
+        ctx.audio.national_theme(civ, !self.prompt);
+        if !self.prompt {
+            self.war_drums(ctx);
+        }
+    }
+
+    fn on_exit(&mut self, ctx: &mut UiContext) {
+        ctx.audio.fade_out();
     }
 
     fn update(&mut self, ctx: &mut UiContext) -> Transition {
@@ -212,6 +234,9 @@ impl Screen for AudienceScreen {
                 // refusing the emissary counts as rejecting the proposal
                 return self.finish(ctx, Some(0));
             }
+            let civ = ctx.game().player(self.ai).civ;
+            ctx.audio.national_theme(civ, true);
+            self.war_drums(ctx);
         }
         Transition::None
     }

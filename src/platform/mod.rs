@@ -101,6 +101,11 @@ pub trait Backend {
     fn is_fullscreen(&self) -> bool {
         false
     }
+    /// Start pulling PCM from the sound engine on the platform's audio device. Backends
+    /// without audio (headless) report an error and the game stays silent.
+    fn start_audio(&mut self, _engine: std::sync::Arc<std::sync::Mutex<crate::audio::Engine>>) -> Result<(), String> {
+        Err("no audio device".to_string())
+    }
 }
 
 /// Largest integer scale so that the 320x200 image fits comfortably in a display of the

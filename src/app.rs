@@ -56,6 +56,12 @@ impl App {
             self.screens.handle(&ev, &mut self.ctx);
         }
         self.screens.update(&mut self.ctx);
+        if let Some(g) = &self.ctx.game {
+            // the in-game Sound option gates every driver call, as in CIV.EXE
+            if self.ctx.audio.available() && self.ctx.audio.enabled() != g.options.sound {
+                self.ctx.audio.set_enabled(g.options.sound);
+            }
+        }
         if self.screens.is_empty() || self.screens.quit_requested() {
             return false;
         }

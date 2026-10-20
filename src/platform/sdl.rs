@@ -10,8 +10,28 @@ use sdl3::pixels::PixelFormat;
 use sdl3::rect::Rect as SdlRect;
 use sdl3::render::{ScaleMode, Texture, TextureCreator, WindowCanvas};
 use sdl3::video::WindowContext;
+use sdl3::audio::{AudioCallback, AudioFormat, AudioSpec, AudioStream, AudioStreamWithCallback};
 use sdl3::EventPump;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// Audio-thread side of the sound engine: renders whatever SDL asks for.
+struct SoundCallback {
+    engine: Arc<Mutex<crate::audio::Engine>>,
+    buf: Vec<i16>,
+}
+
+impl AudioCallback<i16> for SoundCallback {
+    fn callback(&mut self, stream: &mut AudioStream, requested: i32) {
+        let n = (requested.max(0) as usize + 1) & !1;
+        self.buf.clear();
+        self.buf.resize(n, 0);
+        if let Ok(mut e) = self.engine.lock() {
+            e.render(&mut self.buf);
+        }
+        let _ = stream.put_data_i16(&self.buf);
+    }
+}
 
 pub struct SdlBackend {
     _sdl: sdl3::Sdl,
@@ -26,6 +46,7 @@ pub struct SdlBackend {
     offset: (i32, i32),
     fullscreen: bool,
     text_input: sdl3::keyboard::TextInputUtil,
+    audio: Option<AudioStreamWithCallback<SoundCallback>>,
 }
 
 const FRAME: Duration = Duration::from_nanos(16_666_667);
@@ -75,6 +96,7 @@ impl SdlBackend {
             offset: (0, 0),
             fullscreen: o.fullscreen,
             text_input,
+            audio: None,
         };
         b.recompute_layout();
         Ok(b)
@@ -269,6 +291,23 @@ impl Backend for SdlBackend {
 
     fn is_fullscreen(&self) -> bool {
         self.fullscreen
+    }
+    fn start_audio(&mut self, engine: Arc<Mutex<crate::audio::Engine>>) -> Result<(), String> {
+        self.open_audio(engine)
+    }
+}
+
+impl SdlBackend {
+    fn open_audio(&mut self, engine: Arc<Mutex<crate::audio::Engine>>) -> Result<(), String> {
+        let audio = self._sdl.audio().map_err(|e| e.to_string())?;
+        let rate = engine.lock().map_err(|_| "sound engine poisoned".to_string())?.rate() as i32;
+        let spec = AudioSpec { freq: Some(rate), channels: Some(2), format: Some(AudioFormat::S16LE) };
+        let stream = audio
+            .open_playback_stream(&spec, SoundCallback { engine, buf: Vec::new() })
+            .map_err(|e| e.to_string())?;
+        stream.resume().map_err(|e| e.to_string())?;
+        self.audio = Some(stream);
+        Ok(())
     }
 }
 

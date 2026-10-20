@@ -38,8 +38,10 @@ fn visible(g: &Game, a: (i32, i32), b: (i32, i32)) -> bool {
 /// One `try_move` with reporting.
 pub fn step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) -> Result<MoveOutcome, RuleError> {
     let from = g.unit(id).pos();
+    let attacker_kind = g.unit(id).kind;
     let (dx, dy) = d.delta();
     let to = (from.0 + dx, from.1 + dy);
+    let defender_owner = g.units_at(to.0, to.1).first().map(|u| g.unit(*u).owner).unwrap_or(0);
     let r = g.try_move(id, d);
     if let Ok(out) = &r {
         match out {
@@ -47,9 +49,9 @@ pub fn step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) -
                 let vis = visible(g, from, to);
                 sink(TurnStep::AiMove { unit: id, from, to, visible: vis });
             }
-            MoveOutcome::Attacked { won, at, .. } => {
+            MoveOutcome::Attacked { won, at, defender } => {
                 let vis = visible(g, from, *at);
-                sink(TurnStep::Combat { attacker_at: from, defender_at: *at, won: *won, visible: vis });
+                sink(TurnStep::Combat { attacker_at: from, defender_at: *at, won: *won, visible: vis, attacker: attacker_kind, defender: *defender, defender_owner });
             }
             _ => {}
         }

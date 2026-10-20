@@ -136,6 +136,9 @@ impl Screen for ScoreWall {
         }
         self.recorded = true;
         if let Some(g) = ctx.game.as_ref() {
+            ctx.audio.national_theme(g.human().civ, true);
+        }
+        if let Some(g) = ctx.game.as_ref() {
             let me = g.human_slot;
             let s = g.score(me);
             let e = crate::save::FameEntry { leader: g.human().leader.clone(), civ_plural: g.civ_name(me).to_string(), score: s.total, percent: s.percent, year: g.year(), difficulty: g.setup.difficulty.as_u8(), title: g.human().title().trim().to_string(), population: g.total_population(me) };

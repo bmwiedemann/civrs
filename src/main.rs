@@ -1,4 +1,5 @@
 use civrs::assets::{AssetDir, Palette};
+use civrs::platform::Backend;
 use civrs::gfx::{Surface, TextStyle};
 use std::path::{Path, PathBuf};
 
@@ -7,7 +8,8 @@ fn usage() -> ! {
         "civrs - Civilization (1991) reimplementation\n\
          usage: civrs [--assets DIR] [--scale N] [--fullscreen]\n\
                 civrs --dump TARGET --out FILE.ppm [--assets DIR] [--zoom N]\n\
-         dump targets: pic:NAME | sheet:NAME | fonts | pal:NAME | all-pics:DIR"
+         dump targets: pic:NAME | sheet:NAME | fonts | pal:NAME | all-pics:DIR\n\
+                       sound:ID[:LEVEL[:SECONDS]] (WAV) | sound-regs:ID[:LEVEL[:TICKS]] (OPL2 register log)"
     );
     std::process::exit(2);
 }
@@ -47,6 +49,12 @@ fn parse_cli() -> Cli {
 }
 
 fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(spec) = target.strip_prefix("sound:") {
+        return dump_sound(assets, spec, out, false);
+    }
+    if let Some(spec) = target.strip_prefix("sound-regs:") {
+        return dump_sound(assets, spec, out, true);
+    }
     let fonts = assets.load_fonts()?;
     if let Some(name) = target.strip_prefix("pic:") {
         let pic = assets.load_pic(name)?;
@@ -340,6 +348,65 @@ fn dump_overview(game: &civrs::game::Game, out: &Path, zoom: usize) -> Result<()
     Ok(())
 }
 
+/// Render one sound ID through the driver and the OPL2 emulator: a 48 kHz stereo WAV, or
+/// (`regs`) a text log `subtick reg value` of the register writes, one 300 Hz sub-tick per
+/// line group, for comparison with the reference simulator.
+fn dump_sound(assets: &AssetDir, spec: &str, out: &Path, regs: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let mut parts = spec.split(':');
+    let id: u8 = parts.next().unwrap_or("3").parse()?;
+    let level: u8 = parts.next().map(|s| s.parse()).transpose()?.unwrap_or(3);
+    let bytes = assets.read("ASOUND.CVL")?;
+    let im = civrs::audio::cvl::Image::parse(&bytes)?;
+    let rate = civrs::audio::SAMPLE_RATE;
+    let mut engine = civrs::audio::Engine::new(civrs::audio::driver::Driver::new(im), rate);
+    engine.play(id, level);
+    if regs {
+        let ticks: u32 = parts.next().map(|s| s.parse()).transpose()?.unwrap_or(600);
+        let mut text = String::new();
+        for sub in 0..ticks * 5 {
+            for (r, v) in engine.step_sub_tick() {
+                text.push_str(&format!("{sub} {r:02x} {v:02x}\n"));
+            }
+        }
+        std::fs::write(out, text)?;
+        println!("{}: {id} level {level}, {ticks} ticks", out.display());
+        return Ok(());
+    }
+    let seconds: f64 = parts.next().map(|s| s.parse()).transpose()?.unwrap_or(30.0);
+    let mut pcm: Vec<i16> = Vec::new();
+    let chunk = (rate / 50) as usize * 2;
+    let mut buf = vec![0i16; chunk];
+    let mut silent = 0usize;
+    while (pcm.len() / 2) < (seconds * rate as f64) as usize {
+        engine.render(&mut buf);
+        pcm.extend_from_slice(&buf);
+        silent = if engine.is_active() { 0 } else { silent + 1 };
+        if silent > 75 {
+            break; // 1.5 s with nothing left to play
+        }
+    }
+    let data_len = (pcm.len() * 2) as u32;
+    let mut w: Vec<u8> = Vec::with_capacity(44 + data_len as usize);
+    w.extend_from_slice(b"RIFF");
+    w.extend_from_slice(&(36 + data_len).to_le_bytes());
+    w.extend_from_slice(b"WAVEfmt ");
+    w.extend_from_slice(&16u32.to_le_bytes());
+    w.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    w.extend_from_slice(&2u16.to_le_bytes()); // stereo
+    w.extend_from_slice(&rate.to_le_bytes());
+    w.extend_from_slice(&(rate * 4).to_le_bytes());
+    w.extend_from_slice(&4u16.to_le_bytes());
+    w.extend_from_slice(&16u16.to_le_bytes());
+    w.extend_from_slice(b"data");
+    w.extend_from_slice(&data_len.to_le_bytes());
+    for s in &pcm {
+        w.extend_from_slice(&s.to_le_bytes());
+    }
+    std::fs::write(out, w)?;
+    println!("{}: sound {id} level {level}, {:.1} s", out.display(), pcm.len() as f64 / 2.0 / rate as f64);
+    Ok(())
+}
+
 fn main() {
     let cli = parse_cli();
     let assets = match AssetDir::locate(cli.assets.as_deref()) {
@@ -381,5 +448,10 @@ fn main() {
         }
     };
     let mut app = civrs::app::App::new(ctx, first);
+    if let Some(engine) = app.ctx.audio.engine() {
+        if let Err(e) = backend.start_audio(engine) {
+            eprintln!("sound: {e}; running silent");
+        }
+    }
     app.run(&mut backend);
 }

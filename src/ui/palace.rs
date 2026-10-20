@@ -93,6 +93,14 @@ pub fn draw_palace(fb: &mut Surface, ctx: &UiContext, pal: &Palette, level: u8, 
 }
 
 impl Screen for PalaceScreen {
+    fn on_enter(&mut self, ctx: &mut UiContext) {
+        if let Some(g) = ctx.game.as_ref() {
+            ctx.audio.national_theme(g.human().civ, true);
+        }
+    }
+    fn on_exit(&mut self, ctx: &mut UiContext) {
+        ctx.audio.fade_out();
+    }
     fn update(&mut self, _ctx: &mut UiContext) -> Transition {
         self.dismiss.tick();
         Transition::None

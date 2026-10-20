@@ -77,13 +77,14 @@ impl UiContext {
         let ter = Self::load_into(&assets, &mut cache, "TER257")?;
         let palette = sp.pal;
         let hof = crate::save::HallOfFame::load(&save_dir);
+        let audio = Audio::load(&assets);
         Ok(UiContext {
             assets,
             fonts,
             sp,
             ter,
             texts,
-            audio: Audio::new(),
+            audio,
             palette,
             frame: 0,
             mouse: (160, 100),

@@ -59,6 +59,9 @@ civrs --dump fonts --out f.ppm                # font sampler
 civrs --dump map:42 --out m.ppm --zoom 2      # overview of a generated world (seed 42)
 civrs --dump earth --out e.ppm
 civrs --dump screen:map:7:30 --out scr.ppm    # the map screen after 30 AI turns, seed 7
+civrs --dump sound:3 --out theme.wav          # render sound ID 3 (main theme) to a 48 kHz WAV
+civrs --dump sound:10:3:60 --out r.wav        # ID 10 (Roman theme), arrangement level 3, 60 s
+civrs --dump sound-regs:37 --out w.txt        # OPL2 register log (sub-tick, reg, value)
 ```
 
 ## Layout
@@ -72,9 +75,31 @@ civrs --dump screen:map:7:30 --out scr.ppm    # the map screen after 30 AI turns
 - `src/ai/`       computer players and pathfinding
 - `src/ui/`       all screens (title, setup, map, city, reports, Civilopedia, events)
 - `src/save/`     saved games and the Hall of Fame
+- `src/audio/`    the AdLib sound driver (`ASOUND.CVL`) re-implemented, played through an OPL2 emulator
 
-Sound is not reproduced (the original's music lives in driver overlays as MicroProse
-bytecode); the audio module is a stub.
+## Sound
+
+The original has no music files: every tune and effect is bytecode compiled into the
+sound-driver overlays. `src/audio/driver.rs` re-implements the AdLib driver `ASOUND.CVL`
+(the v474 one, ID string `RLND Cvlzatn12-03-91`): it reads the music streams and FM
+instruments from the player's own driver file and reproduces the original's OPL2 register
+writes tick for tick (verified byte for byte against an emulation of the real driver for all
+45 sound IDs). The register stream feeds `nuked-opl3`, a bit-exact YMF262 emulator in its
+OPL2-compatible mode, and SDL3 plays the result; the clock is the game's 300 Hz timer
+interrupt (`SoundWorker` every fifth tick, `FastSoundWorker` while noise effects run).
+
+Sound IDs, triggered where CIV.EXE triggers them (its `PlayTune` call sites are listed in
+`reference/DESIGN.md`): 3 main theme (intro, spaceship arrival), 4 world creation, 5–18 /
+19–32 full and short national anthems (new game, palace, diplomacy audience, conquest and
+retirement plaques, score wall / advance learned, another civ's wonder, city captured,
+emissary), 33 war drums (demands, threats, war), 34/35 fanfares (space-race victory,
+civilization destroyed, We Love the King Day starting/ending), 36 civil disorder, famine,
+pollution, Manhattan Project, barbarians, 37 zone-of-control violation, 38–41 battles (the
+"won" pair when the human's unit wins, explosion variants when the winner has attack above 4
+or defence above 2), 42 nuclear strike, 43 a bomber winning, 44 city finished a build. The
+in-game Sound option (menu Game → Options) gates every call, as in CIV.EXE. Other drivers
+(Roland MT-32, Tandy, PC speaker) and MicroProse's 1994 patched drivers are not supported;
+with no usable `ASOUND.CVL` the game runs silent.
 
 ## Reference material
 

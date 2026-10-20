@@ -88,7 +88,10 @@ impl TitleScreen {
 
 impl Screen for TitleScreen {
     fn on_enter(&mut self, ctx: &mut UiContext) {
-        ctx.audio.music(0);
+        ctx.audio.play(crate::audio::Sound::MainTheme);
+    }
+    fn on_exit(&mut self, ctx: &mut UiContext) {
+        ctx.audio.stop();
     }
 
     fn update(&mut self, ctx: &mut UiContext) -> Transition {
@@ -168,8 +171,11 @@ impl Screen for TitleScreen {
         }
     }
 
-    fn resume(&mut self, result: DialogResult, _ctx: &mut UiContext) -> Transition {
+    fn resume(&mut self, result: DialogResult, ctx: &mut UiContext) -> Transition {
         self.menu_up = false;
+        if matches!(result, DialogResult::Choice(_)) {
+            ctx.audio.fade_out();
+        }
         match result {
             DialogResult::Choice(4) => Transition::Push(crate::ui::halloffame::hall_of_fame()),
             DialogResult::Choice(i) => Transition::Push(crate::ui::setup::start_flow(i)),

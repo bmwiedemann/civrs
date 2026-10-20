@@ -223,10 +223,53 @@ dumps finish it instantly (`UiContext::instant`) unless `CIVRS_TRANSITIONS=1`. T
 can be regenerated into `reference/disasm/` (gitignored, see its README).
 
 ### Sound (*.CVL)
-DOS overlay drivers (AdLib/MT-32/Tandy/PC-speaker/none) with embedded MicroProse music
-bytecode in their data segment; no ready-to-use format. **Out of scope** for the first
-deliverable; the Rust game will have a sound stub (and PC-speaker-style beeps via SDL audio
-could be added later).
+DOS overlay drivers (AdLib `ASOUND`, MT-32 `RSOUND`, Tandy `TSOUND`, PC speaker `ISOUND`,
+none `NSOUND`): MZ executables with 11 far functions listed at image `+0x32` (1 Init,
+2 PlayTune(id, level), 3 Close, 4 SoundWorker @60 Hz, 5 FastSoundWorker @300 Hz while
+SoundWorker returned 1, 6 SoundTimer), data segment at image `+0x1E20`. The music is bytecode
+in the data segment: 231 per-voice streams at DS `0x0050..0x6959` (two-byte `note, duration`
+pairs, note 0 = rest, duration 0 = end; commands `FF n` loop, `FE n` outer loop, `FD` restart,
+`FC n` instrument, `FB n` release, `FA n` pitch slide, `F9 n` volume, `F8 p d` fade,
+`F7 n` detune, `F6` random poke, `F5 n` volume offset, `F4 n` pan, `F3 p d` pan slide),
+57 OPL2 patches of 44 bytes at DS `0x695A`, F-number table at `0x73A8`, voice/operator maps
+at `0x73C6`/`0x73D8`, RNG seed at `0x73FD` (`state = ror16(state + 0x9248, 3)`).
+`PlayTune` dispatches through the jump table at cs:`0x1D0C`; handlers 3-44 just assign streams
+to voices (`lea cx, stream; call start_voice_N`), IDs 5-18 index a 4-entry level table, 33
+pauses the music for one of seven drum patterns on voice 8, 38/39/44 patch random bytes into
+their streams. Full format write-up with the same findings: civ-clone/web-renderer PR #131
+(`docs/asound-cvl-format.md`). Re-implemented in `src/audio/driver.rs`; the voice→stream
+table there was read from the handler disassembly (`objdump -b binary -m i386 -M i8086,intel`
+over the image after the 512-byte MZ header) and the register stream verified against the
+PR's simulator of the real driver for all 45 IDs. Synthesis: `nuked-opl3` crate (LGPL-2.1,
+pure Rust, bit-exact YMF262 in OPL2 mode), stereo right channel lags one sample as on the chip.
+
+How CIV.EXE drives it (from `reference/disasm/`): the loader (overlay 0xcaf) opens `nsound.cvl`
+with the first letter patched (a/i/t/r/n), installs the 11 entries as far-jump stubs at
+`0:0xa2b + 7*k` (k = 0 Init, 1 PlayTune, 2 Close, 3 SoundWorker, 4 FastSoundWorker,
+5 SoundTimer). SoundWorker is called from the 60 Hz tick routine `0:0x345` (every 7th tick
+skipped on 70 Hz displays), FastSoundWorker from the INT 8 handler `0:0x1a6` while the PIT
+divisor word `ds:0x4c != 1`. Every PlayTune goes through the wrapper at file `0x1eec`
+(`0x1a8:0x46c`), which tests bit 4 of the options byte `ds:0x19c0` (the Sound option) and
+skips the call when clear. 64 call sites; the anthem sites push level 3, all others one
+argument. Civ → tune: `ds:0x1518 + 0x3a*civ` short, `+2` long (Barbarians and slot 8: 36).
+Call sites (file offsets; o = `civ-overlays.asm`): intro title theme 3 (o 0xeb2, the intro
+animation paces frames on `SoundTimer() >= 21*f/4`), menu choice fades at a 288-tick phrase
+boundary after tick 5269 (0x1f61); story: fade then 4 (o 0xa701), lines paced by SoundTimer;
+new game *INIT → long anthem (o 0x48ad), faded at start of play (0x24bf); ZOC → 37 (0x5b1a);
+discovery → short anthem (0xbe14); famine 36 (0xd0e3); nuclear test 36 (0xe566); civil
+disorder 36 (0x12641); democracy collapse 36 (0x127ce); WLTKD start 34 (0x12a49) / end 35
+(0x12b5b); pollution 36 (0x12fe9); city captured → conqueror's short anthem (0x140d3);
+AI wonder → owner's short anthem (0x3e9e); combat (0x19bc4): winning bomber 43, else human
+owns the winner → 38/40, otherwise 39/41, "modern" = winner attack > 4 or defence > 2;
+spaceship story 3 (o 0x1a37) then 34 at spacest.pic (o 0x1de4); destroyed/*ARCH 35 then
+human's short anthem (o 0x20db/0x2301); Hall of Fame new entry 34 (o 0x2e3d); diplomacy:
+war drums 33 for CANCEL/TRIBUTE/TAKECIV/PROVOKE/REJECT/RID/MOBILIZE (o 0x6c68..0x76b1),
+emissary prompt short anthem (o 0x7afc), audience long anthem (o 0x7b77), fade at the end
+(o 0x86b5); conquest plaque long anthem (o 0xd9c8); civ destroyed slam screen → long anthem
+of the victim (o 0xdd5e) then human's over the score wall (o 0xe07d); palace long anthem
+(o 0x16006); city view with the new item 44 (o 0x19fa1); nuke animation 42 (o 0x1dfb6);
+retirement at the year limit long anthem (0x2b96); exit PlayTune(0) + Close (0x1c11).
+Nearly every tune is followed by PlayTune(1) when its screen closes.
 
 ### Sprite-sheet map (SP257.PIC, 16x16 cells, origin (cx*16, cy*16); colour 0 = transparent)
 Cells with a 1px L-shaped guide line (colour 3 or 9 on row 0/col 0) must mask that line.
@@ -268,7 +311,8 @@ to PNG and viewing them (Read tool on image) before the UI tracks depend on them
 - Save games: own format (`CIVR` magic + version + bincode of `Game`), 10 slots in
   `~/.local/share/civrs/` (`--save-dir` override), autosave option; hall of fame `fame.dat`.
   Original `.SVE` compatibility is not attempted.
-- Sound: stub API (`Audio::play(Sfx)`), silent. Documented limitation.
+- Sound: AdLib driver re-implementation (`Audio::play(Sound)`, `national_theme(civ, long)`),
+  OPL2 emulation, SDL3 audio stream; MT-32/Tandy/PC-speaker drivers not reproduced.
 - Not reproduced: copy-protection QUIZ, DOS launcher, EGA/Tandy assets (SPRITES.PIC, KINK*, SP299).
 - Headless/CI: `HeadlessBackend` + `--dump TARGET --out FILE.ppm` and `--ai-only --turns N`.
   Visual checks are done by converting PPM to PNG (python3 PIL) and viewing with the Read tool,
@@ -289,7 +333,7 @@ civrs/
   src/ai/{mod,city_ai,unit_ai,diplo_ai,tech_ai,path}.rs
   src/ui/{mod,screen,widgets,theme,intro,title,setup,mapview,sidebar,menubar,tilerender,cityscreen,reveal,
           dialogs,diplomacy_ui,advisors,civilopedia,palace,spaceship_ui,endgame,halloffame}.rs
-  src/save/{mod,hall}.rs     src/audio.rs (stub)     tests/
+  src/save/{mod,hall}.rs     src/audio/{mod,cvl,driver,engine}.rs (ASOUND.CVL driver + OPL2)     tests/
 ```
 Conventions: i32 screen coords, u8 palette indices, all game structs `Clone+Serialize+Deserialize`,
 `Game` owns only plain data (no asset refs), `unsafe` only in platform/sdl.rs, deterministic

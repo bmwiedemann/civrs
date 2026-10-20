@@ -33,7 +33,11 @@ pub fn draw_meander_border(fb: &mut Surface, ctx: &UiContext) {
 }
 
 impl Screen for LeaderIntro {
+    fn on_exit(&mut self, ctx: &mut UiContext) {
+        ctx.audio.fade_out();
+    }
     fn on_enter(&mut self, ctx: &mut UiContext) {
+        ctx.audio.national_theme(ctx.game().human().civ, true);
         let g = ctx.game();
         let p = g.human();
         let mut known: Vec<&str> = p.known_advances().iter().map(|a| crate::rules::ADVANCES[*a as usize].name).collect();

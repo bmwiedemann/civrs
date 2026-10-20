@@ -32,7 +32,12 @@ impl StoryScreen {
 }
 
 impl Screen for StoryScreen {
+    fn on_exit(&mut self, ctx: &mut UiContext) {
+        ctx.audio.fade_out();
+    }
     fn on_enter(&mut self, ctx: &mut UiContext) {
+        ctx.audio.fade_out();
+        ctx.audio.play(crate::audio::Sound::Evolution);
         // 8 story screens over 9 pictures: screen k uses picture k, last caption uses BIRTH8
         let n = ctx.texts.story.len();
         for (k, screen) in ctx.texts.story.iter().enumerate() {

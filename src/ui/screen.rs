@@ -29,6 +29,8 @@ pub enum Transition {
 
 pub trait Screen {
     fn on_enter(&mut self, _ctx: &mut crate::ui::context::UiContext) {}
+    /// Called when the screen is removed from the stack (popped or replaced).
+    fn on_exit(&mut self, _ctx: &mut crate::ui::context::UiContext) {}
     fn handle(&mut self, ev: &Event, ctx: &mut crate::ui::context::UiContext) -> Transition;
     /// Called once per frame (60 Hz) before drawing.
     fn update(&mut self, _ctx: &mut crate::ui::context::UiContext) -> Transition {
@@ -93,18 +95,24 @@ impl ScreenStack {
             Transition::None => {}
             Transition::Push(s) => self.push(s, ctx),
             Transition::Pop(r) => {
-                self.stack.pop();
+                if let Some(mut s) = self.stack.pop() {
+                    s.on_exit(ctx);
+                }
                 if let Some(top) = self.stack.last_mut() {
                     let t2 = top.resume(r, ctx);
                     self.apply(t2, ctx);
                 }
             }
             Transition::Replace(s) => {
-                self.stack.pop();
+                if let Some(mut old) = self.stack.pop() {
+                    old.on_exit(ctx);
+                }
                 self.push(s, ctx);
             }
             Transition::PopAll(s) => {
-                self.stack.clear();
+                for mut old in self.stack.drain(..).rev() {
+                    old.on_exit(ctx);
+                }
                 self.push(s, ctx);
             }
             Transition::Quit => self.quit = true,

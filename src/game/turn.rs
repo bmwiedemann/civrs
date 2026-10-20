@@ -12,7 +12,7 @@ use super::events::{Decision, DecisionReply, Disaster, EndReason, GameEvent};
 use super::map::{CityId, Map, Slot, UnitId};
 use super::{Game, Production, RuleError};
 use crate::ai::AiDriver;
-use crate::rules::{self, advance_ids as adv, improvement_ids as imp, unit_ids, wonder_ids as won, AdvanceId, Domain, Govt, ImprovementId};
+use crate::rules::{self, advance_ids as adv, improvement_ids as imp, unit_ids, wonder_ids as won, AdvanceId, Domain, Govt, ImprovementId, UnitTypeId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -21,7 +21,7 @@ pub enum TurnStep {
     Decision(Decision),
     /// An AI unit moved (for the "enemy moves" animation); `visible` to the human.
     AiMove { unit: UnitId, from: (i32, i32), to: (i32, i32), visible: bool },
-    Combat { attacker_at: (i32, i32), defender_at: (i32, i32), won: bool, visible: bool },
+    Combat { attacker_at: (i32, i32), defender_at: (i32, i32), won: bool, visible: bool, attacker: UnitTypeId, defender: UnitTypeId, defender_owner: Slot },
     Done,
 }
 
@@ -49,7 +49,7 @@ pub enum TurnStepSer {
     Event(GameEvent),
     Decision(Decision),
     AiMove { unit: UnitId, from: (i32, i32), to: (i32, i32), visible: bool },
-    Combat { attacker_at: (i32, i32), defender_at: (i32, i32), won: bool, visible: bool },
+    Combat { attacker_at: (i32, i32), defender_at: (i32, i32), won: bool, visible: bool, attacker: UnitTypeId, defender: UnitTypeId, defender_owner: Slot },
 }
 
 impl From<TurnStepSer> for TurnStep {
@@ -58,7 +58,7 @@ impl From<TurnStepSer> for TurnStep {
             TurnStepSer::Event(e) => TurnStep::Event(e),
             TurnStepSer::Decision(d) => TurnStep::Decision(d),
             TurnStepSer::AiMove { unit, from, to, visible } => TurnStep::AiMove { unit, from, to, visible },
-            TurnStepSer::Combat { attacker_at, defender_at, won, visible } => TurnStep::Combat { attacker_at, defender_at, won, visible },
+            TurnStepSer::Combat { attacker_at, defender_at, won, visible, attacker, defender, defender_owner } => TurnStep::Combat { attacker_at, defender_at, won, visible, attacker, defender, defender_owner },
         }
     }
 }
@@ -69,7 +69,7 @@ impl From<TurnStep> for Option<TurnStepSer> {
             TurnStep::Event(GameEvent::NeedsDecision(d)) | TurnStep::Decision(d) => Some(TurnStepSer::Decision(d)),
             TurnStep::Event(e) => Some(TurnStepSer::Event(e)),
             TurnStep::AiMove { unit, from, to, visible } => Some(TurnStepSer::AiMove { unit, from, to, visible }),
-            TurnStep::Combat { attacker_at, defender_at, won, visible } => Some(TurnStepSer::Combat { attacker_at, defender_at, won, visible }),
+            TurnStep::Combat { attacker_at, defender_at, won, visible, attacker, defender, defender_owner } => Some(TurnStepSer::Combat { attacker_at, defender_at, won, visible, attacker, defender, defender_owner }),
             TurnStep::Done => None,
         }
     }

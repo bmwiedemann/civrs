@@ -11,8 +11,42 @@ use crate::ui::eventpics;
 use crate::ui::screen::Screen;
 use crate::ui::widgets::{MenuDialog, MessageBox, YesNo};
 
+/// Start the sound CIV.EXE plays for an event (before its dialog opens).
+pub fn sound_for_event(ctx: &UiContext, ev: &GameEvent) {
+    use crate::audio::Sound;
+    let Some(g) = ctx.game.as_ref() else { return };
+    let me = g.human_slot;
+    let a = &ctx.audio;
+    let mine = |c: &crate::game::CityId| g.city_opt(*c).map(|c| c.owner == me).unwrap_or(false);
+    match ev {
+        GameEvent::Famine(c) | GameEvent::Disorder(c) if mine(c) => a.play(Sound::Disorder),
+        GameEvent::Celebration(c) if mine(c) => a.play(Sound::Win),
+        GameEvent::CelebrationEnded(c) if mine(c) => a.play(Sound::Lose),
+        GameEvent::ItemBuilt { city, .. } if mine(city) => a.play(Sound::BuildComplete),
+        GameEvent::Pollution { city, .. } if mine(city) => a.play(Sound::Disorder),
+        // "Sensors report a NUCLEAR WEAPONS test"; another civ's wonder gets its jingle, our own
+        // only the city view's build-complete sound
+        GameEvent::WonderBuilt { wonder, .. } if *wonder == rules::wonder_ids::MANHATTAN_PROJECT => a.play(Sound::Disorder),
+        GameEvent::WonderBuilt { owner, .. } if *owner != me => a.national_theme(g.player(*owner).civ, false),
+        GameEvent::AdvanceDiscovered { slot, .. } if *slot == me => a.national_theme(g.player(me).civ, false),
+        GameEvent::CityCaptured { by, from, .. } if *by == me || *from == me => a.national_theme(g.player(*by).civ, false),
+        GameEvent::BarbariansLanded { target, .. } | GameEvent::BarbarianUprising { target, .. } if *target == me => a.play(Sound::Disorder),
+        GameEvent::WarDeclared { a: x, b: y } if *x == me || *y == me => a.play(Sound::WarDrums),
+        GameEvent::NuclearStrike { .. } => a.play(Sound::Nuke),
+        GameEvent::CivDestroyed { slot, by } if *by == me => a.national_theme(g.player(*slot).civ, true),
+        GameEvent::GameEnded(reason) => match reason {
+            crate::game::EndReason::Destroyed => a.play(Sound::Lose),
+            crate::game::EndReason::Spaceship(_) => a.play(Sound::MainTheme),
+            // conquest and retirement show their plaque over the full anthem
+            _ => a.national_theme(g.player(me).civ, true),
+        },
+        _ => {}
+    }
+}
+
 /// Produce a dialog for a game event, if it concerns the human player and is worth showing.
 pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn Screen>> {
+    sound_for_event(ctx, ev);
     let g = ctx.game.as_ref()?;
     let me = g.human_slot;
     let msg = |lines: Vec<String>| -> Option<Box<dyn Screen>> { Some(Box::new(MessageBox::new(lines))) };

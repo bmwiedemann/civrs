@@ -5,7 +5,7 @@ use crate::game::{tile_flags, Decision, Dir8, Map, MoveOutcome, UnitId, UnitOrde
 use crate::gfx::text::{draw_text, draw_text_centered};
 use crate::gfx::{Rect, Surface, TextStyle};
 use crate::platform::{Event, Key, MouseButton};
-use crate::rules::{self, MAP_H, MAP_W, SLOT_COLOURS};
+use crate::rules::{self, UnitTypeId, MAP_H, MAP_W, SLOT_COLOURS};
 use crate::ui::context::UiContext;
 use crate::ui::dialogs;
 use crate::ui::screen::{DialogResult, Screen, Transition};
@@ -188,8 +188,11 @@ impl MapView {
                         break;
                     }
                 }
-                TurnStep::Combat { defender_at, visible, .. } => {
+                TurnStep::Combat { defender_at, visible, won, attacker, defender, defender_owner, .. } => {
                     if visible {
+                        // CIV.EXE: the "won" variants only when the human owns the winning unit
+                        let human_won = !won && defender_owner == ctx.game().human_slot;
+                        Self::battle_sound(ctx, attacker, defender, won, human_won);
                         self.ensure_visible(defender_at.0, defender_at.1);
                         self.pause = 20;
                         break;
@@ -225,6 +228,9 @@ impl MapView {
     fn error(&mut self, ctx: &mut UiContext, e: &crate::game::RuleError) -> Transition {
         match dialogs::error_screen(ctx, e) {
             Some(s) => {
+                if *e == crate::game::RuleError::Zoc {
+                    ctx.audio.play(crate::audio::Sound::IllegalMove);
+                }
                 self.pending = Pending::Error;
                 Transition::Push(s)
             }
@@ -232,12 +238,30 @@ impl MapView {
         }
     }
 
+    /// The battle sound as CIV.EXE picks it (combat routine at 0x19632): a winning bomber
+    /// has its own sound; otherwise the "won" fanfare when the human owns the winning unit,
+    /// "lost" for the rest (including AI vs AI), with the explosion variants when the
+    /// winner has attack above 4 or defence above 2.
+    fn battle_sound(ctx: &UiContext, attacker: UnitTypeId, defender: UnitTypeId, attacker_won: bool, human_won: bool) {
+        if attacker_won && attacker == rules::unit_ids::BOMBER {
+            ctx.audio.play(crate::audio::Sound::Bomber);
+            return;
+        }
+        let winner = &rules::UNITS[if attacker_won { attacker } else { defender } as usize];
+        let modern = winner.att > 4 || winner.def > 2;
+        ctx.audio.play(crate::audio::battle_sound(human_won, modern));
+    }
+
     fn try_move(&mut self, ctx: &mut UiContext, d: Dir8) -> Transition {
         let Some(id) = ctx.game().active_unit else { return Transition::None };
         let before = ctx.game().unit(id).pos();
+        let attacker_kind = ctx.game().unit(id).kind;
         let r = ctx.game_mut().try_move(id, d);
         match r {
             Ok(outcome) => {
+                if let MoveOutcome::Attacked { won, defender, .. } = outcome {
+                    Self::battle_sound(ctx, attacker_kind, defender, won, won);
+                }
                 let g = ctx.game();
                 let alive = g.unit_opt(id).is_some();
                 if alive {
