@@ -15,11 +15,9 @@ use crate::ui::tilerender::sp;
 const BLACK: u8 = 0;
 const BLUE: u8 = 1;
 const GREEN: u8 = 2;
-const DARK_RED: u8 = 4;
 const GREY: u8 = 7;
 const LIGHT_BLUE: u8 = 9;
 const RED: u8 = 12;
-const YELLOW: u8 = 14;
 const PAGE: u8 = 15;
 const WHITE: u8 = 16;
 
@@ -106,82 +104,29 @@ pub fn wrap_spaced(fonts: &FontSet, font: usize, max_w: i32, s: &str, spacing: i
 }
 
 // ---------------------------------------------------------------------------------------------
-// Borders (8-pixel tiles transcribed from the original captures)
+// Border
 // ---------------------------------------------------------------------------------------------
 
-struct BorderTiles {
-    top: [&'static str; 8],
-    bottom: [&'static str; 8],
-    left: [&'static str; 8],
-    right: [&'static str; 8],
-    tl: [&'static str; 8],
-    tr: [&'static str; 8],
-    bl: [&'static str; 8],
-    br: [&'static str; 8],
-}
-
-/// Red/green/yellow dotted border (advances, improvements, wonders, concepts).
-/// G = green, r = red, D = dark red, y = yellow, k = black, . = page.
-static DOTS: BorderTiles = BorderTiles {
-    top: ["rGrGrGrG", "rrrrrrrr", "GyGGGGGG", "GG.y.yGG", "GGy.y.GG", "GGGGGGyG", "rrrrrrrr", "GrGrGrGr"],
-    bottom: ["rGrGrGrG", "rrrrrrrr", "GyGGGGGG", "GG.y.yGG", "GGy.y.GG", "GGGGGGyG", "rrrrrrrr", "GrGrGrGr"],
-    left: ["GrGGGGrr", "rrGGGyrG", "GrGy.Grr", "rrG.yGrG", "GrGy.Grr", "rrG.yGrG", "GryGGGrr", "rrGGGGrG"],
-    right: ["GrGGGGrr", "rrGGGyrG", "GrGy.Grr", "rrG.yGrG", "GrGy.Grr", "rrG.yGrG", "GryGGGrr", "rrGGGGrG"],
-    tl: ["GGGGGGGG", "Grrrrrrr", "GrDrDrDr", "GrrGyk.r", "GrDyGkr.", "Grrkkkkk", "GrDr.kGG", "Grr.rkG."],
-    tr: ["GGGGGGGG", "rrrrrrrG", "rDrDrDrG", ".rkyGrrG", "r.kGyDrG", "kkkkkrrG", "GGkr.DrG", ".Gk.rrrG"],
-    bl: ["Grrr.kG.", "GrD.rkGG", "Grrkkkkk", "GrDyGk.r", "GrrGykr.", "GrDrDrDr", "Grrrrrrr", "GGGGGGGG"],
-    br: [".Gkr.rrG", "GGk.rDrG", "kkkkkrrG", ".rkGyDrG", "r.kyGrrG", "rDrDrDrG", "rrrrrrrG", "GGGGGGGG"],
-};
-
-/// Grey meander border (units, terrain). # = grey, . = page.
-static MEANDER: BorderTiles = BorderTiles {
-    top: ["........", ".#######", ".#.....#", ".#.###.#", ".###.#.#", ".....#.#", "######.#", "........"],
-    bottom: ["........", "######.#", ".....#.#", ".###.#.#", ".#.###.#", ".#.....#", ".#######", "........"],
-    left: [".######.", "......#.", ".####.#.", ".#..#.#.", ".#.##.#.", ".#.#..#.", ".#.####.", ".#......"],
-    right: [".######.", ".#......", ".#.####.", ".#.#..#.", ".#.##.#.", ".#..#.#.", ".####.#.", "......#."],
-    tl: ["........", ".#######", ".#.....#", ".#.#####", ".#.#...#", ".#.#...#", ".#.#...#", ".#.#...."],
-    tr: ["........", ".######.", ".#....#.", ".####.#.", ".#..#.#.", ".#..#.#.", "##..#.#.", "....#.#."],
-    bl: [".###....", ".#.#...#", ".#.#...#", ".#.#...#", ".#.#####", ".#.....#", ".#######", "........"],
-    br: ["....###.", "##..#.#.", ".#..#.#.", ".#..#.#.", ".####.#.", ".#....#.", ".######.", "........"],
-};
-
-fn border_colour(ch: u8, page: u8) -> u8 {
-    match ch {
-        b'G' => GREEN,
-        b'r' => RED,
-        b'D' => DARK_RED,
-        b'y' => YELLOW,
-        b'k' => BLACK,
-        b'#' => GREY,
-        _ => page,
+/// Draw the 8-pixel page border as CIV.EXE 0x7e6:0x260a does: one of two tile sets of SP299,
+/// picked at random (`style` 0: grey meander at x 192, 1: red/green dots at x 224). Row y 120
+/// holds the corners (top-left, top-right, bottom-left, bottom-right), row 128 the edges (top,
+/// right, bottom, left).
+pub fn draw_border(fb: &mut Surface, ctx: &UiContext, style: u8) {
+    let sheet = &ctx.pic("SP299").surf;
+    let x0 = 192 + 32 * (style as i32 & 1);
+    let tile = |fb: &mut Surface, sx: i32, sy: i32, x: i32, y: i32| fb.blit_part(sheet, Rect::new(sx, sy, 8, 8), x, y, None);
+    tile(fb, x0, 120, 0, 0);
+    tile(fb, x0 + 8, 120, 312, 0);
+    tile(fb, x0 + 24, 120, 312, 192);
+    tile(fb, x0 + 16, 120, 0, 192);
+    for i in 1..24 {
+        tile(fb, x0 + 24, 128, 0, 8 * i);
+        tile(fb, x0 + 8, 128, 312, 8 * i);
     }
-}
-
-fn draw_tile(fb: &mut Surface, tile: &[&'static str; 8], x: i32, y: i32, page: u8) {
-    for (r, row) in tile.iter().enumerate() {
-        for (c, ch) in row.bytes().enumerate() {
-            fb.put(x + c as i32, y + r as i32, border_colour(ch, page));
-        }
+    for i in 1..39 {
+        tile(fb, x0, 128, 8 * i, 0);
+        tile(fb, x0 + 16, 128, 8 * i, 192);
     }
-}
-
-/// Draw the 8-pixel page border of the given style over a 320x200 page; the gaps of the
-/// pattern are always light grey (15), even on the white pages.
-pub fn draw_border(fb: &mut Surface, dotted: bool) {
-    let page = PAGE;
-    let t = if dotted { &DOTS } else { &MEANDER };
-    for x in (8..312).step_by(8) {
-        draw_tile(fb, &t.top, x, 0, page);
-        draw_tile(fb, &t.bottom, x, 192, page);
-    }
-    for y in (8..192).step_by(8) {
-        draw_tile(fb, &t.left, 0, y, page);
-        draw_tile(fb, &t.right, 312, y, page);
-    }
-    draw_tile(fb, &t.tl, 0, 0, page);
-    draw_tile(fb, &t.tr, 312, 0, page);
-    draw_tile(fb, &t.bl, 0, 192, page);
-    draw_tile(fb, &t.br, 312, 192, page);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -212,11 +157,13 @@ pub struct EntryScreen {
     pages: Vec<Vec<Item>>,
     page: usize,
     guard: u32,
+    /// Border tile set, picked at random when the entry opens.
+    border: u8,
 }
 
 impl EntryScreen {
     pub fn new(entry: Entry, page: usize) -> EntryScreen {
-        EntryScreen { entry, pages: Vec::new(), page, guard: 2 }
+        EntryScreen { entry, pages: Vec::new(), page, guard: 2, border: 0 }
     }
 
     fn wrap_paragraphs(fonts: &FontSet, paras: &[String], max_w: i32) -> Vec<String> {
@@ -507,6 +454,8 @@ impl EntryScreen {
 impl Screen for EntryScreen {
     fn on_enter(&mut self, ctx: &mut UiContext) {
         self.build(ctx);
+        // random(2) in the original; the frame counter keeps headless renders repeatable
+        self.border = (ctx.frame.wrapping_mul(0x9e37_79b9) >> 13) as u8 & 1;
     }
 
     fn update(&mut self, _ctx: &mut UiContext) -> Transition {
@@ -537,7 +486,7 @@ impl Screen for EntryScreen {
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
         let page = self.page_colour();
         fb.fill_rect(Rect::new(0, 0, 320, 200), page);
-        draw_border(fb, self.entry.dotted_border());
+        draw_border(fb, ctx, self.border);
         if let Some((sheet, r, x, y, key)) = self.picture() {
             let pic = ctx.pic(sheet);
             fb.blit_part(&pic.surf, r, x, y, key);

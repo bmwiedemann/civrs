@@ -84,10 +84,6 @@ impl Entry {
         }
     }
 
-    /// Entries with the dotted red/green border (the others use the grey meander).
-    pub fn dotted_border(self) -> bool {
-        !matches!(self, Entry::Unit(_) | Entry::Terrain(_))
-    }
 
     /// BLURB file index and section key of the history text.
     fn blurb_key(self) -> Option<(usize, String)> {
