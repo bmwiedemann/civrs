@@ -137,6 +137,8 @@ enum Item {
     Text { x: i32, y: i32, colour: u8, text: String },
     /// Map sprite of a unit type (16x16 cell) for the "Allows:" list.
     UnitIcon { x: i32, y: i32, kind: u8 },
+    /// Text centred on `cx`.
+    Centred { cx: i32, y: i32, colour: u8, text: String },
     /// SP299 pictogram of an improvement or wonder (`city_draw::imp_icon` cell).
     ImpIcon { x: i32, y: i32, cell: usize },
     /// Gold-coin symbol followed by a number ("Maintenance: o3").
@@ -217,7 +219,10 @@ impl EntryScreen {
 
     fn stats(&self, ctx: &UiContext, items: &mut Vec<Item>, y0: i32) {
         match self.entry {
-            Entry::Advance(a) => self.advance_stats(a, items),
+            Entry::Advance(a) => {
+                self.advance_stats(a, items);
+                self.advance_source(ctx, a, items);
+            }
             Entry::Improvement(i) => {
                 let imp = &rules::IMPROVEMENTS[i as usize];
                 let mut y = y0;
@@ -326,6 +331,20 @@ impl EntryScreen {
         if y == start + 4 {
             items.remove(allows);
         }
+    }
+
+    /// How the human player gained the advance, centred under the subtitle (CIV.EXE o 0xbe09):
+    /// "(Discovered)", "(from Great Library)" or "(Taken from CIV)"; nothing for advances not
+    /// known or known from the start.
+    fn advance_source(&self, ctx: &UiContext, a: rules::AdvanceId, items: &mut Vec<Item>) {
+        let Some(g) = ctx.game.as_ref() else { return };
+        let line = match g.human().advance_source(a) {
+            -1 => return,
+            0 => "(Discovered)".to_string(),
+            -2 => "(from Great Library)".to_string(),
+            s => format!("(Taken from {})", g.civ_name(s as u8)),
+        };
+        items.push(Item::Centred { cx: self.title_centre(), y: 48, colour: GREY, text: line });
     }
 
     fn terrain_stats(&self, t: Terrain, items: &mut Vec<Item>) {
@@ -506,6 +525,9 @@ impl Screen for EntryScreen {
                     }
                     Item::UnitIcon { x, y, kind } => {
                         Self::draw_unit_sprite(fb, ctx, *kind, *x, *y);
+                    }
+                    Item::Centred { cx, y, colour, text } => {
+                        draw_spaced_centred(fb, &ctx.fonts, FONT_TEXT, *colour, *cx, *y, text, SPACING);
                     }
                     Item::ImpIcon { x, y, cell } => crate::ui::city_draw::imp_icon(fb, ctx, *cell, *x, *y),
                     Item::Coin { x, y, colour, text } => {

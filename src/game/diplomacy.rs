@@ -301,8 +301,7 @@ impl Game {
 
     /// Give an advance from one civilisation to another through diplomacy.
     pub fn transfer_advance(&mut self, from: Slot, to: Slot, a: u8, source: &str) {
-        if self.grant_advance(to, a) {
-            let _ = from;
+        if self.grant_advance(to, a, super::science::AdvanceSource::From(from)) {
             self.push_event(GameEvent::AdvanceAcquired { slot: to, adv: a, source: source.to_string() });
         }
     }

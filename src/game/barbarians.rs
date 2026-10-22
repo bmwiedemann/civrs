@@ -74,7 +74,7 @@ impl Game {
         match &outcome {
             HutOutcome::Gold(g) => self.player_mut(slot).gold += g,
             HutOutcome::Advance(a) => {
-                self.grant_advance(slot, *a);
+                self.grant_advance(slot, *a, super::science::AdvanceSource::Discovered);
                 self.push_event(GameEvent::AdvanceAcquired { slot, adv: *a, source: "hut".into() });
             }
             HutOutcome::Mercenaries(k) => {

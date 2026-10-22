@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 pub const MAGIC: [u8; 4] = *b"CIVR";
 /// 2: the game body is followed by `Game::hints_shown` (u32 LE); version 1 saves still load.
 /// 3: then by each player's `research_count` (u16 LE); older saves derive it from the advances.
-pub const VERSION: u16 = 3;
+/// 4: then by each player's 72 `advance_source` bytes; older saves record no sources.
+pub const VERSION: u16 = 4;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -58,6 +59,9 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     for p in &g.players {
         data.extend_from_slice(&p.research_count.to_le_bytes());
     }
+    for p in &g.players {
+        data.extend((0..72).map(|a| p.advance_source(a) as u8));
+    }
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -77,10 +81,15 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
         let bits: [u8; 4] = rest.get(..4).and_then(|b| b.try_into().ok()).ok_or_else(|| SaveError::Format("missing hint flags".into()))?;
         g.hints_shown = u32::from_le_bytes(bits);
     }
+    let sources = 4 + 2 * g.players.len();
     for (i, p) in g.players.iter_mut().enumerate() {
         p.research_count = match rest.get(4 + 2 * i..6 + 2 * i) {
             Some(b) if ver >= 3 => u16::from_le_bytes([b[0], b[1]]),
             _ => 1 + p.advance_count() as u16 + p.future_techs as u16,
+        };
+        p.advance_source = match rest.get(sources + 72 * i..sources + 72 * (i + 1)) {
+            Some(b) if ver >= 4 => b.iter().map(|v| *v as i8).collect(),
+            _ => vec![-1; 72],
         };
     }
     Ok(g)
@@ -155,5 +164,32 @@ impl HallOfFame {
         self.entries.insert(pos, e);
         self.entries.truncate(10);
         pos
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::game::science::AdvanceSource;
+    use crate::game::{Game, GameSetup};
+    use crate::rules::advance_ids as adv;
+
+    #[test]
+    fn research_count_and_advance_sources_survive_a_save() {
+        let mut g = Game::new(GameSetup { seed: 3, ..Default::default() }, None);
+        g.turn = 10;
+        let h = g.human_slot;
+        g.grant_advance(h, adv::CURRENCY, AdvanceSource::From(2));
+        g.grant_advance(h, adv::POTTERY, AdvanceSource::GreatLibrary);
+        let dir = std::env::temp_dir().join(format!("civrs-save-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        let l = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        for s in 0..8 {
+            assert_eq!(l.player(s).research_count, g.player(s).research_count);
+            assert_eq!(l.player(s).advance_source, g.player(s).advance_source);
+        }
+        assert_eq!(l.human().advance_source(adv::CURRENCY), 2);
+        assert_eq!(l.human().advance_source(adv::POTTERY), -2);
     }
 }

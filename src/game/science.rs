@@ -7,6 +7,28 @@ use super::Game;
 use crate::rules::{self, wonder_ids as won, AdvanceId};
 
 
+/// Where a newly gained advance came from, as the Civilopedia reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AdvanceSource {
+    /// Researched, from a hut or Darwin's Voyage: "(Discovered)".
+    Discovered,
+    /// "(from Great Library)".
+    GreatLibrary,
+    /// Traded, stolen or captured: "(Taken from CIV)".
+    From(Slot),
+}
+
+impl AdvanceSource {
+    /// The byte CIV.EXE keeps per advance (0, -2 or the slot).
+    pub fn code(self) -> i8 {
+        match self {
+            AdvanceSource::Discovered => 0,
+            AdvanceSource::GreatLibrary => -2,
+            AdvanceSource::From(s) => s as i8,
+        }
+    }
+}
+
 impl Game {
     /// Advances the slot could research now.
     pub fn researchable(&self, slot: Slot) -> Vec<AdvanceId> {
@@ -64,7 +86,7 @@ impl Game {
 
     /// Give an advance to a player (no research bookkeeping); returns false if already known.
     /// Also marks wonders of the player obsolete when their obsoleting advance is learned.
-    pub fn grant_advance(&mut self, slot: Slot, a: AdvanceId) -> bool {
+    pub fn grant_advance(&mut self, slot: Slot, a: AdvanceId, source: AdvanceSource) -> bool {
         if a == rules::advance_ids::FUTURE_TECH {
             self.player_mut(slot).future_techs += 1;
             self.player_mut(slot).research_count += 1;
@@ -79,7 +101,11 @@ impl Game {
         if self.player(slot).knows(a) {
             return false;
         }
-        // advances given at the start do not raise the research count (CIV.EXE 0xc364)
+        // the source is kept for the Civilopedia (CIV.EXE 0xc35f); advances given at the start
+        // do not raise the research count (0xc364)
+        if let Some(s) = self.player_mut(slot).advance_source.get_mut(a as usize) {
+            *s = source.code();
+        }
         if self.turn > 0 {
             self.player_mut(slot).research_count += 1;
         }
@@ -133,7 +159,7 @@ impl Game {
                 }
             }
         };
-        self.grant_advance(slot, a);
+        self.grant_advance(slot, a, AdvanceSource::Discovered);
         self.player_mut(slot).researching = None;
         Some(a)
     }
@@ -164,7 +190,7 @@ impl Game {
             }
         }
         for a in gained {
-            if self.grant_advance(slot, a) {
+            if self.grant_advance(slot, a, AdvanceSource::GreatLibrary) {
                 self.push_event(GameEvent::AdvanceAcquired { slot, adv: a, source: "Great Library".into() });
             }
         }
@@ -183,16 +209,16 @@ mod tests {
         g.turn = 1;
         let c0 = g.research_cost(slot);
         assert!(c0 > 0);
-        assert!(g.grant_advance(slot, rules::advance_ids::ALPHABET));
-        assert!(!g.grant_advance(slot, rules::advance_ids::ALPHABET));
+        assert!(g.grant_advance(slot, rules::advance_ids::ALPHABET, AdvanceSource::Discovered));
+        assert!(!g.grant_advance(slot, rules::advance_ids::ALPHABET, AdvanceSource::Discovered));
         assert!(g.research_cost(slot) > c0);
         assert!(g.researchable(slot).contains(&rules::advance_ids::WRITING));
         // future tech after everything
         for a in 0..67u8 {
-            g.grant_advance(slot, a);
+            g.grant_advance(slot, a, AdvanceSource::Discovered);
         }
         assert_eq!(g.researchable(slot), vec![rules::advance_ids::FUTURE_TECH]);
-        g.grant_advance(slot, rules::advance_ids::FUTURE_TECH);
+        g.grant_advance(slot, rules::advance_ids::FUTURE_TECH, AdvanceSource::Discovered);
         assert_eq!(g.player(slot).future_techs, 1);
     }
 }

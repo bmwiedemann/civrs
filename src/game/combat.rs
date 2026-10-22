@@ -249,7 +249,7 @@ impl Game {
         let mut adv = None;
         let known: Vec<u8> = self.player(from).known_advances().into_iter().filter(|a| !self.player(by).knows(*a)).collect();
         if let Some(a) = self.rng.pick(&known).copied() {
-            self.grant_advance(by, a);
+            self.grant_advance(by, a, super::science::AdvanceSource::From(from));
             adv = Some(a);
             self.push_event(GameEvent::AdvanceAcquired { slot: by, adv: a, source: "conquest".into() });
         }

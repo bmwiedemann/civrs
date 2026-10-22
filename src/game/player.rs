@@ -65,6 +65,11 @@ pub struct Player {
     /// Stored after the game body in version-3 saves.
     #[serde(skip)]
     pub research_count: u16,
+    /// How each advance was gained (CIV.EXE es:0x1d48): -1 not recorded (not known, or known
+    /// from the start), 0 discovered, -2 Great Library, else the slot it was taken from.
+    /// Stored after the game body in version-4 saves.
+    #[serde(skip)]
+    pub advance_source: Vec<i8>,
     pub capital: Option<CityId>,
     pub relations: [Relation; 8],
     /// Bit per slot: we have an embassy with them.
@@ -116,6 +121,7 @@ impl Player {
             beakers: 0,
             future_techs: 0,
             research_count: 1,
+            advance_source: vec![-1; 72],
             capital: None,
             relations: [Relation::NoContact; 8],
             embassies: 0,
@@ -140,6 +146,9 @@ impl Player {
     }
     pub fn learn(&mut self, a: AdvanceId) {
         self.advances |= 1u128 << a;
+    }
+    pub fn advance_source(&self, a: AdvanceId) -> i8 {
+        self.advance_source.get(a as usize).copied().unwrap_or(-1)
     }
     pub fn forget(&mut self, a: AdvanceId) {
         self.advances &= !(1u128 << a);

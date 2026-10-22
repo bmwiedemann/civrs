@@ -693,7 +693,7 @@ impl Game {
             // the surplus is lost (CIV.EXE 0x12d94)
             if self.research_complete(slot) {
                 self.player_mut(slot).beakers = 0;
-                self.grant_advance(slot, a);
+                self.grant_advance(slot, a, super::science::AdvanceSource::Discovered);
                 self.player_mut(slot).researching = None;
                 self.push_event(GameEvent::AdvanceDiscovered { slot, adv: a });
                 self.pick_research(slot);
@@ -975,7 +975,7 @@ impl Game {
                 let known: Vec<AdvanceId> = self.player(them).known_advances().into_iter().filter(|a| !self.player(us).knows(*a)).collect();
                 let result = match self.rng.pick(&known).copied() {
                     Some(a) => {
-                        self.grant_advance(us, a);
+                        self.grant_advance(us, a, super::science::AdvanceSource::From(them));
                         self.player_mut(us).stats.techs_stolen += 1;
                         self.push_event(GameEvent::AdvanceAcquired { slot: us, adv: a, source: format!("stolen from {}", target.name) });
                         DiplomatResult::Stole(a)
