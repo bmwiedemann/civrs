@@ -164,13 +164,12 @@ impl Game {
         }
 
         let cost = self.move_cost(&u, (u.x, u.y), (tx, ty));
-        if cost > u.moves_left {
-            // Civ1: a unit with fewer points than needed may still move with some probability
-            let p = (u.moves_left as u32 * 100) / cost.max(1) as u32;
-            if !self.rng.chance(p.max(1)) {
-                self.unit_mut(id).moves_left = 0;
-                return Ok(MoveOutcome::Blocked);
-            }
+        // CIV.EXE 0x634a: a land unit with exactly one full move point always gets through;
+        // with any other amount short of the cost the move fails (and ends the unit's turn)
+        // when random(cost) exceeds the points left
+        if cost > u.moves_left && u.is_land() && u.moves_left != 3 && self.rng.below(cost as u32) > u.moves_left as u32 {
+            self.unit_mut(id).moves_left = 0;
+            return Ok(MoveOutcome::Blocked);
         }
         let had_hut = target.has(tile_flags::HUT);
         self.place_unit(id, tx, ty, cost);
@@ -286,5 +285,46 @@ impl Game {
                 self.unit_mut(id).order = UnitOrder::None;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::game::map::{Dir8, UnitId};
+    use crate::game::{Game, GameSetup, MoveOutcome};
+    use crate::rules::{unit_ids, Terrain};
+
+    /// A Militia west of a bare mountain square, with `moves` thirds left.
+    fn militia_before_mountains(seed: u64, moves: u8) -> (Game, UnitId) {
+        let mut g = Game::new(GameSetup { seed, ..Default::default() }, None);
+        let slot = g.human_slot;
+        let (x, y) = g.unit(g.units_of(slot)[0]).pos();
+        let id = g.add_unit(slot, unit_ids::MILITIA, x, y);
+        let t = g.map.get_mut(x + 1, y).unwrap();
+        t.terrain = Terrain::Mountains;
+        t.flags = 0;
+        g.unit_mut(id).moves_left = moves;
+        (g, id)
+    }
+
+    #[test]
+    fn one_full_move_point_always_enters_mountains() {
+        for seed in 0..20 {
+            let (mut g, id) = militia_before_mountains(seed, 3);
+            assert_eq!(g.try_move(id, Dir8::E), Ok(MoveOutcome::Moved), "seed {seed}");
+            assert_eq!(g.unit(id).moves_left, 0);
+        }
+    }
+
+    #[test]
+    fn partial_move_points_sometimes_fail() {
+        let failed = (0..40)
+            .filter(|seed| {
+                let (mut g, id) = militia_before_mountains(*seed, 2);
+                g.try_move(id, Dir8::E) == Ok(MoveOutcome::Blocked)
+            })
+            .count();
+        // random(9) > 2 fails two times in three
+        assert!((15..40).contains(&failed), "{failed} of 40 failed");
     }
 }
