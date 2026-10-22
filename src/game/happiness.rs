@@ -92,16 +92,33 @@ impl Game {
 
     /// Aggressive units supported by the city that are away from home (Republic/Democracy).
     pub fn aggressive_units_abroad(&self, c: CityId) -> i32 {
+        self.all_units().filter(|u| u.home == Some(c) && self.aggressive_abroad(c, u)).count() as i32
+    }
+
+    /// The unit, supported by city `c`, is a military unit with an attack away from home.
+    pub fn aggressive_abroad(&self, c: CityId, u: &super::Unit) -> bool {
         let city = self.city(c);
-        let slot = city.owner;
-        self.all_units()
-            .filter(|u| u.home == Some(c) && u.is_military() && u.info().att > 0)
-            .filter(|u| {
-                let in_own_city = self.city_at(u.x, u.y).map(|cc| self.city(cc).owner == slot).unwrap_or(false);
-                let in_fortress = self.map.tile(u.x, u.y).has(super::tile_flags::FORTRESS) && super::Map::dist((u.x, u.y), (city.x, city.y)) <= 2;
-                !in_own_city && !in_fortress
-            })
-            .count() as i32
+        if !u.is_military() || u.info().att == 0 {
+            return false;
+        }
+        let in_own_city = self.city_at(u.x, u.y).map(|cc| self.city(cc).owner == city.owner).unwrap_or(false);
+        let in_fortress = self.map.tile(u.x, u.y).has(super::tile_flags::FORTRESS) && super::Map::dist((u.x, u.y), (city.x, city.y)) <= 2;
+        !in_own_city && !in_fortress
+    }
+
+    /// Unhappy citizens a unit supported by city `c` causes (Republic 1, Democracy 2, one less
+    /// with Women's Suffrage).
+    pub fn unit_unhappiness(&self, c: CityId, u: &super::Unit) -> i32 {
+        let slot = self.city(c).owner;
+        let g = rules::GOVERNMENTS[self.player(slot).govt as usize];
+        if g.martial_law_max > 0 || !self.aggressive_abroad(c, u) {
+            return 0;
+        }
+        let mut per = g.unhappy_per_aggressive_unit as i32;
+        if self.owner_has_wonder(slot, won::WOMENS_SUFFRAGE) {
+            per -= 1;
+        }
+        per.max(0)
     }
 
     pub fn city_happiness(&self, c: CityId) -> Happiness {

@@ -3,7 +3,7 @@
 //! city map, improvements with sell dots, FOOD STORAGE, the INFO / HAPPY / MAP / VIEW tabs,
 //! the production box with CHANGE / BUY and the RENAME / EXIT buttons.
 
-use crate::game::{CityId, Production, RuleError, Specialist, UnitOrder};
+use crate::game::{CityId, Production, RuleError, Specialist};
 use crate::gfx::text::wrap;
 use crate::gfx::{Rect, Surface};
 use crate::platform::{Event, Key, MouseButton};
@@ -87,22 +87,6 @@ fn stock_layout(cost: i32) -> (i32, i32, Rect) {
     (rows, pitch, Rect::new(230, 98, 88, bottom - 98 + 1))
 }
 
-fn order_abbrev(o: UnitOrder) -> &'static str {
-    match o {
-        UnitOrder::None => "NON.",
-        UnitOrder::Fortify | UnitOrder::Fortified => "FOR.",
-        UnitOrder::Sentry => "SEN.",
-        UnitOrder::Goto => "GOTO",
-        UnitOrder::Road => "ROAD",
-        UnitOrder::Irrigate => "IRR.",
-        UnitOrder::Mine => "MINE",
-        UnitOrder::Fortress => "FTR.",
-        UnitOrder::CleanPollution => "POL.",
-        UnitOrder::Pillage => "PIL.",
-        _ => "SKIP",
-    }
-}
-
 /// Advisor text for an item from PRODUCE.TXT (shared sections fall through to the next
 /// non-empty one), with `$RPLC1` replaced and the `^` line breaks removed.
 fn produce_text(ctx: &UiContext, name: &str) -> Option<String> {
@@ -146,16 +130,11 @@ impl CityScreen {
     }
 
     /// Units shown in the INFO view: supported by the city first, then the others present.
+    /// The city's own units on its square, as listed on the INFO tab (at most 18).
     fn info_units(&self, ctx: &UiContext) -> Vec<crate::game::UnitId> {
         let g = ctx.game();
         let c = g.city(self.city);
-        let mut v = g.supported_units(self.city);
-        for id in g.units_at(c.x, c.y) {
-            if !v.contains(&id) && g.unit(id).owner == c.owner {
-                v.push(id);
-            }
-        }
-        v
+        g.units_at(c.x, c.y).into_iter().filter(|id| g.unit(*id).owner == c.owner).take(18).collect()
     }
 
     /// Improvements then wonders of the city, as listed in the improvements panel.
@@ -408,14 +387,37 @@ impl CityScreen {
 
     fn draw_support(&self, fb: &mut Surface, ctx: &UiContext) {
         panel(fb, P_SUPPORT);
+        // the units the city supports (CIV.EXE 0xff78): seven to a row from (8, 69), 16 px
+        // apart, the third row overlapping at y 77; under each its upkeep: a shield once the
+        // free units are used up, food for Settlers, unhappy faces for units abroad
         let g = ctx.game();
         let c = g.city(self.city);
-        let y = g.city_yield(self.city);
-        let w = P_SUPPORT.w - 4;
-        // shields taken by unit upkeep, food taken by settlers, gold for maintenance
-        icon_row(fb, ctx, ICON_SHIELD, 2, 69, y.shield_upkeep, 0, w);
-        icon_row(fb, ctx, ICON_FOOD, 2, 77, y.food_upkeep - 2 * c.size as i32, 0, w);
-        icon_row(fb, ctx, ICON_TAX, 2, 86, y.gold_upkeep, 0, w);
+        let govt = rules::GOVERNMENTS[g.player(c.owner).govt as usize];
+        let (mut x, mut y) = (8, 69);
+        for (i, id) in g.supported_units(self.city).into_iter().enumerate() {
+            let u = g.unit(id);
+            if i >= govt.free_units_per_city as usize {
+                icon(fb, ctx, ICON_SHIELD, x + 8, y + 12, None);
+            }
+            let (src, n) = if u.kind == rules::unit_ids::SETTLERS {
+                (ICON_FOOD, govt.settler_food as i32)
+            } else {
+                (ICON_UNHAPPY, g.unit_unhappiness(self.city, u))
+            };
+            for k in 0..n.min(2) {
+                icon(fb, ctx, src, x + 2 * k, y + 12, None);
+            }
+            let kind = if u.leader { rules::unit_ids::DIPLOMAT } else { u.kind };
+            unit_box(fb, ctx, kind, u.owner, x, y);
+            x += 16;
+            if x >= 112 {
+                x = 8;
+                y += 16;
+                if y > 85 {
+                    y -= 24;
+                }
+            }
+        }
     }
 
     fn draw_tile_icons(&self, fb: &mut Surface, ctx: &UiContext, px: i32, py: i32, yields: (i32, i32, i32), outline: Option<u8>) {
@@ -555,14 +557,18 @@ impl CityScreen {
     }
 
     fn draw_info(&self, fb: &mut Surface, ctx: &UiContext) {
+        // CIV.EXE 0x101da: six to a row, 18 px apart, rows 16 px apart, each over the first
+        // three letters of its home city
         let g = ctx.game();
-        for (i, id) in self.info_units(ctx).iter().enumerate().take(21) {
+        for (i, id) in self.info_units(ctx).iter().enumerate() {
             let u = g.unit(*id);
-            let x = 100 + 18 * (i as i32 % 7);
-            let y = 116 + 24 * (i as i32 / 7);
+            let x = 100 + 18 * (i as i32 % 6);
+            let y = 116 + 16 * (i as i32 / 6);
             let kind = if u.leader { rules::unit_ids::DIPLOMAT } else { u.kind };
             unit_box(fb, ctx, kind, u.owner, x, y);
-            small_text(fb, ctx, x, y + 16, BLACK, order_abbrev(u.order));
+            let home = u.home.and_then(|h| g.city_opt(h)).map(|c| c.name.to_ascii_uppercase()).unwrap_or_else(|| "NONE".into());
+            let abbrev: String = home.chars().take(3).chain(std::iter::once('.')).collect();
+            small_text(fb, ctx, x, y + 15, BLACK, &abbrev);
         }
     }
 
