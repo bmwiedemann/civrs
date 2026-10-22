@@ -333,31 +333,8 @@ pub fn improvement_picture(id: ImprovementId) -> Option<(&'static str, Rect)> {
     Some(("CITYPIX2", Rect::new(1 + 50 * col, 1 + 50 * row, 49, 49)))
 }
 
-/// Picture of a wonder in WONDERS.PIC (pink-framed cut-outs on purple, key = colour at the
-/// top-left corner) or WONDERS2.PIC (the four large-scale wonders on green).
+/// Picture of a wonder: its sprite in the city view (WONDERS.PIC, or WONDERS2.PIC for the four
+/// large-scale wonders).
 pub fn wonder_picture(w: WonderId) -> (&'static str, Rect) {
-    use rules::wonder_ids as id;
-    match w {
-        id::PYRAMIDS => ("WONDERS2", Rect::new(131, 54, 188, 29)), // pyramid face ?
-        id::HANGING_GARDENS => ("WONDERS", Rect::new(160, 149, 68, 50)),
-        id::COLOSSUS => ("WONDERS2", Rect::new(88, 97, 124, 39)), // the statue's feet
-        id::LIGHTHOUSE => ("WONDERS", Rect::new(229, 116, 40, 83)),
-        id::GREAT_LIBRARY => ("WONDERS", Rect::new(164, 97, 64, 51)), // hall with crest ?
-        id::ORACLE => ("WONDERS", Rect::new(61, 117, 41, 56)),        // temple with torches ?
-        id::GREAT_WALL => ("WONDERS2", Rect::new(1, 38, 66, 81)),
-        id::MAGELLANS_EXPEDITION => ("WONDERS", Rect::new(268, 53, 51, 62)), // golden ship
-        id::MICHELANGELOS_CHAPEL => ("WONDERS", Rect::new(9, 117, 51, 56)),
-        id::COPERNICUS_OBSERVATORY => ("WONDERS", Rect::new(112, 1, 71, 54)),
-        id::SHAKESPEARES_THEATRE => ("WONDERS", Rect::new(276, 1, 44, 51)),
-        id::ISAAC_NEWTONS_COLLEGE => ("WONDERS", Rect::new(103, 139, 55, 60)),
-        id::JS_BACHS_CATHEDRAL => ("WONDERS", Rect::new(184, 1, 41, 69)),
-        id::DARWINS_VOYAGE => ("WONDERS", Rect::new(226, 2, 26, 46)), // emblem on a pedestal ?
-        id::HOOVER_DAM => ("WONDERS2", Rect::new(1, 14, 147, 20)),      // dam between hills
-        id::WOMENS_SUFFRAGE => ("WONDERS", Rect::new(253, 1, 22, 47)),
-        id::MANHATTAN_PROJECT => ("WONDERS", Rect::new(40, 73, 62, 43)), // terraces, cloud ?
-        id::UNITED_NATIONS => ("WONDERS", Rect::new(103, 79, 60, 59)),
-        id::APOLLO_PROGRAM => ("WONDERS", Rect::new(270, 116, 49, 83)),
-        id::SETI_PROGRAM => ("WONDERS", Rect::new(73, 1, 38, 54)),
-        _ => ("WONDERS", Rect::new(240, 60, 27, 55)), // Cure for Cancer: caduceus ?
-    }
+    crate::ui::city_view::wonder_sprite(w)
 }

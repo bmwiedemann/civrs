@@ -67,6 +67,12 @@ const WONDER_RECTS: [(i32, i32, i32, i32); 22] = [
 /// Hoover Dam, in the order they are drawn.
 const FIXED_WONDERS: [u8; 4] = [won::PYRAMIDS, won::HOOVER_DAM, won::COLOSSUS, won::GREAT_WALL];
 
+/// Sheet and rectangle of a wonder's picture: WONDERS2 for the four with a fixed place.
+pub fn wonder_sprite(w: u8) -> (&'static str, Rect) {
+    let (x0, y0, x1, y1) = WONDER_RECTS[w.clamp(1, 21) as usize];
+    (if fixed_wonder(w) { "WONDERS2" } else { "WONDERS" }, Rect::new(x0, y0, x1 - x0 + 1, y1 - y0 + 1))
+}
+
 fn fixed_wonder(w: u8) -> bool {
     FIXED_WONDERS.contains(&w)
 }

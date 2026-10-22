@@ -5,37 +5,10 @@ use crate::assets::Palette;
 use crate::gfx::{Rect, Surface};
 use crate::platform::Event;
 use crate::rules::{self, WonderId};
+use crate::ui::civilopedia::wonder_picture;
 use crate::ui::context::UiContext;
 use crate::ui::eventpics::{draw_caption_centred, Dismiss};
 use crate::ui::screen::{DialogResult, Screen, Transition};
-
-/// Picture of a wonder: sheet name and rectangle (measured; see the report for the mapping).
-pub fn wonder_picture(w: WonderId) -> (&'static str, Rect) {
-    use rules::wonder_ids as id;
-    match w {
-        id::PYRAMIDS => ("WONDERS2", Rect::new(130, 53, 190, 31)),
-        id::HANGING_GARDENS => ("WONDERS", Rect::new(160, 149, 68, 50)),
-        id::COLOSSUS => ("WONDERS2", Rect::new(87, 96, 126, 41)),
-        id::LIGHTHOUSE => ("WONDERS", Rect::new(229, 116, 40, 83)),
-        id::GREAT_LIBRARY => ("WONDERS", Rect::new(164, 97, 64, 51)),
-        id::ORACLE => ("WONDERS", Rect::new(61, 117, 41, 56)),
-        id::GREAT_WALL => ("WONDERS2", Rect::new(0, 37, 68, 83)),
-        id::MAGELLANS_EXPEDITION => ("WONDERS", Rect::new(268, 53, 51, 62)),
-        id::MICHELANGELOS_CHAPEL => ("WONDERS", Rect::new(9, 117, 51, 56)),
-        id::COPERNICUS_OBSERVATORY => ("WONDERS", Rect::new(125, 1, 58, 54)),
-        id::SHAKESPEARES_THEATRE => ("WONDERS", Rect::new(276, 1, 44, 51)),
-        id::ISAAC_NEWTONS_COLLEGE => ("WONDERS", Rect::new(103, 139, 55, 60)),
-        id::JS_BACHS_CATHEDRAL => ("WONDERS", Rect::new(184, 1, 41, 69)),
-        id::DARWINS_VOYAGE => ("WONDERS2", Rect::new(0, 13, 149, 22)),
-        id::HOOVER_DAM => ("WONDERS", Rect::new(40, 73, 62, 43)),
-        id::WOMENS_SUFFRAGE => ("WONDERS", Rect::new(253, 1, 22, 47)),
-        id::MANHATTAN_PROJECT => ("WONDERS", Rect::new(226, 2, 26, 46)),
-        id::UNITED_NATIONS => ("WONDERS", Rect::new(103, 79, 60, 59)),
-        id::APOLLO_PROGRAM => ("WONDERS", Rect::new(270, 116, 49, 83)),
-        id::SETI_PROGRAM => ("WONDERS", Rect::new(73, 1, 52, 54)),
-        _ => ("WONDERS", Rect::new(240, 60, 27, 55)), // Cure for Cancer
-    }
-}
 
 /// Blit `sr` of `src` enlarged `scale` times at (`x`, `y`), skipping `key` pixels.
 #[allow(clippy::too_many_arguments)]
