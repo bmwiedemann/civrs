@@ -105,9 +105,9 @@ pub fn button(fb: &mut Surface, ctx: &UiContext, r: Rect, label: &str, style: Bu
 pub const ICON_FOOD: (i32, i32) = (128, 32);
 pub const ICON_SHIELD: (i32, i32) = (136, 32);
 pub const ICON_TRADE: (i32, i32) = (144, 32);
-pub const ICON_LUX: (i32, i32) = (128, 40);
+pub const ICON_LUX: (i32, i32) = (144, 40);
 pub const ICON_TAX: (i32, i32) = (152, 32);
-pub const ICON_SCI: (i32, i32) = (144, 40);
+pub const ICON_SCI: (i32, i32) = (128, 40);
 
 /// Blit an 8x8 icon. The black outline (colour 5) can be recoloured for dark backgrounds.
 pub fn icon(fb: &mut Surface, ctx: &UiContext, src: (i32, i32), x: i32, y: i32, outline: Option<u8>) {
