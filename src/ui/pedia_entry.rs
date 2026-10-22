@@ -272,10 +272,9 @@ impl EntryScreen {
             Entry::Improvement(i) => {
                 let imp = &rules::IMPROVEMENTS[i as usize];
                 let mut y = y0;
-                if imp.prereq.is_some() {
-                    items.push(text(BODY_X, y, LIGHT_BLUE, format!("Requires {}", advance_name(imp.prereq))));
-                    y += STAT_PITCH;
-                }
+                // "Requires " even without an advance (CIV.EXE o 0xbeac)
+                items.push(text(BODY_X, y, LIGHT_BLUE, format!("Requires {}", advance_name(imp.prereq))));
+                y += STAT_PITCH;
                 items.push(text(BODY_X, y, LIGHT_BLUE, format!("Cost: {} shields.", imp.cost as u32 * 10)));
                 y += STAT_PITCH;
                 let end = spaced_width(&ctx.fonts, FONT_TEXT, "Maintenance: ", SPACING);
@@ -297,10 +296,11 @@ impl EntryScreen {
                 let ut = &rules::UNITS[u as usize];
                 let x = 100;
                 let mut y = y0;
-                if ut.prereq.is_some() {
-                    items.push(text(x, y, LIGHT_BLUE, format!("Requires {}", advance_name(ut.prereq))));
-                    y += STAT_PITCH;
-                }
+                // "Requires " even without an advance; the Nuclear unit also names Nuclear Fission
+                // (o 0xbfa2)
+                let also = if u == rules::unit_ids::NUCLEAR { " and Nuclear Fission" } else { "" };
+                items.push(text(x, y, LIGHT_BLUE, format!("Requires {}{also}", advance_name(ut.prereq))));
+                y += STAT_PITCH;
                 items.push(text(x, y, LIGHT_BLUE, format!("Cost: {} resources.", ut.cost as u32 * 10)));
                 y += STAT_PITCH;
                 items.push(text(x, y, RED, format!("Attack Strength: {}", ut.att)));
