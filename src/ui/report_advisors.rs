@@ -316,51 +316,43 @@ pub fn paint_trade(fb: &mut Surface, ctx: &UiContext) {
 
 pub fn paint_science(fb: &mut Surface, ctx: &UiContext) {
     title_block(fb, ctx, "SCIENCE REPORT");
-    portrait(fb, ctx, 3);
     let g = ctx.game();
     let p = g.human();
-    // current research box
-    let (line1, line2) = match p.researching {
-        Some(a) => {
-            let cost = g.research_cost(g.human_slot);
-            let per_turn = g.science_income(g.human_slot).max(0);
-            let left = (cost - p.beakers).max(0);
-            let turns = if per_turn > 0 { (left + per_turn - 1) / per_turn } else { 0 };
-            let eta = if per_turn > 0 { format!("{turns} turns") } else { "never".to_string() };
-            (format!("Researching: {}", rules::ADVANCES[a as usize].name), format!("{}/{cost}{GLYPH_BULB} ({eta})", p.beakers))
-        }
-        None => ("Researching: nothing".to_string(), format!("{}{GLYPH_BULB} saved", p.beakers)),
-    };
-    let w = width(ctx, &line1).max(width(ctx, &line2)).max(80) + 8;
-    let bx = (160 - w / 2).clamp(8, 270 - w);
+    // research box (CIV.EXE overlay 0x12ec0): one bulb per beaker collected, `step` eighths of a
+    // pixel apart, in a box as wide as the advance costs
+    let cost = g.research_cost(g.human_slot);
+    let step = (2432 / (cost + 1)).clamp(1, 64);
+    let w = (step * cost / 8 + 8).clamp(8, 304);
+    let bx = 160 - w / 2;
     fb.fill_rect(Rect::new(bx, 25, w, 16), col(ctx, BG_LIGHT_BLUE));
-    text(fb, ctx, bx + 4, 26, &line1, WHITE);
-    text(fb, ctx, bx + 4, 34, &line2, WHITE);
-    // known advances in columns
+    // the portrait is redrawn over a box that reaches it
+    if bx > 40 {
+        portrait(fb, ctx, 3);
+    }
+    let bulb = Rect::new(129, 41, 7, 7);
+    let mut acc = 0;
+    for _ in 0..p.beakers.clamp(0, cost) {
+        fb.blit_part(&ctx.sp.surf, bulb, bx + acc / 8, 33, Some(0));
+        acc += step;
+    }
+    if let Some(a) = p.researching {
+        let line = format!("Researching {}", rules::ADVANCES[a as usize].name);
+        text_c(fb, ctx, 161, 26, &line, BLACK);
+        text_c(fb, ctx, 160, 26, &line, WHITE);
+    }
+    // known advances in index order, three per row
     let mut known: Vec<&str> = p.known_advances().iter().map(|a| rules::ADVANCES[*a as usize].name).collect();
-    known.sort_unstable();
     if p.future_techs > 0 {
         known.push("Future Tech.");
     }
-    if known.is_empty() {
-        text(fb, ctx, 8, 43, "No advances yet.", CYAN);
-        return;
-    }
-    let (rows, cols, pitch, colw, small) = if known.len() <= 57 { (19, 3, 8, 100, false) } else { (21, 4, 7, 78, true) };
+    let mut y = 42;
     for (i, name) in known.iter().enumerate() {
-        let c = i / rows;
-        if c >= cols {
-            break;
+        text(fb, ctx, 8 + (i % 3) as i32 * 100, y, name, CYAN);
+        if i % 3 == 2 {
+            y += 7;
+            if y > 192 {
+                break;
+            }
         }
-        let x = 8 + c as i32 * colw;
-        let y = 43 + (i % rows) as i32 * pitch;
-        if small {
-            tiny(fb, ctx, x, y, name, CYAN);
-        } else {
-            text(fb, ctx, x, y, name, CYAN);
-        }
-    }
-    if p.future_techs > 1 {
-        text(fb, ctx, 200, 192, &format!("Future Techs: {}", p.future_techs), CYAN);
     }
 }
