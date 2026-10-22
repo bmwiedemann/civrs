@@ -191,72 +191,23 @@ pub fn item_frame(fb: &mut Surface, x: i32, y: i32, owner: Slot) {
     fb.hline(x, x + 14, y + 14, CYAN);
 }
 
-/// SP299 holds the 18x8 improvement / wonder pictograms on a 19x10 grid (8 per row).
+/// SP299 holds the improvement / wonder pictograms, 18x10 cells 19 px apart, five to a column
+/// (CIV.EXE 0xc91:0x703b); `cell` 40 and 41 sit side by side below the grid.
 pub fn imp_icon(fb: &mut Surface, ctx: &UiContext, cell: usize, x: i32, y: i32) {
     let pic = ctx.pic("SP299");
-    let src = Rect::new(161 + 19 * (cell % 8) as i32, 52 + 10 * (cell / 8) as i32, 18, 8);
+    let cell = cell as i32;
+    let src = if cell < 40 { Rect::new(161 + 19 * (cell / 5), 50 + 10 * (cell % 5), 18, 10) } else { Rect::new(161 + 19 * (cell & 1), 100, 18, 10) };
     fb.blit_part(&pic.surf, src, x, y, None);
 }
 
-/// Pictogram cell for an improvement id (best visual match of the SP299 sheet).
-pub fn improvement_cell(id: u8) -> usize {
-    use crate::rules::improvement_ids as imp;
-    match id {
-        imp::PALACE => 0,
-        imp::BARRACKS => 1,
-        imp::GRANARY => 2,
-        imp::TEMPLE => 5,
-        imp::MARKETPLACE => 8,
-        imp::LIBRARY => 9,
-        imp::COURTHOUSE => 19,
-        imp::CITY_WALLS => 17,
-        imp::AQUEDUCT => 25,
-        imp::BANK => 33,
-        imp::CATHEDRAL => 10,
-        imp::UNIVERSITY => 18,
-        imp::MASS_TRANSIT => 35,
-        imp::COLOSSEUM => 16,
-        imp::FACTORY => 26,
-        imp::MFG_PLANT => 34,
-        imp::SDI_DEFENSE => 39,
-        imp::RECYCLING_CNTR => 11,
-        imp::POWER_PLANT => 3,
-        imp::HYDRO_PLANT => 7,
-        imp::NUCLEAR_PLANT => 27,
-        imp::SS_STRUCTURAL => 39,
-        imp::SS_COMPONENT => 36,
-        imp::SS_MODULE => 40,
-        _ => 0,
-    }
+/// Pictogram cell for an improvement id; the spaceship parts have none.
+pub fn improvement_cell(id: u8) -> Option<usize> {
+    (1..=21).contains(&id).then(|| id as usize - 1)
 }
 
-/// Pictogram cell for a wonder id.
+/// Pictogram cell for a wonder id (after the 21 improvements).
 pub fn wonder_cell(id: u8) -> usize {
-    use crate::rules::wonder_ids as w;
-    match id {
-        w::PYRAMIDS => 12,
-        w::HANGING_GARDENS => 20,
-        w::COLOSSUS => 28,
-        w::LIGHTHOUSE => 13,
-        w::GREAT_LIBRARY => 24,
-        w::ORACLE => 22,
-        w::GREAT_WALL => 21,
-        w::MAGELLANS_EXPEDITION => 29,
-        w::MICHELANGELOS_CHAPEL => 37,
-        w::SHAKESPEARES_THEATRE => 14,
-        w::COPERNICUS_OBSERVATORY => 6,
-        w::SETI_PROGRAM => 31,
-        w::ISAAC_NEWTONS_COLLEGE => 23,
-        w::JS_BACHS_CATHEDRAL => 30,
-        w::DARWINS_VOYAGE => 38,
-        w::WOMENS_SUFFRAGE => 15,
-        w::HOOVER_DAM => 7,
-        w::MANHATTAN_PROJECT => 40,
-        w::UNITED_NATIONS => 32,
-        w::APOLLO_PROGRAM => 36,
-        w::CURE_FOR_CANCER => 41,
-        _ => 12,
-    }
+    id as usize + 20
 }
 
 /// Cut `s` down to `max` pixels of small text the way CIV.EXE 0x1f1ad does: drop the last

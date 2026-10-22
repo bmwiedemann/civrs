@@ -38,15 +38,17 @@ pub struct CityScreen {
     advisors: Option<(String, String)>,
     /// Action performed on the first frame (headless renders of the sub-views / dialogs).
     start: Option<String>,
+    /// First improvement slot of the listed page (MORE flips between 0 and the overflow).
+    imp_start: usize,
 }
 
 pub fn city_screen(c: CityId) -> Box<dyn Screen> {
-    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None })
+    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0 })
 }
 
 /// City screen that opens on a tab or dialog: "happy", "map", "view", "change", "buy", "rename", "sell".
 pub fn city_screen_at(c: CityId, start: &str) -> Box<dyn Screen> {
-    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: Some(start.to_string()) })
+    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: Some(start.to_string()), imp_start: 0 })
 }
 
 // ---- layout (coordinates include the 1-px borders) ---------------------------------------
@@ -73,6 +75,9 @@ const MAP_ORIGIN: (i32, i32) = (128, 24);
 const CITIZEN_X: i32 = 10;
 const CITIZEN_Y: i32 = 8;
 const MINIMAP: Rect = Rect::new(101, 116, 120, 76);
+const B_MORE: Rect = Rect::new(287, 88, 28, 8);
+/// Rows of the improvement list (from y 2, 6 px apart; CIV.EXE 0x103ad).
+const IMP_ROWS: usize = 14;
 
 /// Shield-stock rows (one per 10 shields of cost), their pitch and the production panel.
 fn stock_layout(cost: i32) -> (i32, i32, Rect) {
@@ -154,11 +159,25 @@ impl CityScreen {
     }
 
     /// Improvements then wonders of the city, as listed in the improvements panel.
-    fn listed(&self, ctx: &UiContext) -> Vec<Production> {
+    /// The listed page: the wonders (first page only), then the improvements from `imp_start`
+    /// up to 14 rows, and the improvement slot the next page starts at, if any.
+    fn listed(&self, ctx: &UiContext) -> (Vec<Production>, Option<usize>) {
         let c = ctx.game().city(self.city);
-        let mut v: Vec<Production> = c.improvement_list().into_iter().map(Production::Improvement).collect();
-        v.extend(c.wonder_list().into_iter().map(Production::Wonder));
-        v
+        let mut v: Vec<Production> = Vec::new();
+        if self.imp_start == 0 {
+            v.extend(c.wonder_list().into_iter().map(Production::Wonder));
+        }
+        for id in c.improvement_list() {
+            let k = id as usize - 1;
+            if k < self.imp_start {
+                continue;
+            }
+            if v.len() >= IMP_ROWS {
+                return (v, Some(k));
+            }
+            v.push(Production::Improvement(id));
+        }
+        (v, None)
     }
 
     fn citizen_pitch(n: usize) -> i32 {
@@ -310,9 +329,16 @@ impl CityScreen {
             self.map_click(ctx, x, y);
             return Transition::None;
         }
-        if P_IMP.inset(1).contains(x, y) && y >= 2 {
-            let row = ((y - 2) / 8) as usize;
-            if let Some(Production::Improvement(id)) = self.listed(ctx).get(row).copied() {
+        // MORE flips to the overflow page and back (CIV.EXE 0x11fd8)
+        let (list, more) = self.listed(ctx);
+        if (more.is_some() || self.imp_start > 0) && x >= 288 && y > 88 && y < 96 {
+            self.imp_start = more.unwrap_or(0);
+            return Transition::None;
+        }
+        // sell dots (0x1201f)
+        if x >= 300 && y < 94 && y >= 2 {
+            let row = ((y - 2) / 6) as usize;
+            if let Some(Production::Improvement(id)) = list.get(row).copied() {
                 if id != improvement_ids::PALACE {
                     return self.sell(id);
                 }
@@ -453,21 +479,34 @@ impl CityScreen {
 
     fn draw_improvements(&self, fb: &mut Surface, ctx: &UiContext) {
         panel(fb, P_IMP);
-        let old = fb.clip();
-        fb.set_clip(Some(P_IMP.inset(1)));
-        for (i, p) in self.listed(ctx).iter().enumerate() {
-            let y = 2 + 8 * i as i32;
-            match p {
+        // CIV.EXE 0x103ad: names 6 px apart, the pictograms alternating between x 233 and
+        // 213 two pixels higher; names cut to 63 (wonders) or 56 px
+        let (list, more) = self.listed(ctx);
+        for (i, p) in list.iter().enumerate() {
+            let y = 2 + 6 * i as i32;
+            let ix = if i % 2 == 0 { 233 } else { 213 };
+            let max = match p {
                 Production::Improvement(id) => {
-                    imp_icon(fb, ctx, improvement_cell(*id), 233, y);
                     sell_dot(fb, 308, y + 1);
+                    if let Some(cell) = improvement_cell(*id) {
+                        imp_icon(fb, ctx, cell, ix, y - 2);
+                    }
+                    56
                 }
-                Production::Wonder(w) => imp_icon(fb, ctx, wonder_cell(*w), 233, y),
-                Production::Unit(_) => {}
-            }
-            small_text(fb, ctx, 253, y + 2, WHITE, &p.name().to_ascii_uppercase());
+                Production::Wonder(w) => {
+                    imp_icon(fb, ctx, wonder_cell(*w), ix, y - 2);
+                    63
+                }
+                Production::Unit(_) => 56,
+            };
+            small_text(fb, ctx, 253, y + 2, WHITE, &fit_small_text(ctx, &p.name().to_ascii_uppercase(), max));
         }
-        fb.set_clip(Some(old));
+        // the first pictogram reaches over the panel's top edge, which is drawn again
+        fb.hline(231, 250, 0, 0);
+        fb.hline(231, 250, 1, 1);
+        if more.is_some() || self.imp_start > 0 {
+            button(fb, ctx, B_MORE, "MORE", ButtonStyle::Plain);
+        }
     }
 
     fn draw_food(&self, fb: &mut Surface, ctx: &UiContext) {
