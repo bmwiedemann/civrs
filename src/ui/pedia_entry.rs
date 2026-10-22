@@ -192,6 +192,8 @@ enum Item {
     Text { x: i32, y: i32, colour: u8, text: String },
     /// Map sprite of a unit type (16x16 cell) for the "Allows:" list.
     UnitIcon { x: i32, y: i32, kind: u8 },
+    /// SP299 pictogram of an improvement or wonder (`city_draw::imp_icon` cell).
+    ImpIcon { x: i32, y: i32, cell: usize },
     /// Gold-coin symbol followed by a number ("Maintenance: o3").
     Coin { x: i32, y: i32, colour: u8, text: String },
 }
@@ -322,53 +324,60 @@ impl EntryScreen {
         }
     }
 
+    /// The advance's stats page as CIV.EXE o 0xbb2a lays it out: "Requires" (left out
+    /// without prerequisites), "Allows:", the advances it leads to 8 px apart, then 4 px
+    /// further the units (sprite, red) and improvements / wonders (pictogram, green) 12 px
+    /// apart; "Allows:" goes again when nothing follows it.
     fn advance_stats(&self, a: rules::AdvanceId, items: &mut Vec<Item>) {
         let adv = &rules::ADVANCES[a as usize];
         let req = match (adv.prereq[0], adv.prereq[1]) {
             (Some(p), Some(q)) => format!("Requires {} and {}", advance_name(Some(p)), advance_name(Some(q))),
             (Some(p), None) | (None, Some(p)) => format!("Requires {}", advance_name(Some(p))),
-            (None, None) => "Requires nothing".to_string(),
+            (None, None) => String::new(),
         };
-        items.push(text(32, 84, BLUE, req));
+        if !req.is_empty() {
+            items.push(text(32, 84, BLUE, req));
+        }
+        let allows = items.len();
         items.push(text(32, 100, BLUE, "Allows:"));
-        let mut y = 108;
-        let mut push = |item: Item| {
-            items.push(item);
-        };
+        let start = 108;
+        let mut y = start;
         for (i, other) in rules::ADVANCES.iter().enumerate() {
             if !rules::is_real(i as u8) || other.name.is_empty() {
                 continue;
             }
             if other.prereq.contains(&Some(a)) {
                 let with = other.prereq.iter().flatten().find(|p| **p != a).map(|p| format!(" (with {})", advance_name(Some(*p)))).unwrap_or_default();
-                push(text(40, y, LIGHT_BLUE, format!("{}{}", other.name, with)));
-                y += 12;
+                items.push(text(40, y, LIGHT_BLUE, format!("{}{}", other.name, with)));
+                y += STAT_PITCH;
             }
         }
-        for g in rules::GOVERNMENTS.iter() {
-            if g.prereq == Some(a) {
-                push(text(40, y, LIGHT_BLUE, format!("{} government", g.name)));
-                y += 12;
-            }
-        }
+        y += 4;
         for (i, u) in rules::UNITS.iter().enumerate() {
             if u.prereq == Some(a) {
-                push(Item::UnitIcon { x: 39, y: y - 5, kind: i as u8 });
-                push(text(60, y, RED, format!("{} unit", u.name)));
+                items.push(Item::UnitIcon { x: 39, y: y - 5, kind: i as u8 });
+                items.push(text(60, y, RED, format!("{} unit", u.name)));
                 y += 12;
             }
         }
-        for imp in rules::IMPROVEMENTS.iter().skip(1) {
+        for (i, imp) in rules::IMPROVEMENTS.iter().enumerate().skip(1) {
             if imp.prereq == Some(a) {
-                push(text(40, y, BLUE, format!("{} improvement", imp.name)));
+                if let Some(cell) = crate::ui::city_draw::improvement_cell(i as u8) {
+                    items.push(Item::ImpIcon { x: 40, y: y - 2, cell });
+                }
+                items.push(text(60, y, GREEN, format!("{} improvement", imp.name)));
                 y += 12;
             }
         }
-        for w in rules::WONDERS.iter().skip(1) {
+        for (i, w) in rules::WONDERS.iter().enumerate().skip(1) {
             if w.prereq == Some(a) {
-                push(text(40, y, BLUE, format!("{} wonder", w.name)));
+                items.push(Item::ImpIcon { x: 40, y: y - 2, cell: crate::ui::city_draw::wonder_cell(i as u8) });
+                items.push(text(60, y, GREEN, format!("{} Wonder", w.name)));
                 y += 12;
             }
+        }
+        if y == start + 4 {
+            items.remove(allows);
         }
     }
 
@@ -549,6 +558,7 @@ impl Screen for EntryScreen {
                     Item::UnitIcon { x, y, kind } => {
                         Self::draw_unit_sprite(fb, ctx, *kind, *x, *y);
                     }
+                    Item::ImpIcon { x, y, cell } => crate::ui::city_draw::imp_icon(fb, ctx, *cell, *x, *y),
                     Item::Coin { x, y, colour, text } => {
                         Self::draw_coin(fb, *x, *y, *colour);
                         draw_spaced(fb, &ctx.fonts, FONT_TEXT, *colour, *x + 7, *y, text, SPACING);
