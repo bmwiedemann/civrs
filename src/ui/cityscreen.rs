@@ -304,6 +304,15 @@ impl CityScreen {
                 return self.tab_click(i);
             }
         }
+        // a click on one of the city's units on the INFO tab wakes it (0x12271; the original
+        // finds the unit with a 16 px column pitch although they are drawn 18 px apart)
+        if matches!(self.tab, Tab::Info) && (100..211).contains(&x) && y >= 116 {
+            let i = ((y - 116) / 16 * 6 + (x - 100) / 16) as usize;
+            if let Some(&id) = self.info_units(ctx).get(i) {
+                ctx.game_mut().wake_unit(id);
+                return Transition::None;
+            }
+        }
         if P_MAP.inset(1).contains(x, y) {
             self.map_click(ctx, x, y);
             return Transition::None;

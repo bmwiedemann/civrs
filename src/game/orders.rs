@@ -289,8 +289,42 @@ impl Game {
         self.active_unit = self.next_active_unit();
     }
 
+    /// Clear a unit's orders, as a click on it in the city screen does (CIV.EXE 0x122d3):
+    /// a sentried or fortified unit also gets its full moves back.
+    pub fn wake_unit(&mut self, id: UnitId) {
+        let u = self.unit_mut(id);
+        if matches!(u.order, UnitOrder::Sentry | UnitOrder::Fortified) {
+            u.moves_left = u.full_moves();
+        }
+        u.order = UnitOrder::None;
+        u.order_turns = 0;
+        u.goto = None;
+    }
+
     pub fn skip_unit(&mut self, id: UnitId) {
         self.unit_mut(id).order = UnitOrder::Skip;
         self.unit_mut(id).moves_left = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::game::{Game, GameSetup, UnitOrder};
+    use crate::rules::unit_ids;
+
+    #[test]
+    fn wake_unit_restores_moves_of_sentried_and_fortified() {
+        let mut g = Game::new(GameSetup { seed: 7, ..Default::default() }, None);
+        let slot = g.human_slot;
+        let s = g.units_of(slot)[0];
+        let (x, y) = (g.unit(s).x, g.unit(s).y);
+        for (order, moves) in [(UnitOrder::Fortified, 3), (UnitOrder::Sentry, 3), (UnitOrder::Fortify, 0)] {
+            let u = g.add_unit(slot, unit_ids::MILITIA, x, y);
+            g.unit_mut(u).order = order;
+            g.unit_mut(u).moves_left = 0;
+            g.wake_unit(u);
+            assert_eq!(g.unit(u).order, UnitOrder::None);
+            assert_eq!(g.unit(u).moves_left, moves);
+        }
     }
 }
