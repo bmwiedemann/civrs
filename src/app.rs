@@ -14,22 +14,12 @@ pub struct App {
     pub dump: Option<(std::path::PathBuf, u64)>,
 }
 
-/// 8x11 arrow cursor, 1 = black outline, 2 = white fill.
-const CURSOR: [&str; 11] = [
-    "1.......", "11......", "121.....", "1221....", "12221...", "122221..", "1222221.", "12221111",
-    "1211....", "11.1....", "1.......",
-];
-
-pub fn draw_cursor(fb: &mut Surface, x: i32, y: i32) {
-    for (r, row) in CURSOR.iter().enumerate() {
-        for (c, ch) in row.bytes().enumerate() {
-            match ch {
-                b'1' => fb.put(x + c as i32, y + r as i32, 0),
-                b'2' => fb.put(x + c as i32, y + r as i32, 15),
-                _ => {}
-            }
-        }
-    }
+/// The mouse pointer: TORCH.PIC (13x14) with its hot spot at the top-left corner, the colour
+/// of that corner transparent (CIV.EXE 0x1b87 loads it, 0:0x1697 installs it at offset 0,0).
+pub fn draw_cursor(fb: &mut Surface, ctx: &UiContext, x: i32, y: i32) {
+    let torch = ctx.pic("TORCH");
+    let key = torch.surf.get(0, 0);
+    fb.blit_part(&torch.surf, torch.surf.bounds(), x, y, Some(key));
 }
 
 impl App {
@@ -70,7 +60,7 @@ impl App {
         self.ctx.palette = pal;
         if self.screens.wants_cursor() {
             let (mx, my) = self.ctx.mouse;
-            draw_cursor(&mut self.fb, mx, my);
+            draw_cursor(&mut self.fb, &self.ctx, mx, my);
         }
         backend.present(&self.fb, &pal);
         self.ctx.frame += 1;

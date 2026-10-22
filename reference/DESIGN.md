@@ -449,7 +449,7 @@ F fortress; P pillage; p clean pollution; b build/join city; h home; u unload; D
 F1-F12 reports; Tab next unit; Ctrl-S/Ctrl-L quick save/load; Ctrl-Q quit prompt. City screen: I H M V R Esc, Shift-M, Shift-A.
 Mouse (320x200 space): LMB menu bar/items; LMB tile: own city -> city screen, own unit -> activate/stack list, else centre; RMB adjacent tile -> move;
 goto LMB = destination; LMB minimap centres; LMB unit box cycles; dialogs LMB choose, RMB cancel; city map LMB toggles worker, citizen click cycles specialist.
-Software cursor arrow drawn in 320x200 space; hardware cursor hidden.
+Software cursor TORCH.PIC (hot spot top-left, corner colour transparent) drawn in 320x200 space; hardware cursor hidden.
 
 ## Build order, tracks and milestones
 Tracks (parallel subagents after M1/M2 interfaces exist):
