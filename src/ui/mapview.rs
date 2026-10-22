@@ -1135,13 +1135,17 @@ impl Screen for MapView {
                 let me = g.human_slot;
                 match button {
                     MouseButton::Right => {
+                        // CIV.EXE 0x479c: a square next to the active unit moves it there, any
+                        // other explored square shows the Civilopedia page of its terrain
                         if let Some(id) = g.active_unit {
                             let (ux, uy) = g.unit(id).pos();
                             if let Some(d) = Dir8::from_delta(tx - ux, ty - uy) {
                                 return self.try_move(ctx, d);
                             }
-                            // far away: goto
-                            return self.confirm_goto(ctx, (tx, ty));
+                        }
+                        if g.explored(me, tx, ty) {
+                            let t = g.map.tile(tx, ty).terrain;
+                            return Transition::Push(crate::ui::civilopedia::entry_screen(crate::ui::pedia_data::Entry::Terrain(t), 0));
                         }
                         Transition::None
                     }
