@@ -432,14 +432,12 @@ impl CityScreen {
                 }
                 draw_terrain(fb, ctx, g, tx, ty, px, py);
                 draw_fog_edges(fb, ctx, g, slot, tx, ty, px, py);
-                if (dx, dy) != (0, 0) {
-                    if let Some(other) = g.city_at(tx, ty) {
-                        draw_city(fb, ctx, g, other, px, py);
-                    }
+                if let Some(city) = g.city_at(tx, ty) {
+                    draw_city(fb, ctx, g, city, px, py);
                 }
             }
         }
-        // worked tiles show their yields; the centre on a black card
+        // worked tiles show their yields
         for idx in 0..21u8 {
             if !c.works(idx) {
                 continue;
@@ -449,12 +447,7 @@ impl CityScreen {
             let px = MAP_ORIGIN.0 + (rx as i32 + 2) * 16;
             let py = MAP_ORIGIN.1 + (ry as i32 + 2) * 16;
             let yields = g.tile_yield(slot, tx, ty, Some(self.city));
-            if idx == 0 {
-                fb.fill_rect(Rect::new(px, py, 18, 16), BLACK);
-                self.draw_tile_icons(fb, ctx, px, py, yields, Some(GREY));
-            } else {
-                self.draw_tile_icons(fb, ctx, px, py, yields, None);
-            }
+            self.draw_tile_icons(fb, ctx, px, py, yields, None);
         }
     }
 
