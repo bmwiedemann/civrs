@@ -22,8 +22,8 @@ pub fn sound_for_event(ctx: &UiContext, ev: &GameEvent) {
         GameEvent::Famine(c) | GameEvent::Disorder(c) if mine(c) => a.play(Sound::Disorder),
         GameEvent::Celebration(c) if mine(c) => a.play(Sound::Win),
         GameEvent::CelebrationEnded(c) if mine(c) => a.play(Sound::Lose),
-        // the city view plays it when it adds the new building
-        GameEvent::ItemBuilt { city, item } if mine(city) && built_view_item(g, *city, *item).is_none() => a.play(Sound::BuildComplete),
+        // completed production has no sound of its own: only the city view plays tune 44 as
+        // it adds a new building (CIV.EXE o 0x19fa1)
         GameEvent::Pollution { city, .. } if mine(city) => a.play(Sound::Disorder),
         // "Sensors report a NUCLEAR WEAPONS test"; another civ's wonder gets its jingle, our own
         // only the city view's build-complete sound
