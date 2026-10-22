@@ -1,5 +1,5 @@
 //! "ROME founded: 4000 BC." animation (CIV.EXE overlay 0x1e424): four settlers' wagons roll
-//! over the meadow, one pixel every 10 ticks, then the city screen.
+//! over the meadow, one pixel every 10 ticks, then the city view and the city screen.
 
 use crate::game::CityId;
 use crate::gfx::text::draw_text_centered;
@@ -46,12 +46,18 @@ impl CityFounded {
         }
     }
 
-    fn finish(&mut self) -> Transition {
+    /// Leave for the city screen; when the wagons have arrived (no key pressed) the city view
+    /// comes first (0x1e687: city view with item -3).
+    fn finish(&mut self, interrupted: bool) -> Transition {
         if self.done {
             return Transition::None;
         }
         self.done = true;
-        Transition::Replace(crate::ui::cityscreen::city_screen(self.city))
+        if interrupted {
+            Transition::Replace(crate::ui::cityscreen::city_screen(self.city))
+        } else {
+            Transition::Replace(crate::ui::city_view::founded_view(self.city))
+        }
     }
 }
 
@@ -59,13 +65,13 @@ impl Screen for CityFounded {
     fn update(&mut self, _ctx: &mut UiContext) -> Transition {
         self.t += 1;
         if self.t >= STEPS * TICKS_PER_STEP {
-            return self.finish();
+            return self.finish(false);
         }
         Transition::None
     }
     fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
         match ev {
-            Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } if self.t > 10 => self.finish(),
+            Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } if self.t > 10 => self.finish(true),
             _ => Transition::None,
         }
     }

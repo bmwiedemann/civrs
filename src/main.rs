@@ -196,7 +196,7 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
         // previews compare against plain captures: no CIVILIZATION NOTE hints on top
         game.hints_shown = u32::MAX;
         // (mapcity: the map screen after founding that city)
-        if !matches!(parts[0], "map" | "mapall") {
+        if !matches!(parts[0], "map" | "mapall" | "founded" | "built") {
             // reports want a city: found one with the first human Settlers
             let slot = game.human_slot;
             if let Some(s) = game.units_of(slot).into_iter().find(|u| game.unit(*u).kind == civrs::rules::unit_ids::SETTLERS) {
@@ -220,7 +220,7 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
         }
         // the city screen needs a city: found one with the human's first settler
         let mut city = None;
-        if matches!(parts.first(), Some(&"city" | &"founded")) {
+        if matches!(parts.first(), Some(&"city" | &"founded" | &"built")) {
             let slot = game.human_slot;
             let id = game.units_of(slot).into_iter().find(|id| game.unit(*id).kind == civrs::rules::unit_ids::SETTLERS).ok_or("no settler")?;
             city = Some(game.found_city(id).map_err(|e| format!("{e:?}"))?);
@@ -239,6 +239,13 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
                 None => return Err(format!("unknown civilopedia entry code {seed}").into()),
             },
             "founded" => civrs::ui::cityfounded::city_founded(city.unwrap()),
+            // city view after completing an improvement: screen:built:SEED:TURNS[:IMPROVEMENT]
+            // (CIVRS_FRAMES=70 shows it after the new building has been added)
+            "built" => {
+                let item: u8 = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(civrs::rules::improvement_ids::GRANARY);
+                ctx.game_mut().city_mut(city.unwrap()).add_improvement(item);
+                civrs::ui::city_view::built_view(&ctx, city.unwrap(), item)
+            }
             "city" => match parts.get(3) {
                 Some(start) => civrs::ui::cityscreen::city_screen_at(city.unwrap(), start),
                 None => civrs::ui::cityscreen::city_screen(city.unwrap()),

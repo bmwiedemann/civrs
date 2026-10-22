@@ -22,7 +22,8 @@ pub fn sound_for_event(ctx: &UiContext, ev: &GameEvent) {
         GameEvent::Famine(c) | GameEvent::Disorder(c) if mine(c) => a.play(Sound::Disorder),
         GameEvent::Celebration(c) if mine(c) => a.play(Sound::Win),
         GameEvent::CelebrationEnded(c) if mine(c) => a.play(Sound::Lose),
-        GameEvent::ItemBuilt { city, .. } if mine(city) => a.play(Sound::BuildComplete),
+        // the city view plays it when it adds the new building
+        GameEvent::ItemBuilt { city, item } if mine(city) && built_view_item(g, *city, *item).is_none() => a.play(Sound::BuildComplete),
         GameEvent::Pollution { city, .. } if mine(city) => a.play(Sound::Disorder),
         // "Sensors report a NUCLEAR WEAPONS test"; another civ's wonder gets its jingle, our own
         // only the city view's build-complete sound
@@ -41,6 +42,19 @@ pub fn sound_for_event(ctx: &UiContext, ev: &GameEvent) {
             _ => a.national_theme(g.player(me).civ, true),
         },
         _ => {}
+    }
+}
+
+/// The improvement a completed `item` adds to the city view, when the original shows it there
+/// (CIV.EXE 0xe676: Animations on, not the Palace, no spaceship part, no auto-build).
+fn built_view_item(g: &Game, city: crate::game::CityId, item: crate::game::Production) -> Option<crate::ui::city_view::ViewItem> {
+    use rules::improvement_ids as imp;
+    let c = g.city_opt(city)?;
+    match item {
+        crate::game::Production::Improvement(i) if g.options.animations && !c.auto_build && i != imp::PALACE && i < imp::SS_STRUCTURAL => {
+            Some(crate::ui::city_view::improvement_item(i))
+        }
+        _ => None,
     }
 }
 
@@ -67,7 +81,10 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
         }
         GameEvent::ItemBuilt { city, item } if g.city(*city).owner == me => match item {
             crate::game::Production::Unit(_) => None,
-            _ => msg(vec![format!("{} completes {}.", city_name(*city), item.name())]),
+            _ => match built_view_item(g, *city, *item) {
+                Some(view) => Some(crate::ui::city_view::built_view(ctx, *city, view)),
+                None => msg(vec![format!("{} builds", city_name(*city)), format!("{}.", item.name())]),
+            },
         },
         GameEvent::ProductionBlocked { city, item } if g.city(*city).owner == me => {
             msg(vec![format!("{} cannot complete {}.", city_name(*city), item.name())])
@@ -250,10 +267,8 @@ pub fn screen_for_decision(ctx: &mut UiContext, d: &Decision) -> Box<dyn Screen>
             let items: Vec<String> = options.iter().map(|gv| rules::GOVERNMENTS[*gv as usize].name.to_string()).collect();
             Box::new(MenuDialog::new(vec!["Select type of government:".into()], items).no_cancel())
         }
-        Decision::ProductionChoice { city, reason } => {
-            let name = g.city_opt(*city).map(|c| c.name.clone()).unwrap_or_default();
-            Box::new(MessageBox::new(vec![format!("{name}: {reason}")]))
-        }
+        // the map view opens the city screen once this is answered
+        Decision::ProductionChoice { .. } => Box::new(Proceed),
         Decision::SellForUpkeep { city, candidates, .. } => {
             let name = g.city_opt(*city).map(|c| c.name.clone()).unwrap_or_default();
             let items: Vec<String> = candidates.iter().map(|i| rules::IMPROVEMENTS[*i as usize].name.to_string()).collect();
@@ -262,6 +277,19 @@ pub fn screen_for_decision(ctx: &mut UiContext, d: &Decision) -> Box<dyn Screen>
         Decision::Diplomacy(state) => crate::ui::diplomacy_ui::audience_screen(state.clone()),
         Decision::KeepPlaying { .. } => Box::new(YesNo::new(vec!["Do you wish to".into(), "continue playing?".into()], "Yes, keep playing.", "No, I'm done.")),
     }
+}
+
+/// A decision that needs no question: closes on its first frame.
+struct Proceed;
+
+impl Screen for Proceed {
+    fn update(&mut self, _ctx: &mut UiContext) -> crate::ui::screen::Transition {
+        crate::ui::screen::Transition::Pop(crate::ui::screen::DialogResult::Done)
+    }
+    fn handle(&mut self, _ev: &crate::platform::Event, _ctx: &mut UiContext) -> crate::ui::screen::Transition {
+        crate::ui::screen::Transition::None
+    }
+    fn draw(&mut self, _fb: &mut crate::gfx::Surface, _ctx: &mut UiContext) {}
 }
 
 /// Translate a dialog result into a decision reply.
