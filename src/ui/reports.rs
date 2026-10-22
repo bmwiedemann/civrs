@@ -24,7 +24,7 @@ pub const LINE_H: i32 = 8;
 /// Font 0 icon glyphs.
 pub const GLYPH_LUX: char = '\u{5c}';
 pub const GLYPH_CHECK: char = '\u{5e}';
-pub const GLYPH_COIN: char = '\u{5f}';
+pub const GLYPH_COIN: char = '$';
 pub const GLYPH_FOOD: char = '\u{7b}';
 pub const GLYPH_SHIELD: char = '\u{7c}';
 pub const GLYPH_TRADE: char = '\u{7d}';
