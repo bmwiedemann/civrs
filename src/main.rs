@@ -195,6 +195,7 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
         let mut game = civrs::game::Game::new(setup, None);
         // previews compare against plain captures: no CIVILIZATION NOTE hints on top
         game.hints_shown = u32::MAX;
+        // (mapcity: the map screen after founding that city)
         if !matches!(parts[0], "map" | "mapall") {
             // reports want a city: found one with the first human Settlers
             let slot = game.human_slot;
@@ -227,7 +228,7 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
         ctx.game = Some(game);
         let mut dialog: Option<Box<dyn civrs::ui::Screen>> = None;
         let screen: Box<dyn civrs::ui::Screen> = match parts[0] {
-            "map" | "mapall" => Box::new(civrs::ui::mapview::MapView::new()),
+            "map" | "mapall" | "mapcity" => Box::new(civrs::ui::mapview::MapView::new()),
             // Civilopedia list: screen:pedia:CATEGORY (0 complete, 1 advances, 2 improvements,
             // 3 units, 4 terrain, 5 misc)
             "pedia" => civrs::ui::civilopedia::category(&ctx, seed as usize),

@@ -741,17 +741,22 @@ impl MapView {
         fb.fill_rect(strip, theme::CYAN);
         fb.hline(3, 76, 71, theme::GREEN);
         let st = TextStyle::new(0, theme::TEXT);
+        // the original appends the font's person ('#') and coin ('$') glyphs to the figures
         let pop = g.total_population(g.human_slot);
         if pop > 0 {
-            let end = draw_text(fb, &ctx.fonts, &st, 2, 73, &format_pop(pop));
-            draw_people_glyph(fb, end + 1, 73);
+            draw_text(fb, &ctx.fonts, &st, 2, 73, &format!("{}#", format_pop(pop)));
         }
-        let end = draw_text(fb, &ctx.fonts, &st, 2, 81, &g.year_text());
-        draw_jewel_glyph(fb, end + 4, 82);
+        draw_text(fb, &ctx.fonts, &st, 2, 81, &g.year_text());
+        // research progress bulb and global-warming sun: 8x8 cells of SP299, four stages each
+        let sheet = ctx.pic("SP299");
+        let stage = (p.beakers * 4 / (g.research_cost(g.human_slot) + 1)).clamp(0, 3);
+        fb.blit_part(&sheet.surf, Rect::new(160 + 8 * stage, 120, 8, 8), 48, 80, None);
+        if g.polluted_tiles > 0 {
+            let stage = (g.polluted_tiles as i32 / 4).clamp(0, 3);
+            fb.blit_part(&sheet.surf, Rect::new(160 + 8 * stage, 128, 8, 8), 56, 80, None);
+        }
         let sci = p.sci() / 10;
-        let end = draw_text(fb, &ctx.fonts, &st, 2, 89, &format!("{}", p.gold));
-        draw_coin_glyph(fb, end + 1, 90);
-        draw_text(fb, &ctx.fonts, &st, 27, 89, &format!("{}.{}.{}", p.tax / 10, p.lux / 10, sci));
+        draw_text(fb, &ctx.fonts, &st, 2, 89, &format!("{}$ {}.{}.{}", p.gold, p.lux / 10, p.tax / 10, sci));
         let mut y = 99;
         match self.mode {
             Mode::EndOfTurn => {
@@ -811,41 +816,6 @@ impl MapView {
             draw_text(fb, &ctx.fonts, &TextStyle::new(1, theme::TEXT), 3, 190, &self.status_line);
         }
     }
-}
-
-/// Small coin glyph after the treasury figure.
-fn draw_coin_glyph(fb: &mut Surface, x: i32, y: i32) {
-    for (dx, dy) in [(1, 0), (2, 0), (0, 1), (3, 1), (0, 2), (3, 2), (1, 3), (2, 3)] {
-        fb.put(x + dx, y + dy, theme::BLACK);
-    }
-    fb.put(x + 1, y + 1, theme::BLACK);
-}
-
-/// Small jewel glyph after the year.
-fn draw_jewel_glyph(fb: &mut Surface, x: i32, y: i32) {
-    for dx in 0..5 {
-        fb.put(x + dx, y, theme::CYAN);
-    }
-    for dx in 1..4 {
-        fb.put(x + dx, y + 1, theme::CYAN);
-    }
-    fb.put(x + 2, y + 2, theme::CYAN);
-    fb.put(x + 2, y + 3, theme::BLACK);
-}
-
-/// Small person glyph after the population.
-fn draw_people_glyph(fb: &mut Surface, x: i32, y: i32) {
-    fb.put(x + 2, y, theme::BLACK);
-    for dx in 1..4 {
-        fb.put(x + dx, y + 1, theme::BLACK);
-    }
-    for dx in 0..5 {
-        fb.put(x + dx, y + 2, theme::BLACK);
-    }
-    fb.put(x + 1, y + 3, theme::BLACK);
-    fb.put(x + 3, y + 3, theme::BLACK);
-    fb.put(x + 1, y + 4, theme::BLACK);
-    fb.put(x + 3, y + 4, theme::BLACK);
 }
 
 pub fn format_pop(p: i64) -> String {
