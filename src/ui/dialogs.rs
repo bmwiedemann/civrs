@@ -95,6 +95,8 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
         GameEvent::DisorderEnded(c) if g.city(*c).owner == me => msg(vec![format!("Order restored in {}.", city_name(*c))]),
         GameEvent::Celebration(c) if g.city(*c).owner == me => Some(eventpics::celebration_screen(ctx, &city_name(*c))),
         GameEvent::AdvanceDiscovered { slot, adv } if *slot == me => with_pedia(Some(crate::ui::discovery::discovery_screen(ctx, *adv)), *adv),
+        // the hut's own message (HutEntered) announces it and adds the Civilopedia page
+        GameEvent::AdvanceAcquired { source, .. } if source == "hut" => None,
         GameEvent::AdvanceAcquired { slot, adv, source } if *slot == me => {
             with_pedia(msg(vec![format!("You acquire {}", rules::ADVANCES[*adv as usize].name), format!("({source})")]), *adv)
         }
