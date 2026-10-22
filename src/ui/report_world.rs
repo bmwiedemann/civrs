@@ -7,14 +7,14 @@ use crate::ui::context::UiContext;
 use crate::ui::reports::*;
 use crate::ui::tilerender::{blit_sprite, sp};
 
-/// Row of citizen figures (8x16 each, alternating male/female): `happy`, then `content`, then
+/// Row of citizen figures (8x16 cells on a 7-px pitch, alternating male/female): `happy`, then `content`, then
 /// `unhappy`; squeezed when they do not fit in `max_w`.
 pub fn citizens_row(fb: &mut Surface, ctx: &UiContext, x: i32, y: i32, happy: i32, content: i32, unhappy: i32, max_w: i32) {
     let n = happy + content + unhappy;
     if n <= 0 {
         return;
     }
-    let step = if n * 8 <= max_w { 8 } else { (max_w / n).max(2) };
+    let step = if n * 7 <= max_w { 7 } else { (max_w / n).max(2) };
     let mut i = 0;
     for (count, base) in [(happy, 0u8), (content, 2u8), (unhappy, 4u8)] {
         for _ in 0..count {

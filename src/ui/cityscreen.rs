@@ -163,9 +163,9 @@ impl CityScreen {
 
     fn citizen_pitch(n: usize) -> i32 {
         if n == 0 {
-            8
+            7
         } else {
-            (186 / n as i32).clamp(2, 8)
+            (186 / n as i32).clamp(2, 7)
         }
     }
 
@@ -535,7 +535,7 @@ impl CityScreen {
         let c = g.city(self.city);
         let h = g.city_happiness(self.city);
         let n = c.size as usize;
-        let pitch = (120 / n.max(1) as i32).clamp(2, 8);
+        let pitch = (120 / n.max(1) as i32).clamp(2, 7);
         for (r, (_, happy, content, unhappy)) in h.steps.iter().enumerate().take(5) {
             let y = 116 + 16 * r as i32;
             let mut x = 102;
