@@ -27,6 +27,9 @@ pub mod sp {
     pub const IRRIGATION: (i32, i32) = (4, 2);
     pub const HUT: (i32, i32) = (5, 2);
     pub const MINE: (i32, i32) = (7, 2);
+    /// 15x15 overlays drawn at (+1,+1): city buildings (colour 5 = owner's dark shade), walls
+    pub const CITY_TEXTURE: (i32, i32) = (193, 113);
+    pub const CITY_WALLS: (i32, i32) = (209, 113);
     pub const FORTIFIED: (i32, i32) = (13, 7);
     pub const FORTRESS: (i32, i32) = (14, 7);
     pub const PATTERN_CHECKER: (i32, i32) = (18, 11);
@@ -45,10 +48,6 @@ pub mod sp {
     }
     pub fn unit(kind: u8) -> Rect {
         cell((kind % 20) as i32, 10 + (kind / 20) as i32)
-    }
-    pub fn city(size_class: u8, walls: bool) -> Rect {
-        let c = (10 + size_class.min(8)) as i32;
-        cell(c, if walls { 1 } else { 2 })
     }
     pub fn explosion(frame: u8) -> Rect {
         cell((frame % 8) as i32, 6)
@@ -77,21 +76,6 @@ pub fn civ_remap(slot: Slot) -> [u8; 256] {
     // the original draws the sprites' index 15 in cyan on the map
     m[15] = 11;
     m
-}
-
-/// City size class 0..8 for the sprite.
-pub fn city_size_class(size: u8) -> u8 {
-    match size {
-        0..=1 => 0,
-        2 => 1,
-        3 => 2,
-        4..=5 => 3,
-        6..=7 => 4,
-        8..=9 => 5,
-        10..=12 => 6,
-        13..=16 => 7,
-        _ => 8,
-    }
 }
 
 /// Blit a 16x16 sprite cell with colour 0 transparent, masking the 1px guide line (colour 3 or 9)
@@ -190,22 +174,35 @@ pub fn draw_terrain(fb: &mut Surface, ctx: &UiContext, game: &Game, x: i32, y: i
     }
 }
 
-/// Draw a city sprite for a city at pixel (px,py).
+/// Draw a city on the map tile at pixel (px,py), as CIV.EXE 0x1b2be does: a white frame, the
+/// owner's dark frame along the top and right, the owner's light fill, the building texture
+/// (SP257 cell 12,7) in the dark shade, the size in black, a black outline when units are
+/// inside and the wall overlay (cell 13,7).
 pub fn draw_city(fb: &mut Surface, ctx: &UiContext, game: &Game, city: crate::game::CityId, px: i32, py: i32) {
     let c = game.city(city);
     let col = SLOT_COLOURS[(c.owner & 7) as usize];
-    let walls = c.has_improvement(rules::improvement_ids::CITY_WALLS);
-    // civ-coloured square with a dark frame; walls get a thicker frame
-    fb.fill_rect(Rect::new(px, py, 16, 16), col.light);
-    fb.rect_outline(Rect::new(px, py, 16, 16), 8);
-    if walls {
-        fb.rect_outline(Rect::new(px + 1, py + 1, 14, 14), 8);
+    fb.rect_outline(Rect::new(px + 1, py + 1, 14, 14), 15);
+    fb.rect_outline(Rect::new(px + 2, py + 1, 13, 13), col.dark);
+    fb.fill_rect(Rect::new(px + 2, py + 2, 12, 12), col.light);
+    let mut map = [0u8; 256];
+    for (i, v) in map.iter_mut().enumerate() {
+        *v = i as u8;
     }
-    // faint building texture from the city sprite, then the size number
-    let _ = city_size_class(c.size);
-    let text = format!("{}", c.size);
-    let st = crate::gfx::TextStyle::shadowed(0, 0, col.light);
-    crate::gfx::text::draw_text_centered(fb, &ctx.fonts, &st, px + 8, py + 4, &text);
+    map[5] = col.dark;
+    blit_sprite_remap(fb, &ctx.sp.surf, Rect::new(sp::CITY_TEXTURE.0, sp::CITY_TEXTURE.1, 15, 15), px + 1, py + 1, &map);
+    if c.disorder {
+        blit_sprite(fb, &ctx.sp.surf, sp::citizen(4), px + 5, py + 2);
+    } else {
+        let st = crate::gfx::TextStyle::new(0, 0);
+        let x = px + if c.size < 10 { 6 } else { 3 };
+        crate::gfx::text::draw_text(fb, &ctx.fonts, &st, x, py + 5, &c.size.to_string());
+    }
+    if !game.units_at(c.x, c.y).is_empty() {
+        fb.rect_outline(Rect::new(px, py, 16, 16), 0);
+    }
+    if c.has_improvement(rules::improvement_ids::CITY_WALLS) {
+        blit_sprite(fb, &ctx.sp.surf, Rect::new(sp::CITY_WALLS.0, sp::CITY_WALLS.1, 15, 15), px + 1, py + 1);
+    }
 }
 
 /// Draw a unit sprite (with civ colours) at pixel (px,py).
