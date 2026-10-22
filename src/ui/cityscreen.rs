@@ -588,6 +588,17 @@ impl CityScreen {
         panel(fb, r);
         fb.fill_rect(Rect::new(r.x + 1, r.y + 1, r.w - 2, 115 - r.y - 1), BORDER);
         button(fb, ctx, B_CHANGE, "CHANGE", ButtonStyle::Plain);
+        // production that cannot be completed: the button face flashes yellow, colours 9 and
+        // 14 swapping every 10 ticks (CIV.EXE 0x112e1)
+        if g.production_invalid(self.city) && (ctx.frame / 10) % 2 == 0 {
+            for y in B_CHANGE.y..B_CHANGE.bottom() {
+                for x in B_CHANGE.x..B_CHANGE.right() {
+                    if fb.get(x, y) == LIGHT {
+                        fb.put(x, y, crate::ui::theme::YELLOW);
+                    }
+                }
+            }
+        }
         button(fb, ctx, B_BUY, "BUY", ButtonStyle::Plain);
         match c.production {
             Production::Unit(k) => unit_box(fb, ctx, k, c.owner, ITEM_FRAME.0, ITEM_FRAME.1),

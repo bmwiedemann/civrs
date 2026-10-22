@@ -578,6 +578,16 @@ impl Game {
         Some(id)
     }
 
+    /// Production after an improvement or wonder is finished: a human's city stays on it, so
+    /// the city screen's CHANGE button flashes until something else is chosen; the AI and
+    /// auto-build cities move on at once.
+    fn after_building(&mut self, c: CityId, human: bool) {
+        if !human || self.city(c).auto_build {
+            let next = self.default_production(c);
+            self.city_mut(c).production = next;
+        }
+    }
+
     /// Finish building `prod` in city `c`.
     pub fn complete_production(&mut self, c: CityId, prod: Production) {
         let (x, y, owner) = {
@@ -608,6 +618,11 @@ impl Game {
                 self.push_event(GameEvent::ItemBuilt { city: c, item: prod });
             }
             Production::Improvement(i) => {
+                // still set to an improvement the city has: nothing is built, the shields
+                // wait for a new choice (CIV.EXE 0xe4f1)
+                if self.city(c).has_improvement(i) {
+                    return;
+                }
                 self.city_mut(c).shields -= prod.cost();
                 if matches!(i, imp::SS_STRUCTURAL | imp::SS_COMPONENT | imp::SS_MODULE) {
                     self.add_spaceship_part(owner, i);
@@ -623,8 +638,7 @@ impl Game {
                     }
                 }
                 self.push_event(GameEvent::ItemBuilt { city: c, item: prod });
-                let next = self.default_production(c);
-                self.city_mut(c).production = next;
+                self.after_building(c, human);
                 if human {
                     self.push_event(GameEvent::NeedsDecision(Decision::ProductionChoice { city: c, reason: "built".into() }));
                 }
@@ -641,8 +655,7 @@ impl Game {
                 cm.caravan_shields = 0;
                 self.push_event(GameEvent::WonderBuilt { city: c, wonder: w, owner });
                 self.on_wonder_built(owner, w);
-                let next = self.default_production(c);
-                self.city_mut(c).production = next;
+                self.after_building(c, human);
                 if human {
                     self.push_event(GameEvent::NeedsDecision(Decision::ProductionChoice { city: c, reason: "built".into() }));
                 }
@@ -1098,7 +1111,13 @@ mod tests {
         assert!(g.city(c).has_improvement(imp::BARRACKS));
         let ev = g.take_events();
         assert!(ev.iter().any(|e| matches!(e, GameEvent::NeedsDecision(Decision::ProductionChoice { .. }))));
-        assert_ne!(g.city(c).production, Production::Improvement(imp::BARRACKS));
+        // the city stays on the finished building (CHANGE flashes) and does not build it again
+        assert_eq!(g.city(c).production, Production::Improvement(imp::BARRACKS));
+        assert!(g.production_invalid(c));
+        g.city_mut(c).shields = 40;
+        g.process_city(c);
+        assert!(!g.take_events().iter().any(|e| matches!(e, GameEvent::ItemBuilt { .. })));
+        assert!(g.city(c).shields >= 40);
     }
 
     #[test]

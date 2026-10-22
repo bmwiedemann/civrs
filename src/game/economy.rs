@@ -557,6 +557,11 @@ impl Game {
                 return Err(RuleError::Other("That wonder has already been built."));
             }
         }
+        if let Production::Improvement(i) = city.production {
+            if city.has_improvement(i) {
+                return Err(RuleError::Other("That improvement has already been built."));
+            }
+        }
         let cost = self.buy_cost(c);
         if cost <= 0 {
             return Err(RuleError::Other("Production is already complete."));
@@ -701,6 +706,17 @@ impl Game {
 
     /// What a city builds after finishing an improvement/wonder: the cheapest available
     /// improvement, else the best defensive unit it can build [approx].
+    /// Whether the city's production can no longer be completed: an improvement it already
+    /// has or a wonder built somewhere (the original flashes the CHANGE button then).
+    pub fn production_invalid(&self, c: CityId) -> bool {
+        let city = self.city(c);
+        match city.production {
+            Production::Improvement(i) => city.has_improvement(i),
+            Production::Wonder(w) => self.wonders_built[w as usize].is_some(),
+            Production::Unit(_) => false,
+        }
+    }
+
     pub fn default_production(&self, c: CityId) -> Production {
         let mut best: Option<(i32, Production)> = None;
         for i in 1..rules::IMPROVEMENTS.len() as u8 {
