@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 
 pub const MAGIC: [u8; 4] = *b"CIVR";
 /// 2: the game body is followed by `Game::hints_shown` (u32 LE); version 1 saves still load.
-pub const VERSION: u16 = 2;
+/// 3: then by each player's `research_count` (u16 LE); older saves derive it from the advances.
+pub const VERSION: u16 = 3;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -54,6 +55,9 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     data.extend_from_slice(&VERSION.to_le_bytes());
     data.extend_from_slice(&body);
     data.extend_from_slice(&g.hints_shown.to_le_bytes());
+    for p in &g.players {
+        data.extend_from_slice(&p.research_count.to_le_bytes());
+    }
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -72,6 +76,12 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     if ver >= 2 {
         let bits: [u8; 4] = rest.get(..4).and_then(|b| b.try_into().ok()).ok_or_else(|| SaveError::Format("missing hint flags".into()))?;
         g.hints_shown = u32::from_le_bytes(bits);
+    }
+    for (i, p) in g.players.iter_mut().enumerate() {
+        p.research_count = match rest.get(4 + 2 * i..6 + 2 * i) {
+            Some(b) if ver >= 3 => u16::from_le_bytes([b[0], b[1]]),
+            _ => 1 + p.advance_count() as u16 + p.future_techs as u16,
+        };
     }
     Ok(g)
 }

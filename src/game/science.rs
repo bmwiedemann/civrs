@@ -6,10 +6,6 @@ use super::map::Slot;
 use super::Game;
 use crate::rules::{self, wonder_ids as won, AdvanceId};
 
-/// Beakers for the `n+1`-th advance at difficulty `d` [approx]: `(n + 1) * (8 + 2 * d)`.
-pub fn research_cost_for(n: i32, difficulty: i32) -> i32 {
-    (n + 1) * (8 + 2 * difficulty)
-}
 
 impl Game {
     /// Advances the slot could research now.
@@ -24,16 +20,42 @@ impl Game {
         v
     }
 
-    /// Beakers needed for the next advance (AI pays `ai_cost_pct`).
-    pub fn research_cost(&self, slot: Slot) -> i32 {
-        let p = self.player(slot);
-        let n = p.advance_count() as i32 + p.future_techs as i32;
-        let d = self.setup.difficulty as i32;
-        let mut cost = research_cost_for(n, d);
-        if !p.human {
-            cost = cost * rules::DIFFICULTY[self.setup.difficulty as usize].ai_cost_pct as i32 / 100;
+    /// Catch-up bonus to the beakers per advance (CIV.EXE 0x27e0, ds:0xd2de): from 1 AD, the
+    /// leading civ's research count less turn/9, clamped to 0..6.
+    pub fn research_catch_up(&self) -> i32 {
+        if self.year() < 0 {
+            return 0;
         }
-        cost.max(1)
+        let lead = self.players.iter().skip(1).map(|p| p.research_count as i32).max().unwrap_or(0);
+        (lead - self.turn as i32 / 9).clamp(0, 6)
+    }
+
+    /// Beakers per research step (CIV.EXE 0x12cf7): `2 * difficulty + 6` for the human,
+    /// `14 - difficulty` for the AI, plus the catch-up bonus. With `minimum` the human's early
+    /// advances cost at least `11 - research count` per step (not applied by the sidebar bulb).
+    pub fn research_multiplier(&self, slot: Slot, minimum: bool) -> i32 {
+        let p = self.player(slot);
+        let d = self.setup.difficulty as i32;
+        let m = if p.human { 2 * d + 6 } else { 14 - d } + self.research_catch_up();
+        if p.human && minimum {
+            m.max(11 - p.research_count as i32)
+        } else {
+            m
+        }
+    }
+
+    /// Beakers shown as the cost of the next advance: research count * multiplier, doubled
+    /// from 1 AD.
+    pub fn research_cost(&self, slot: Slot) -> i32 {
+        let k = if self.year() < 0 { 1 } else { 2 };
+        (self.player(slot).research_count as i32 * self.research_multiplier(slot, true) * k).max(1)
+    }
+
+    /// The advance is found once the beakers (halved from 1 AD) exceed count * multiplier.
+    pub fn research_complete(&self, slot: Slot) -> bool {
+        let k = if self.year() < 0 { 1 } else { 2 };
+        let p = self.player(slot);
+        p.beakers / k > p.research_count as i32 * self.research_multiplier(slot, true)
     }
 
     pub fn set_research(&mut self, slot: Slot, a: AdvanceId) {
@@ -45,6 +67,7 @@ impl Game {
     pub fn grant_advance(&mut self, slot: Slot, a: AdvanceId) -> bool {
         if a == rules::advance_ids::FUTURE_TECH {
             self.player_mut(slot).future_techs += 1;
+            self.player_mut(slot).research_count += 1;
             if self.player(slot).researching == Some(a) {
                 self.player_mut(slot).researching = None;
             }
@@ -55,6 +78,10 @@ impl Game {
         }
         if self.player(slot).knows(a) {
             return false;
+        }
+        // advances given at the start do not raise the research count (CIV.EXE 0xc364)
+        if self.turn > 0 {
+            self.player_mut(slot).research_count += 1;
         }
         self.player_mut(slot).learn(a);
         if self.player(slot).researching == Some(a) {
@@ -153,6 +180,7 @@ mod tests {
     fn research_cost_positive_and_growing() {
         let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
         let slot = g.human_slot;
+        g.turn = 1;
         let c0 = g.research_cost(slot);
         assert!(c0 > 0);
         assert!(g.grant_advance(slot, rules::advance_ids::ALPHABET));

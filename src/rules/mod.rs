@@ -308,8 +308,6 @@ mod tests {
         assert_eq!(years, vec![2100, 2080, 2060, 2040, 2020]);
         let content: Vec<u8> = DIFFICULTY.iter().map(|d| d.content_base).collect();
         assert_eq!(content, vec![4, 3, 2, 1, 0]);
-        let pct: Vec<u8> = DIFFICULTY.iter().map(|d| d.ai_cost_pct).collect();
-        assert_eq!(pct, vec![100, 90, 80, 70, 60]);
         let settlers: Vec<u8> = DIFFICULTY.iter().map(|d| d.human_start_settlers).collect();
         assert_eq!(settlers, vec![2, 1, 1, 1, 1]);
         let techs: Vec<u8> = DIFFICULTY.iter().map(|d| d.ai_start_techs).collect();

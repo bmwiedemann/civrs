@@ -749,7 +749,10 @@ impl MapView {
         draw_text(fb, &ctx.fonts, &st, 2, 81, &g.year_text());
         // research progress bulb and global-warming sun: 8x8 cells of SP299, four stages each
         let sheet = ctx.pic("SP299");
-        let stage = (p.beakers * 4 / (g.research_cost(g.human_slot) + 1)).clamp(0, 3);
+        // 0x3544 leaves out the early-advance minimum of the real cost
+        let k = if g.year() < 0 { 1 } else { 2 };
+        let cost = p.research_count as i32 * g.research_multiplier(g.human_slot, false) * k;
+        let stage = (p.beakers * 4 / (cost + 1)).clamp(0, 3);
         fb.blit_part(&sheet.surf, Rect::new(160 + 8 * stage, 120, 8, 8), 48, 80, None);
         if g.polluted_tiles > 0 {
             let stage = (g.polluted_tiles as i32 / 4).clamp(0, 3);

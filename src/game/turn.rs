@@ -689,11 +689,10 @@ impl Game {
         if self.player(slot).researching.is_none() && self.player(slot).beakers > 0 {
             self.pick_research(slot);
         }
-        let cost = self.research_cost(slot);
-        let p = self.player(slot);
-        if let Some(a) = p.researching {
-            if p.beakers >= cost {
-                self.player_mut(slot).beakers -= cost;
+        if let Some(a) = self.player(slot).researching {
+            // the surplus is lost (CIV.EXE 0x12d94)
+            if self.research_complete(slot) {
+                self.player_mut(slot).beakers = 0;
                 self.grant_advance(slot, a);
                 self.player_mut(slot).researching = None;
                 self.push_event(GameEvent::AdvanceDiscovered { slot, adv: a });

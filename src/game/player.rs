@@ -61,6 +61,10 @@ pub struct Player {
     pub researching: Option<AdvanceId>,
     pub beakers: i32,
     pub future_techs: u8,
+    /// Advances learned since the start plus one (CIV.EXE ds:0xe898); sets the research cost.
+    /// Stored after the game body in version-3 saves.
+    #[serde(skip)]
+    pub research_count: u16,
     pub capital: Option<CityId>,
     pub relations: [Relation; 8],
     /// Bit per slot: we have an embassy with them.
@@ -111,6 +115,7 @@ impl Player {
             researching: None,
             beakers: 0,
             future_techs: 0,
+            research_count: 1,
             capital: None,
             relations: [Relation::NoContact; 8],
             embassies: 0,

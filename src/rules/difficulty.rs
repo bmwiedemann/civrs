@@ -47,8 +47,6 @@ pub struct DifficultyInfo {
     pub end_year: i32,
     /// Citizens born content in every city.
     pub content_base: u8,
-    /// AI production/research cost as a percentage of the human's.
-    pub ai_cost_pct: u8,
     /// Settlers the human player starts with.
     pub human_start_settlers: u8,
     /// Free advances given to AI civilizations at the start.
@@ -60,7 +58,6 @@ const fn level(
     short: &'static str,
     end_year: i32,
     content_base: u8,
-    ai_cost_pct: u8,
     human_start_settlers: u8,
     ai_start_techs: u8,
 ) -> DifficultyInfo {
@@ -69,7 +66,6 @@ const fn level(
         short,
         end_year,
         content_base,
-        ai_cost_pct,
         human_start_settlers,
         ai_start_techs,
     }
@@ -77,9 +73,9 @@ const fn level(
 
 /// The 5 difficulty levels, easiest first.
 pub static DIFFICULTY: [DifficultyInfo; 5] = [
-    level("Chieftain", "Chief", 2100, 4, 100, 2, 0),
-    level("Warlord", "Lord", 2080, 3, 90, 1, 0),
-    level("Prince", "Prince", 2060, 2, 80, 1, 1),
-    level("King", "King", 2040, 1, 70, 1, 2),
-    level("Emperor", "Emperor", 2020, 0, 60, 1, 3),
+    level("Chieftain", "Chief", 2100, 4, 2, 0),
+    level("Warlord", "Lord", 2080, 3, 1, 0),
+    level("Prince", "Prince", 2060, 2, 1, 1),
+    level("King", "King", 2040, 1, 1, 2),
+    level("Emperor", "Emperor", 2020, 0, 1, 3),
 ];
