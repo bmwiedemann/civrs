@@ -482,6 +482,10 @@ impl CityScreen {
         let w = if cols > 1 { (cols - 1) * pitch_x + 9 } else { 9 };
         let store = Rect::new(FOOD_AREA.x, FOOD_AREA.y + 1, w.min(max_w), FOOD_AREA.h - 2);
         fill_stipple(fb, store);
+        // a granary marks the food kept after growth with a line across the middle (0x1090a)
+        if c.has_improvement(improvement_ids::GRANARY) {
+            fb.hline(5, (cols - 1) * pitch_x + 9, 155, 1);
+        }
         let n = c.food.clamp(0, c.granary_size());
         for k in 0..n {
             let (col, row) = (k % cols, k / cols);
