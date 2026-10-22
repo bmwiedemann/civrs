@@ -77,9 +77,9 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
         GameEvent::Disorder(c) if g.city(*c).owner == me => Some(eventpics::disorder_screen(ctx, &city_name(*c))),
         GameEvent::DisorderEnded(c) if g.city(*c).owner == me => msg(vec![format!("Order restored in {}.", city_name(*c))]),
         GameEvent::Celebration(c) if g.city(*c).owner == me => Some(eventpics::celebration_screen(ctx, &city_name(*c))),
-        GameEvent::AdvanceDiscovered { slot, adv } if *slot == me => Some(crate::ui::discovery::discovery_screen(ctx, *adv)),
+        GameEvent::AdvanceDiscovered { slot, adv } if *slot == me => with_pedia(Some(crate::ui::discovery::discovery_screen(ctx, *adv)), *adv),
         GameEvent::AdvanceAcquired { slot, adv, source } if *slot == me => {
-            msg(vec![format!("You acquire {}", rules::ADVANCES[*adv as usize].name), format!("({source})")])
+            with_pedia(msg(vec![format!("You acquire {}", rules::ADVANCES[*adv as usize].name), format!("({source})")]), *adv)
         }
         GameEvent::UnitLost { slot, kind, reason, .. } if *slot == me => msg(vec![format!("{} {}.", rules::UNITS[*kind as usize].name, reason)]),
         GameEvent::CityCaptured { city, by, from, gold, adv } => {
@@ -88,7 +88,10 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
                 if let Some(a) = adv {
                     l.push(format!("You acquire {}.", rules::ADVANCES[*a as usize].name));
                 }
-                msg(l)
+                match adv {
+                    Some(a) => with_pedia(msg(l), *a),
+                    None => msg(l),
+                }
             } else if *from == me {
                 news(vec![format!("{} captured", city_name(*city)), format!("by the {}!", civ(*by))])
             } else {
@@ -156,7 +159,10 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
                 HutOutcome::Empty => vec!["The tribe is friendly,".into(), "but has nothing to offer.".into()],
                 HutOutcome::Settlers => vec!["A friendly tribe".into(), "joins your civilization.".into()],
             };
-            msg(text)
+            match outcome {
+                HutOutcome::Advance(a) => with_pedia(msg(text), *a),
+                _ => msg(text),
+            }
         }
         GameEvent::CityFounded { .. } => None,
         GameEvent::Hint(section) => {
@@ -191,6 +197,19 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
         GameEvent::GameEnded(reason) => Some(crate::ui::endgame::end_screen(ctx, *reason)),
         _ => None,
     }
+}
+
+/// Follows the message about a new advance of the human player with the advance's
+/// Civilopedia page, as CIV.EXE's grant routine does (0xc5d9; not for Future Tech).
+fn with_pedia(first: Option<Box<dyn Screen>>, adv: rules::AdvanceId) -> Option<Box<dyn Screen>> {
+    if adv == rules::advance_ids::FUTURE_TECH {
+        return first;
+    }
+    let page = crate::ui::civilopedia::entry_screen(crate::ui::pedia_data::Entry::Advance(adv), 0);
+    Some(match first {
+        Some(f) => Box::new(Sequence { first: Some(f), then: Some(page) }),
+        None => page,
+    })
 }
 
 /// Plays `first` then `then` (both drawn over the parent), popping `Done` at the end.
