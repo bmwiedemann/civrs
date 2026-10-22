@@ -1,29 +1,29 @@
-//! "ROME founded: 4000 BC." animation: the meadow dissolves in (driver duration 10, as in
-//! the original) while wagons roll over it, then the city screen.
+//! "ROME founded: 4000 BC." animation (CIV.EXE overlay 0x1e424): four settlers' wagons roll
+//! over the meadow, one pixel every 10 ticks, then the city screen.
 
 use crate::game::CityId;
 use crate::gfx::text::draw_text_centered;
 use crate::gfx::{Rect, Surface, TextStyle};
 use crate::platform::Event;
 use crate::ui::context::UiContext;
-use crate::ui::reveal::Reveal;
 use crate::ui::screen::{DialogResult, Screen, Transition};
 
 pub struct CityFounded {
     city: CityId,
     t: u64,
     done: bool,
-    reveal: Option<Reveal>,
 }
-
-/// Driver duration of the dissolve (overlay call site: `push 10; push 1; call dissolve`).
-const DISSOLVE: u32 = 10;
 
 pub fn city_founded(c: CityId) -> Box<dyn Screen> {
-    Box::new(CityFounded { city: c, t: 0, done: false, reveal: None })
+    Box::new(CityFounded { city: c, t: 0, done: false })
 }
 
-const FRAMES: [Rect; 4] = [Rect::new(0, 0, 49, 16), Rect::new(0, 16, 49, 16), Rect::new(0, 32, 49, 16), Rect::new(0, 48, 49, 16)];
+/// The four wagon frames of SETTLERS.PIC, inside the boxes drawn around them on the sheet.
+const FRAMES: [Rect; 4] = [Rect::new(1, 1, 47, 15), Rect::new(1, 17, 47, 15), Rect::new(1, 33, 47, 15), Rect::new(1, 49, 47, 15)];
+/// The wagons advance one pixel (and one frame) every 10 ticks, from x 80 to x 119.
+const TICKS_PER_STEP: u64 = 10;
+const FIRST_STEP: i32 = 80;
+const STEPS: u64 = 40;
 
 impl CityFounded {
     /// The meadow, the wagons at time `t` and the "founded" line.
@@ -32,10 +32,10 @@ impl CityFounded {
         fb.blit(&hill.surf, 0, 0);
         let wag = ctx.pic("SETTLERS");
         let key = wag.surf.get(0, 70);
-        let frame = FRAMES[((t / 6) % 4) as usize];
-        let x = 60 + (t as i32 * 2) % 260;
-        for i in 0..3 {
-            fb.blit_part(&wag.surf, frame, x - i * 40, 120 + i * 8, Some(key));
+        let step = FIRST_STEP + (t / TICKS_PER_STEP).min(STEPS - 1) as i32;
+        for i in 0..4 {
+            let frame = FRAMES[((i + step) & 3) as usize];
+            fb.blit_part(&wag.surf, frame, step + 13 * i, 120 + ((10 * i) & 15), Some(key));
         }
         let g = ctx.game();
         if let Some(c) = g.city_opt(city) {
@@ -58,7 +58,7 @@ impl CityFounded {
 impl Screen for CityFounded {
     fn update(&mut self, _ctx: &mut UiContext) -> Transition {
         self.t += 1;
-        if self.t > 150 {
+        if self.t >= STEPS * TICKS_PER_STEP {
             return self.finish();
         }
         Transition::None
@@ -73,11 +73,7 @@ impl Screen for CityFounded {
         Transition::Pop(DialogResult::Done)
     }
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
-        let reveal = self.reveal.get_or_insert_with(|| Reveal::new(ctx, DISSOLVE));
-        let mut content = Surface::screen();
-        Self::render(&mut content, ctx, self.city, self.t);
-        let old = ctx.palette;
-        reveal.draw(fb, &content, &old, &ctx.pic_pal("HILL"));
+        Self::render(fb, ctx, self.city, self.t);
     }
     fn palette(&self, ctx: &UiContext) -> crate::assets::Palette {
         ctx.pic_pal("HILL")
