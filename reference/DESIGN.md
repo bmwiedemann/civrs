@@ -415,7 +415,7 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
   Hanging Gardens/Cure for Cancer +1 content, Bach -2 unhappy, Shakespeare all content; martial law max 3 under Anarchy/Desp/Mon/Comm; Republic 1 / Democracy 2
   unhappy per aggressive unit abroad (Women's Suffrage -1); disorder if unhappy > happy; celebration size>=3, happy > half, no unhappy; Democracy 2 turns disorder -> anarchy.
 - Science: cost `(n+1)*(8+2*difficulty)` beakers [approx]; research choice after each discovery; Future Tech after all; Great Library, Darwin's 2 advances.
-- Movement in thirds, road 1/3, rail free, river-to-river 1/3; partial-move probability; sight 1/2/3; ZOC rule [ERROR ZOC]; trireme 50% loss away from coast
+- Movement in thirds, road 1/3, rail free, no river bonus (CIV.EXE 0x6336); partial-move probability; sight 1/2/3; ZOC rule [ERROR ZOC]; trireme 50% loss away from coast
   (Lighthouse safe); air fuel (Fighter 1 turn, Bomber 2, Nuclear 1); transports/carriers; orders Fortify/Sentry/Goto(A*)/Road 2/Rail 6/Irrigate/Mine per table/
   Fortress 3/Clean 3/Pillage order per READ.ME §3; irrigation needs water; settlers join city <10; found city not adjacent to city; Esc undo.
 - Combat: `A = att*8*vet1.5`, `D = def*8*terrain/2*fortified1.5*fortress2*walls3(land attackers, Great Wall)*vet1.5`; loop rolling `rng.below(A)` vs `rng.below(D)`;

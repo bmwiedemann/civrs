@@ -3,7 +3,7 @@
 use super::map::{tile_flags, Dir8, Map, UnitId};
 use super::unit::UnitOrder;
 use super::{Game, MoveOutcome, RuleError};
-use crate::rules::{self, unit_ids, Domain, Terrain};
+use crate::rules::{self, unit_ids, Domain};
 
 impl Game {
     /// Movement cost in thirds for `unit` moving from (fx,fy) to (tx,ty), ignoring legality.
@@ -21,9 +21,6 @@ impl Game {
         let from_road = ft.has(tile_flags::ROAD) || from_rail;
         let to_road = tt.has(tile_flags::ROAD) || to_rail;
         if from_road && to_road {
-            return 1;
-        }
-        if ft.terrain == Terrain::River && tt.terrain == Terrain::River && !Dir8::from_delta(to.0 - from.0, to.1 - from.1).map(|d| d.is_diagonal()).unwrap_or(true) {
             return 1;
         }
         if tt.is_ocean() {
