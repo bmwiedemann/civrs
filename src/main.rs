@@ -265,9 +265,22 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
             "invaders" => civrs::ui::eventpics::invaders_screen(&ctx, vec!["Barbarians land".into(), "near Rome!".into()]),
             "endgame" => civrs::ui::endgame::end_screen(&ctx, match seed { 1 => civrs::game::EndReason::Destroyed, 2 => civrs::game::EndReason::Conquest, 3 => civrs::game::EndReason::Spaceship(1), _ => civrs::game::EndReason::Retired }),
             "arch" => civrs::ui::endgame::arch_screen(&ctx),
+            // screen:palace:N[:0:STEP]: the palace after N sample additions; STEP "intro",
+            // "section" or "stylePART" opens the addition dialog at that step
             "palace" => {
-                ctx.game_mut().human_mut().palace_level = seed as u8;
-                civrs::ui::palace::palace_screen(&ctx, vec!["The people build a fine addition to your palace.".into()])
+                let mut pal = civrs::game::palace::Palace::default();
+                for k in 0..seed as usize {
+                    const ORDER: [usize; 10] = [4, 3, 5, 10, 2, 6, 9, 11, 1, 7];
+                    if let Some(part) = ORDER.iter().cycle().skip(k % ORDER.len()).take(ORDER.len()).find_map(|p| pal.pick(*p)) {
+                        pal.improve(part, (k % 3) as u8);
+                    }
+                }
+                ctx.game_mut().human_mut().set_palace(&pal);
+                match parts.get(3) {
+                    Some(&"intro") => civrs::ui::palace::palace_addition(&ctx),
+                    Some(step) => civrs::ui::palace::palace_addition_at(&ctx, step),
+                    None => civrs::ui::palace::palace_screen(&ctx, Vec::new()),
+                }
             }
             "spaceship" => civrs::ui::spaceship_ui::arrival_screen(&ctx, 1),
             "news" => civrs::ui::eventpics::over_map(civrs::ui::eventpics::travelers_report(vec!["Babylonian civilization".into(), "destroyed by Romans!".into()])),

@@ -72,8 +72,9 @@ pub struct Player {
     pub spaceship: Spaceship,
     /// Consecutive peace turns after 1 AD (score).
     pub peace_turns: u32,
-    /// Palace level (0..4) from additions awarded over time.
+    /// Palace additions awarded so far.
     pub palace_level: u8,
+    /// The palace sections (`Palace::encode`).
     pub palace_parts: Vec<u8>,
     /// Next index into the civ's city name list.
     pub city_name_cursor: u8,
@@ -118,7 +119,7 @@ impl Player {
             spaceship: Spaceship::default(),
             peace_turns: 0,
             palace_level: 0,
-            palace_parts: Vec::new(),
+            palace_parts: crate::game::palace::Palace::default().encode(),
             city_name_cursor: 0,
             stats: PlayerStats::default(),
             destroyed_turn: None,
@@ -137,6 +138,12 @@ impl Player {
     }
     pub fn forget(&mut self, a: AdvanceId) {
         self.advances &= !(1u128 << a);
+    }
+    pub fn palace(&self) -> crate::game::palace::Palace {
+        crate::game::palace::Palace::decode(&self.palace_parts)
+    }
+    pub fn set_palace(&mut self, p: &crate::game::palace::Palace) {
+        self.palace_parts = p.encode();
     }
     pub fn advance_count(&self) -> u32 {
         (self.advances & ((1u128 << 67) - 1)).count_ones()

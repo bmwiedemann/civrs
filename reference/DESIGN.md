@@ -382,7 +382,7 @@ City screen: title, citizens row, resource rows (food/shield/trade icons), 5x5 c
 production box with Change/Buy, buttons Info/Happy/Map/View/Rename/Exit, supported/present units. City View = CBACKS1..3 skyline + CITYPIX1..3 + DOCKER.
 Dialogs/pictures: production change (PRODUCE.TXT advisor), buy confirm, RIOT/RIOT2 disorder, LOVE1/2 celebration, DISCOVR1/2 + advance icon + research menu,
 WONDERS/WONDERS2 crops + BLURB1 NAME2, GOVT{0..3}{A|M} on government change (A ancient / M modern after Invention), diplomacy (BACKgX + GOVTgX advisors by
-size rank + KINGnn portrait with palette merge 64..143 + KING.TXT sections), palace (HILL + CASTLE0..4 + CBRUSH0..5), spaceship SPACEST (+PLANET1/2 arrival),
+size rank + KINGnn portrait with palette merge 64..143 + KING.TXT sections), palace (CBACK + CBACKS1..3 road + CASTLE0..4 sections + CBRUSH0..5 gardens, overlay 0x15f76), spaceship SPACEST (+PLANET1/2 arrival),
 NUKE1 flash, INVADERS/2/3 barbarians, disasters D1..D6, advisors F1-F6 (City Status, Military, Intelligence, Attitude, Trade, Science), world F7-F12
 (Wonders, Top 5 cities, Civ score, World map, Demographics, Spaceships), Civilopedia (icons + BLURB0/1/2/4), save/load slots, tax/lux rates, options,
 end game (SAD destroyed; SLAM1/SLAM2/SLAG2 + ARCH score/retire; PLANET spaceship win), Hall of Fame (KING.TXT FAME), ERROR.TXT message boxes, HELP.TXT hints,

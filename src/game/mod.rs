@@ -16,6 +16,7 @@ pub mod map;
 pub mod mapgen;
 pub mod movement;
 pub mod orders;
+pub mod palace;
 pub mod player;
 pub mod pollution;
 pub mod rng;

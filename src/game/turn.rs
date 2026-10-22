@@ -307,11 +307,9 @@ impl Game {
             let p = self.player(slot);
             let cities = self.cities_of(slot);
             let orderly = cities.iter().all(|c| !self.city(*c).disorder);
-            if p.palace_level < 4 && cities.len() >= 3 + p.palace_level as usize && orderly && p.capital.is_some() {
-                let part = (self.turn % 7) as u8;
-                let pm = self.player_mut(slot);
-                pm.palace_level += 1;
-                pm.palace_parts.push(part);
+            if p.palace().any_offered() && cities.len() >= 3 + p.palace_level as usize && orderly && p.capital.is_some() {
+                // the player picks the section on the palace screen
+                self.player_mut(slot).palace_level += 1;
                 self.push_event(GameEvent::PalaceAddition(slot));
             }
         }
