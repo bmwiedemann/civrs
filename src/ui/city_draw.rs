@@ -259,6 +259,20 @@ pub fn wonder_cell(id: u8) -> usize {
     }
 }
 
+/// Cut `s` down to `max` pixels of small text the way CIV.EXE 0x1f1ad does: drop the last
+/// character and end the rest with a '.' unless that would follow a space.
+pub fn fit_small_text(ctx: &UiContext, s: &str, max: i32) -> String {
+    let mut b: Vec<u8> = s.bytes().collect();
+    while b.len() > 1 && small_text_width(ctx, std::str::from_utf8(&b).unwrap_or("")) > max {
+        let n = b.len();
+        if n >= 3 && b[n - 3] != b' ' {
+            b[n - 2] = b'.';
+        }
+        b.pop();
+    }
+    String::from_utf8(b).unwrap_or_default()
+}
+
 /// The red "sell" dot: 7x7, black outline, white ring, red centre.
 pub fn sell_dot(fb: &mut Surface, x: i32, y: i32) {
     const DOT: [&str; 7] = ["..###..", ".#WWW#.", "#WRRRW#", "#WRRRW#", "#WRRRW#", ".#WWW#.", "..###.."];

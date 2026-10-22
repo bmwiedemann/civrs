@@ -587,7 +587,7 @@ impl CityScreen {
         let (_, pitch, r) = stock_layout(cost);
         panel(fb, r);
         fb.fill_rect(Rect::new(r.x + 1, r.y + 1, r.w - 2, 115 - r.y - 1), BORDER);
-        button(fb, ctx, B_CHANGE, "CHANGE", ButtonStyle::Plain);
+        button(fb, ctx, B_CHANGE, if c.auto_build { "AUTO." } else { "CHANGE" }, ButtonStyle::Plain);
         // production that cannot be completed: the button face flashes yellow, colours 9 and
         // 14 swapping every 10 ticks (CIV.EXE 0x112e1)
         if g.production_invalid(self.city) && (ctx.frame / 10) % 2 == 0 {
@@ -602,25 +602,14 @@ impl CityScreen {
         button(fb, ctx, B_BUY, "BUY", ButtonStyle::Plain);
         match c.production {
             Production::Unit(k) => unit_box(fb, ctx, k, c.owner, ITEM_FRAME.0, ITEM_FRAME.1),
+            // improvements and wonders by name, centred over the buttons (0x1079f)
             other => {
-                item_frame(fb, ITEM_FRAME.0, ITEM_FRAME.1, c.owner);
-                let old = fb.clip();
-                fb.set_clip(Some(Rect::new(ITEM_FRAME.0 + 1, ITEM_FRAME.1 + 1, 13, 13)));
-                let cell = match other {
-                    Production::Wonder(w) => wonder_cell(w),
-                    Production::Improvement(i) => improvement_cell(i),
-                    Production::Unit(_) => 0,
-                };
-                imp_icon(fb, ctx, cell, ITEM_FRAME.0 - 2, ITEM_FRAME.1 + 4);
-                fb.set_clip(Some(old));
+                small_text_centered(fb, ctx, 274, 100, WHITE, &fit_small_text(ctx, other.name(), 86));
             }
         }
         let n = c.shields.clamp(0, cost);
         for k in 0..n {
             icon(fb, ctx, ICON_SHIELD, r.x + 1 + (k % 10) * 8, 115 + (k / 10) * pitch, None);
-        }
-        if c.auto_build {
-            small_text(fb, ctx, r.x + 3, r.bottom() + 2, WHITE, "AUTO");
         }
     }
 
