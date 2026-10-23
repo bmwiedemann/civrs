@@ -54,7 +54,8 @@ pub struct Unit {
     pub moves_left: u8,
     pub veteran: bool,
     pub order: UnitOrder,
-    /// Turns of work remaining for terraforming orders.
+    /// Settlers work counter (CIV.EXE unit +5): turns of work done on the current job,
+    /// the order's own turn included; 0 when idle (see `orders.rs`).
     pub order_turns: u8,
     pub goto: Option<(i32, i32)>,
     pub home: Option<CityId>,

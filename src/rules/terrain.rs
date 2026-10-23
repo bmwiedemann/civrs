@@ -179,8 +179,13 @@ pub fn road_turns(t: Terrain) -> u8 {
 pub fn railroad_turns(t: Terrain) -> u8 {
     4 * t.info().move_cost
 }
-/// Turns for a Settlers unit to build a fortress.
-pub const FORTRESS_TURNS: u8 = 3;
+/// Turns for a Settlers unit to build a fortress: the terrain's move cost plus 4 (CIV.EXE
+/// 0x522a). (The handler reads the terrain from a local of `move_units` that only the road,
+/// irrigation, mine and movement code set, so in CIV.EXE it is the terrain of whatever square
+/// was last looked at — usually the fortress square itself when the order repeats.)
+pub fn fortress_turns(t: Terrain) -> u8 {
+    t.info().move_cost + 4
+}
 /// Turns for a Settlers unit to clean pollution: "four turns of work" (Civilopedia), the
 /// counter reaching 4 in CIV.EXE 0x50db.
 pub const CLEAN_POLLUTION_TURNS: u8 = 4;

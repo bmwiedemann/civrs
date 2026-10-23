@@ -305,9 +305,11 @@ impl Game {
         u.x = x;
         u.y = y;
         u.moves_left = u.moves_left.saturating_sub(cost);
-        if u.order == UnitOrder::Fortified || u.order == UnitOrder::Fortify {
+        if u.order == UnitOrder::Fortified || u.order == UnitOrder::Fortify || u.order.is_work() {
             u.order = UnitOrder::None;
         }
+        // a move resets the work counter (unit +5 = the type's fuel, 0x6d00)
+        u.order_turns = 0;
         let owner = u.owner;
         self.note_occupant(owner, x, y);
     }

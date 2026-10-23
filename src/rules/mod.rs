@@ -29,8 +29,8 @@ pub use misc::{
     advance_year, calendar_year, year_for_turn, year_text, ADJECTIVES, CITY_RADIUS, COMMODITIES, CUSTOM_WORLD_OPTIONS,
     DEMOGRAPHIC_CATEGORIES, HISTORIANS, MAIN_MENU, MAP_H, MAP_W, NEWSPAPERS, RATINGS,
 };
-pub use terrain::{Special, Terraform, Terrain, TerrainInfo, CLEAN_POLLUTION_TURNS, FORTRESS_TURNS, TERRAIN};
-pub use terrain::{railroad_turns, road_turns};
+pub use terrain::{Special, Terraform, Terrain, TerrainInfo, CLEAN_POLLUTION_TURNS, TERRAIN};
+pub use terrain::{fortress_turns, railroad_turns, road_turns};
 pub use units::{unit_by_name, unit_ids, AiRole, Domain, UnitType, UNITS};
 pub use wonders::{wonder_by_name, wonder_ids, Wonder, WONDERS};
 

@@ -418,8 +418,9 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
   then wonders: Hanging Gardens/Cure for Cancer +1 happy, Shakespeare all content, Bach -2 unhappy on its continent.
 - Science: cost `(n+1)*(8+2*difficulty)` beakers [approx]; research choice after each discovery; Future Tech after all; Great Library, Darwin's 2 advances.
 - Movement in thirds, road 1/3, rail free, no river bonus (CIV.EXE 0x6336); partial moves (0x634a): a land unit with exactly 1 MP always enters, otherwise it fails when random(3*cost) > moves left; sight 1, or 2 for units with table sight flag 2 (ships: the outer ring only over ocean, 0x8061); ZOC rule [ERROR ZOC]; trireme 50% loss away from coast (human only, 0x75da);
-  air fuel (Fighter 1 turn, Bomber 2, Nuclear 1); transports/carriers; orders Fortify/Sentry/Goto(A*)/Road 2/Rail 6/Irrigate/Mine per table/
-  Fortress 3/Clean 3/Pillage order per READ.ME §3; irrigation needs water; settlers join city <10; found city not adjacent to city; Esc undo.
+  air fuel (Fighter 1 turn, Bomber 2, Nuclear 1); transports/carriers; orders Fortify/Sentry/Goto(A*); Settlers work counted per turn incl. the
+  order's turn (unit +5, 0x4492 repeats the key): road 2x/rail 4x move cost, irrigate/mine per table, fortress move cost+4 (0x522a), clean 4;
+  pillage at once (0x4c80); irrigation water 0x77fd (city squares never count); settlers join city <10 (no Aqueduct exception); cities may be adjacent; Esc undo.
 - Combat: `A = att*8*vet1.5`, `D = def*8*terrain/2*fortified1.5*fortress2*walls: def*8*terrain/2*3 instead of fortification, not vs attack-12 units (Artillery, Bomber) nor for air defenders (0x198ca)*vet1.5`; loop rolling `rng.below(A)` vs `rng.below(D)`;
   winner 50% veteran; stack dies outside city/fortress; city shrinks on lost defence without walls; Fighters only vs air; ground units capture; capture plunders gold
   `gold*size/total`, steals an advance, 1/3 improvements destroyed, Palace destroyed; size-1 city destroyed; capital loss with >=6 cities -> civil war (ESCHISM);

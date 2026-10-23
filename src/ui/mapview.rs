@@ -64,6 +64,8 @@ pub(crate) enum Pending {
     /// "We have signed a peace treaty..." before a unit attacks or enters the land of a treaty
     /// partner: (unit, direction, partner).
     AttackTreaty(UnitId, Dir8, crate::game::Slot),
+    /// senate_check_attack before a pillage near a treaty partner's city (CIV.EXE 0x4cea).
+    PillageTreaty(UnitId, crate::game::Slot),
 }
 
 pub struct MapView {
@@ -432,8 +434,13 @@ impl MapView {
                     "Disband Unit  D".into(),
                 ];
                 gaps.push(14);
-                let (settlers, military, ship) = match g.active_unit.and_then(|a| g.unit_opt(a)) {
-                    Some(u) => (u.kind == rules::unit_ids::SETTLERS, u.info().att > 0, u.is_sea()),
+                // "Pillage" (0x1c1fe): improvements & 0x1e, type < 0x1a and not the Fighter
+                let (settlers, pillager, ship) = match g.active_unit.and_then(|a| g.unit_opt(a)) {
+                    Some(u) => {
+                        let built = g.map.tile(u.x, u.y).flags & (tile_flags::ROAD | tile_flags::RAILROAD | tile_flags::IRRIGATION | tile_flags::MINE) != 0;
+                        let pillager = built && u.kind < rules::unit_ids::DIPLOMAT && u.kind != rules::unit_ids::FIGHTER;
+                        (u.kind == rules::unit_ids::SETTLERS, pillager, u.is_sea())
+                    }
                     None => (false, false, false),
                 };
                 let has_unit = g.active_unit.is_some();
@@ -449,7 +456,7 @@ impl MapView {
                     !has_unit,
                     !has_unit,
                     !has_unit,
-                    !military,
+                    !pillager,
                     !settlers,
                     !has_unit,
                     !ship,
@@ -559,6 +566,12 @@ impl MapView {
             Key::Char('m') => self.unit_order(ctx, UnitOrder::Mine),
             Key::Char('p') => {
                 if mods.shift {
+                    // 'P' asks senate_check_attack about the nearest city's owner (0x4cea)
+                    if let Some(o) = active.and_then(|id| ctx.game().pillage_treaty(id)) {
+                        let lines = vec!["We have signed a".into(), "peace treaty with".into(), format!("the {}!", ctx.game().player(o).plural())];
+                        self.pending = Pending::PillageTreaty(active.unwrap(), o);
+                        return Transition::Push(Box::new(MenuDialog::new(lines, vec!["Cancel action.".into(), "Break treaty.".into()]).with_pos(80, 80)));
+                    }
                     self.unit_order(ctx, UnitOrder::Pillage)
                 } else {
                     self.unit_order(ctx, UnitOrder::CleanPollution)
@@ -1172,6 +1185,14 @@ impl Screen for MapView {
             },
             // senate_check_attack (CIV.EXE 0x1a3b4): "Break treaty." goes ahead unless the
             // Senate overrules; "Cancel action." cancels the unit's goto
+            Pending::PillageTreaty(id, _) => match result {
+                DialogResult::Choice(1) if ctx.game().senate_overrules(ctx.game().human_slot) => {
+                    self.pending = Pending::Event;
+                    Transition::Push(Box::new(MessageBox::new(vec!["Overruled by".into(), "the Senate.".into(), "Action canceled.".into()]).with_pos(100, 80)))
+                }
+                DialogResult::Choice(1) if ctx.game().active_unit == Some(id) => self.unit_order(ctx, UnitOrder::Pillage),
+                _ => Transition::None,
+            },
             Pending::AttackTreaty(id, d, o) => match result {
                 DialogResult::Choice(1) if ctx.game().senate_overrules(ctx.game().human_slot) => {
                     self.pending = Pending::Event;
