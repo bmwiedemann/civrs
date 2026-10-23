@@ -239,15 +239,8 @@ pub const DISASTER_START_TURN: u32 = 10;
 /// Shields a caravan adds to a wonder.
 pub const CARAVAN_WONDER_SHIELDS: i32 = 50;
 
-/// One-off bonus for establishing a trade route [c1]: `(distance + 10) * (ta + tb) / 24`,
-/// doubled between different civilisations.
-pub fn trade_route_bonus(distance: i32, trade_a: i32, trade_b: i32, foreign: bool) -> i32 {
-    let mut v = (distance + 10) * (trade_a + trade_b) / 24;
-    if foreign {
-        v *= 2;
-    }
-    v.max(1)
-}
+/// Goods a caravan carries in the arrival message, by unit number (CIV.EXE ds:0x1972).
+pub const CARAVAN_GOODS: [&str; 8] = ["Silk", "Silver", "Wine", "Copper", "Gems", "Dye", "Salt", "Spice"];
 
 /// Gold needed to incite a revolt [approx]: `(size * 100 + 1000) / (distance to capital + 2)`,
 /// halved when the city is in disorder, clamped to 50..=9999.
@@ -918,39 +911,74 @@ impl Game {
                 if target == home {
                     return Err(RuleError::Other("A city cannot trade with itself."));
                 }
-                if self.city(home).trade_routes.contains(&target) {
-                    return Err(RuleError::Other("These cities already have a trade route."));
-                }
-                let home_city = self.city(home).clone();
-                let dist = Map::dist((home_city.x, home_city.y), (city.x, city.y));
-                let foreign = city.owner != u.owner;
-                let bonus = trade_route_bonus(dist, self.raw_trade(home), self.raw_trade(target), foreign);
-                self.add_trade_route(home, target);
-                self.add_trade_route(target, home);
+                // CIV.EXE 0x146be: the revenue goes to gold and research alike, then the route
+                // is recorded (if it is new and strong enough) in the home city only
+                let bonus = self.trade_route_revenue(u.owner, home, target);
                 let p = self.player_mut(u.owner);
                 p.gold += bonus;
                 p.beakers += bonus;
                 self.remove_unit(id);
                 self.refresh_vision(u.owner);
-                self.push_event(GameEvent::TradeRouteMade { city: home, with: target, bonus });
+                self.add_trade_route(home, target);
+                self.push_event(GameEvent::TradeRouteMade { city: home, with: target, bonus, goods: (id & 7) as u8 });
                 Ok(())
             }
         }
     }
 
-    /// Record a route in one city (max 3; the weakest is replaced when full).
+    /// One-off revenue of a caravan of `slot` from `home` arriving in `target` (CIV.EXE
+    /// 0x146be): `(distance + 10) * (trade of both) / 24`, halved on the same continent and
+    /// halved again between cities of one civilization; a third less each when the target's
+    /// owner knows the Railroad, then Flight.
+    pub fn trade_route_revenue(&self, slot: Slot, home: CityId, target: CityId) -> i32 {
+        let (a, b) = (self.city(home), self.city(target));
+        let mut v = (Map::dist(a.pos(), b.pos()) + 10) * (self.raw_trade(home) + self.raw_trade(target)) / 24;
+        if self.map.tile(a.x, a.y).continent == self.map.tile(b.x, b.y).continent {
+            v /= 2;
+        }
+        if b.owner == slot {
+            v /= 2;
+        }
+        for a in [adv::RAILROAD, adv::FLIGHT] {
+            if self.player(b.owner).knows(a) {
+                v -= v / 3;
+            }
+        }
+        v
+    }
+
+    /// Record a route of city `c` (CIV.EXE 0x148a7): up to three; when full, the new route
+    /// replaces the weakest one if it is stronger (by the partner's trade, doubled abroad).
     fn add_trade_route(&mut self, c: CityId, other: CityId) {
         if self.city(c).trade_routes.contains(&other) {
             return;
         }
-        if self.city(c).trade_routes.len() >= 3 {
-            let routes = self.city(c).trade_routes.clone();
-            let worst = routes.iter().enumerate().min_by_key(|(_, r)| self.trade_route_value(c, **r)).map(|(i, _)| i);
-            if let Some(i) = worst {
-                self.city_mut(c).trade_routes.remove(i);
-            }
+        if self.city(c).trade_routes.len() < 3 {
+            self.city_mut(c).trade_routes.push(other);
+            return;
         }
-        self.city_mut(c).trade_routes.push(other);
+        let owner = self.city(c).owner;
+        let weight = |r: CityId| self.city_opt(r).map(|rc| self.raw_trade(r) * if rc.owner != owner { 2 } else { 1 }).unwrap_or(-1);
+        let routes = self.city(c).trade_routes.clone();
+        let (i, w) = routes.iter().enumerate().map(|(i, r)| (i, weight(*r))).min_by_key(|(_, w)| *w).unwrap();
+        if w < weight(other) {
+            self.city_mut(c).trade_routes[i] = other;
+        }
+    }
+
+    /// Does a caravan of `slot` coming into its own city `target` ask what to do (CIV.EXE
+    /// 0x5c37)? Only when the city builds a wonder, or it is 10 or more squares from the
+    /// caravan's home or on another continent; otherwise the caravan simply moves in.
+    pub fn caravan_menu_wanted(&self, u: &super::Unit, target: CityId) -> bool {
+        let city = self.city(target);
+        if city.owner != u.owner {
+            return false;
+        }
+        if matches!(city.production, Production::Wonder(_)) {
+            return true;
+        }
+        let Some(home) = u.home.and_then(|h| self.city_opt(h)) else { return false };
+        Map::dist(home.pos(), city.pos()) >= 10 || self.map.tile(home.x, home.y).continent != self.map.tile(city.x, city.y).continent
     }
 
     // ---- diplomats --------------------------------------------------------------------------
@@ -1233,6 +1261,65 @@ mod tests {
     }
 
     #[test]
+    fn caravan_arrival_and_trade_route_rules() {
+        use crate::game::{Dir8, MoveOutcome};
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        for y in 2..20 {
+            for x in 2..40 {
+                let t = g.map.get_mut(x, y).unwrap();
+                t.terrain = crate::rules::Terrain::Grassland;
+                t.flags = 0;
+            }
+        }
+        g.map.compute_continents();
+        let ids: Vec<_> = g.all_units().map(|u| u.id).collect();
+        for id in ids {
+            g.remove_unit(id);
+        }
+        let ids: Vec<_> = g.all_cities().map(|c| c.id).collect();
+        for c in ids {
+            g.cities[c as usize] = None;
+        }
+        let slot = g.human_slot;
+        let home = g.add_city(slot, "Home".into(), 5, 5);
+        let near = g.add_city(slot, "Near".into(), 10, 5);
+        let far = g.add_city(slot, "Far".into(), 20, 5);
+        let caravan = |g: &mut Game, x| {
+            let id = g.add_unit(slot, unit_ids::CARAVAN, x, 5);
+            g.unit_mut(id).home = Some(home);
+            id
+        };
+        // CIV.EXE 0x5c37: a city within 10 squares asks only while it builds a wonder
+        let a = caravan(&mut g, 9);
+        assert_eq!(g.try_move(a, Dir8::E), Ok(MoveOutcome::Moved));
+        g.city_mut(near).production = Production::Wonder(won::PYRAMIDS);
+        let b = caravan(&mut g, 9);
+        assert_eq!(g.try_move(b, Dir8::E), Ok(MoveOutcome::CaravanArrived(near)));
+        assert_eq!(g.unit(b).pos(), (9, 5), "the caravan waits for the answer");
+        assert_eq!(g.move_on(b, Dir8::E), Ok(MoveOutcome::Moved));
+        // 10+ squares from home: the trade route is offered
+        let c = caravan(&mut g, 19);
+        assert_eq!(g.try_move(c, Dir8::E), Ok(MoveOutcome::CaravanArrived(far)));
+        let expected = (15 + 10) * (g.raw_trade(home) + g.raw_trade(far)) / 24 / 2 / 2;
+        assert_eq!(g.trade_route_revenue(slot, home, far), expected);
+        let (gold, beakers) = (g.player(slot).gold, g.player(slot).beakers);
+        assert!(g.caravan_action(c, CaravanAction::TradeRoute(far)).is_ok());
+        assert_eq!(g.player(slot).gold, gold + expected);
+        assert_eq!(g.player(slot).beakers, beakers + expected);
+        assert_eq!(g.city(home).trade_routes, vec![far]);
+        assert!(g.city(far).trade_routes.is_empty());
+        // Railroad, then Flight, each take a third off
+        g.player_mut(slot).learn(adv::RAILROAD);
+        let v = 25 * (g.raw_trade(home) + g.raw_trade(far)) / 24 / 4;
+        assert_eq!(g.trade_route_revenue(slot, home, far), v - v / 3);
+        // a full list only takes a stronger route
+        g.city_mut(home).trade_routes = vec![far, far, far];
+        g.add_trade_route(home, near);
+        let weaker = g.raw_trade(near) <= g.raw_trade(far);
+        assert_eq!(g.city(home).trade_routes.contains(&near), !weaker);
+    }
+
+    #[test]
     fn runs_twenty_turns_resolving_decisions() {
         for diff in [Difficulty::Chieftain, Difficulty::Emperor] {
             let mut g = Game::new(GameSetup { seed: 42, difficulty: diff, ..Default::default() }, None);
@@ -1287,7 +1374,7 @@ mod tests {
         assert!(g.unit_opt(car).is_none());
         assert!(g.player(slot).gold > gold);
         assert_eq!(g.city(c).trade_routes, vec![c2]);
-        assert_eq!(g.city(c2).trade_routes, vec![c]);
+        assert!(g.city(c2).trade_routes.is_empty(), "only the home city gets the route");
         assert!(g.city_yield(c).trade > g.raw_trade(c));
     }
 }

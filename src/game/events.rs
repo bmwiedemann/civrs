@@ -98,7 +98,8 @@ pub enum GameEvent {
     PeaceTreaty { a: Slot, b: Slot },
     WarDeclared { a: Slot, b: Slot },
     ContactMade { a: Slot, b: Slot },
-    TradeRouteMade { city: CityId, with: CityId, bonus: i32 },
+    /// `goods` indexes `turn::CARAVAN_GOODS`.
+    TradeRouteMade { city: CityId, with: CityId, bonus: i32, goods: u8 },
     HutEntered { unit: UnitId, slot: Slot, outcome: HutOutcome },
     CityFounded { city: CityId },
     /// Advisor hint keyed by HELP.TXT section.

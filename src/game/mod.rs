@@ -194,6 +194,9 @@ pub enum MoveOutcome {
     Boarded(UnitId),
     /// A non-combat unit entered a foreign city (caravan/diplomat): the UI shows a menu.
     EnteredForeignCity(CityId),
+    /// A human's caravan reached one of its own cities where it may trade or help a wonder
+    /// (`Game::caravan_menu_wanted`); it has not moved: the UI asks, and `move_on` enters.
+    CaravanArrived(CityId),
     /// Move not possible (no error text).
     Blocked,
 }

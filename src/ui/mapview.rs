@@ -51,6 +51,8 @@ enum Pending {
     Error,
     /// A note in front of the founding animation of the first city.
     CityFounded(crate::game::CityId),
+    /// The "Will you?" menu of a caravan stopped before one of our cities.
+    CaravanMenu(UnitId, crate::game::CityId, Dir8),
 }
 
 pub struct MapView {
@@ -257,10 +259,15 @@ impl MapView {
     }
 
     fn try_move(&mut self, ctx: &mut UiContext, d: Dir8) -> Transition {
+        self.move_active(ctx, d, false)
+    }
+
+    /// Move the active unit; `keep_moving` completes a caravan's move into one of our cities.
+    fn move_active(&mut self, ctx: &mut UiContext, d: Dir8, keep_moving: bool) -> Transition {
         let Some(id) = ctx.game().active_unit else { return Transition::None };
         let before = ctx.game().unit(id).pos();
         let attacker_kind = ctx.game().unit(id).kind;
-        let r = ctx.game_mut().try_move(id, d);
+        let r = if keep_moving { ctx.game_mut().move_on(id, d) } else { ctx.game_mut().try_move(id, d) };
         match r {
             Ok(outcome) => {
                 if let MoveOutcome::Attacked { won, defender, .. } = outcome {
@@ -276,6 +283,7 @@ impl MapView {
                 }
                 let t = match outcome {
                     MoveOutcome::EnteredForeignCity(c) => self.foreign_city_menu(ctx, id, c),
+                    MoveOutcome::CaravanArrived(c) => self.caravan_menu(ctx, id, c, d),
                     _ => Transition::None,
                 };
                 // show any events (huts, captures)
@@ -300,12 +308,51 @@ impl MapView {
         let u = g.unit(id);
         let name = g.city(c).name.clone();
         if u.kind == rules::unit_ids::CARAVAN {
-            self.pending = Pending::None;
-            self.status_line = format!("Caravan at {name}");
-            Transition::Push(Box::new(MenuDialog::new(vec![format!("Caravan arrives at {name}.")], vec!["Establish trade route".into(), "Help build wonder".into(), "Keep moving".into()])))
-        } else {
+            // a caravan entering a foreign city sets up the route at once (CIV.EXE 0x5d15)
+            return self.caravan_choice(ctx, id, c, 1);
+        }
+        {
             Transition::Push(Box::new(MenuDialog::new(vec![format!("Diplomat arrives at {name}.")], vec!["Establish embassy".into(), "Investigate city".into(), "Sabotage production".into(), "Steal technology".into(), "Incite a revolt".into(), "Keep moving".into()])))
         }
+    }
+
+    /// "Will you?" when a caravan reaches one of our cities (CIV.EXE 0x5cbe): the trade
+    /// route is greyed when the city builds a wonder and lies within 10 squares of home.
+    fn caravan_menu(&mut self, ctx: &mut UiContext, id: UnitId, c: crate::game::CityId, d: Dir8) -> Transition {
+        let g = ctx.game();
+        let u = g.unit(id);
+        let city = g.city(c);
+        let wonder = matches!(city.production, crate::game::Production::Wonder(_));
+        let near = u.home.and_then(|h| g.city_opt(h)).map(|h| Map::dist(h.pos(), city.pos()) < 10).unwrap_or(true);
+        let mut items = vec!["Keep moving".to_string(), "Establish trade route".to_string()];
+        if wonder {
+            items.push("Help build WONDER.".into());
+        }
+        let disabled = items.iter().enumerate().map(|(i, _)| i == 1 && wonder && near).collect();
+        self.pending = Pending::CaravanMenu(id, c, d);
+        Transition::Push(Box::new(MenuDialog::new(vec!["Will you?".into()], items).with_pos(100, 80).with_disabled(disabled)))
+    }
+
+    /// Carry out a caravan's choice at city `c`: 0 keep moving, 1 trade route, 2 help build
+    /// the wonder.
+    fn caravan_choice(&mut self, ctx: &mut UiContext, id: UnitId, c: crate::game::CityId, choice: usize) -> Transition {
+        use crate::game::turn::CaravanAction;
+        let action = match choice {
+            1 => CaravanAction::TradeRoute(c),
+            2 => CaravanAction::HelpWonder(c),
+            _ => CaravanAction::KeepMoving,
+        };
+        if let Err(e) = ctx.game_mut().caravan_action(id, action) {
+            return self.error(ctx, &e);
+        }
+        if let Some(s) = self.next_event_screen(ctx) {
+            self.pending = Pending::Event;
+            return Transition::Push(s);
+        }
+        if ctx.game().unit_opt(id).is_none() {
+            self.activate_next(ctx);
+        }
+        Transition::None
     }
 
     fn open_city(&mut self, _ctx: &mut UiContext, c: crate::game::CityId) -> Transition {
@@ -601,6 +648,13 @@ impl MapView {
                     }
                 }
                 Ok(MoveOutcome::EnteredHut) => {}
+                Ok(MoveOutcome::CaravanArrived(c)) => {
+                    let g = ctx.game_mut();
+                    g.unit_mut(id).order = UnitOrder::None;
+                    g.unit_mut(id).goto = None;
+                    g.active_unit = Some(id);
+                    return self.caravan_menu(ctx, id, c, dir);
+                }
                 Ok(_) | Err(_) => {
                     let g = ctx.game_mut();
                     if let Some(u) = g.unit_opt(id) {
@@ -1028,6 +1082,11 @@ impl Screen for MapView {
                 self.pending = Pending::Event;
                 Transition::Push(crate::ui::cityfounded::city_founded(c))
             }
+            Pending::CaravanMenu(id, c, d) => match result {
+                DialogResult::Choice(0) => self.move_active(ctx, d, true),
+                DialogResult::Choice(i) => self.caravan_choice(ctx, id, c, i),
+                _ => Transition::None,
+            },
             Pending::QuitConfirm => {
                 if result == DialogResult::No {
                     // second option = yes (see YesNo ordering above: ("No","Yes"))

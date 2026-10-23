@@ -870,7 +870,7 @@ fn act_caravan(g: &mut Game, id: UnitId, sink: &mut dyn FnMut(TurnStep)) {
                     let bonus = g.trade_route_value(h, d);
                     g.city_mut(h).trade_routes.push(d);
                     g.player_mut(slot).gold += bonus * 2;
-                    g.push_event(GameEvent::TradeRouteMade { city: h, with: d, bonus });
+                    g.push_event(GameEvent::TradeRouteMade { city: h, with: d, bonus, goods: (id & 7) as u8 });
                     g.remove_unit(id);
                     g.refresh_vision(slot);
                 }

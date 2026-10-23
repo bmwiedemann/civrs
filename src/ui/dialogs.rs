@@ -188,9 +188,13 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
         GameEvent::WarDeclared { a, b } => news(vec![format!("The {} declare war", civ(*a)), format!("on the {}!", civ(*b))]),
         GameEvent::EmbassyEstablished { slot, with } if *slot == me => news(vec!["Embassy established".into(), format!("with the {}.", civ(*with))]),
         GameEvent::ContactMade { .. } => None,
-        GameEvent::TradeRouteMade { city, with, bonus } if g.city(*city).owner == me => {
-            msg(vec![format!("Trade route established between {} and {}.", city_name(*city), city_name(*with)), format!("Bonus: {bonus} gold.")])
-        }
+        // CIV.EXE 0x147f7
+        GameEvent::TradeRouteMade { city, with, bonus, goods } if g.city(*city).owner == me => msg(vec![
+            format!("{} caravan from {}", crate::game::turn::CARAVAN_GOODS[*goods as usize & 7], city_name(*city)),
+            format!("arrives in {}", city_name(*with)),
+            "Trade route established".into(),
+            format!("Revenue: ${bonus}."),
+        ]),
         GameEvent::HutEntered { slot, outcome, .. } if *slot == me => {
             let text = match outcome {
                 HutOutcome::Gold(n) => vec![format!("You have discovered {n}$ of valuable metals.")],

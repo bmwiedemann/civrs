@@ -386,7 +386,7 @@ size rank + KINGnn portrait with palette merge 64..143 + KING.TXT sections), pal
 NUKE1 flash, INVADERS/2/3 barbarians, disasters D1..D6, advisors F1-F6 (City Status, Military, Intelligence, Attitude, Trade, Science), world F7-F12
 (Wonders, Top 5 cities, Civ score, World map, Demographics, Spaceships), Civilopedia (icons + BLURB0/1/2/4), save/load slots, tax/lux rates, options,
 end game (SAD destroyed; SLAM1/SLAM2/SLAG2 + ARCH score/retire; PLANET spaceship win), Hall of Fame (KING.TXT FAME), ERROR.TXT message boxes, HELP.TXT hints,
-caravan menu (trade route / help wonder / keep moving), diplomat menu (embassy / investigate / sabotage / steal tech / incite revolt), unit stack list.
+caravans (0x5b66: in a foreign city the route is set up at once; in an own city "Will you?" Keep moving / Establish trade route / Help build WONDER. only when it builds a wonder, is 10+ squares from home or on another continent; trade greyed for a wonder city under 10), revenue (0x146be) `(d+10)(ta+tb)/24`, /2 same continent, /2 own civ, -1/3 each for Railroad, Flight of the target's owner, to gold and beakers; route kept in the home city only (3 slots, weakest replaced if stronger), diplomat menu (embassy / investigate / sabotage / steal tech / incite revolt), unit stack list.
 Food storage: the stippled box at the left of the dark FOOD STORAGE panel is the granary itself,
 (size+1) icons wide on an 8-px pitch (squeezed when wider than the panel) and 10 rows high; a size-1
 city's box is (3,115)-(19,196).

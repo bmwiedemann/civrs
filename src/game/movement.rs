@@ -53,6 +53,15 @@ impl Game {
 
     /// Try to move the unit one step. Handles combat, city capture, huts and boarding.
     pub fn try_move(&mut self, id: UnitId, d: Dir8) -> Result<MoveOutcome, RuleError> {
+        self.step(id, d, true)
+    }
+
+    /// Complete a move that stopped with `MoveOutcome::CaravanArrived` ("Keep moving").
+    pub fn move_on(&mut self, id: UnitId, d: Dir8) -> Result<MoveOutcome, RuleError> {
+        self.step(id, d, false)
+    }
+
+    fn step(&mut self, id: UnitId, d: Dir8, ask_caravan: bool) -> Result<MoveOutcome, RuleError> {
         let u = self.unit(id).clone();
         if u.moves_left == 0 {
             return Err(RuleError::NoMoves);
@@ -122,6 +131,14 @@ impl Game {
                     return Ok(MoveOutcome::EnteredForeignCity(c));
                 }
                 return Ok(self.capture_city(id, c));
+            }
+        }
+
+        // a human's caravan coming into one of its own cities may stop to trade or help build
+        // a wonder (CIV.EXE 0x5c37)
+        if ask_caravan && u.kind == unit_ids::CARAVAN && self.is_human(slot) {
+            if let Some(c) = self.city_at(tx, ty).filter(|c| self.caravan_menu_wanted(&u, *c)) {
+                return Ok(MoveOutcome::CaravanArrived(c));
             }
         }
 
