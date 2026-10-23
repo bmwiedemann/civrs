@@ -22,7 +22,9 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// has no layer: a u32 LE byte count first); older saves compute it from the terrain.
 /// 11: then by the global warming counter (u16 LE, `Game::warming_counter`); older saves start
 /// it at 0.
-pub const VERSION: u16 = 11;
+/// 12: then by the number of unit slots (u32 LE) and each slot's `Unit::seen_by` byte (0 for an
+/// empty slot); older saves take the owner and the civilizations that see the square now.
+pub const VERSION: u16 = 12;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -94,6 +96,8 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     data.extend_from_slice(&(g.map.site.len() as u32).to_le_bytes());
     data.extend_from_slice(&g.map.site);
     data.extend_from_slice(&g.warming_counter.to_le_bytes());
+    data.extend_from_slice(&(g.units.len() as u32).to_le_bytes());
+    data.extend(g.units.iter().map(|u| u.as_ref().map(|u| u.seen_by).unwrap_or(0)));
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -175,6 +179,24 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     let warming = site + 4 + rest.get(site..site + 4).map(|n| u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize).unwrap_or(0);
     if let Some(b) = rest.get(warming..warming + 2).filter(|_| ver >= 11) {
         g.warming_counter = u16::from_le_bytes([b[0], b[1]]);
+    }
+    let seen = warming + 2;
+    let slots = rest.get(seen..seen + 4).filter(|_| ver >= 12).map(|n| u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize);
+    match slots.and_then(|n| rest.get(seen + 4..seen + 4 + n)) {
+        Some(b) => {
+            for (u, v) in g.units.iter_mut().zip(b) {
+                if let Some(u) = u {
+                    u.seen_by = *v;
+                }
+            }
+        }
+        None => {
+            let vision = g.vision.clone();
+            for u in g.units.iter_mut().flatten() {
+                let here = if crate::game::Map::in_bounds(u.x, u.y) { vision.get(crate::game::Map::idx(u.x, u.y)).copied().unwrap_or(0) } else { 0 };
+                u.seen_by = 1 << u.owner | here;
+            }
+        }
     }
     g.update_research_catch_up();
     Ok(g)
@@ -408,6 +430,28 @@ mod tests {
     }
 
     #[test]
+    fn unit_sightings_survive_a_save_and_old_saves_take_the_owner_and_vision() {
+        let mut g = Game::new(GameSetup { seed: 4, ..Default::default() }, None);
+        let id = g.all_units().next().unwrap().id;
+        let owner = g.unit(id).owner;
+        let other = if owner == 2 { 3 } else { 2 };
+        g.unit_mut(id).seen_by = 1 << owner | 1 << other;
+        let dir = std::env::temp_dir().join(format!("civrs-seen-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        assert_eq!(super::load_game(&path).unwrap().unit(id).seen_by, 1 << owner | 1 << other);
+        // a version-11 file: no sightings; the owner, and who sees the square now
+        let mut data = std::fs::read(&path).unwrap();
+        data[4..6].copy_from_slice(&11u16.to_le_bytes());
+        data.truncate(data.len() - 4 - g.units.len());
+        std::fs::write(&path, &data).unwrap();
+        let old = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        let u = old.unit(id);
+        assert_eq!(old.unit(id).seen_by, 1 << owner | old.vision[crate::game::Map::idx(u.x, u.y)]);
+    }
+
+    #[test]
     fn warming_counter_survives_a_save_and_old_saves_start_at_zero() {
         let mut g = Game::new(GameSetup { seed: 4, ..Default::default() }, None);
         g.warming_counter = 13;
@@ -417,7 +461,7 @@ mod tests {
         assert_eq!(super::load_game(&path).unwrap().warming_counter, 13);
         let mut data = std::fs::read(&path).unwrap();
         data[4..6].copy_from_slice(&10u16.to_le_bytes());
-        data.truncate(data.len() - 2);
+        data.truncate(data.len() - 2 - 4 - g.units.len());
         std::fs::write(&path, &data).unwrap();
         let old = super::load_game(&path).unwrap();
         let _ = std::fs::remove_dir_all(dir);
@@ -446,7 +490,7 @@ mod tests {
         // a version-7 file: no diplomacy trailer; relations and embassies of the body count
         let mut data = std::fs::read(&path).unwrap();
         data[4..6].copy_from_slice(&7u16.to_le_bytes());
-        data.truncate(data.len() - 8 * super::DIPLO_TRAILER - 8 * super::AI_TRAILER - 4 - g.map.site.len() - 2);
+        data.truncate(data.len() - 8 * super::DIPLO_TRAILER - 8 * super::AI_TRAILER - 4 - g.map.site.len() - 2 - 4 - g.units.len());
         std::fs::write(&path, &data).unwrap();
         let mut old = super::load_game(&path).unwrap();
         // what a version-7 save stored
@@ -506,7 +550,7 @@ mod tests {
         // a version-5 file: same body, no city trailer
         let mut data = std::fs::read(&path).unwrap();
         data[4..6].copy_from_slice(&5u16.to_le_bytes());
-        data.truncate(data.len() - 8 * super::AI_TRAILER - 4 - g.map.site.len() - 2 - 8 * super::DIPLO_TRAILER - 4 - g.cities.len() * super::CITY_TRAILER);
+        data.truncate(data.len() - 8 * super::AI_TRAILER - 4 - g.map.site.len() - 2 - 4 - g.units.len() - 8 * super::DIPLO_TRAILER - 4 - g.cities.len() * super::CITY_TRAILER);
         std::fs::write(&path, &data).unwrap();
         let old = super::load_game(&path).unwrap();
         let _ = std::fs::remove_dir_all(dir);

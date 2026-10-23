@@ -67,6 +67,13 @@ pub struct Unit {
     pub leader: bool,
     /// Turn the unit was created (for AI bookkeeping / barbarian expiry).
     pub created_turn: u32,
+    /// The civilizations that have seen the unit since its last step, a bit per slot (CIV.EXE
+    /// unit +9): created with the owner's bit (create_unit 0x8bee), cleared by every step
+    /// (0x67e4, cargo 0x69b4) and set again by the sightings of `Game::mark_sightings`
+    /// (unit_look 0x8038). A foreign unit is drawn, and its moves and fights are shown, only
+    /// to the civilizations whose bit it has. Saved in the version-12 trailer.
+    #[serde(skip)]
+    pub seen_by: u8,
 }
 
 impl Unit {
@@ -88,6 +95,7 @@ impl Unit {
             carried_by: None,
             leader: false,
             created_turn: turn,
+            seen_by: 1 << owner,
         }
     }
 

@@ -569,7 +569,7 @@ fn copy_explored(map: &mut Map, slot: Slot, from: Slot) {
 mod tests {
     use super::*;
     use crate::game::{tile_flags, GameSetup, Relation};
-    use crate::rules::{improvement_ids as imp, unit_ids, Govt, Terrain};
+    use crate::rules::{improvement_ids as imp, unit_ids, Terrain};
 
     fn flat_game() -> Game {
         flat_game_with(7)
@@ -938,5 +938,96 @@ mod tests {
         g.city_unrest(c);
         assert_eq!(g.city(c).owner, 2);
         assert!(g.events.iter().any(|e| matches!(e, GameEvent::CityDefected { city, admired: a, from: 1 } if *city == c && *a == admired)));
+    }
+
+    /// The human (slot h) and an opponent o on the flat arena, everything at war.
+    fn sightings_game() -> (Game, u8, u8) {
+        let mut g = flat_game();
+        let h = g.human_slot;
+        let o = if h == 2 { 3 } else { 2 };
+        g.players[o as usize].in_game = true;
+        g.players[o as usize].alive = true;
+        for (a, b) in [(h, o), (1, 2)] {
+            g.set_relation(a, b, Relation::War);
+        }
+        (g, h, o)
+    }
+
+    /// CIV.EXE unit +9: created seen by its owner (0x8bee); a step clears it (0x67e4); unit_look
+    /// marks both sides of a neighbourhood (0x835b/0x840f) and the mark stays while the unit
+    /// stands still, even after the observer has gone (draw_tile_with_units 0x1b85a).
+    #[test]
+    fn units_stay_seen_until_they_move() {
+        let (mut g, h, o) = sightings_game();
+        let enemy = g.add_unit(o, unit_ids::LEGION, 15, 15);
+        assert_eq!(g.unit(enemy).seen_by, 1 << o);
+        assert!(!g.units_shown_to(h, 15, 15));
+        let scout = g.add_unit(h, unit_ids::MILITIA, 13, 15);
+        g.try_move(scout, crate::game::Dir8::E).unwrap();
+        assert!(g.units_shown_to(h, 15, 15), "seen from next door");
+        assert!(g.unit_seen_by(scout, o), "and the scout by the enemy");
+        // the scout walks away: the enemy is still on the map where it was seen
+        g.unit_mut(scout).moves_left = 3;
+        g.try_move(scout, crate::game::Dir8::W).unwrap();
+        g.unit_mut(scout).moves_left = 3;
+        g.try_move(scout, crate::game::Dir8::W).unwrap();
+        assert!(!g.visible_to(h, 15, 15));
+        assert!(g.units_shown_to(h, 15, 15));
+        // once it steps out of sight it is gone from the human's map
+        g.place_unit(enemy, 16, 15, 0);
+        g.mark_sightings(enemy);
+        assert!(!g.units_shown_to(h, 16, 15));
+    }
+
+    /// Cities hide their units: a unit in a city is not seen by its neighbours, nor is the
+    /// stack of a neighbouring city marked (0x833d, 0x83f1); a foreign city sees an adjacent
+    /// land unit (0x82c5), and the human's cities see two squares away (0x86b3).
+    #[test]
+    fn cities_hide_their_units_and_see_around_them() {
+        let (mut g, h, o) = sightings_game();
+        g.add_city(o, "Fort".into(), 15, 15);
+        let guard = g.add_unit(o, unit_ids::PHALANX, 15, 15);
+        let scout = g.add_unit(h, unit_ids::MILITIA, 14, 15);
+        g.mark_sightings(scout);
+        assert!(!g.unit_seen_by(guard, h), "the garrison stays hidden");
+        assert!(g.unit_seen_by(scout, o), "the city sees the land unit next to it");
+        g.add_city(h, "Watch".into(), 20, 20);
+        let raider = g.add_unit(o, unit_ids::LEGION, 22, 21);
+        g.map.explore(h, 22, 21, 0);
+        g.mark_sightings(raider);
+        assert!(g.unit_seen_by(raider, h), "seen by the human's city two squares away");
+    }
+
+    /// Two squares away only units with 5x5 sight see, and never a Submarine (0x87f6); a
+    /// Submarine next to a unit is seen like any other (0x840f).
+    #[test]
+    fn far_sight_sees_two_squares_but_not_submarines() {
+        let (mut g, h, o) = sightings_game();
+        for y in 10..20 {
+            for x in 10..20 {
+                g.map.get_mut(x, y).unwrap().terrain = Terrain::Ocean;
+            }
+        }
+        let far = (0..crate::rules::UNITS.len() as u8).find(|k| crate::rules::UNITS[*k as usize].sight & 2 != 0 && crate::rules::UNITS[*k as usize].domain == crate::rules::Domain::Sea && *k != unit_ids::SUBMARINE).unwrap();
+        let ship = g.add_unit(h, far, 12, 12);
+        let near = g.add_unit(h, unit_ids::TRIREME, 16, 12);
+        let frigate = g.add_unit(o, unit_ids::FRIGATE, 14, 12);
+        let sub = g.add_unit(o, unit_ids::SUBMARINE, 12, 14);
+        let sub2 = g.add_unit(o, unit_ids::SUBMARINE, 17, 12);
+        for id in [ship, near] {
+            g.mark_sightings(id);
+        }
+        assert!(g.unit_seen_by(frigate, h), "a ship two squares off is seen by 5x5 sight");
+        assert!(!g.unit_seen_by(sub, h), "a Submarine two squares off is not");
+        assert!(g.unit_seen_by(sub2, h), "a Submarine next to a unit is");
+    }
+
+    #[test]
+    fn a_bribed_unit_is_seen_by_its_former_owner() {
+        let (mut g, h, o) = sightings_game();
+        let t = g.add_unit(o, unit_ids::LEGION, 15, 15);
+        g.player_mut(h).gold = 1000;
+        let n = g.bribe_unit(h, t);
+        assert_eq!(g.unit(n).seen_by, 1 << h | 1 << o);
     }
 }

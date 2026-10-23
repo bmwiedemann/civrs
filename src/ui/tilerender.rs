@@ -286,7 +286,9 @@ pub fn draw_tile(fb: &mut Surface, ctx: &UiContext, game: &Game, slot: Slot, x: 
     }
     // the active unit's off phase shows the bare square, not the next unit of its stack
     let blinking = hide_unit.is_some_and(|h| game.unit_opt(h).is_some_and(|u| u.pos() == (x, y)));
-    if game.visible_to(slot, x, y) && !blinking {
+    // foreign units only when the viewer has seen them since their last step (unit +9,
+    // draw_tile_with_units 0x1b85a); they stay in view while they stand still
+    if game.units_shown_to(slot, x, y) && !blinking {
         let units: Vec<_> = game.units_at(x, y).into_iter().filter(|u| game.unit(*u).carried_by.is_none() || game.unit(*u).carried_by.map(|c| game.unit_opt(c).is_none()).unwrap_or(false)).collect();
         if let Some(&top) = units.first() {
             // In a city only show units when there are no city sprites? Civ1 shows the city only.

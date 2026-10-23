@@ -15,8 +15,7 @@
 //! Every move is reported to the turn `sink` as `TurnStep::AiMove` / `TurnStep::Combat` with a
 //! `visible` flag telling the UI whether the human can see either square.
 //!
-//! civrs keeps no unit "seen by" byte (+9): a unit counts as seen by another civilization while
-//! that civilization can see its square now (unverified approximation).
+//! Who has seen a unit is its "seen by" byte (+9, `Unit::seen_by`, `Game::mark_sightings`).
 
 use crate::game::goals::goal;
 use crate::game::goto::{dist_metric, exe_in_map, turn_angle, DX, DY};
@@ -75,10 +74,6 @@ fn dir(d: usize) -> Command {
     }
 }
 
-fn visible(g: &Game, a: (i32, i32), b: (i32, i32)) -> bool {
-    let h = g.human_slot;
-    g.visible_to(h, a.0, a.1) || g.visible_to(h, b.0, b.1)
-}
 
 /// One `try_move` with reporting.
 pub fn step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) -> Result<MoveOutcome, RuleError> {
@@ -87,6 +82,9 @@ pub fn step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) -
     let (dx, dy) = d.delta();
     let to = (Map::wrap_x(from.0 + dx), from.1 + dy);
     let defender_owner = g.units_at(to.0, to.1).first().map(|u| g.unit(*u).owner).unwrap_or(0);
+    // the human watches what he has seen (unit +9, 0x6721; the defender for a fight, 0x19a9e)
+    let h = g.human_slot;
+    let watched = g.human_watches_move(id, to) || g.units_shown_to(h, to.0, to.1);
     // what happened before this move is shown before it, what the move brings (a contact and
     // its treaty, a hut) after it, as CIV.EXE shows its messages while the computer moves
     flush_events(g, sink);
@@ -94,11 +92,11 @@ pub fn step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) -
     if let Ok(out) = &r {
         match out {
             MoveOutcome::Moved | MoveOutcome::EnteredHut | MoveOutcome::Boarded(_) | MoveOutcome::CapturedCity(_) | MoveOutcome::DestroyedCity => {
-                let vis = visible(g, from, to);
+                let vis = watched || g.unit_seen_by(id, h);
                 sink(TurnStep::AiMove { unit: id, from, to, visible: vis });
             }
             MoveOutcome::Attacked { won, at, defender } => {
-                let vis = visible(g, from, *at);
+                let vis = watched || g.unit_seen_by(id, h);
                 sink(TurnStep::Combat { attacker_at: from, defender_at: *at, won: *won, visible: vis, attacker: attacker_kind, defender: *defender, defender_owner });
             }
             _ => {}
@@ -484,7 +482,7 @@ fn fighter(g: &mut Game, slot: Slot, id: UnitId) -> Option<Command> {
     let h = g.human_slot;
     let mut nearest: Option<(UnitId, i32)> = None;
     let mut last = 0;
-    for b in g.all_units().filter(|b| b.owner == h && b.kind == unit_ids::BOMBER && g.visible_to(slot, b.x, b.y)) {
+    for b in g.all_units().filter(|b| b.owner == h && b.kind == unit_ids::BOMBER && b.seen_by & (1 << slot) != 0) {
         let d = Map::civ_distance(u.pos(), b.pos());
         last = d;
         if nearest.map(|n| d < n.1).unwrap_or(true) {
@@ -1292,7 +1290,8 @@ fn score_direction(g: &mut Game, c: &Ctx, k: usize, peaceful: bool) -> Option<(i
             return None;
         }
     } else {
-        let seen = (1..8u8).any(|o| o != slot && g.player(o).alive && g.visible_to(o, c.x, c.y));
+        // nobody has seen the unit since its last step (unit +9 == 0, 0x1802c)
+        let seen = u.seen_by != 0;
         if !seen && !here_ocean {
             let r = g.rng.below(3) as i32;
             let f = if c.role == AiRole::Attack { t.info().move_cost } else { t.info().defense } as i32;

@@ -1,6 +1,6 @@
 //! Unit movement: terrain costs, zones of control, boarding ships, triggering combat.
 
-use super::map::{tile_flags, Dir8, Map, UnitId};
+use super::map::{tile_flags, Dir8, Map, Slot, UnitId};
 use super::unit::UnitOrder;
 use super::{Game, MoveOutcome, RuleError};
 use crate::rules::{self, unit_ids, Domain};
@@ -205,6 +205,7 @@ impl Game {
                             self.unit_mut(id).order = UnitOrder::Sentry;
                             self.unit_mut(id).moves_left = 0;
                             self.refresh_vision(slot);
+                            self.mark_sightings(id);
                             return Ok(MoveOutcome::Boarded(s));
                         }
                         None => return Ok(MoveOutcome::Blocked),
@@ -268,6 +269,7 @@ impl Game {
                 let cu = self.unit_mut(c);
                 cu.x = tx;
                 cu.y = ty;
+                cu.seen_by = 0;
             }
         }
         // aircraft landing in a city / carrier refuels
@@ -286,9 +288,17 @@ impl Game {
                 self.unit_mut(id).carried_by = None;
             }
         }
+        // a unit that enters a foreign city is seen by its owner (0x6a65)
+        if let Some(c) = self.city_at(tx, ty) {
+            let o = self.city(c).owner;
+            if o != slot {
+                self.unit_mut(id).seen_by |= 1 << o;
+            }
+        }
         self.reveal_garrisons_near(slot, tx, ty);
         self.refresh_vision(slot);
-        // unit_look: the civilizations whose units are next to it meet (0x8491)
+        // unit_look: who sees whom, and the civilizations whose units are next to it meet (0x8491)
+        self.mark_sightings(id);
         self.look_for_contacts(id);
         self.unit_look_goals(id);
         if had_hut {
@@ -308,10 +318,131 @@ impl Game {
         if u.order == UnitOrder::Fortified || u.order == UnitOrder::Fortify || u.order.is_work() {
             u.order = UnitOrder::None;
         }
-        // a move resets the work counter (unit +5 = the type's fuel, 0x6d00)
+        // a move resets the work counter (unit +5 = the type's fuel, 0x6d00) and who has seen
+        // the unit (+9, 0x67e4)
         u.order_turns = 0;
+        u.seen_by = 0;
         let owner = u.owner;
         self.note_occupant(owner, x, y);
+    }
+
+    /// Has civilization `slot` seen unit `id` since its last step (unit +9)? Its owner
+    /// always has.
+    pub fn unit_seen_by(&self, id: UnitId, slot: Slot) -> bool {
+        self.unit_opt(id).is_some_and(|u| u.owner == slot || u.seen_by & (1 << slot) != 0)
+    }
+
+    /// Does `slot` see the units on (x, y)? As draw_tile_with_units (0x1b85a) decides it: the
+    /// square's first unit (0x1bade) belongs to `slot` or has its bit.
+    pub fn units_shown_to(&self, slot: Slot, x: i32, y: i32) -> bool {
+        self.units_at(x, y).first().is_some_and(|u| self.unit_seen_by(*u, slot))
+    }
+
+    /// The sightings of `unit_look` (CIV.EXE 0x8038) for unit `id` at its square:
+    /// - next to it (0x8255..0x8413): a foreign city sees a land unit; the first unit of a
+    ///   foreign stack sees it unless it stands in a city, and is seen by it unless that stack
+    ///   is in a city (cities hide their units);
+    /// - two squares away, for a unit that sees 5x5 (ships: ocean squares only, 0x878d): the
+    ///   first unit of a foreign stack outside a city is seen, never a Submarine (0x87f6);
+    /// - two squares away whatever the unit (0x8546..0x8715): unless it is a Submarine, a
+    ///   foreign stack whose first unit sees 5x5 (a ship only when this unit is at sea) wakes
+    ///   from sentry, loses its goto and sees this unit unless it is in a city; otherwise one
+    ///   of the human's cities there sees it, when the human knows this unit's square.
+    pub fn mark_sightings(&mut self, id: UnitId) {
+        let Some(u) = self.unit_opt(id).cloned() else { return };
+        let l = u.owner;
+        let human = self.human_slot;
+        let in_city = self.city_at(u.x, u.y).is_some();
+        let far = u.sight_range() > 1;
+        let at_sea = self.map.is_ocean(u.x, u.y);
+        let human_knows_here = self.explored(human, u.x, u.y);
+        let mut seen = 0u8;
+        let mut marked: Vec<UnitId> = Vec::new();
+        let mut woken: Vec<UnitId> = Vec::new();
+        for dy in -2..=2i32 {
+            for dx in -2..=2i32 {
+                let (nx, ny) = (Map::wrap_x(u.x + dx), u.y + dy);
+                if (dx, dy) == (0, 0) || !Map::in_bounds(nx, ny) {
+                    continue;
+                }
+                let city = self.city_at(nx, ny);
+                let head = self.units_at(nx, ny).first().copied().filter(|o| self.unit(*o).owner != l);
+                if dx.abs() <= 1 && dy.abs() <= 1 {
+                    if let Some(c) = city {
+                        let o = self.city(c).owner;
+                        if o != l && u.is_land() {
+                            seen |= 1 << o;
+                        }
+                    }
+                    if let Some(h) = head {
+                        if !in_city {
+                            seen |= 1 << self.unit(h).owner;
+                        }
+                        if city.is_none() {
+                            marked.push(h);
+                        }
+                    }
+                    continue;
+                }
+                if let Some(h) = head {
+                    if far && !(u.is_sea() && !self.map.is_ocean(nx, ny)) && city.is_none() && self.unit(h).kind != unit_ids::SUBMARINE {
+                        marked.push(h);
+                    }
+                    let hu = self.unit(h);
+                    if u.kind != unit_ids::SUBMARINE {
+                        if hu.sight_range() > 1 && !(hu.is_sea() && !at_sea) {
+                            woken.push(h);
+                            if !in_city {
+                                seen |= 1 << hu.owner;
+                            }
+                        } else if hu.owner == human && city.is_some() && human_knows_here {
+                            seen |= 1 << human;
+                        }
+                    }
+                }
+                if city.is_some_and(|c| self.city(c).owner == human) && human_knows_here {
+                    seen |= 1 << human;
+                }
+            }
+        }
+        self.unit_mut(id).seen_by |= seen;
+        for h in marked {
+            self.unit_mut(h).seen_by |= 1 << l;
+        }
+        for h in woken {
+            let hu = self.unit_mut(h);
+            if hu.order == UnitOrder::Sentry && hu.carried_by.is_none() {
+                hu.order = UnitOrder::None;
+            }
+            hu.goto = None;
+        }
+    }
+
+    /// Does the human watch unit `id` step to `to` (CIV.EXE 0x6721)? When it is his own or he
+    /// has seen it, and also (0x6607, 0x6672, bits CIV.EXE ORs in before the step clears
+    /// them) when it is a barbarian on land leaving a square he knows near one of his cities,
+    /// or it enters a foreign city he knows while he has an embassy with either side.
+    pub fn human_watches_move(&self, id: UnitId, to: (i32, i32)) -> bool {
+        let Some(u) = self.unit_opt(id) else { return false };
+        let human = self.human_slot;
+        if self.unit_seen_by(id, human) {
+            return true;
+        }
+        if u.owner == 0 && !self.map.is_ocean(to.0, to.1) && self.explored(human, u.x, u.y) {
+            if let (Some(c), _) = self.nearest_city_exe(u.x, u.y) {
+                if self.city(c).owner == human {
+                    return true;
+                }
+            }
+        }
+        if let Some(c) = self.city_at(to.0, to.1) {
+            let o = self.city(c).owner;
+            let embassy = self.player(human).has_embassy(u.owner) || self.player(human).has_embassy(o);
+            if o != u.owner && self.explored(human, to.0, to.1) && embassy {
+                return true;
+            }
+        }
+        false
     }
 
     pub fn cargo_count(&self, ship: UnitId) -> usize {
@@ -381,6 +512,7 @@ impl Game {
         let looking: Vec<(UnitId, (i32, i32))> = self.all_units().filter(|u| u.owner == slot).map(|u| (u.id, u.pos())).collect();
         for (id, (x, y)) in looking {
             self.reveal_garrisons_near(slot, x, y);
+            self.mark_sightings(id);
             self.look_for_contacts(id);
             self.unit_look_goals(id);
         }

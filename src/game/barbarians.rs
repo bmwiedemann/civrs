@@ -232,7 +232,9 @@ impl Game {
                     let (nx, ny) = (Map::wrap_x(u.x + DIR_DX[i]), u.y + DIR_DY[i]);
                     if Map::in_bounds(nx, ny) && self.owner_at(nx, ny).is_none() && self.map.is_land(nx, ny) {
                         let kind = if self.map.terrain(nx, ny).info().move_cost > 2 { unit_ids::LEGION } else { unit_ids::CAVALRY };
-                        self.add_barbarian(kind, nx, ny);
+                        // seen by the civ that opened the hut (0x9ab3)
+                        let b = self.add_barbarian(kind, nx, ny);
+                        self.unit_mut(b).seen_by |= 1 << slot;
                     }
                     i += step;
                 }
@@ -410,6 +412,9 @@ impl Game {
             };
             let u = self.add_barbarian(kind, x, y);
             self.unit_mut(u).leader = kind == unit_ids::DIPLOMAT;
+            // seen by every civilization that knows the square (0x30cd)
+            let known = self.map.tile(x, y).explored;
+            self.unit_mut(u).seen_by |= known;
         }
         self.refresh_vision(0);
     }
@@ -617,8 +622,13 @@ impl Game {
                     if self.map.tile(nx, ny).explored_by(human) && city.owner == human && self.continent_exe(city.x, city.y) == self.continent_exe(nx, ny) {
                         let near_city = self.nearest_city_exe(nx, ny).0;
                         self.push_event(GameEvent::BarbariansLanded { at: (nx, ny), near_city, target: human });
+                        // the human, told of the landing, sees the ship (0x18f9b)
+                        self.unit_mut(id).seen_by |= 1 << human;
                     }
                 }
+                // unloading, the ship is seen by every civilization that knows its square (0x19029)
+                let known = self.map.tile(u.x, u.y).explored;
+                self.unit_mut(id).seen_by |= known;
                 self.unit_mut(id).moves_left = 0;
                 return BarbarianCommand::Unload;
             }

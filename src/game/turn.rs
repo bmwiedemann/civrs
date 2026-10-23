@@ -299,6 +299,8 @@ impl Game {
         let t = self.unit(target).clone();
         self.remove_unit(target);
         let new = self.add_unit(by, t.kind, t.x, t.y);
+        // the new unit is also seen by the unit's former owner (o 0x1de89)
+        self.unit_mut(new).seen_by |= 1 << t.owner;
         self.player_mut(by).gold -= cost;
         self.refresh_vision(by);
         self.refresh_vision(t.owner);
@@ -1431,6 +1433,8 @@ impl Game {
             if Map::dist((u.x, u.y), pos) <= 1 && !self.map.is_ocean(u.x, u.y) {
                 u.owner = to;
                 u.order = UnitOrder::None;
+                // re-created for the new owner, seen by the old one (o 0x1e3af)
+                u.seen_by = 1 << to | 1 << from;
                 if u.home != Some(c) {
                     u.home = None;
                 }
