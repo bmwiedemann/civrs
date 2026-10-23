@@ -69,8 +69,7 @@ impl Game {
             return None;
         }
         if self.cities_of(u.owner).is_empty() {
-            let clear = self.all_cities().all(|c| Map::dist((c.x, c.y), (x, y)) >= 3);
-            if clear && super::mapgen::site_score(&self.map, x, y) >= GOOD_SITE {
+            if self.good_city_site(x, y) {
                 return self.hint("BUILDCITY");
             }
             return None;
@@ -93,6 +92,29 @@ impl Game {
             return None;
         }
         Some(GameEvent::HintAt { section: section.into(), city })
+    }
+
+    /// BUILDCITY's test (CIV.EXE o 0x3824): the square yields at least 2 food and shields,
+    /// it is a good site and no neighbour is a better one, and no city works it (the original
+    /// reads its site value from a map layer that founding a city overwrites over the radius).
+    fn good_city_site(&self, x: i32, y: i32) -> bool {
+        let info = self.map.tile(x, y).terrain.info();
+        if info.food + info.shields < 2 {
+            return false;
+        }
+        let in_radius = self.all_cities().any(|c| rules::CITY_RADIUS.iter().any(|&(dx, dy)| (c.x + dx as i32, c.y + dy as i32) == (x, y)));
+        if in_radius {
+            return false;
+        }
+        let score = super::mapgen::site_score(&self.map, x, y);
+        if score < GOOD_SITE {
+            return false;
+        }
+        super::Dir8::ALL.iter().all(|d| {
+            let (dx, dy) = d.delta();
+            let (nx, ny) = (x + dx, y + dy);
+            !Map::in_bounds(nx, ny) || super::mapgen::site_score(&self.map, nx, ny) <= score
+        })
     }
 
     /// The human's nearest city whose radius covers (x,y).
@@ -149,6 +171,21 @@ mod tests {
         let s2 = g.add_unit(me, unit_ids::SETTLERS, 24, 24);
         g.found_city(s2).unwrap();
         assert!(!g.take_events().iter().any(|e| matches!(e, GameEvent::Hint(_))));
+    }
+
+    #[test]
+    fn no_buildcity_hint_inside_another_city_radius() {
+        let mut g = arena();
+        let me = g.human_slot;
+        let other = (0..8u8).find(|s| *s != me && *s != 0 && g.player(*s).alive).unwrap();
+        let s = g.add_unit(other, unit_ids::SETTLERS, 20, 20);
+        g.found_city(s).unwrap();
+        g.take_events();
+        for (x, y) in [(22, 21), (21, 22), (20, 18)] {
+            assert!(!g.good_city_site(x, y), "({x},{y}) is worked by the city");
+        }
+        let mine = g.add_unit(me, unit_ids::SETTLERS, 22, 21);
+        assert_eq!(g.settler_hint(mine), None);
     }
 
     #[test]
