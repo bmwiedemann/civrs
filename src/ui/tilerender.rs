@@ -210,7 +210,8 @@ pub fn draw_city(fb: &mut Surface, ctx: &UiContext, game: &Game, city: crate::ga
         let x = px + if c.size < 10 { 6 } else { 3 };
         crate::gfx::text::draw_text(fb, &ctx.fonts, &st, x, py + 5, &c.size.to_string());
     }
-    if !game.units_at(c.x, c.y).is_empty() {
+    // a garrison stashed in the record counts as units inside (0x1b433 tests slot +0x1a)
+    if !game.units_at(c.x, c.y).is_empty() || c.garrison[0] != crate::game::city::NO_GARRISON {
         fb.rect_outline(Rect::new(px, py, 16, 16), 0);
     }
     if c.has_improvement(rules::improvement_ids::CITY_WALLS) {

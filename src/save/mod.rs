@@ -11,7 +11,9 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// 5: then by each player's spaceship trailer (grid, arrival year, landed flag).
 /// 6: then by the year (i32 LE) and each player's launch year (i32 LE, `i32::MIN` = none);
 /// older saves take the launch-free calendar year of their turns.
-pub const VERSION: u16 = 6;
+/// 7: then by the number of city slots (u32 LE) and `CITY_TRAILER` bytes per slot (the stashed
+/// garrison); older saves have none.
+pub const VERSION: u16 = 7;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -72,6 +74,7 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     for p in &g.players {
         data.extend_from_slice(&p.spaceship.launch_year.unwrap_or(i32::MIN).to_le_bytes());
     }
+    data.extend_from_slice(&city_trailer(g));
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -122,7 +125,36 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
             _ => s.launched_turn.map(crate::rules::calendar_year),
         };
     }
+    let cities = calendar + 4 + 4 * g.players.len();
+    if ver >= 7 {
+        read_city_trailer(&mut g, rest.get(cities..).unwrap_or_default());
+    }
     Ok(g)
+}
+
+/// Bytes per city slot of the version-7 city trailer: the two garrison slots and the
+/// garrison-out flag.
+const CITY_TRAILER: usize = 3;
+
+fn city_trailer(g: &Game) -> Vec<u8> {
+    let mut v = (g.cities.len() as u32).to_le_bytes().to_vec();
+    for c in &g.cities {
+        match c {
+            Some(c) => v.extend_from_slice(&[c.garrison[0], c.garrison[1], c.garrison_out as u8]),
+            None => v.extend_from_slice(&[crate::game::city::NO_GARRISON, crate::game::city::NO_GARRISON, 0]),
+        }
+    }
+    v
+}
+
+fn read_city_trailer(g: &mut Game, b: &[u8]) {
+    let n = b.get(..4).map(|n| u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize).unwrap_or(0);
+    for (i, c) in g.cities.iter_mut().enumerate().take(n) {
+        if let (Some(c), Some(r)) = (c.as_mut(), b.get(4 + CITY_TRAILER * i..4 + CITY_TRAILER * (i + 1))) {
+            c.garrison = [r[0], r[1]];
+            c.garrison_out = r[2] != 0;
+        }
+    }
 }
 
 /// Bytes per player of the version-5 spaceship trailer: the grid, the arrival year (i32,
@@ -254,6 +286,32 @@ mod tests {
         }
         assert_eq!(l.human().advance_source(adv::CURRENCY), 2);
         assert_eq!(l.human().advance_source(adv::POTTERY), -2);
+    }
+
+    #[test]
+    fn stashed_garrison_survives_a_save_and_old_saves_have_none() {
+        let mut g = Game::new(GameSetup { seed: 5, ..Default::default() }, None);
+        let h = g.human_slot;
+        let settler = g.units_of(h).into_iter().find(|id| g.unit(*id).kind == crate::rules::unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        g.city_mut(c).garrison = [crate::rules::unit_ids::PHALANX | crate::game::city::GARRISON_VETERAN, crate::rules::unit_ids::MILITIA];
+        g.city_mut(c).garrison_out = true;
+        let dir = std::env::temp_dir().join(format!("civrs-garrison-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        let l = super::load_game(&path).unwrap();
+        assert_eq!(l.city(c).garrison, g.city(c).garrison);
+        assert!(l.city(c).garrison_out);
+        // a version-5 file: same body, no city trailer
+        let mut data = std::fs::read(&path).unwrap();
+        data[4..6].copy_from_slice(&5u16.to_le_bytes());
+        data.truncate(data.len() - 4 - g.cities.len() * super::CITY_TRAILER);
+        std::fs::write(&path, &data).unwrap();
+        let old = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(old.city(c).garrison, crate::game::city::no_garrison());
+        assert!(!old.city(c).garrison_out);
+        assert_eq!(old.player(h).spaceship, g.player(h).spaceship);
     }
 
     #[test]

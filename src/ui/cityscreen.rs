@@ -138,6 +138,55 @@ fn error_box(ctx: &UiContext, e: &RuleError) -> Option<Box<dyn Screen>> {
 }
 
 impl CityScreen {
+    fn handle_event(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
+        if ctx.game().city_opt(self.city).is_none() {
+            return Transition::Pop(DialogResult::Done);
+        }
+        if self.view_only {
+            return match ev {
+                Event::Key { key: Key::Unknown, .. } => Transition::None,
+                Event::Key { key: Key::Char('i'), down: true, .. } => self.tab_click(0),
+                Event::Key { key: Key::Char('h'), down: true, .. } => self.tab_click(1),
+                Event::Key { key: Key::Char('m'), down: true, .. } => self.tab_click(2),
+                Event::Key { down: true, .. } => Transition::Pop(DialogResult::Done),
+                Event::MouseButton { button: MouseButton::Left, x, y, down: true } => match TAB_RECTS.iter().position(|r| r.contains(*x, *y)) {
+                    Some(i) => self.tab_click(i),
+                    None => Transition::Pop(DialogResult::Done),
+                },
+                _ => Transition::None,
+            };
+        }
+        match ev {
+            Event::Key { key, mods, down: true, .. } => match key {
+                Key::Esc | Key::Enter => Transition::Pop(DialogResult::Done),
+                Key::Char('x') => Transition::Pop(DialogResult::Done),
+                Key::Char('i') => self.tab_click(0),
+                Key::Char('h') => self.tab_click(1),
+                Key::Char('m') => self.tab_click(2),
+                Key::Char('v') => self.view(),
+                Key::Char('c') => self.change(ctx),
+                Key::Char('b') => self.buy(ctx),
+                Key::Char('r') => self.rename(ctx),
+                Key::Char('a') if mods.shift => {
+                    // AUTO on asks the production advisor at once; with nothing worth it the
+                    // flag stays until the city finishes its item (CIV.EXE 0x113d7..0x11411)
+                    let g = ctx.game_mut();
+                    let c = g.city_mut(self.city);
+                    c.auto_build = !c.auto_build;
+                    if c.auto_build {
+                        if let Some(p) = g.auto_production(self.city) {
+                            g.city_mut(self.city).production = p;
+                        }
+                    }
+                    Transition::None
+                }
+                _ => Transition::None,
+            },
+            Event::MouseButton { button: MouseButton::Left, x, y, down: true } => self.click(ctx, *x, *y),
+            _ => Transition::None,
+        }
+    }
+
     fn error(&mut self, ctx: &UiContext, e: &RuleError) -> Transition {
         match error_box(ctx, e) {
             Some(s) => {
@@ -811,52 +860,13 @@ impl Screen for CityScreen {
     }
 
     fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
-        if ctx.game().city_opt(self.city).is_none() {
-            return Transition::Pop(DialogResult::Done);
+        let t = self.handle_event(ev, ctx);
+        // leaving the city screen ends process_city's mode 1 at 0x131d2, which puts a garrison
+        // that was let out back into the record
+        if matches!(t, Transition::Pop(_)) {
+            ctx.game_mut().restash_garrison(self.city);
         }
-        if self.view_only {
-            return match ev {
-                Event::Key { key: Key::Unknown, .. } => Transition::None,
-                Event::Key { key: Key::Char('i'), down: true, .. } => self.tab_click(0),
-                Event::Key { key: Key::Char('h'), down: true, .. } => self.tab_click(1),
-                Event::Key { key: Key::Char('m'), down: true, .. } => self.tab_click(2),
-                Event::Key { down: true, .. } => Transition::Pop(DialogResult::Done),
-                Event::MouseButton { button: MouseButton::Left, x, y, down: true } => match TAB_RECTS.iter().position(|r| r.contains(*x, *y)) {
-                    Some(i) => self.tab_click(i),
-                    None => Transition::Pop(DialogResult::Done),
-                },
-                _ => Transition::None,
-            };
-        }
-        match ev {
-            Event::Key { key, mods, down: true, .. } => match key {
-                Key::Esc | Key::Enter => Transition::Pop(DialogResult::Done),
-                Key::Char('x') => Transition::Pop(DialogResult::Done),
-                Key::Char('i') => self.tab_click(0),
-                Key::Char('h') => self.tab_click(1),
-                Key::Char('m') => self.tab_click(2),
-                Key::Char('v') => self.view(),
-                Key::Char('c') => self.change(ctx),
-                Key::Char('b') => self.buy(ctx),
-                Key::Char('r') => self.rename(ctx),
-                Key::Char('a') if mods.shift => {
-                    // AUTO on asks the production advisor at once; with nothing worth it the
-                    // flag stays until the city finishes its item (CIV.EXE 0x113d7..0x11411)
-                    let g = ctx.game_mut();
-                    let c = g.city_mut(self.city);
-                    c.auto_build = !c.auto_build;
-                    if c.auto_build {
-                        if let Some(p) = g.auto_production(self.city) {
-                            g.city_mut(self.city).production = p;
-                        }
-                    }
-                    Transition::None
-                }
-                _ => Transition::None,
-            },
-            Event::MouseButton { button: MouseButton::Left, x, y, down: true } => self.click(ctx, *x, *y),
-            _ => Transition::None,
-        }
+        t
     }
 
     fn resume(&mut self, result: DialogResult, ctx: &mut UiContext) -> Transition {
@@ -886,6 +896,13 @@ impl Screen for CityScreen {
         fb.fill(BLACK);
         if ctx.game().city_opt(self.city).is_none() {
             return;
+        }
+        // drawing the city screen (process_city mode 1) lets the garrison out (0xcda0) and,
+        // silently, re-places the workers of a city that has more than citizens (0xd70d)
+        let g = ctx.game_mut();
+        g.unstash_garrison(self.city);
+        if g.city(self.city).workers() > g.city(self.city).size as u32 {
+            g.fix_workers(self.city);
         }
         self.draw_title(fb, ctx);
         self.draw_resources(fb, ctx);

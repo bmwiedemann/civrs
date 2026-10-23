@@ -102,6 +102,13 @@ impl Game {
             }
         };
         self.last_combat = Some(((attacker.x, attacker.y), (x, y), won));
+        // a computer city that is attacked, whoever wins, goes on alert (city status 0x10,
+        // CIV.EXE 0x6114..0x6141): its next turn re-chooses production and buys
+        if let Some(c) = self.city_at(x, y) {
+            if self.city(c).owner != self.human_slot {
+                self.city_mut(c).auto_build = true;
+            }
+        }
         // an attack costs one full move, so Armor and Mech. Inf. may attack three times; a
         // Bomber's attack ends its turn (READ.ME §2, CIV.EXE 0x60e4)
         self.unit_mut(id).moves_left = if attacker.kind == unit_ids::BOMBER { 0 } else { attacker.moves_left.saturating_sub(3) };
@@ -123,8 +130,9 @@ impl Game {
             if let Some(c) = t.city {
                 if let Some(city) = self.city_opt(c) {
                     if !self.city_has_walls(city) && city.size > 1 {
+                        // only the size drops (CIV.EXE 0x618a): the extra worker goes at the
+                        // city's next turn, the human's with "Population decrease" (0xd70d)
                         self.city_mut(c).size -= 1;
-                        self.auto_assign(c);
                         self.push_event(GameEvent::CityShrank(c));
                     }
                 }
@@ -228,6 +236,9 @@ impl Game {
 
     /// Ground unit `id` enters undefended enemy city `c`.
     pub fn capture_city(&mut self, id: UnitId, c: CityId) -> MoveOutcome {
+        // the captor next to the city has let its garrison out (unit_look 0x828f), so a
+        // stashed unit is never captured with the record
+        self.unstash_garrison(c);
         let attacker = self.unit(id).clone();
         let city = self.city(c).clone();
         let from = city.owner;
@@ -269,6 +280,9 @@ impl Game {
             cm.disorder = false;
             cm.disorder_turns = 0;
             cm.celebrating = false;
+            // CIV.EXE 0x13ef0/0x13fb7 clear (among others) the AUTO and garrison-out bits
+            cm.auto_build = false;
+            cm.garrison_out = false;
             cm.trade_routes.clear();
             cm.specialists.clear();
             cm.shields = 0;
@@ -681,6 +695,24 @@ mod tests {
         g.auto_assign(c);
         let d = g.add_unit(1, unit_ids::DIPLOMAT, 19, 20);
         (g, c, d)
+    }
+
+    #[test]
+    fn a_city_losing_a_defender_shrinks_but_keeps_its_workers_until_its_turn() {
+        let (mut g, c, d) = diplomat_game();
+        g.remove_unit(d);
+        let workers = g.city(c).workers();
+        assert_eq!(workers, 4);
+        loop {
+            g.add_unit(2, unit_ids::MILITIA, 20, 20);
+            let a = g.add_unit(1, unit_ids::ARMOR, 19, 20);
+            if let MoveOutcome::Attacked { won: true, .. } = g.attack(a, 20, 20) {
+                break;
+            }
+        }
+        assert_eq!(g.city(c).size, 3);
+        assert_eq!(g.city(c).workers(), workers);
+        assert!(g.city(c).auto_build, "on alert");
     }
 
     #[test]

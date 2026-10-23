@@ -616,6 +616,8 @@ impl Game {
             founded_turn: self.turn,
             pollution_pending: 0,
             caravan_shields: 0,
+            garrison: city::no_garrison(),
+            garrison_out: false,
         };
         if first_city {
             c.add_improvement(rules::improvement_ids::PALACE);

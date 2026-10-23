@@ -454,6 +454,11 @@ impl Game {
         if self.city_opt(c).is_none() {
             return;
         }
+        // a computer city's purchases and alert (CIV.EXE 0xec0d..0xef79), before its taxes
+        if !self.player(slot).human {
+            let net = if self.city(c).disorder { 0 } else { y.shield_surplus() };
+            crate::ai::city_ai::city_turn_purchase(self, c, net);
+        }
         // gold & science
         self.player_mut(slot).gold += y.tax;
         self.player_mut(slot).beakers += y.sci;
@@ -464,6 +469,7 @@ impl Game {
         if let Some(cm) = self.cities[c as usize].as_mut() {
             cm.bought = false;
         }
+        self.restash_garrison(c);
     }
 
     /// Supported unit farthest from its home city (disbanded first on shortages); Diplomats
@@ -1388,6 +1394,9 @@ impl Game {
     /// The work of `transfer_city`, without the announcement; returns the plunder and the
     /// advance taken.
     fn revolt_city(&mut self, c: CityId, to: Slot) -> (i32, Option<AdvanceId>) {
+        // stashed units change sides with the others (CIV.EXE would keep them in the record of
+        // a city it can no longer let them out of)
+        self.unstash_garrison(c);
         let (pos, from, size) = {
             let city = self.city(c);
             (city.pos(), city.owner, city.size)
@@ -1427,6 +1436,8 @@ impl Game {
             cm.disorder = false;
             cm.celebrating = false;
             cm.disorder_turns = 0;
+            cm.auto_build = false;
+            cm.garrison_out = false;
             cm.trade_routes.clear();
             cm.specialists.clear();
             cm.production = Production::Unit(unit_ids::MILITIA);

@@ -2,9 +2,8 @@
 //! and entertainers are the city turn's business (`Game::assign_workers`), as in CIV.EXE.
 
 use super::naval_ai::{self, Plan};
-use super::unit_ai::enemy_near;
-use crate::game::{CityId, Game, Production, Slot};
-use crate::rules::{self, improvement_ids as imp, AiRole, Govt};
+use crate::game::{CityId, Game, Map, Production, Slot};
+use crate::rules::{self, improvement_ids as imp, unit_ids, Govt, Terrain};
 
 /// What the city should build next: CIV.EXE's production advisor (0xa5e:0x41d), see
 /// `game::production`. The computer asks it when a city is founded, after every unit,
@@ -31,27 +30,112 @@ pub fn manage(g: &mut Game, c: CityId, plan: &Plan) {
     if g.city_opt(c).is_none() {
         return;
     }
-    let slot = g.city(c).owner;
     // the advisor's item can no longer be built (a wonder finished elsewhere, an improvement
     // the city got another way): CIV.EXE cancels it on completion and asks again (0xe4f1)
     if g.production_invalid(c) {
         let p = choose_production(g, c);
         g.city_mut(c).production = p;
     }
-    // purchases: defenders when threatened, otherwise when rolling in gold
+    // civrs's own overseas planner (`naval_ai`, not CIV.EXE's) pays for the expedition's ship
+    // at the BUY price; CIV.EXE's purchases are `city_turn_purchase`
+    let slot = g.city(c).owner;
     let gold = g.player(slot).gold;
     let cost = g.buy_cost(c);
     if cost > 0 && !g.city(c).bought && !g.city(c).disorder {
         let prod = g.city(c).production;
-        let is_defender = matches!(prod, Production::Unit(k) if rules::UNITS[k as usize].role == AiRole::Defend);
-        let threatened = enemy_near(g, slot, g.city(c).pos(), 3);
-        let rich = gold > 300 + cost * 5 && !matches!(prod, Production::Wonder(_));
-        // the expedition's ship is worth paying for
-        let ship_wanted = plan.wants_transport && matches!(prod, Production::Unit(k) if naval_ai::is_transport_kind(k)) && gold >= cost + 50;
-        if (threatened && is_defender && gold >= cost * 3) || (threatened && matches!(prod, Production::Improvement(i) if i == imp::CITY_WALLS) && gold >= cost * 2) || rich || ship_wanted {
+        if plan.wants_transport && matches!(prod, Production::Unit(k) if naval_ai::is_transport_kind(k)) && gold >= cost + 50 {
             let _ = g.buy(c);
         }
     }
+}
+
+/// The end of a computer city's turn in CIV.EXE's city routine (0xec0d..0xef79, after the
+/// production): a city on alert (attacked since its last turn, `City::auto_build`) asks the
+/// advisor again (0x1579:0x34bc); then the treasury pays for shields, two gold each, never
+/// through the price of the BUY button. Each rule that applies replaces the amount of the one
+/// before:
+/// - gold/64 for a unit whose AI role is the continent's policy (hostile 1 = attack, threatened
+///   2 = defend, offensive 5 = transport) while the city makes shields (`net_shields` != 0);
+/// - gold/128 for a spaceship part while the human's ship is under way;
+/// - in disorder, for an improvement or wonder: what is missing, at most gold/8;
+/// - for a unit while nobody stands in the city square, or on alert: what is missing, at most
+///   gold/3;
+/// - for the Palace (production -1): what is missing of the "unit cost" at 0x1142 + 0x22 * -1 =
+///   ds:0x1120, a word of the table before the unit table (127, wonder obsolescence), at most
+///   gold/3;
+/// - when the city status byte is exactly 0x19 (disorder, hydro site, alert and nothing else)
+///   and the civilization has no Nuclear unit: what is missing of the unit, at most gold/4
+///   (0xeeab; with an improvement CIV.EXE reads its "cost" from unrelated data, left out).
+///
+/// Then gold/512 more above 2000 gold. The alert is cleared.
+///
+/// Not modelled: CIV.EXE reads the policy stored at the start of the civilization's turn
+/// (ds:0xe698), civrs computes it now; its shield costs carry the computer's cost factor
+/// (16 - 2 * difficulty, [bp-0x4a] at 0xccf7) that civrs does not have.
+pub fn city_turn_purchase(g: &mut Game, c: CityId, net_shields: i32) {
+    let slot = g.city(c).owner;
+    if g.city(c).auto_build {
+        let p = choose_production(g, c);
+        g.city_mut(c).production = p;
+    }
+    let city = g.city(c).clone();
+    let gold = g.player(slot).gold;
+    let missing = city.production.cost() - city.shields;
+    let mut amount = 0;
+    if let Production::Unit(u) = city.production {
+        if net_shields != 0 {
+            let census = g.census();
+            let k = crate::game::production::continent_index(g.map.tile(city.x, city.y).continent);
+            let policy = g.continent_policy(&census, slot, k);
+            if matches!(policy, 1 | 2 | 5) && rules::UNITS[u as usize].role as u8 == policy {
+                amount = gold / 64;
+            }
+        }
+    }
+    if g.player(g.human_slot).spaceship.launched() && matches!(city.production, Production::Improvement(i) if (imp::SS_STRUCTURAL..=imp::SS_MODULE).contains(&i)) {
+        amount = gold / 128;
+    }
+    let unit = matches!(city.production, Production::Unit(_));
+    if city.disorder && !unit && city.shields != 0 {
+        amount = missing.max(0).min(gold / 8);
+    }
+    if (g.units_at(city.x, city.y).is_empty() || city.auto_build) && unit && city.shields != 0 {
+        amount = missing.max(0).min(gold / 3);
+    }
+    if city.production == Production::Improvement(imp::PALACE) && city.shields != 0 {
+        amount = (127 * 10 - city.shields).max(0).min(gold / 3);
+    }
+    if unit && exe_status(g, c) == 0x19 && !g.all_units().any(|u| u.owner == slot && u.kind == unit_ids::NUCLEAR) && city.shields != 0 {
+        amount = missing.max(0).min(gold / 4);
+    }
+    if gold > 2000 {
+        amount += gold / 512;
+    }
+    let cm = g.city_mut(c);
+    cm.shields += amount;
+    cm.auto_build = false;
+    g.player_mut(slot).gold -= 2 * amount;
+}
+
+/// CIV.EXE's city status byte (+6) as far as civrs keeps its bits: 0x1 disorder, 0x2 coastal,
+/// 0x4 garrison out, 0x8 Hydro Plant site, 0x10 AUTO / alert, 0x20 advance stolen, 0x40
+/// celebration, 0x80 improvement sold this turn. CIV.EXE sets the coastal and hydro bits when
+/// the city is founded (o 0x1b6b9, 0x1b6d2); civrs derives them from the map (unverified that
+/// the tests are the same).
+fn exe_status(g: &Game, c: CityId) -> u8 {
+    let city = g.city(c);
+    let hydro = Map::neighbours8(city.x, city.y).chain(std::iter::once((city.x, city.y))).any(|(x, y)| matches!(g.map.terrain(x, y), Terrain::River | Terrain::Mountains));
+    let bits = [
+        city.disorder,
+        g.map.is_coastal(city.x, city.y),
+        city.garrison_out,
+        hydro,
+        city.auto_build,
+        city.tech_stolen,
+        city.celebrating,
+        g.player(city.owner).sold_cities.contains(&c),
+    ];
+    bits.iter().enumerate().fold(0, |s, (i, b)| s | ((*b as u8) << i))
 }
 
 /// Tax 50 / lux 0 / sci 50 within the government's limit; luxuries rise while cities riot.
@@ -104,5 +188,82 @@ mod tests {
             set_rates(&mut g, slot);
         }
         assert_eq!((g.player(slot).tax, g.player(slot).lux), (50, 0));
+    }
+
+    /// A new computer city building Militia with 4 shields stored and nobody inside.
+    fn empty_ai_city() -> (Game, CityId) {
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        let slot = (1..8).find(|s| *s != g.human_slot && g.player(*s).alive && !g.units_of(*s).is_empty()).unwrap();
+        let settler = g.units_of(slot).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        for id in g.units_at(g.city(c).x, g.city(c).y) {
+            g.remove_unit(id);
+        }
+        let cm = g.city_mut(c);
+        cm.production = Production::Unit(unit_ids::MILITIA);
+        cm.shields = 4;
+        (g, c)
+    }
+
+    #[test]
+    fn an_empty_computer_city_buys_its_unit_at_two_gold_a_shield() {
+        let (mut g, c) = empty_ai_city();
+        let slot = g.city(c).owner;
+        // what is missing (6), at most gold / 3
+        g.player_mut(slot).gold = 300;
+        city_turn_purchase(&mut g, c, 0);
+        assert_eq!((g.city(c).shields, g.player(slot).gold), (10, 288));
+        g.city_mut(c).shields = 4;
+        g.player_mut(slot).gold = 9;
+        city_turn_purchase(&mut g, c, 0);
+        assert_eq!((g.city(c).shields, g.player(slot).gold), (7, 3));
+        // nothing stored yet: nothing bought
+        g.city_mut(c).shields = 0;
+        city_turn_purchase(&mut g, c, 0);
+        assert_eq!((g.city(c).shields, g.player(slot).gold), (0, 3));
+        // a rich treasury adds gold / 512 to whatever the rules give
+        g.player_mut(slot).gold = 5120;
+        city_turn_purchase(&mut g, c, 0);
+        assert_eq!((g.city(c).shields, g.player(slot).gold), (10, 5100));
+    }
+
+    #[test]
+    fn an_attacked_computer_city_rechooses_and_buys_with_units_inside() {
+        let (mut g, c) = empty_ai_city();
+        let slot = g.city(c).owner;
+        let (x, y) = g.city(c).pos();
+        g.add_unit(slot, unit_ids::PHALANX, x, y);
+        g.player_mut(slot).gold = 300;
+        // garrisoned and not on alert: nothing
+        city_turn_purchase(&mut g, c, 0);
+        assert_eq!(g.city(c).shields, 4);
+        // attacked: the advisor chooses again and the unit is bought, then the alert ends
+        g.city_mut(c).auto_build = true;
+        let advice = g.ai_production(c);
+        city_turn_purchase(&mut g, c, 0);
+        assert_eq!(g.city(c).production, advice);
+        assert!(!g.city(c).auto_build);
+        if matches!(advice, Production::Unit(_)) {
+            assert_eq!(g.city(c).shields, advice.cost());
+        }
+    }
+
+    #[test]
+    fn attacks_put_computer_cities_on_alert_but_not_the_humans() {
+        let (mut g, c) = empty_ai_city();
+        let slot = g.city(c).owner;
+        let (x, y) = g.city(c).pos();
+        let h = g.human_slot;
+        g.set_relation(h, slot, crate::game::Relation::War);
+        g.add_unit(slot, unit_ids::PHALANX, x, y);
+        let a = g.add_unit(h, unit_ids::LEGION, x + 1, y);
+        g.attack(a, x, y);
+        assert!(g.city(c).auto_build, "set win or lose");
+        // the human's own city keeps its AUTO setting
+        let hc = g.add_city(h, "Mine".into(), x + 6, y);
+        g.add_unit(h, unit_ids::PHALANX, x + 6, y);
+        let b = g.add_unit(slot, unit_ids::LEGION, x + 5, y);
+        g.attack(b, x + 6, y);
+        assert!(!g.city(hc).auto_build);
     }
 }

@@ -192,18 +192,19 @@ impl Game {
 
     /// Unit types of the owner's units in the city square that impose martial law: every unit
     /// with an attack strength, ships and aircraft included, in stack order (CIV.EXE 0xf818
-    /// walks at most 32 units of the stack). The original also counts the two garrison units
-    /// stashed in the record of a human city (+0x1a/+0x1b, 0xf900); civrs keeps those units on
-    /// the map, so they are counted here directly.
+    /// walks at most 32 units of the stack). These are the units the happiness row shows.
     pub fn martial_law_kinds(&self, c: CityId) -> Vec<u8> {
         let city = self.city(c);
         self.all_units().filter(|u| (u.x, u.y) == (city.x, city.y) && u.owner == city.owner).take(32).filter(|u| u.info().att > 0).map(|u| u.kind).collect()
     }
 
     /// Military units of the owner inside the city that impose martial law (capped at 3 by
-    /// the caller).
+    /// the caller): those on the map, then the garrison stashed in the city record with an
+    /// attack strength (0xf900..0xf960, not drawn; CIV.EXE only looks at them while some
+    /// citizen is unhappy, which makes no difference to the clamp that follows).
     pub fn martial_law_units(&self, c: CityId) -> i32 {
-        self.martial_law_kinds(c).len() as i32
+        let stashed = self.city(c).garrison_units().filter(|(k, _)| rules::UNITS[*k as usize].att > 0).count();
+        (self.martial_law_kinds(c).len() + stashed) as i32
     }
 
     /// Units supported by the city that count as "abroad" (ds:0x6546).
@@ -287,7 +288,7 @@ impl Game {
         // Democracy unhappiness for each unit abroad
         if (p.govt as u8) < Govt::Republic as u8 {
             let kinds = self.martial_law_kinds(c);
-            let n = (kinds.len() as i32).min(3);
+            let n = self.martial_law_units(c).min(3);
             m.unhappy -= n.clamp(0, m.unhappy);
             m.rebalance();
             steps.push(m.step(HappyRow::MartialLaw(kinds.into_iter().take(3).collect())));

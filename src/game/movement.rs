@@ -62,6 +62,13 @@ impl Game {
     }
 
     fn step(&mut self, id: UnitId, d: Dir8, ask_caravan: bool) -> Result<MoveOutcome, RuleError> {
+        // whatever the unit does next to a foreign city, CIV.EXE's unit_look has let that
+        // city's garrison out by now (0x828f)
+        let (ux, uy, owner) = {
+            let u = self.unit(id);
+            (u.x, u.y, u.owner)
+        };
+        self.reveal_garrisons_near(owner, ux, uy);
         let u = self.unit(id).clone();
         if u.moves_left == 0 {
             return Err(RuleError::NoMoves);
@@ -249,6 +256,7 @@ impl Game {
                 self.unit_mut(id).carried_by = None;
             }
         }
+        self.reveal_garrisons_near(slot, tx, ty);
         self.refresh_vision(slot);
         if had_hut {
             self.map.get_mut(tx, ty).unwrap().set(tile_flags::HUT, false);
@@ -314,8 +322,15 @@ impl Game {
     }
 
     /// Reset movement points at the start of a player's turn; handles fortify completion.
+    ///
+    /// CIV.EXE's unit loop at the start of a civilization's turn (0x4174..0x4327) also looks
+    /// around with every unit (unit_look 0x41e3, which lets out the garrison of a foreign city
+    /// next to it) and, for a unit that finishes fortifying in a city: a computer's unit is
+    /// rehomed to a city of size 3 or more (0x42a4), and a unit fortified in its home city
+    /// stashes the city's garrison when no foreign unit is next to it (0x42b2..0x431f).
     pub fn reset_moves(&mut self, slot: super::Slot) {
         let extra_sea_move = self.extra_sea_move(slot);
+        let mut fortified = Vec::new();
         for u in self.units.iter_mut().flatten() {
             if u.owner != slot {
                 continue;
@@ -327,9 +342,25 @@ impl Game {
             u.moves_left = m;
             if u.order == UnitOrder::Fortify {
                 u.order = UnitOrder::Fortified;
+                fortified.push(u.id);
             }
             if u.order == UnitOrder::Skip {
                 u.order = UnitOrder::None;
+            }
+        }
+        let looking: Vec<(i32, i32)> = self.all_units().filter(|u| u.owner == slot).map(|u| u.pos()).collect();
+        for (x, y) in looking {
+            self.reveal_garrisons_near(slot, x, y);
+        }
+        for id in fortified {
+            // an earlier stash may have taken the unit off the map already
+            let Some((x, y)) = self.unit_opt(id).map(|u| u.pos()) else { continue };
+            let Some(c) = self.city_at(x, y) else { continue };
+            if slot != self.human_slot && self.city(c).size >= 3 {
+                self.unit_mut(id).home = Some(c);
+            }
+            if self.unit(id).home == Some(c) && !self.foreign_unit_adjacent(slot, x, y) {
+                self.stash_garrison(c);
             }
         }
         // sentried units wake up when an enemy unit comes adjacent

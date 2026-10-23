@@ -197,11 +197,12 @@ impl Game {
 
     /// The units the city supports, each with whether it costs a shield (CIV.EXE 0xfc6e):
     /// Diplomats and Caravans never do; under Anarchy and Despotism the others are free up to
-    /// the city's size; under the other governments each costs one.
+    /// the city's size; under the other governments each costs one. The garrison stashed in
+    /// the city record counts first towards the free ones (0xfbf5, 0xd28b).
     pub fn shield_costs(&self, c: CityId) -> Vec<(super::UnitId, bool)> {
         let city = self.city(c);
         let free = rules::GOVERNMENTS[self.player(city.owner).govt as usize].free_units_up_to_size;
-        let mut paying = 0;
+        let mut paying = city.garrison_count();
         self.supported_units(c)
             .into_iter()
             .map(|id| {
@@ -214,10 +215,18 @@ impl Game {
             .collect()
     }
 
+    /// Shields the stashed garrison costs (CIV.EXE 0xd28b..0xd2ec, 0xfbf5..0xfc56): only the
+    /// units beyond the city's size, whatever the government; a city under the Monarchy or
+    /// later supports its two stashed units for nothing from size 2 on.
+    pub fn garrison_upkeep(&self, c: CityId) -> i32 {
+        let city = self.city(c);
+        (city.garrison_count() - city.size as i32).max(0)
+    }
+
     /// Would one more supported unit (not a Diplomat or Caravan) cost the city a shield?
     pub fn next_unit_costs_shield(&self, c: CityId) -> bool {
         let city = self.city(c);
-        let paying = self.supported_units(c).into_iter().filter(|id| !matches!(self.unit(*id).kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN)).count() as i32;
+        let paying = city.garrison_count() + self.supported_units(c).into_iter().filter(|id| !matches!(self.unit(*id).kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN)).count() as i32;
         !rules::GOVERNMENTS[self.player(city.owner).govt as usize].free_units_up_to_size || paying + 1 > city.size as i32
     }
 
@@ -286,7 +295,7 @@ impl Game {
         let g = rules::GOVERNMENTS[p.govt as usize];
         let settlers = self.all_units().filter(|u| u.home == Some(c) && u.kind == unit_ids::SETTLERS).count() as i32;
         y.food_upkeep = city.size as i32 * 2 + settlers * g.settler_food as i32;
-        y.shield_upkeep = self.shield_costs(c).iter().filter(|(_, cost)| *cost).count() as i32;
+        y.shield_upkeep = self.shield_costs(c).iter().filter(|(_, cost)| *cost).count() as i32 + self.garrison_upkeep(c);
         y.shields = self.boosted_shields(c, y.shields);
         // corruption and the tax/lux/sci split (CIV.EXE 0xf1df): luxuries and taxes rounded to
         // the nearest unit, science gets the rest
@@ -550,7 +559,11 @@ impl Game {
         if keep {
             let worked = 1 + self.city(c).workers() as i32;
             if worked > remaining {
-                // "Population decrease in CITY." (0xd70d, the human in the turn) and a fresh start
+                // "Population decrease in CITY." for the human's city in its turn (0xd70d..0xd769,
+                // ds:0x255f) and a fresh start
+                if turn && slot == self.human_slot {
+                    self.push_event(super::GameEvent::PopulationDecrease(c));
+                }
                 for idx in 1..21u8 {
                     if self.city(c).works(idx) {
                         self.release_tile(c, idx);
@@ -610,7 +623,7 @@ impl Game {
             if turn && !human && disorder {
                 specialists += 1;
             }
-            let support = self.shield_costs(c).iter().filter(|(_, cost)| *cost).count() as i32;
+            let support = self.shield_costs(c).iter().filter(|(_, cost)| *cost).count() as i32 + self.garrison_upkeep(c);
             while remaining > specialists {
                 let fw = 16 / (food - eaten).clamp(1, 99);
                 let sw = 3 * size / (shields - support).clamp(1, 99);
@@ -978,7 +991,7 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::{GameSetup, UnitId};
+    use crate::game::{GameEvent, GameSetup, UnitId};
 
     pub(crate) fn fixture() -> (Game, CityId) {
         let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
@@ -989,6 +1002,33 @@ mod tests {
         g.player_mut(slot).gold = 0;
         g.player_mut(slot).advances = 0;
         (g, c)
+    }
+
+    #[test]
+    fn more_workers_than_citizens_tell_the_human_at_the_city_turn_only() {
+        let (mut g, c) = fixture();
+        g.city_mut(c).size = 3;
+        g.auto_assign(c);
+        assert_eq!(g.city(c).workers(), 3);
+        g.take_events();
+        g.city_mut(c).size = 2;
+        // outside the turn (city screen, advisor) the workers are re-placed silently
+        let mut quiet = g.clone();
+        quiet.assign_workers(c, false);
+        assert!(!quiet.take_events().iter().any(|e| matches!(e, GameEvent::PopulationDecrease(_))));
+        g.assign_workers(c, true);
+        assert_eq!(g.take_events(), vec![GameEvent::PopulationDecrease(c)]);
+        assert_eq!(g.city(c).workers() as usize + g.city(c).specialists.len(), 2);
+        // a computer city says nothing
+        let slot = g.city(c).owner;
+        g.city_mut(c).size = 3;
+        g.auto_assign(c);
+        g.city_mut(c).size = 2;
+        g.player_mut(slot).human = false;
+        g.human_slot = (slot + 1) % 8;
+        g.take_events();
+        g.assign_workers(c, true);
+        assert!(!g.take_events().iter().any(|e| matches!(e, GameEvent::PopulationDecrease(_))));
     }
 
     #[test]

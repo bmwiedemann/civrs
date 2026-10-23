@@ -5,9 +5,11 @@
 //! Every candidate the production menu offers gets a value, **lower is better**; the computer
 //! takes the lowest of all, the human's AUTO city the lowest improvement (if it is 500 or less).
 //!
-//! Not modelled: the two garrison units a city record stores for unseen cities (+0x1a/+0x1b,
-//! counted by the census and the advisor as units on the continent; civrs has no such store),
-//! and CIV.EXE's habit of counting ships whose ocean body has the same id as the continent.
+//! The garrison a human city keeps in its record (+0x1a/+0x1b, `City::garrison`) counts in the
+//! census and in the advisor's unit totals as units in the city.
+//!
+//! Not modelled: CIV.EXE's habit of counting ships whose ocean body has the same id as the
+//! continent.
 
 use super::city::Production;
 use super::map::{CityId, Slot};
@@ -86,7 +88,14 @@ impl Game {
         }
         for city in self.all_cities() {
             if (city.owner as usize) < 8 {
-                c.cities[city.owner as usize][continent_index(self.map.tile(city.x, city.y).continent)] += 1;
+                let k = continent_index(self.map.tile(city.x, city.y).continent);
+                c.cities[city.owner as usize][k] += 1;
+                // the stashed garrison (0x15a95..0x15b2a)
+                for (kind, _) in city.garrison_units() {
+                    let t = &rules::UNITS[kind as usize];
+                    c.defence[city.owner as usize][k] += t.def as i32;
+                    c.attack[city.owner as usize][k] += t.att as i32;
+                }
             }
         }
         for (i, t) in self.map.tiles.iter().enumerate() {
@@ -277,6 +286,14 @@ impl Game {
             }
         }
         for other in self.all_cities().filter(|o| o.owner == slot) {
+            // the garrison stashed in cities on this continent (0xb044..0xb07f): units of the
+            // civ and here, but not in ds:0xb3be, which create_unit / delete_unit keep
+            if continent_index(self.map.tile(other.x, other.y).continent) == k {
+                for (kind, _) in other.garrison_units() {
+                    units += 1;
+                    here[kind as usize] += 1;
+                }
+            }
             if let Production::Unit(u) = other.production {
                 in_production[u as usize] += 1;
                 if other.id != c && continent_index(self.map.tile(other.x, other.y).continent) == k {

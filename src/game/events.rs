@@ -149,6 +149,9 @@ pub enum GameEvent {
     /// "<Title> <Leader> plans retirement in 20 years." for the human `Slot`, 20 years
     /// before the end of the game (CIV.EXE 0x2a28).
     RetirementWarning(Slot),
+    /// "Population decrease\nin CITY.": the human's city has more working squares than
+    /// citizens at its turn and places its workers anew (CIV.EXE 0xd70d, ds:0x255f).
+    PopulationDecrease(CityId),
 }
 
 /// A choice the engine needs from the human player before continuing.
