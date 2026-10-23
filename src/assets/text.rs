@@ -202,9 +202,10 @@ pub fn parse_story(bytes: &[u8]) -> Vec<Vec<String>> {
 }
 
 /// CREDITS.TXT: one line per credit, read in file order by the intro (`fscanf("%[^\n]\n")`,
-/// which also skips blank lines); `%` stands for `.`.
+/// which also skips blank lines). The text is kept as written: the intro font (FONT_THIN) has
+/// its full stop at `%` and a different glyph at `.`, so "JEFFERY L% BRIGGS" is drawn as is.
 pub fn parse_credits(bytes: &[u8]) -> Vec<String> {
-    lines_of(bytes).into_iter().map(|l| l.replace('%', ".").trim().to_string()).filter(|l| !l.is_empty()).collect()
+    lines_of(bytes).into_iter().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect()
 }
 
 #[cfg(test)]
