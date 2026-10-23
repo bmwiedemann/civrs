@@ -258,33 +258,7 @@ impl Game {
                 Specialist::Scientist => y.sci += 2,
             }
         }
-        // buildings and wonders
-        let mut tax_mult = 100;
-        let mut sci_mult = 100;
-        if city.has_improvement(imp::MARKETPLACE) {
-            tax_mult += 50;
-        }
-        if city.has_improvement(imp::BANK) {
-            tax_mult += 50;
-        }
-        if city.has_improvement(imp::LIBRARY) {
-            sci_mult += 50;
-        }
-        if city.has_improvement(imp::UNIVERSITY) {
-            sci_mult += 50;
-        }
-        if city.has_wonder(won::COPERNICUS_OBSERVATORY) && !self.wonder_obsolete(won::COPERNICUS_OBSERVATORY) {
-            sci_mult += 100;
-        }
-        if city.has_wonder(won::ISAAC_NEWTONS_COLLEGE) && !self.wonder_obsolete(won::ISAAC_NEWTONS_COLLEGE) {
-            sci_mult += 100;
-        }
-        if self.owner_has_wonder(slot, won::SETI_PROGRAM) {
-            sci_mult += 50;
-        }
-        y.tax = y.tax * tax_mult / 100;
-        y.lux = y.lux * tax_mult / 100;
-        y.sci = y.sci * sci_mult / 100;
+        self.trade_boosts(c, &mut y);
         y.gold_upkeep = self.city_upkeep(c);
         // civil disorder: no production, taxes or science (food and luxuries continue)
         if city.disorder {
@@ -293,6 +267,37 @@ impl Game {
             y.sci = 0;
         }
         y
+    }
+
+    /// Buildings and wonders that raise taxes, luxuries and science (CIV.EXE 0xf2f2..0xf3f5):
+    /// Marketplace and Bank each add half of what the city has so far; Library and University
+    /// add half of the base science, plus a third each with Isaac Newton's College; Copernicus
+    /// doubles the city's science and the SETI Program adds half of it (0x12cc0).
+    fn trade_boosts(&self, c: CityId, y: &mut CityYield) {
+        let city = self.city(c);
+        let slot = city.owner;
+        for i in [imp::MARKETPLACE, imp::BANK] {
+            if city.has_improvement(i) {
+                y.tax += y.tax / 2;
+                y.lux += y.lux / 2;
+            }
+        }
+        let base_sci = y.sci;
+        let newton = self.owner_has_wonder(slot, won::ISAAC_NEWTONS_COLLEGE);
+        for i in [imp::LIBRARY, imp::UNIVERSITY] {
+            if city.has_improvement(i) {
+                y.sci += base_sci / 2;
+                if newton {
+                    y.sci += base_sci / 3;
+                }
+            }
+        }
+        if city.has_wonder(won::COPERNICUS_OBSERVATORY) && !self.wonder_obsolete(won::COPERNICUS_OBSERVATORY) {
+            y.sci *= 2;
+        }
+        if self.owner_has_wonder(slot, won::SETI_PROGRAM) {
+            y.sci += y.sci / 2;
+        }
     }
 
     /// Trade a route between two cities yields per turn: `(ta + tb + 4) / 8`, doubled for a
@@ -1040,5 +1045,32 @@ mod tests {
         assert_eq!(b(&g), (20, 6));
         g.city_mut(c).add_improvement(imp::HYDRO_PLANT);
         assert_eq!(b(&g), (25, 7));
+    }
+
+    #[test]
+    fn trade_buildings_and_science_wonders() {
+        let (mut g, c) = fixture();
+        let boost = |g: &Game, tax, sci| {
+            let mut y = CityYield { tax, lux: tax, sci, ..Default::default() };
+            g.trade_boosts(c, &mut y);
+            (y.tax, y.lux, y.sci)
+        };
+        g.city_mut(c).add_improvement(imp::MARKETPLACE);
+        g.city_mut(c).add_improvement(imp::BANK);
+        g.city_mut(c).add_improvement(imp::LIBRARY);
+        g.city_mut(c).add_improvement(imp::UNIVERSITY);
+        // the Bank adds half of what the Marketplace left: 10 -> 15 -> 22
+        assert_eq!(boost(&g, 10, 12), (22, 22, 24));
+        let other = g.add_city(g.city(c).owner, "Other".into(), g.city(c).x + 6, g.city(c).y);
+        g.city_mut(other).add_wonder(won::ISAAC_NEWTONS_COLLEGE);
+        g.wonders_built[won::ISAAC_NEWTONS_COLLEGE as usize] = Some(other);
+        // Isaac Newton's College helps the libraries and universities of every city
+        assert_eq!(boost(&g, 10, 12).2, 32);
+        g.city_mut(c).add_wonder(won::COPERNICUS_OBSERVATORY);
+        g.wonders_built[won::COPERNICUS_OBSERVATORY as usize] = Some(c);
+        assert_eq!(boost(&g, 10, 12).2, 64);
+        g.city_mut(other).add_wonder(won::SETI_PROGRAM);
+        g.wonders_built[won::SETI_PROGRAM as usize] = Some(other);
+        assert_eq!(boost(&g, 10, 12).2, 96);
     }
 }
