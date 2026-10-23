@@ -741,9 +741,12 @@ impl Game {
 
     // ---- government -------------------------------------------------------------------------
 
+    /// Governments the civ may choose: those whose advance it knows, or all of them with the
+    /// Pyramids (CIV.EXE 0x14e39 skips the advance checks for an owner of wonder 1).
     pub fn governments_available(&self, slot: Slot) -> Vec<Govt> {
         let p = self.player(slot);
-        Govt::ALL.iter().copied().filter(|g| *g != Govt::Anarchy && rules::GOVERNMENTS[*g as usize].prereq.map(|a| p.knows(a)).unwrap_or(true)).collect()
+        let all = self.owner_has_wonder(slot, won::PYRAMIDS);
+        Govt::ALL.iter().copied().filter(|g| *g != Govt::Anarchy && (all || rules::GOVERNMENTS[*g as usize].prereq.map(|a| p.knows(a)).unwrap_or(true))).collect()
     }
 
     /// Start a revolution: Anarchy for 1-4 turns (none with the Pyramids), then a new government.
@@ -1148,6 +1151,16 @@ mod tests {
         g.apply_decision(&Decision::SellForUpkeep { slot, city: c, candidates: vec![imp::CATHEDRAL] }, DecisionReply::Choice(0));
         assert!(!g.city(c).has_improvement(imp::CATHEDRAL));
         assert!(g.player(slot).gold >= 0);
+    }
+
+    #[test]
+    fn pyramids_make_every_government_available() {
+        let (mut g, c) = fixture();
+        let slot = g.human_slot;
+        assert_eq!(g.governments_available(slot), vec![Govt::Despotism]);
+        g.city_mut(c).add_wonder(won::PYRAMIDS);
+        g.wonders_built[won::PYRAMIDS as usize] = Some(c);
+        assert_eq!(g.governments_available(slot).len(), 5);
     }
 
     #[test]
