@@ -176,6 +176,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     if let Some(b) = rest.get(warming..warming + 2).filter(|_| ver >= 11) {
         g.warming_counter = u16::from_le_bytes([b[0], b[1]]);
     }
+    g.update_research_catch_up();
     Ok(g)
 }
 

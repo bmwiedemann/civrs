@@ -128,13 +128,25 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             None => msg(vec![format!("{} builds", city_name(*city)), format!("{}.", rules::WONDERS[*wonder as usize].name)]),
         },
         GameEvent::WonderBuilt { city, wonder, owner } => Some(crate::ui::wonderscreen::wonder_screen(ctx, *wonder, &city_name(*city), *owner)),
-        GameEvent::WonderObsolete { wonder, owner } if *owner == me => msg(vec![format!("{} is now obsolete.", rules::WONDERS[*wonder as usize].name)]),
+        // "<adv> cancels\nthe effect of\n<wonder>." (CIV.EXE 0xc796, the human's wonders)
+        GameEvent::WonderObsolete { wonder, owner } if *owner == me => {
+            let w = &rules::WONDERS[*wonder as usize];
+            let adv = w.obsolete_by.map(|a| rules::ADVANCES[a as usize].name).unwrap_or("");
+            msg(vec![format!("{adv} cancels"), "the effect of".into(), format!("{}.", w.name)])
+        }
+        GameEvent::BarracksObsolete { slot, adv } if *slot == me => {
+            msg(vec![format!("Development of {}", rules::ADVANCES[*adv as usize].name), "makes existing Barracks".into(), "obsolete.".into()])
+        }
         GameEvent::Disorder(c) if g.city(*c).owner == me => Some(eventpics::disorder_screen(ctx, *c)),
         GameEvent::DisorderEnded(c) if g.city(*c).owner == me => msg(vec![format!("Order restored in {}.", city_name(*c))]),
         GameEvent::Celebration(c) if g.city(*c).owner == me => Some(eventpics::celebration_screen(ctx, *c)),
         GameEvent::AdvanceDiscovered { slot, adv } if *slot == me => with_pedia(Some(crate::ui::discovery::discovery_screen(ctx, *adv)), *adv),
         // the hut's own message (HutEntered) announces it and adds the Civilopedia page
         GameEvent::AdvanceAcquired { source, .. } if source == "hut" => None,
+        // "<Plural> acquire\n<adv> from\nthe Great Library!" (CIV.EXE 0xc394..0xc42a)
+        GameEvent::AdvanceAcquired { slot, adv, source } if *slot == me && source == "Great Library" => {
+            with_pedia(msg(vec![format!("{} acquire", g.player(me).plural()), format!("{} from", rules::ADVANCES[*adv as usize].name), "the Great Library!".into()]), *adv)
+        }
         GameEvent::AdvanceAcquired { slot, adv, source } if *slot == me => {
             with_pedia(msg(vec![format!("You acquire {}", rules::ADVANCES[*adv as usize].name), format!("({source})")]), *adv)
         }

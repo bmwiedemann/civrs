@@ -171,6 +171,7 @@ impl TurnRunner {
                 }
                 Phase::NewTurn => {
                     g.advance_calendar();
+                    g.update_research_catch_up();
                     let slot = g.human_slot;
                     g.reset_moves(slot);
                     g.progress_work(slot);
@@ -326,8 +327,6 @@ impl Game {
             self.player_mut(slot).senate_blocks = self.player(slot).senate_blocks.saturating_add(1);
             self.revolution(slot);
         }
-        self.process_science(slot);
-        self.great_library_check(slot);
         self.process_unit_hazards(slot);
         if !self.player(slot).human && self.player(slot).gold < 0 {
             self.player_mut(slot).gold = 0;
@@ -472,7 +471,7 @@ impl Game {
         }
         // gold & science
         self.player_mut(slot).gold += y.tax;
-        self.player_mut(slot).beakers += y.sci;
+        self.city_science(c, y.sci);
         self.pay_upkeep(c);
         // hazards
         self.pollution_roll(c);
@@ -865,51 +864,11 @@ impl Game {
                 self.apollo_reveal(owner);
             }
             won::DARWINS_VOYAGE => self.darwins_voyage(owner),
-            won::GREAT_LIBRARY => self.great_library_check(owner),
             _ => {}
         }
     }
 
     // ---- science ----------------------------------------------------------------------------
-
-    /// Discover advances from the beakers accumulated by the cities this turn.
-    pub fn process_science(&mut self, slot: Slot) {
-        if !self.player(slot).alive {
-            return;
-        }
-        // a computer player gets the advance `choose_research` draws once the beakers are
-        // full; they are spent even when it draws nothing (CIV.EXE 0x12d94, 0x0bb4a)
-        if !self.player(slot).human {
-            self.player_mut(slot).researching = None;
-            if self.research_complete(slot) {
-                self.player_mut(slot).beakers = 0;
-                if let Some(a) = crate::ai::tech_ai::choose(self, slot) {
-                    self.grant_advance(slot, a, super::science::AdvanceSource::Discovered);
-                    self.push_event(GameEvent::AdvanceDiscovered { slot, adv: a });
-                }
-            }
-            return;
-        }
-        if self.player(slot).researching.is_none() && self.player(slot).beakers > 0 {
-            self.pick_research(slot);
-        }
-        if let Some(a) = self.player(slot).researching {
-            // the surplus is lost (CIV.EXE 0x12d94)
-            if self.research_complete(slot) {
-                self.player_mut(slot).beakers = 0;
-                // the science advisor's pick is drawn like a computer's before the advance is
-                // granted, leaving out the goal itself (choose_research 0x0bb5d, 0x0bfc1)
-                let advice = (self.setup.difficulty == rules::Difficulty::Chieftain && self.options.instant_advice).then(|| crate::ai::tech_ai::draw(self, slot, Some(a))).flatten();
-                self.grant_advance(slot, a, super::science::AdvanceSource::Discovered);
-                self.player_mut(slot).researching = None;
-                self.push_event(GameEvent::AdvanceDiscovered { slot, adv: a });
-                if let Some(adv) = advice {
-                    self.push_event(GameEvent::ScienceAdvice { slot, adv });
-                }
-                self.pick_research(slot);
-            }
-        }
-    }
 
     // ---- units ------------------------------------------------------------------------------
 
@@ -1030,6 +989,7 @@ impl Game {
                 };
                 if let Some(a) = pick {
                     self.set_research(*slot, a);
+                    self.research_chosen(*slot);
                 }
             }
             Decision::ChooseGovernment { slot, options } => {

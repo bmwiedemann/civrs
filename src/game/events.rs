@@ -183,6 +183,9 @@ pub enum GameEvent {
     /// "Scientists alarmed by\nrising temperatures.\nGlobal Warming feared!" (CIV.EXE 0x3b2e):
     /// the warming counter reached 12 with more than 6 polluted squares.
     GlobalWarmingFeared,
+    /// "Development of ADV\nmakes existing Barracks\nobsolete." (CIV.EXE 0xc6ea): the human
+    /// learned Gunpowder or Combustion and its Barracks are gone.
+    BarracksObsolete { slot: Slot, adv: AdvanceId },
 }
 
 /// A choice the engine needs from the human player before continuing.

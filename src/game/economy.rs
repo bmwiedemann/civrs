@@ -330,7 +330,8 @@ impl Game {
     /// Buildings and wonders that raise taxes, luxuries and science (CIV.EXE 0xf2f2..0xf3f5):
     /// Marketplace and Bank each add half of what the city has so far; Library and University
     /// add half of the base science, plus a third each with Isaac Newton's College; Copernicus
-    /// doubles the city's science and the SETI Program adds half of it (0x12cc0).
+    /// doubles the city's science. (The SETI Program's half goes to the beakers only,
+    /// `city_science` 0x12cc0.)
     fn trade_boosts(&self, c: CityId, y: &mut CityYield) {
         let city = self.city(c);
         let slot = city.owner;
@@ -352,9 +353,6 @@ impl Game {
         }
         if city.has_wonder(won::COPERNICUS_OBSERVATORY) && !self.wonder_obsolete(won::COPERNICUS_OBSERVATORY) {
             y.sci *= 2;
-        }
-        if self.owner_has_wonder(slot, won::SETI_PROGRAM) {
-            y.sci += y.sci / 2;
         }
     }
 
@@ -1325,7 +1323,7 @@ mod tests {
         assert_eq!(boost(&g, 10, 12).2, 64);
         g.city_mut(other).add_wonder(won::SETI_PROGRAM);
         g.wonders_built[won::SETI_PROGRAM as usize] = Some(other);
-        assert_eq!(boost(&g, 10, 12).2, 96);
+        assert_eq!(boost(&g, 10, 12).2, 64, "SETI counts in the beakers, not in the city");
     }
 
     #[test]

@@ -213,6 +213,14 @@ pub struct Game {
     /// the game body in version-9 saves.
     #[serde(skip)]
     pub warming_counter: u16,
+    /// The research catch-up bonus ds:0xd2de of this turn (`update_research_catch_up`); not
+    /// saved, recomputed on loading.
+    #[serde(skip)]
+    pub catch_up: i32,
+    /// Free advances of Darwin's Voyage the human gets once the research menu is answered.
+    /// Not saved.
+    #[serde(skip)]
+    pub free_research: u8,
 }
 
 fn no_audience() -> i8 {
@@ -340,6 +348,8 @@ impl Game {
             diplo_latch: -1,
             treaty_break_ok: None,
             warming_counter: 0,
+            catch_up: 0,
+            free_research: 0,
         };
         game.place_starting_units(&slots, &world);
         game.refresh_all_vision();
