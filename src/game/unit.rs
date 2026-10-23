@@ -104,6 +104,10 @@ impl Unit {
     pub fn is_sea(&self) -> bool {
         self.info().domain == crate::rules::Domain::Sea
     }
+    /// A ship land units can board (the Carrier only takes air units).
+    pub fn carries_land_units(&self) -> bool {
+        self.is_sea() && self.info().capacity > 0 && self.kind != crate::rules::unit_ids::CARRIER
+    }
     pub fn is_air(&self) -> bool {
         self.info().domain == crate::rules::Domain::Air
     }

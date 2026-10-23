@@ -131,7 +131,7 @@ impl Game {
                     // board a ship with room
                     let ship = self.units_at(tx, ty).into_iter().find(|s| {
                         let su = self.unit(*s);
-                        su.owner == slot && su.is_sea() && su.info().capacity > 0 && self.cargo_count(*s) < su.info().capacity as usize
+                        su.owner == slot && su.carries_land_units() && self.cargo_count(*s) < su.info().capacity as usize
                     });
                     match ship {
                         Some(s) => {
@@ -188,7 +188,10 @@ impl Game {
         }
         // aircraft landing in a city / carrier refuels
         if u.is_air() {
-            let carrier = self.units_at(tx, ty).into_iter().find(|s| *s != id && self.unit(*s).kind == unit_ids::CARRIER && self.unit(*s).owner == slot);
+            // a Carrier takes up to 8 air units, Nuclear included
+            let carrier = self.units_at(tx, ty).into_iter().find(|s| {
+                *s != id && self.unit(*s).kind == unit_ids::CARRIER && self.unit(*s).owner == slot && self.cargo_count(*s) < self.unit(*s).info().capacity as usize
+            });
             if self.city_at(tx, ty).map(|c| self.city(c).owner == slot).unwrap_or(false) {
                 self.unit_mut(id).fuel = 0;
                 self.unit_mut(id).carried_by = None;
@@ -236,7 +239,7 @@ impl Game {
         match unit.info().domain {
             Domain::Land => t.is_land() || self.units_at(x, y).iter().any(|s| {
                 let su = self.unit(*s);
-                su.owner == unit.owner && su.is_sea() && su.info().capacity > 0
+                su.owner == unit.owner && su.carries_land_units()
             }),
             Domain::Sea => t.is_ocean() || self.city_at(x, y).map(|c| self.city(c).owner == unit.owner).unwrap_or(false),
             Domain::Air => true,
@@ -375,5 +378,27 @@ mod tests {
         assert!(g.visible_to(slot, x - 2, y + 2), "ocean two squares away");
         assert!(!g.visible_to(slot, x + 2, y), "land two squares away");
         assert!(!g.visible_to(slot, x + 3, y), "three squares away");
+    }
+
+    #[test]
+    fn carriers_take_eight_aircraft_and_no_land_units() {
+        let mut g = Game::new(GameSetup { seed: 1, ..Default::default() }, None);
+        let slot = g.human_slot;
+        let (x, y) = (40, 25);
+        for xx in x - 1..=x + 1 {
+            let t = g.map.get_mut(xx, y).unwrap();
+            t.terrain = Terrain::Ocean;
+            t.city = None;
+        }
+        g.map.get_mut(x - 1, y).unwrap().terrain = Terrain::Grassland;
+        let carrier = g.add_unit(slot, unit_ids::CARRIER, x, y);
+        let militia = g.add_unit(slot, unit_ids::MILITIA, x - 1, y);
+        assert_eq!(g.try_move(militia, Dir8::E), Ok(MoveOutcome::Blocked));
+        for n in 0..9 {
+            let f = g.add_unit(slot, unit_ids::FIGHTER, x + 1, y);
+            assert_eq!(g.try_move(f, Dir8::W), Ok(MoveOutcome::Moved));
+            assert_eq!(g.unit(f).carried_by.is_some(), n < 8, "fighter {n}");
+        }
+        assert_eq!(g.cargo_count(carrier), 8);
     }
 }

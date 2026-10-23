@@ -35,7 +35,7 @@ fn build_grid(g: &Game, u: &Unit) -> Grid {
         let i = Map::idx(other.x, other.y);
         if other.owner != u.owner {
             grid.foreign[i] = true;
-        } else if other.is_sea() && other.info().capacity > 0 && other.id != u.id {
+        } else if other.carries_land_units() && other.id != u.id {
             grid.own_transport[i] = true;
         }
     }
