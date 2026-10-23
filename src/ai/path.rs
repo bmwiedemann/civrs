@@ -75,6 +75,7 @@ pub fn astar_limited(g: &Game, u: &Unit, goal: (i32, i32), limit: usize) -> Opti
     // than one road step. The estimate counts the cheapest step a square can cost the unit,
     // so that it never overestimates and roads and railroads are followed when faster.
     let min_step = if u.is_land() { 1 } else { 300 };
+    let trireme = u.kind == crate::rules::unit_ids::TRIREME;
     let h = |p: (i32, i32)| Map::dist(p, goal) * min_step;
     let mut open: BinaryHeap<Reverse<(i32, i32, usize)>> = BinaryHeap::new();
     let mut best: Vec<i32> = vec![i32::MAX; n];
@@ -113,10 +114,15 @@ pub fn astar_limited(g: &Game, u: &Unit, goal: (i32, i32), limit: usize) -> Opti
             if !is_goal && grid.foreign[ni] {
                 continue;
             }
-            let step = match g.move_cost(u, cp, (nx, ny)) {
+            let mut step = match g.move_cost(u, cp, (nx, ny)) {
                 0 => 1,
                 c => 100 * c as i32,
             };
+            // a Trireme ending its turn with no land next to it may be lost (CIV.EXE 0x75da):
+            // it keeps to the coast unless open sea saves ten squares
+            if trireme && g.map.is_ocean(nx, ny) && g.map.land_mask8(nx, ny) == 0 {
+                step += 3000;
+            }
             let nc = cost + step;
             if nc < best[ni] {
                 best[ni] = nc;
@@ -217,5 +223,31 @@ mod tests {
         let u = g.add_unit(1, unit_ids::LEGION, 10, 10);
         let path = astar(&g, g.unit(u), (12, 10)).expect("path");
         assert!(path.contains(&(11, 1)), "takes the railroad: {path:?}");
+    }
+
+    #[test]
+    fn astar_keeps_a_trireme_to_the_coast() {
+        let mut g = Game::new(GameSetup { seed: 3, num_civs: 7, ..Default::default() }, None);
+        for y in 2..20 {
+            for x in 2..30 {
+                let t = g.map.get_mut(x, y).unwrap();
+                t.terrain = if x >= 15 { Terrain::Grassland } else { Terrain::Ocean };
+                t.flags = 0;
+                t.city = None;
+            }
+        }
+        let ids: Vec<_> = g.all_units().map(|u| u.id).collect();
+        for id in ids {
+            g.remove_unit(id);
+        }
+        // straight north along a coast to the east: every square of the way stays beside
+        // land, though paths through the open sea to the west are just as short
+        for start in [14, 13] {
+            let s = g.add_unit(1, unit_ids::TRIREME, start, 15);
+            let path = astar(&g, g.unit(s), (14, 9)).expect("path");
+            assert_eq!(path.len(), 7, "{path:?}");
+            assert!(path[1..].iter().all(|p| g.map.land_mask8(p.0, p.1) != 0), "{path:?}");
+            g.remove_unit(s);
+        }
     }
 }
