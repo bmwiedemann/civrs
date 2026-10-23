@@ -219,8 +219,44 @@ pub fn draw_unit(fb: &mut Surface, ctx: &UiContext, game: &Game, id: crate::game
         blit_sprite_remap(fb, &ctx.sp.surf, sp::unit(kind), px + 1, py + 1, &map);
     }
     blit_sprite_remap(fb, &ctx.sp.surf, sp::unit(kind), px, py, &map);
-    if matches!(u.order, UnitOrder::Fortified | UnitOrder::Fortify) {
-        blit_sprite(fb, &ctx.sp.surf, cell(sp::FORTIFIED.0, sp::FORTIFIED.1), px, py);
+    // status marks as CIV.EXE 0x1b639 draws them: the fortification over a fortified unit,
+    // "F" while fortifying, "G" on the human's units with a goto, and the settlers' job letter
+    // in a grey frame; letters at (+4, +7) with a black shadow below, light blue on slot 1's
+    // white units, white otherwise
+    let letter_colour = if u.owner == 1 { 9 } else { 15 };
+    let letter = |fb: &mut Surface, s: &str| {
+        crate::gfx::text::draw_text(fb, &ctx.fonts, &crate::gfx::TextStyle::new(0, 0), px + 4, py + 8, s);
+        crate::gfx::text::draw_text(fb, &ctx.fonts, &crate::gfx::TextStyle::new(0, letter_colour), px + 4, py + 7, s);
+    };
+    match u.order {
+        UnitOrder::Fortified => blit_sprite(fb, &ctx.sp.surf, cell(sp::FORTIFIED.0, sp::FORTIFIED.1), px, py),
+        UnitOrder::Fortify => letter(fb, "F"),
+        _ => {}
+    }
+    if u.owner == game.human_slot && u.goto.is_some() {
+        letter(fb, "G");
+    }
+    let job = match u.order {
+        UnitOrder::Road => Some("R"),
+        UnitOrder::Irrigate => Some("I"),
+        UnitOrder::Mine => Some("M"),
+        UnitOrder::Fortress => Some("F"),
+        UnitOrder::CleanPollution => Some("P"),
+        _ => None,
+    };
+    if let Some(j) = job.filter(|_| !u.is_air()) {
+        letter(fb, j);
+        fb.rect_outline(Rect::new(px - 1, py - 1, 16, 16), 7);
+    }
+    // a sentried unit is greyed: colours 5 and 8 become 7
+    if u.order == UnitOrder::Sentry {
+        for yy in py..py + 16 {
+            for xx in px..px + 16 {
+                if matches!(fb.get(xx, yy), 5 | 8) {
+                    fb.put(xx, yy, 7);
+                }
+            }
+        }
     }
 }
 
