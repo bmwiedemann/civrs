@@ -107,11 +107,25 @@ impl Entry {
 
     /// Game-effect note (the `NAME2` section), if the entry has one.
     pub fn blurb2(self, ctx: &UiContext) -> Vec<String> {
-        match self.blurb_key() {
+        let text = match self.blurb_key() {
             Some((file, key)) if file != 0 => ctx.texts.blurb[file].section(&format!("{key}2")).map(paragraphs).unwrap_or_default(),
             _ => Vec::new(),
+        };
+        match self {
+            Entry::Wonder(w) => mark_missing_obsolescence(w, text),
+            _ => text,
         }
     }
+}
+
+/// A wonder whose page says it works "until the development of" an advance, while the rules
+/// (CIV.EXE's table) never make it obsolete, gets "not implemented: " in front of that part
+/// (Copernicus' Observatory and the Automobile).
+fn mark_missing_obsolescence(w: WonderId, text: Vec<String>) -> Vec<String> {
+    if rules::WONDERS[w as usize].obsolete_by.is_some() {
+        return text;
+    }
+    text.into_iter().map(|p| p.replacen("until the development", "not implemented: until the development", 1)).collect()
 }
 
 fn sort_entries(mut v: Vec<Entry>) -> Vec<Entry> {
@@ -333,4 +347,21 @@ pub fn improvement_picture(id: ImprovementId) -> Option<(&'static str, Rect)> {
 /// large-scale wonders).
 pub fn wonder_picture(w: WonderId) -> (&'static str, Rect) {
     crate::ui::city_view::wonder_sprite(w)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rules::wonder_ids as won;
+
+    #[test]
+    fn copernicus_page_says_its_obsolescence_is_not_implemented() {
+        let text = vec!["Doubles knowledge production in city, until the development of the AUTOMOBILE.".to_string()];
+        assert_eq!(
+            mark_missing_obsolescence(won::COPERNICUS_OBSERVATORY, text.clone()),
+            vec!["Doubles knowledge production in city, not implemented: until the development of the AUTOMOBILE.".to_string()]
+        );
+        // wonders that do become obsolete keep their text
+        assert_eq!(mark_missing_obsolescence(won::ORACLE, text.clone()), text);
+    }
 }
