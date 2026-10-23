@@ -20,13 +20,20 @@ impl Game {
 
     /// Defence strength x8 including terrain, fortification, fortress, walls and veteran status.
     ///
-    /// `attacker` selects the walls rule (City Walls only count against land
-    /// attackers).
+    /// `attacker` selects the walls rule: City Walls triple the defence (terrain included,
+    /// instead of the fortification bonus) of every unit but aircraft, except against the
+    /// units with attack 12, Artillery and Bombers (CIV.EXE 0x198ca).
     pub fn defense_strength(&self, u: &Unit, attacker: Option<&Unit>) -> i32 {
         let t = self.map.tile(u.x, u.y);
         let mut d = u.info().def as i32 * 8;
         if u.veteran {
             d += d / 2;
+        }
+        let walls = t.city.and_then(|c| self.city_opt(c)).map(|c| self.city_has_walls(c)).unwrap_or(false)
+            && !u.is_air()
+            && attacker.map(|a| a.info().att != 12).unwrap_or(true);
+        if walls {
+            return d * t.terrain.info().defense as i32 / 2 * 3;
         }
         // terrain multiplier in halves (Grassland 2 = x1, Forest 3 = x1.5, Hills 4 = x2 ...)
         if u.is_land() {
@@ -39,14 +46,6 @@ impl Game {
         }
         if t.has(tile_flags::FORTRESS) && !in_city {
             d *= 2;
-        }
-        if let Some(c) = t.city {
-            if let Some(city) = self.city_opt(c) {
-                let land_attacker = attacker.map(|a| a.is_land()).unwrap_or(true);
-                if land_attacker && self.city_has_walls(city) {
-                    d *= 3;
-                }
-            }
         }
         d
     }
@@ -520,7 +519,7 @@ mod tests {
     }
 
     #[test]
-    fn walls_triple_defence_against_land_attackers() {
+    fn walls_triple_defence_except_against_artillery_and_bombers() {
         let mut g = flat_game();
         let c = g.add_city(2, "Wallville".into(), 20, 20);
         let d = g.add_unit(2, unit_ids::PHALANX, 20, 20);
@@ -528,11 +527,14 @@ mod tests {
         let plain = g.defense_strength(g.unit(d), Some(g.unit(a)));
         assert_eq!(plain, 24, "in-city bonus x1.5");
         g.city_mut(c).add_improvement(imp::CITY_WALLS);
-        let walled = g.defense_strength(g.unit(d), Some(g.unit(a)));
-        assert_eq!(walled, plain * 3);
-        // ships ignore walls
+        // x3 of the base defence, in place of the in-city bonus
+        assert_eq!(g.defense_strength(g.unit(d), Some(g.unit(a))), 48);
         let ship = g.add_unit(1, unit_ids::FRIGATE, 22, 22);
-        assert_eq!(g.defense_strength(g.unit(d), Some(g.unit(ship))), plain);
+        assert_eq!(g.defense_strength(g.unit(d), Some(g.unit(ship))), 48);
+        for k in [unit_ids::ARTILLERY, unit_ids::BOMBER] {
+            let ignores = g.add_unit(1, k, 21, 21);
+            assert_eq!(g.defense_strength(g.unit(d), Some(g.unit(ignores))), plain);
+        }
         // fortress doubles outside cities
         g.map.get_mut(12, 12).unwrap().set(tile_flags::FORTRESS, true);
         let f = g.add_unit(2, unit_ids::PHALANX, 12, 12);

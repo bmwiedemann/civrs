@@ -420,7 +420,7 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
 - Movement in thirds, road 1/3, rail free, no river bonus (CIV.EXE 0x6336); partial moves (0x634a): a land unit with exactly 1 MP always enters, otherwise it fails when random(3*cost) > moves left; sight 1, or 2 for units with table sight flag 2 (ships: the outer ring only over ocean, 0x8061); ZOC rule [ERROR ZOC]; trireme 50% loss away from coast;
   air fuel (Fighter 1 turn, Bomber 2, Nuclear 1); transports/carriers; orders Fortify/Sentry/Goto(A*)/Road 2/Rail 6/Irrigate/Mine per table/
   Fortress 3/Clean 3/Pillage order per READ.ME §3; irrigation needs water; settlers join city <10; found city not adjacent to city; Esc undo.
-- Combat: `A = att*8*vet1.5`, `D = def*8*terrain/2*fortified1.5*fortress2*walls3(land attackers)*vet1.5`; loop rolling `rng.below(A)` vs `rng.below(D)`;
+- Combat: `A = att*8*vet1.5`, `D = def*8*terrain/2*fortified1.5*fortress2*walls: def*8*terrain/2*3 instead of fortification, not vs attack-12 units (Artillery, Bomber) nor for air defenders (0x198ca)*vet1.5`; loop rolling `rng.below(A)` vs `rng.below(D)`;
   winner 50% veteran; stack dies outside city/fortress; city shrinks on lost defence without walls; Fighters only vs air; ground units capture; capture plunders gold
   `gold*size/total`, steals an advance, 1/3 improvements destroyed, Palace destroyed; size-1 city destroyed; capital loss with >=6 cities -> civil war (ESCHISM);
   nukes (Manhattan) 3x3 kill + half size + pollution, SDI blocks.
