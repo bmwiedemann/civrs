@@ -60,6 +60,9 @@ pub struct MapView {
     pending: Pending,
     runner: Option<TurnRunner>,
     current_decision: Option<Decision>,
+    /// A decision raised outside the turn runner (the Pyramids' government choice right after
+    /// a revolution), answered by the dialog on top and applied directly.
+    loose_decision: Option<Decision>,
     /// Frames to pause before continuing processing (enemy move animation).
     pause: u32,
     blink: bool,
@@ -90,6 +93,7 @@ impl MapView {
             pending: Pending::None,
             runner: None,
             current_decision: None,
+            loose_decision: None,
             pause: 0,
             blink: true,
             last_centered: None,
@@ -917,6 +921,10 @@ impl Screen for MapView {
                 Transition::None
             }
             Pending::Event | Pending::Error => {
+                if let Some(d) = self.loose_decision.take() {
+                    let reply = dialogs::reply_for(&d, &result);
+                    ctx.game_mut().apply_decision(&d, reply);
+                }
                 // events produced while the dialog was up (audiences, unit actions)
                 if let Some(s) = self.next_event_screen(ctx) {
                     self.pending = Pending::Event;
@@ -1222,6 +1230,13 @@ impl MapView {
         let events = ctx.game_mut().take_events();
         self.queued.extend(events);
         while let Some(e) = self.queued.pop_front() {
+            if let crate::game::GameEvent::NeedsDecision(d) = &e {
+                if self.runner.is_none() && self.loose_decision.is_none() {
+                    self.loose_decision = Some(d.clone());
+                    return Some(dialogs::screen_for_decision(ctx, d));
+                }
+                continue;
+            }
             if let Some(s) = self.event_screen(ctx, &e) {
                 return Some(s);
             }
