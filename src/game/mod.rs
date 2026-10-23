@@ -10,6 +10,8 @@ pub mod combat;
 pub mod diplomacy;
 pub mod economy;
 pub mod events;
+pub mod goals;
+pub mod goto;
 pub mod happiness;
 pub mod hints;
 pub mod map;
@@ -188,6 +190,11 @@ pub struct Game {
     /// Barbarian headings and the last-occupant map layer (not saved).
     #[serde(skip)]
     pub barbarian_memory: barbarians::BarbarianMemory,
+    /// The computer players' goal lists, continent policies and unit bytes civrs's records
+    /// lack (`goals::AiMemory`); the persistent goals and policies go into the version-9 save
+    /// trailer, the rest is not saved.
+    #[serde(skip)]
+    pub ai_memory: goals::AiMemory,
     /// Computer players (bit per slot) whose audience with the human is queued but not over:
     /// CIV.EXE holds the audience while their units move, civrs after their turn, so until
     /// then their units keep the peace with the human. Not saved.
@@ -293,6 +300,7 @@ impl Game {
             hints_shown: 0,
             year: rules::calendar_year(0),
             barbarian_memory: Default::default(),
+            ai_memory: Default::default(),
             audience_pending: 0,
             diplo_latch: -1,
             treaty_break_ok: None,
@@ -567,6 +575,9 @@ impl Game {
         }
         self.players[owner as usize].stats.units_built += 1;
         self.note_occupant(owner, x, y);
+        // create_unit 0x8b51 starts the unit without a heading
+        self.ai_memory.heading.remove(&id);
+        self.barbarian_memory.heading.remove(&id);
         id
     }
 

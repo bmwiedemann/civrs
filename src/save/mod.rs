@@ -15,7 +15,10 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// garrison); older saves have none.
 /// 8: then by each player's diplomacy flags (8 x u16 LE, `Player::diplo`) and last contact turn
 /// (i32 LE); older saves derive the flags from their relations and embassies.
-pub const VERSION: u16 = 8;
+/// 9: then by each civilization's `AI_TRAILER` bytes: the 16 persistent AI goals (x, y, type,
+/// priority as signed bytes, CIV.EXE ds:0xd76e..) and the continent policies (a flag byte, 1
+/// when known, and 16 policies, ds:0xe698); older saves start with no goals and no policies.
+pub const VERSION: u16 = 9;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -83,6 +86,7 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
         }
         data.extend_from_slice(&p.last_contact.to_le_bytes());
     }
+    data.extend_from_slice(&ai_trailer(g));
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -150,7 +154,48 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
             _ => migrate_relations(p),
         }
     }
+    let ai = diplo + DIPLO_TRAILER * g.players.len();
+    if ver >= 9 {
+        if let Some(b) = rest.get(ai..ai + 8 * AI_TRAILER) {
+            read_ai_trailer(&mut g, b);
+        }
+    }
     Ok(g)
+}
+
+/// Bytes per civilization of the version-9 AI trailer: 16 persistent goals of 4 bytes, the
+/// policy flag and 16 policies.
+const AI_TRAILER: usize = crate::game::goals::PERSISTENT_GOALS * 4 + 1 + 16;
+
+fn ai_trailer(g: &Game) -> Vec<u8> {
+    let m = &g.ai_memory;
+    let mut v = Vec::with_capacity(8 * AI_TRAILER);
+    for c in 0..8 {
+        for p in &m.persistent[c] {
+            v.extend_from_slice(&[p.x as u8, p.y as u8, p.kind as u8, p.priority as u8]);
+        }
+        match m.policies[c] {
+            Some(pol) => {
+                v.push(1);
+                v.extend_from_slice(&pol);
+            }
+            None => v.extend_from_slice(&[0; 17]),
+        }
+    }
+    v
+}
+
+fn read_ai_trailer(g: &mut Game, b: &[u8]) {
+    use crate::game::goals::{Goal, PERSISTENT_GOALS};
+    for c in 0..8 {
+        let r = &b[c * AI_TRAILER..(c + 1) * AI_TRAILER];
+        for i in 0..PERSISTENT_GOALS {
+            let q = &r[4 * i..4 * i + 4];
+            g.ai_memory.persistent[c][i] = Goal { x: q[0] as i8, y: q[1] as i8, kind: q[2] as i8, priority: q[3] as i8 };
+        }
+        let at = 4 * PERSISTENT_GOALS;
+        g.ai_memory.policies[c] = (r[at] != 0).then(|| r[at + 1..at + 17].try_into().unwrap());
+    }
 }
 
 /// Bytes per player of the version-8 diplomacy trailer: the flags towards each slot and the
@@ -353,7 +398,7 @@ mod tests {
         // a version-7 file: no diplomacy trailer; relations and embassies of the body count
         let mut data = std::fs::read(&path).unwrap();
         data[4..6].copy_from_slice(&7u16.to_le_bytes());
-        data.truncate(data.len() - 8 * super::DIPLO_TRAILER);
+        data.truncate(data.len() - 8 * super::AI_TRAILER - 8 * super::DIPLO_TRAILER);
         std::fs::write(&path, &data).unwrap();
         let mut old = super::load_game(&path).unwrap();
         // what a version-7 save stored
@@ -366,6 +411,34 @@ mod tests {
         assert_eq!(old.diplo(1, 3), CONTACT);
         assert_eq!(old.diplo(1, 4), 0);
         assert_eq!(old.player(2).last_contact, -1);
+    }
+
+    #[test]
+    fn persistent_ai_goals_and_policies_survive_a_save() {
+        use crate::game::goals::goal;
+        let mut g = Game::new(GameSetup { seed: 8, ..Default::default() }, None);
+        g.add_persistent_goal(3, 12, 34, goal::SETTLE, 2);
+        g.add_persistent_goal(5, 70, 1, goal::DEFEND, 7);
+        g.ai_memory.policies[3] = Some([5; 16]);
+        g.add_goal(3, 1, 1, goal::ATTACK, 4);
+        let dir = std::env::temp_dir().join(format!("civrs-goals-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        let l = super::load_game(&path).unwrap();
+        assert_eq!(l.ai_memory.persistent, g.ai_memory.persistent);
+        assert_eq!(l.ai_memory.policies[3], Some([5; 16]));
+        assert_eq!(l.ai_memory.policies[2], None);
+        // the transient goals are not saved, as in CIV.EXE
+        assert!(!l.ai_memory.goals[3].iter().any(|o| o.pos() == (1, 1)));
+        // a version-8 file: no AI trailer
+        let mut data = std::fs::read(&path).unwrap();
+        data[4..6].copy_from_slice(&8u16.to_le_bytes());
+        data.truncate(data.len() - 8 * super::AI_TRAILER);
+        std::fs::write(&path, &data).unwrap();
+        let old = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        assert!(old.ai_memory.persistent.iter().flatten().all(|p| p.is_free()));
+        assert_eq!(old.player(2).diplo, g.player(2).diplo);
     }
 
     #[test]
@@ -385,7 +458,7 @@ mod tests {
         // a version-5 file: same body, no city trailer
         let mut data = std::fs::read(&path).unwrap();
         data[4..6].copy_from_slice(&5u16.to_le_bytes());
-        data.truncate(data.len() - 8 * super::DIPLO_TRAILER - 4 - g.cities.len() * super::CITY_TRAILER);
+        data.truncate(data.len() - 8 * super::AI_TRAILER - 8 * super::DIPLO_TRAILER - 4 - g.cities.len() * super::CITY_TRAILER);
         std::fs::write(&path, &data).unwrap();
         let old = super::load_game(&path).unwrap();
         let _ = std::fs::remove_dir_all(dir);

@@ -342,6 +342,43 @@ mod tests {
         });
     }
 
+    /// The 12-seed archipelago statistics at King, 250 turns: overseas cities, seeds without
+    /// any, all cities and barbarian cities (`cargo test --release --lib
+    /// ai::tests::archipelago_statistics -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn archipelago_statistics() {
+        use crate::game::{WorldParams, WorldSource};
+        let seeds = [11u64, 2, 41, 1, 3, 4, 5, 7, 13, 17, 23, 29];
+        let rows: Vec<(u64, usize, usize, usize, usize)> = std::thread::scope(|s| {
+            let hs: Vec<_> = seeds
+                .iter()
+                .map(|&seed| {
+                    s.spawn(move || {
+                        let setup = GameSetup { seed, num_civs: 7, difficulty: crate::rules::Difficulty::King, world: WorldSource::Random(WorldParams { land_mass: 0, ..WorldParams::normal() }), ..Default::default() };
+                        let start = start_continents(&Game::new(setup.clone(), None));
+                        let (g, _) = archipelago(seed, 250);
+                        let overseas = overseas_cities(&g, &start);
+                        let cities = g.all_cities().count();
+                        let barbarian = g.all_cities().filter(|c| c.owner == 0).count();
+                        let units = g.all_units().filter(|u| u.owner != 0).count();
+                        (seed, overseas, cities, barbarian, units)
+                    })
+                })
+                .collect();
+            hs.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        let (mut o, mut none, mut c, mut b) = (0, 0, 0, 0);
+        for (seed, overseas, cities, barbarian, units) in &rows {
+            eprintln!("STATS seed {seed}: overseas {overseas} cities {cities} barbarian {barbarian} units {units}");
+            o += overseas;
+            none += (*overseas == 0) as usize;
+            c += cities;
+            b += barbarian;
+        }
+        eprintln!("STATS total: overseas {o} seeds without {none} cities {c} barbarian {b}");
+    }
+
     #[test]
     fn archipelago_ai_settles_other_continents() {
         let mut total = 0;

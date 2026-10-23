@@ -675,13 +675,13 @@ impl MapView {
             if u.order != UnitOrder::Goto || u.moves_left == 0 {
                 break;
             }
-            let Some(dir) = g.next_goto_step(id) else {
+            let dest = u.goto;
+            let Some(dir) = ctx.game_mut().next_goto_step(id) else {
                 let g = ctx.game_mut();
                 g.unit_mut(id).order = UnitOrder::None;
                 g.unit_mut(id).goto = None;
                 break;
             };
-            let dest = u.goto;
             let r = ctx.game_mut().try_move(id, dir);
             match r {
                 Ok(MoveOutcome::Moved) | Ok(MoveOutcome::Boarded(_)) => {

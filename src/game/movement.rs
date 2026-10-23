@@ -335,18 +335,11 @@ impl Game {
         }
     }
 
-    /// Simple A* path for goto; returns the next step direction.
-    pub fn next_goto_step(&self, id: UnitId) -> Option<Dir8> {
-        let u = self.unit(id);
-        let goal = u.goto?;
-        if (u.x, u.y) == goal {
-            return None;
-        }
-        let path = crate::ai::path::astar(self, u, goal)?;
-        if path.len() < 2 {
-            return None;
-        }
-        Dir8::from_delta(path[1].0 - u.x, path[1].1 - u.y)
+    /// The next step of a unit's goto: CIV.EXE's `goto_direction` (0x1db04, see `goto`), for
+    /// the human's units as for the computer's. `None` when there is no step; the goto may
+    /// have been dropped then (arrived, or no way found).
+    pub fn next_goto_step(&mut self, id: UnitId) -> Option<Dir8> {
+        self.goto_step(id)
     }
 
     /// Ships of `slot` get one more move per turn from the Lighthouse or Magellan's Expedition;
