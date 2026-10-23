@@ -726,7 +726,8 @@ impl Game {
         for id in ids {
             let Some(u) = self.unit_opt(id).cloned() else { continue };
             let in_own_city = self.city_at(u.x, u.y).map(|c| self.city(c).owner == slot).unwrap_or(false);
-            if u.kind == unit_ids::TRIREME && !in_own_city && self.map.land_mask8(u.x, u.y) == 0 && self.rng.chance(50) {
+            // only the human's Triremes are lost at sea (CIV.EXE 0x75da)
+            if u.kind == unit_ids::TRIREME && self.player(slot).human && !in_own_city && self.map.land_mask8(u.x, u.y) == 0 && self.rng.chance(50) {
                 self.remove_unit(id);
                 self.push_event(GameEvent::UnitLost { slot, kind: u.kind, at: (u.x, u.y), reason: "lost at sea".into() });
                 continue;
