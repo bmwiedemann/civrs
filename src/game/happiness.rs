@@ -70,18 +70,37 @@ impl Game {
         base.max(1)
     }
 
-    /// Unhappy citizens a Temple pacifies in this city.
+    /// Unhappy citizens a Temple pacifies in this city: 1 with Ceremonial Burial, 2 with
+    /// Mysticism, doubled by the Oracle (CIV.EXE 0xf6ca).
     pub fn temple_effect(&self, c: CityId) -> i32 {
         let city = self.city(c);
         let p = self.player(city.owner);
-        let mut t = 1;
-        if p.knows(rules::advance_ids::MYSTICISM) {
-            t += 1;
-        }
+        let t = if p.knows(rules::advance_ids::MYSTICISM) {
+            2
+        } else if p.knows(rules::advance_ids::CEREMONIAL_BURIAL) {
+            1
+        } else {
+            0
+        };
         if self.owner_has_wonder(city.owner, won::ORACLE) {
-            t *= 2;
+            t * 2
+        } else {
+            t
         }
-        t
+    }
+
+    /// Unhappy citizens a Cathedral pacifies in this city: 4, or 6 with Michelangelo's Chapel;
+    /// nothing while the owner does not know Religion (CIV.EXE 0xf625).
+    pub fn cathedral_effect(&self, c: CityId) -> i32 {
+        let city = self.city(c);
+        if !city.has_improvement(imp::CATHEDRAL) || !self.player(city.owner).knows(rules::advance_ids::RELIGION) {
+            return 0;
+        }
+        if self.owner_has_wonder(city.owner, won::MICHELANGELOS_CHAPEL) {
+            6
+        } else {
+            4
+        }
     }
 
     /// Military units of the owner inside the city that can impose martial law.
@@ -146,9 +165,7 @@ impl Game {
         if city.has_improvement(imp::COLOSSEUM) {
             make_content += 3;
         }
-        if city.has_improvement(imp::CATHEDRAL) || self.owner_has_wonder(slot, won::MICHELANGELOS_CHAPEL) {
-            make_content += 3;
-        }
+        make_content += self.cathedral_effect(c);
         h.pacify(make_content);
         h.steps.push(("Buildings", h.happy, h.content, h.unhappy));
         // wonders
@@ -232,5 +249,25 @@ mod tests {
         g.add_unit(slot, unit_ids::PHALANX, x, y);
         let h2 = g.city_happiness(c);
         assert!(h2.unhappy < h.unhappy);
+    }
+
+    #[test]
+    fn temple_and_cathedral_follow_the_civilopedia() {
+        let (mut g, c) = emperor_fixture();
+        let slot = g.city(c).owner;
+        g.player_mut(slot).advances = 0;
+        g.city_mut(c).add_improvement(imp::TEMPLE);
+        g.city_mut(c).add_improvement(imp::CATHEDRAL);
+        assert_eq!((g.temple_effect(c), g.cathedral_effect(c)), (0, 0));
+        g.player_mut(slot).learn(rules::advance_ids::CEREMONIAL_BURIAL);
+        g.player_mut(slot).learn(rules::advance_ids::RELIGION);
+        assert_eq!((g.temple_effect(c), g.cathedral_effect(c)), (1, 4));
+        g.player_mut(slot).learn(rules::advance_ids::MYSTICISM);
+        g.city_mut(c).add_wonder(won::MICHELANGELOS_CHAPEL);
+        g.wonders_built[won::MICHELANGELOS_CHAPEL as usize] = Some(c);
+        assert_eq!((g.temple_effect(c), g.cathedral_effect(c)), (2, 6));
+        // Michelangelo's Chapel is no Cathedral of its own
+        g.city_mut(c).remove_improvement(imp::CATHEDRAL);
+        assert_eq!(g.cathedral_effect(c), 0);
     }
 }

@@ -411,7 +411,7 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
   (x2 foreign, max 3); corruption by distance to palace * govt factor (4/3/2/2(Communism flat)/1/0), Courthouse halves; rates in 10% steps capped per govt
   (60/70/80/80/100, Anarchy all lux); Marketplace/Bank +50% tax&lux, Library/University +50% sci, Copernicus/Newton +100% city, SETI +50% all;
   specialists 2 each; upkeep paid, sell improvement if broke.
-- Happiness: content base 4..0 by difficulty; 2 lux per step; Temple 1 (2 with Mysticism, Oracle x2), Colosseum 3, Cathedral 3 (Michelangelo everywhere),
+- Happiness: content base 4..0 by difficulty; 2 lux per step; Temple 1 with Ceremonial Burial (2 with Mysticism, Oracle x2), Colosseum 3, Cathedral 4 with Religion (6 with Michelangelo),
   Hanging Gardens/Cure for Cancer +1 content, Bach -2 unhappy, Shakespeare all content; martial law max 3 under Anarchy/Desp/Mon/Comm; Republic 1 / Democracy 2
   unhappy per aggressive unit abroad (Women's Suffrage -1); disorder if unhappy > happy; celebration size>=3, happy > half, no unhappy; Democracy 2 turns disorder -> anarchy.
 - Science: cost `(n+1)*(8+2*difficulty)` beakers [approx]; research choice after each discovery; Future Tech after all; Great Library, Darwin's 2 advances.
