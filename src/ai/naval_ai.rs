@@ -167,9 +167,9 @@ fn foreign_grid(g: &Game, slot: Slot) -> Vec<bool> {
     blocked
 }
 
-/// Moves per turn of a ship (Magellan's Expedition adds one).
+/// Moves per turn of a ship (the Lighthouse or Magellan's Expedition adds one).
 fn moves_per_turn(g: &Game, u: &Unit) -> usize {
-    u.info().moves as usize + if g.owner_has_wonder(u.owner, rules::wonder_ids::MAGELLANS_EXPEDITION) { 1 } else { 0 }
+    u.info().moves as usize + if g.extra_sea_move(u.owner) { 1 } else { 0 }
 }
 
 // ---- water reachability ----------------------------------------------------------------------

@@ -416,8 +416,8 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
   unhappy per aggressive unit abroad (Women's Suffrage -1); disorder if unhappy > happy; celebration size>=3, happy > half, no unhappy; Democracy 2 turns disorder -> anarchy;
   then wonders: Hanging Gardens/Cure for Cancer +1 happy, Shakespeare all content, Bach -2 unhappy on its continent.
 - Science: cost `(n+1)*(8+2*difficulty)` beakers [approx]; research choice after each discovery; Future Tech after all; Great Library, Darwin's 2 advances.
-- Movement in thirds, road 1/3, rail free, no river bonus (CIV.EXE 0x6336); partial moves (0x634a): a land unit with exactly 1 MP always enters, otherwise it fails when random(3*cost) > moves left; sight 1/2/3; ZOC rule [ERROR ZOC]; trireme 50% loss away from coast
-  (Lighthouse safe); air fuel (Fighter 1 turn, Bomber 2, Nuclear 1); transports/carriers; orders Fortify/Sentry/Goto(A*)/Road 2/Rail 6/Irrigate/Mine per table/
+- Movement in thirds, road 1/3, rail free, no river bonus (CIV.EXE 0x6336); partial moves (0x634a): a land unit with exactly 1 MP always enters, otherwise it fails when random(3*cost) > moves left; sight 1/2/3; ZOC rule [ERROR ZOC]; trireme 50% loss away from coast;
+  air fuel (Fighter 1 turn, Bomber 2, Nuclear 1); transports/carriers; orders Fortify/Sentry/Goto(A*)/Road 2/Rail 6/Irrigate/Mine per table/
   Fortress 3/Clean 3/Pillage order per READ.ME §3; irrigation needs water; settlers join city <10; found city not adjacent to city; Esc undo.
 - Combat: `A = att*8*vet1.5`, `D = def*8*terrain/2*fortified1.5*fortress2*walls3(land attackers, Great Wall)*vet1.5`; loop rolling `rng.below(A)` vs `rng.below(D)`;
   winner 50% veteran; stack dies outside city/fortress; city shrinks on lost defence without walls; Fighters only vs air; ground units capture; capture plunders gold
@@ -433,7 +433,7 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
   random; proposals EXCHANGE/CANCEL/TRIBUTE/TAKECIV/PEACE/GIVECIV/GIVECASH/GROVEL/THREAT/TREATY/HELPME/CRUSADE/... from KING.TXT; human audience menu
   (peace / military proposal / demand tribute); embassies reveal intel; UN forces peace acceptance; AI-AI relations rolled every 10 turns.
 - Barbarians: huts + sea landings from turn 50 (Chieftain 150), `2+difficulty` era-appropriate units + leader (ransom 100 gold), attack nearest city, INVADER screens.
-- Wonders: effects as Civ1 (Pyramids no anarchy, Hanging Gardens +1 content, Colossus, Lighthouse, Great Library, Oracle, Great Wall, Magellan +1 sea move,
+- Wonders: effects as Civ1 (Pyramids no anarchy, Hanging Gardens +1 content, Colossus, Lighthouse +1 sea move (not with Magellan), Great Library, Oracle, Great Wall, Magellan +1 sea move,
   Michelangelo, Copernicus, Shakespeare, Newton, Bach, Darwin, Hoover, Women's Suffrage, Manhattan, UN, Apollo (reveal map, SS parts for all), SETI, Cure for Cancer);
   obsolete when any civ learns the advance (0xc91:0x6c8d); caravan help = 50 shields.
 - Spaceship: after Apollo; structural <=39, component <=16, module <=12; launch when >=1/2/3 and structurals cover; flight turns `max(6, 100/(2+components/2))`;

@@ -257,15 +257,21 @@ impl Game {
         Dir8::from_delta(path[1].0 - u.x, path[1].1 - u.y)
     }
 
+    /// Ships of `slot` get one more move per turn from the Lighthouse or Magellan's Expedition;
+    /// having both gives no more (CIV.EXE 0x40e2).
+    pub fn extra_sea_move(&self, slot: super::Slot) -> bool {
+        self.owner_has_wonder(slot, rules::wonder_ids::LIGHTHOUSE) || self.owner_has_wonder(slot, rules::wonder_ids::MAGELLANS_EXPEDITION)
+    }
+
     /// Reset movement points at the start of a player's turn; handles fortify completion.
     pub fn reset_moves(&mut self, slot: super::Slot) {
-        let magellan = self.owner_has_wonder(slot, rules::wonder_ids::MAGELLANS_EXPEDITION);
+        let extra_sea_move = self.extra_sea_move(slot);
         for u in self.units.iter_mut().flatten() {
             if u.owner != slot {
                 continue;
             }
             let mut m = u.full_moves();
-            if u.is_sea() && magellan {
+            if u.is_sea() && extra_sea_move {
                 m += 3;
             }
             u.moves_left = m;
@@ -326,5 +332,25 @@ mod tests {
             .count();
         // random(9) > 2 fails two times in three
         assert!((15..40).contains(&failed), "{failed} of 40 failed");
+    }
+
+    #[test]
+    fn lighthouse_and_magellan_give_ships_one_move_together() {
+        use crate::rules::wonder_ids as won;
+        let mut g = Game::new(GameSetup { seed: 1, ..Default::default() }, None);
+        let slot = g.human_slot;
+        let settler = g.units_of(slot).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        let (x, y) = g.city(c).pos();
+        let ship = g.add_unit(slot, unit_ids::TRIREME, x, y);
+        let full = g.unit(ship).full_moves();
+        g.reset_moves(slot);
+        assert_eq!(g.unit(ship).moves_left, full);
+        for w in [won::LIGHTHOUSE, won::MAGELLANS_EXPEDITION] {
+            g.city_mut(c).add_wonder(w);
+            g.wonders_built[w as usize] = Some(c);
+            g.reset_moves(slot);
+            assert_eq!(g.unit(ship).moves_left, full + 3);
+        }
     }
 }

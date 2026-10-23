@@ -610,8 +610,7 @@ impl Game {
                 let id = self.add_unit(owner, k, x, y);
                 self.unit_mut(id).home = Some(c);
                 let domain = rules::UNITS[k as usize].domain;
-                let veteran = (domain == Domain::Land && self.city(c).has_improvement(imp::BARRACKS))
-                    || (domain == Domain::Sea && self.owner_has_wonder(owner, won::LIGHTHOUSE));
+                let veteran = domain == Domain::Land && self.city(c).has_improvement(imp::BARRACKS);
                 if veteran {
                     self.unit_mut(id).veteran = true;
                 }
@@ -712,11 +711,10 @@ impl Game {
     /// Triremes away from coast, aircraft out of fuel.
     pub fn process_unit_hazards(&mut self, slot: Slot) {
         let ids = self.units_of(slot);
-        let lighthouse = self.owner_has_wonder(slot, won::LIGHTHOUSE);
         for id in ids {
             let Some(u) = self.unit_opt(id).cloned() else { continue };
             let in_own_city = self.city_at(u.x, u.y).map(|c| self.city(c).owner == slot).unwrap_or(false);
-            if u.kind == unit_ids::TRIREME && !in_own_city && self.map.land_mask8(u.x, u.y) == 0 && !lighthouse && self.rng.chance(50) {
+            if u.kind == unit_ids::TRIREME && !in_own_city && self.map.land_mask8(u.x, u.y) == 0 && self.rng.chance(50) {
                 self.remove_unit(id);
                 self.push_event(GameEvent::UnitLost { slot, kind: u.kind, at: (u.x, u.y), reason: "lost at sea".into() });
                 continue;
