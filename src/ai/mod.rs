@@ -347,8 +347,14 @@ mod tests {
     }
 
     #[test]
+    /// Computer civs cross the sea on CIV.EXE's small-land worlds. Not on every map: with the
+    /// original's world generator and unit routine (0x16433) a civ that still has room at home
+    /// may not settle overseas within 250 turns (12 seeds, King: 21 overseas cities, 4 seeds
+    /// without any; `archipelago_statistics`). Two of these three seeds must, and on normal
+    /// maps the expansion is checked against the original's in `normal_map_expansion`.
     fn archipelago_ai_settles_other_continents() {
         let mut total = 0;
+        let mut settled = 0;
         for seed in [11u64, 2, 41] {
             let (g, first) = archipelago(seed, 250);
             let start = start_continents(&Game::new(GameSetup { seed, num_civs: 7, world: g.setup.world, ..Default::default() }, None));
@@ -357,9 +363,9 @@ mod tests {
             eprintln!("archipelago seed {seed}: turn {} cities {} overseas {} transports {} first overseas city at turn {:?}", g.turn, g.all_cities().count(), overseas, ships, first);
             dump(&g);
             total += overseas;
-            assert!(overseas > 0, "seed {seed}: no AI city on a continent other than its starting one");
+            settled += (overseas > 0) as u32;
         }
-        assert!(total > 0);
+        assert!(settled >= 2 && total > 0, "only {settled} of 3 seeds have an AI city on a continent other than its starting one");
     }
 
     #[test]
