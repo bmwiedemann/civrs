@@ -184,26 +184,28 @@ impl Game {
         self.all_units().filter(|u| u.home == Some(c)).map(|u| u.id).collect()
     }
 
-    /// Shield production multiplier in percent from Factory / Mfg. Plant / power plants.
-    fn shield_multiplier(&self, c: CityId) -> i32 {
+    /// The city gets power from its own plant or a Hoover Dam on its continent.
+    pub fn city_has_power(&self, c: CityId) -> bool {
         let city = self.city(c);
-        let mut mult = 100;
-        let factory = city.has_improvement(imp::FACTORY);
-        let mfg = city.has_improvement(imp::MFG_PLANT);
-        if factory {
-            mult += 50;
-        }
-        if mfg {
-            mult += 50;
-        }
-        let plant = city.has_improvement(imp::POWER_PLANT)
+        city.has_improvement(imp::POWER_PLANT)
             || city.has_improvement(imp::HYDRO_PLANT)
             || city.has_improvement(imp::NUCLEAR_PLANT)
-            || self.owner_has_wonder(city.owner, won::HOOVER_DAM);
-        if plant && (factory || mfg) {
-            mult += 50;
-        }
-        mult
+            || (self.owner_has_wonder(city.owner, won::HOOVER_DAM) && self.same_continent_as_wonder(c, won::HOOVER_DAM))
+    }
+
+    /// Shields after Factory (+50%), Mfg. Plant (+100%, not added to the Factory) and power
+    /// (+50%, only with one of them), in quarters as CIV.EXE 0xdc5d..0xddd5 counts.
+    fn boosted_shields(&self, c: CityId, shields: i32) -> i32 {
+        let city = self.city(c);
+        let factory = if city.has_improvement(imp::MFG_PLANT) {
+            4
+        } else if city.has_improvement(imp::FACTORY) {
+            2
+        } else {
+            0
+        };
+        let power = if self.city_has_power(c) { 2.min(factory) } else { 0 };
+        shields + power * shields / 4 + factory * shields / 4
     }
 
     /// Full resource accounting for a city.
@@ -237,7 +239,7 @@ impl Game {
         let supported = self.supported_units(c).len() as i32;
         let free = g.free_units_per_city as i32;
         y.shield_upkeep = (supported - free).max(0);
-        y.shields = y.shields * self.shield_multiplier(c) / 100;
+        y.shields = self.boosted_shields(c, y.shields);
         // corruption and the tax/lux/sci split
         y.corruption = self.corruption(c, y.trade);
         let net = y.trade - y.corruption;
@@ -1021,5 +1023,22 @@ mod tests {
         g.player_mut(other).learn(crate::rules::advance_ids::ELECTRICITY);
         assert!(g.wonder_obsolete(won::COLOSSUS));
         assert!(!g.owner_has_wonder(slot, won::COLOSSUS));
+    }
+
+    #[test]
+    fn factory_mfg_plant_and_power_in_quarters() {
+        let (mut g, c) = fixture();
+        let b = |g: &Game| (g.boosted_shields(c, 10), g.boosted_shields(c, 3));
+        assert_eq!(b(&g), (10, 3));
+        g.city_mut(c).add_improvement(imp::POWER_PLANT);
+        assert_eq!(b(&g), (10, 3), "power needs a factory");
+        g.city_mut(c).add_improvement(imp::FACTORY);
+        assert_eq!(b(&g), (20, 5));
+        g.city_mut(c).remove_improvement(imp::POWER_PLANT);
+        assert_eq!(b(&g), (15, 4));
+        g.city_mut(c).add_improvement(imp::MFG_PLANT);
+        assert_eq!(b(&g), (20, 6));
+        g.city_mut(c).add_improvement(imp::HYDRO_PLANT);
+        assert_eq!(b(&g), (25, 7));
     }
 }

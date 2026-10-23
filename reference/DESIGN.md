@@ -406,7 +406,7 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
 - Tile yield: TERRAIN/special [spec]; irrigation/mine bonuses [spec]; road +1 trade on Desert/Grassland/Plains; railroad +50% shields; city centre auto-irrigated
   + min 1 shield; Despotism/Anarchy -1 on tiles >2; Republic/Democracy +1 trade where >=1; pollution halves; Colossus +1 ocean trade.
 - City turn: food surplus = food - 2*size - settlers upkeep (1; 2 Rep/Dem); growth at (size+1)*10, Granary keeps half, Aqueduct for >10; famine shrinks;
-  shields minus unit upkeep beyond free units (3 under Anarchy/Despotism/Monarchy/Communism, 0 Rep/Dem); Factory/Mfg +50% each, plants/Hoover +50% with Factory;
+  shields minus unit upkeep beyond free units (3 under Anarchy/Despotism/Monarchy/Communism, 0 Rep/Dem); Factory +50% / Mfg. Plant +100%, plants/Hoover (same continent) +50% with either, counted in quarters (0xdc5d);
   cost = cost*10 shields; change-class penalty 50%; buy cost units `2r + r^2/20` (x2 if empty), improvements `2r`, wonders `4r`; trade routes `(ta+tb+4)/8`
   (x2 foreign, max 3); corruption by distance to palace * govt factor (4/3/2/2(Communism flat)/1/0), Courthouse halves; rates in 10% steps capped per govt
   (60/70/80/80/100, Anarchy all lux); Marketplace/Bank +50% tax&lux, Library/University +50% sci, Copernicus/Newton +100% city, SETI +50% all;
