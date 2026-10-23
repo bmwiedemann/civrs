@@ -39,7 +39,9 @@ impl CityFounded {
         }
         let g = ctx.game();
         if let Some(c) = g.city_opt(city) {
-            let text = format!("{} founded: {}.", c.name, crate::rules::year_text(crate::rules::year_for_turn(c.founded_turn)));
+            // the current year (append_year 0x238:0x1720, ds:0xb220): the animation runs right
+            // after the founding
+            let text = format!("{} founded: {}.", c.name, crate::rules::year_text(g.year()));
             let pal = ctx.pic_pal("HILL");
             let black = pal.nearest([0, 0, 0]);
             draw_text_centered(fb, &ctx.fonts, &TextStyle::new(3, black), 160, 2, &text);

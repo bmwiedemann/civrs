@@ -18,7 +18,8 @@ pub struct Spaceship {
     pub components: u8,
     pub modules: u8,
     pub launched_turn: Option<u32>,
-    /// Turn of the first year >= `arrival_year` (the ship lands at the end of the turn before).
+    /// Saves before version 6 landed the ship on this turn; no longer set (the ship lands in
+    /// the year `arrival_year`), kept so that older saves load.
     pub arrival_turn: Option<u32>,
     /// The ship was cancelled when the capital fell (cleared by the next part).
     pub lost: bool,
@@ -33,6 +34,9 @@ pub struct Spaceship {
     /// The ship reached Alpha Centauri. Stored after the game body in version-5 saves.
     #[serde(skip)]
     pub landed: bool,
+    /// Launch year ds:0xe8a8[civ]. Stored after the game body in version-6 saves.
+    #[serde(skip)]
+    pub launch_year: Option<i32>,
 }
 
 impl Spaceship {

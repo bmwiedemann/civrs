@@ -11,16 +11,17 @@
 //!   energy = 200 * solar / clamp(hab + life, 1, 99) %; fuel = 100 * fuel / clamp(prop, 1, 99) %;
 //! - mass = sum of part masses (parts table ds:0x4bd0) in units of 100 tons;
 //! - flight time = 50 * mass / (min(10 * prop, 10 * fuel) + 1) tenths of years;
-//! - success = 100, times clamp(support, 0, 100)% (only when the screen is drawn, i.e. for the
-//!   human's ship), times clamp(energy, 0, 100)%, minus (flight - 150) / 10 when the flight
-//!   takes over 15 years, clamped to 0..100.
+//! - success = 100, times clamp(support, 0, 100)% (only when the screen is drawn: the
+//!   human's ship, or any ship with the Enemy Moves option on, o 0x177db), times
+//!   clamp(energy, 0, 100)%, minus (flight - 150) / 10 when the flight takes over 15 years,
+//!   clamped to 0..100.
 //!
 //! The ship lands in the year `launch year + flight / 10` without any roll: the success chance
 //! only scales the human's score (o 0x1c3dd) and steers the AI's launch decision (0xe835).
-//!
-//! Not modelled: from the first launch on CIV.EXE advances the calendar by one year per turn
-//! (0x26ed, ds:0x4cd8 & 0xfe); civrs keeps its turn-based calendar and lands the ship on the
-//! first turn whose year reaches the arrival year.
+//! Once a ship is in flight the calendar runs one year per turn from 1750 on (0x26ed,
+//! `Game::next_year`), so a ship launched then lands on the turn whose year equals its arrival
+//! year. CIV.EXE compares for equality (0x2a13): a ship launched before 1750, while the years
+//! still go in steps of 5 or more, can miss its year and never land; civrs keeps that.
 
 use super::events::{Decision, EndReason, GameEvent};
 use super::map::{CityId, Slot};
@@ -155,23 +156,31 @@ fn is_structure(s: &Spaceship, x: i32, y: i32) -> bool {
     s.part_at(x, y).is_some_and(|t| t < 3)
 }
 
-/// Statistics of a ship (o 0x177ce). `drawn` is ship_draw's "screen visible" flag (the human's
-/// ship, or the reveal-all option): only then does a life-support shortfall lower the success
-/// chance (the multiplication sits inside the drawing branch, o 0x17c0a).
+/// The part of type `t` at (x, y) counts: a structural always, anything else when a cell
+/// orthogonally next to its footprint holds a structural (o 0x17964..0x179ed; ship_draw
+/// outlines the others in colour 12).
+pub fn part_attached(s: &Spaceship, x: i32, y: i32, t: u8) -> bool {
+    let (w, h) = footprint(t);
+    let mut attached = t < 3;
+    for dx in 0..w {
+        for dy in 0..h {
+            let (cx, cy) = (x + dx, y + dy);
+            attached |= [(cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)].iter().any(|&(nx, ny)| is_structure(s, nx, ny));
+        }
+    }
+    attached
+}
+
+/// Statistics of a ship (o 0x177ce). `drawn` is ship_draw's "screen visible" flag
+/// (`Game::ship_drawn`: the human's ship, or any with Enemy Moves on): only then does a
+/// life-support shortfall lower the success chance (the multiplication sits inside the
+/// drawing branch, o 0x17c0a).
 pub fn ship_stats(s: &Spaceship, drawn: bool) -> ShipStats {
     let mut st = ShipStats::default();
     for &(x, y, _) in PLACEMENT.iter() {
         let (x, y) = (x as i32, y as i32);
         let Some(t) = s.part_at(x, y) else { continue };
-        let (w, h) = footprint(t);
-        let mut attached = t < 3;
-        for dx in 0..w {
-            for dy in 0..h {
-                let (cx, cy) = (x + dx, y + dy);
-                attached |= [(cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)].iter().any(|&(nx, ny)| is_structure(s, nx, ny));
-            }
-        }
-        if attached {
+        if part_attached(s, x, y, t) {
             st.counts[t as usize] += 1;
         }
     }
@@ -304,19 +313,16 @@ pub fn grid_from_counts(s: &mut Spaceship) {
     s.recount();
 }
 
-/// First turn after `from` whose year reaches `year`.
-fn turn_of_year(from: u32, year: i32) -> u32 {
-    let mut t = from + 1;
-    while rules::year_for_turn(t) < year {
-        t += 1;
-    }
-    t
-}
-
 impl Game {
-    /// Statistics of a civ's ship as ship_draw computes them (drawn for the human).
+    /// Statistics of a civ's ship as ship_draw computes them.
     pub fn spaceship_stats(&self, slot: Slot) -> ShipStats {
-        ship_stats(&self.player(slot).spaceship, self.is_human(slot))
+        ship_stats(&self.player(slot).spaceship, self.ship_drawn(slot))
+    }
+
+    /// ship_draw shows (and counts the life support of) the human's ship, and every other
+    /// ship when the Enemy Moves option (ds:0x19c0 bit 5) is on (o 0x177db..0x177f1).
+    pub fn ship_drawn(&self, slot: Slot) -> bool {
+        self.is_human(slot) || self.options.enemy_moves
     }
 
     /// Probability (percent) shown as "Prob. of Success".
@@ -374,12 +380,11 @@ impl Game {
         self.after_human_part(slot);
     }
 
-    /// Redraw with the LAUNCH button (ship_draw(civ, -1, 1), o 0x18842).
+    /// Redraw with the LAUNCH button (ship_draw(civ, -1, 1), o 0x18842): the human sees the
+    /// ship after every part, with the button once it can be launched.
     fn after_human_part(&mut self, slot: Slot) {
         self.project_arrival(slot);
-        if self.spaceship_can_launch(slot) {
-            self.push_event(GameEvent::NeedsDecision(Decision::SpaceshipLaunch { slot }));
-        }
+        self.push_event(GameEvent::NeedsDecision(Decision::SpaceshipLaunch { slot }));
     }
 
     /// The AI's slot scan for a part of `kind` (o 0x182c4 up to 0x18428).
@@ -421,7 +426,7 @@ impl Game {
             AiPick::Exhausted => 2,
         };
         // ds:0x4cd6: cleared on entry, the success chance of the redrawn ship once placed
-        let success = if ret == 0 { ship_stats(&self.player(slot).spaceship, false).success } else { 0 };
+        let success = if ret == 0 { self.spaceship_stats(slot).success } else { 0 };
         // refused structural/component: the shields come back and a city still set to a
         // spaceship part switches to the next kind (0xe7d1..0xe831)
         if ret != 0 && kind < 2 {
@@ -438,7 +443,7 @@ impl Game {
     }
 
     /// The AI launch rule (0xe835..0xe916) with the success chance ds:0x4cd6 of the AI's own
-    /// (undrawn, so support-blind) ship. `forced` = no slot was left for the part (after the
+    /// ship (support-blind unless Enemy Moves had it drawn). `forced` = no slot was left for the part (after the
     /// refund step).
     fn ai_launch_wanted(&self, slot: Slot, forced: bool, success: i32) -> bool {
         let human = self.human_slot;
@@ -493,8 +498,8 @@ impl Game {
         self.apollo_built && !s.launched() && self.spaceship_stats(slot).habitation() > 0
     }
 
-    /// Launch (o 0x18b38): stores the launch year; the arrival year is the one ship_draw
-    /// projected last. A ship whose arrival year is not after the launch year never lands
+    /// Launch (o 0x18b38): sets the launched bit and stores the launch year ds:0xe8a8; the
+    /// arrival year is the one ship_draw projected last. A ship whose arrival year is not after the launch year never lands
     /// (CIV.EXE compares the year for equality).
     pub fn launch_spaceship(&mut self, slot: Slot) -> Result<(), RuleError> {
         if self.player(slot).spaceship.launched() {
@@ -507,7 +512,8 @@ impl Game {
         let year = self.year();
         let s = &mut self.player_mut(slot).spaceship;
         s.launched_turn = Some(turn);
-        s.arrival_turn = s.arrival_year.filter(|a| *a > year).map(|a| turn_of_year(turn, a));
+        s.launch_year = Some(year);
+        s.arrival_turn = None;
         s.lost = false;
         self.push_event(GameEvent::SpaceshipLaunched(slot));
         Ok(())
@@ -531,13 +537,15 @@ impl Game {
     }
 
     /// Ships whose arrival year has come (0x29f8): the last civ in slot order whose launched
-    /// ship arrives wins. Called once per turn from `process_world` (before the turn counter
-    /// advances, so the coming turn's year is the one compared).
+    /// ship's arrival year equals the year wins. Called once per turn from `process_world`
+    /// before the calendar advances, so the coming turn's year is the one compared, as CIV.EXE
+    /// does right after its year advance.
     pub fn spaceship_arrivals(&mut self) {
+        let year = self.next_year();
         let mut winner = None;
         for slot in 1..8u8 {
             let s = self.player(slot).spaceship;
-            if s.launched() && !s.landed && s.arrival_turn.is_some_and(|t| t <= self.turn + 1) {
+            if s.launched() && !s.landed && s.arrival_year == Some(year) {
                 winner = Some(slot);
             }
         }
@@ -698,19 +706,50 @@ mod tests {
             }
         }
         let st = g.spaceship_stats(slot);
+        // 1770 AD: two years a turn until a ship is in flight, then one
+        g.set_turn(360);
+        assert_eq!((g.year(), g.next_year()), (1770, 1772));
         g.launch_spaceship(slot).unwrap();
         let s = g.player(slot).spaceship;
-        assert_eq!(s.arrival_year, Some(g.year() + st.flight / 10));
-        let arrival = s.arrival_turn.unwrap();
-        assert!(rules::year_for_turn(arrival) >= s.arrival_year.unwrap());
+        assert_eq!((s.launch_year, s.launched_turn), (Some(1770), Some(360)));
+        let arrival = 1770 + st.flight / 10;
+        assert!(arrival > 1771);
+        assert_eq!(s.arrival_year, Some(arrival));
         assert_eq!(g.spaceship_score(slot), 0);
-        g.turn = arrival - 2;
-        g.spaceship_arrivals();
-        assert_eq!(g.ended, None);
-        g.turn = arrival - 1;
+        // the year the turn loop compares is the coming one (0x2a13 after 0x26ed)
+        while g.next_year() < arrival {
+            g.spaceship_arrivals();
+            assert_eq!(g.ended, None);
+            let y = g.year();
+            g.advance_calendar();
+            assert_eq!(g.year(), y + 1);
+        }
         g.spaceship_arrivals();
         assert_eq!(g.ended, Some(EndReason::Spaceship(slot)));
         assert_eq!(g.spaceship_score(slot), st.success * st.habitation() / 2);
+    }
+
+    #[test]
+    fn early_ship_misses_its_year() {
+        // launched in 1600 AD the calendar still goes in steps of 5: an arrival year between
+        // two steps never comes (CIV.EXE compares for equality)
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        let slot = g.human_slot;
+        g.apollo_built = true;
+        g.set_turn(320);
+        assert_eq!(g.year(), 1600);
+        let s = &mut g.player_mut(slot).spaceship;
+        *s = ship_with(&[2, 37]);
+        s.recount();
+        g.launch_spaceship(slot).unwrap();
+        g.player_mut(slot).spaceship.arrival_year = Some(1612);
+        for _ in 0..60 {
+            g.spaceship_arrivals();
+            g.advance_calendar();
+        }
+        assert_eq!(g.ended, None);
+        assert!(!g.player(slot).spaceship.landed);
+        assert_eq!(g.year(), 1750 + 30);
     }
 
     #[test]

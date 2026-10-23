@@ -8,7 +8,10 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// 2: the game body is followed by `Game::hints_shown` (u32 LE); version 1 saves still load.
 /// 3: then by each player's `research_count` (u16 LE); older saves derive it from the advances.
 /// 4: then by each player's 72 `advance_source` bytes; older saves record no sources.
-pub const VERSION: u16 = 5;
+/// 5: then by each player's spaceship trailer (grid, arrival year, landed flag).
+/// 6: then by the year (i32 LE) and each player's launch year (i32 LE, `i32::MIN` = none);
+/// older saves take the launch-free calendar year of their turns.
+pub const VERSION: u16 = 6;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -65,6 +68,10 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     for p in &g.players {
         data.extend_from_slice(&spaceship_trailer(&p.spaceship));
     }
+    data.extend_from_slice(&g.year.to_le_bytes());
+    for p in &g.players {
+        data.extend_from_slice(&p.spaceship.launch_year.unwrap_or(i32::MIN).to_le_bytes());
+    }
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -102,6 +109,19 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
             _ => migrate_spaceship(&mut p.spaceship),
         }
     }
+    let calendar = ships + SHIP_TRAILER * g.players.len();
+    let word = |at: usize| rest.get(at..at + 4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    g.year = match word(calendar) {
+        Some(y) if ver >= 6 => y,
+        _ => crate::rules::calendar_year(g.turn),
+    };
+    for (i, p) in g.players.iter_mut().enumerate() {
+        let s = &mut p.spaceship;
+        s.launch_year = match word(calendar + 4 + 4 * i) {
+            Some(y) if ver >= 6 => (y != i32::MIN).then_some(y),
+            _ => s.launched_turn.map(crate::rules::calendar_year),
+        };
+    }
     Ok(g)
 }
 
@@ -132,7 +152,7 @@ fn migrate_spaceship(s: &mut crate::game::Spaceship) {
     crate::game::spaceship::grid_from_counts(s);
     if s.launched() {
         s.landed = s.arrival_turn.is_none() && !s.lost;
-        s.arrival_year = s.arrival_turn.map(crate::rules::year_for_turn);
+        s.arrival_year = s.arrival_turn.map(crate::rules::calendar_year);
     }
 }
 
@@ -252,12 +272,39 @@ mod tests {
         // a version-4 file: same body, no spaceship trailer
         let mut data = std::fs::read(&path).unwrap();
         data[4..6].copy_from_slice(&4u16.to_le_bytes());
-        data.truncate(data.len() - g.players.len() * super::SHIP_TRAILER);
+        data.truncate(data.len() - g.players.len() * super::SHIP_TRAILER - 4 - 4 * g.players.len());
         std::fs::write(&path, &data).unwrap();
         let old = super::load_game(&path).unwrap();
         let _ = std::fs::remove_dir_all(dir);
         let s = old.player(h).spaceship;
         assert_eq!((s.structurals, s.components, s.modules), (1, 0, 1));
         assert_eq!(s.arrival_year, None);
+    }
+
+    #[test]
+    fn year_and_launch_year_survive_a_save_and_old_saves_take_the_calendar() {
+        let mut g = Game::new(GameSetup { seed: 5, ..Default::default() }, None);
+        let h = g.human_slot;
+        g.set_turn(380);
+        g.player_mut(h).spaceship.launched_turn = Some(370);
+        g.player_mut(h).spaceship.launch_year = Some(1790);
+        // a calendar that ran one year a turn since the launch
+        g.year = 1800;
+        let dir = std::env::temp_dir().join(format!("civrs-year-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        let l = super::load_game(&path).unwrap();
+        assert_eq!(l.year(), 1800);
+        assert_eq!(l.player(h).spaceship.launch_year, Some(1790));
+        assert_eq!(l.player(2).spaceship.launch_year, None);
+        // a version-5 file: no calendar trailer
+        let mut data = std::fs::read(&path).unwrap();
+        data[4..6].copy_from_slice(&5u16.to_le_bytes());
+        data.truncate(data.len() - 4 - 4 * g.players.len());
+        std::fs::write(&path, &data).unwrap();
+        let old = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(old.year(), crate::rules::calendar_year(380));
+        assert_eq!(old.player(h).spaceship.launch_year, Some(crate::rules::calendar_year(370)));
     }
 }

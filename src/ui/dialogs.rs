@@ -214,15 +214,24 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
         GameEvent::ImprovementSold { city, improvement, gold } if g.city(*city).owner == me => {
             msg(vec![format!("{} sold in {} for {} gold.", rules::IMPROVEMENTS[*improvement as usize].name, city_name(*city), gold)])
         }
-        // "<Plural> LAUNCH space ship!" / "Estimate arrival in <year>." (CIV.EXE o 0x18b6d)
+        // "<Plural> LAUNCH space ship!" / "Estimate arrival in <year>.", then the ship
+        // (CIV.EXE o 0x18b38)
         GameEvent::SpaceshipLaunched(s) => {
-            let year = g.spaceship_arrival_year(*s).map(rules::year_text).unwrap_or_else(|| "?".into());
-            msg(vec![format!("{} LAUNCH space ship!", g.player(*s).plural()), format!("Estimate arrival in {year}.")])
+            let (first, then) = crate::ui::spaceship_ui::launch_screens(ctx, *s);
+            Some(Box::new(Sequence { first: Some(first), then }))
         }
         GameEvent::SpaceshipArrived(s) => news(vec![format!("The {} spaceship", civ(*s)), "reaches Alpha Centauri!".into()]),
         GameEvent::SpaceshipLost(s) if *s == me => msg(vec!["Your spaceship is lost!".into()]),
         // CIV.EXE o 0x1842b, for every part an AI civ adds
-        GameEvent::SpaceshipPartBuilt(s) if *s != me => msg(vec![format!("{} build space ship.", g.player(*s).plural())]),
+        GameEvent::SpaceshipPartBuilt(s) if *s != me => {
+            let (first, then) = crate::ui::spaceship_ui::ai_part_screens(ctx, *s);
+            Some(Box::new(Sequence { first: Some(first), then }))
+        }
+        // "<Title> <Leader>\nplans retirement\nin 20 years." (CIV.EXE 0x2a28, overlay 21)
+        GameEvent::RetirementWarning(s) if *s == me => {
+            let p = g.player(*s);
+            news(vec![format!("{} {}", p.title(), p.leader), "plans retirement".into(), "in 20 years.".into()])
+        }
         // CIV.EXE 0x14364
         GameEvent::SpaceshipCancelled { slot, launched } => {
             msg(vec![format!("{} spaceship", g.player(*slot).adjective()), if *launched { "returns to Earth.".into() } else { "construction cancelled.".into() }])
@@ -368,16 +377,15 @@ pub fn screen_for_decision(ctx: &mut UiContext, d: &Decision) -> Box<dyn Screen>
         }
         Decision::Diplomacy(state) => crate::ui::diplomacy_ui::audience_screen(state.clone()),
         Decision::KeepPlaying { .. } => Box::new(YesNo::new(vec!["Do you wish to".into(), "continue playing?".into()], "Yes, keep playing.", "No, I'm done.")),
-        // CIV.EXE o 0x1855b / 0x18591 (Esc there wastes the part; here a type must be chosen)
-        Decision::SpaceshipPart { kind, .. } => {
+        // CIV.EXE o 0x1855b / 0x18591 at (100,80) over the ship (Esc there wastes the part;
+        // here a type must be chosen)
+        Decision::SpaceshipPart { slot, kind } => {
             let items: Vec<String> = if *kind == 1 { vec!["Propulsion".into(), "Fuel".into()] } else { vec!["Habitation".into(), "Life Support".into(), "Solar Panel".into()] };
-            Box::new(MenuDialog::new(vec!["Type?".into()], items).no_cancel())
+            let menu = Box::new(MenuDialog::new(vec!["Type?".into()], items).with_pos(100, 80).no_cancel());
+            crate::ui::spaceship_ui::part_question(ctx, *slot, menu)
         }
-        // CIV.EXE o 0x1810d
-        Decision::SpaceshipLaunch { slot } => {
-            let title = vec!["Confirm spaceship launch.".into(), format!("({}% chance of success)", g.success_chance(*slot))];
-            Box::new(MenuDialog::new(title, vec!["No Launch".into(), "Launch CONFIRMED!".into()]))
-        }
+        // the ship with its LAUNCH button (CIV.EXE o 0x18842); confirming answers Choice(1)
+        Decision::SpaceshipLaunch { slot } => crate::ui::spaceship_ui::launch_prompt(ctx, *slot),
     }
 }
 

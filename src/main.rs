@@ -322,6 +322,48 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
                 }
             }
             "spaceship" => civrs::ui::spaceship_ui::arrival_screen(&ctx, 1),
+            // the human's ship (a sample with every kind of part, one module unattached):
+            // screen:ship:SEED:TURNS[:STEP] with STEP "confirm" (the launch question), "nation"
+            // (the viewer's "Which nation?"), "launched", "notice" (ship_launch's text) or
+            // "part" (the "Type?" question over the ship)
+            "ship" => {
+                use civrs::ui::spaceship_ui as ss;
+                let g = ctx.game_mut();
+                let h = g.human_slot;
+                g.apollo_built = true;
+                g.set_turn(370);
+                for _ in 0..12 {
+                    g.place_spaceship_part(h, 0, 0);
+                }
+                for c in [0, 1, 0, 1] {
+                    g.place_spaceship_part(h, 1, c);
+                }
+                for c in [0, 1, 2, 0] {
+                    g.place_spaceship_part(h, 2, c);
+                }
+                let step = parts.get(3).copied().unwrap_or("");
+                if matches!(step, "launched" | "notice") {
+                    g.launch_spaceship(h).map_err(|e| format!("{e:?}"))?;
+                }
+                let _ = g.take_events();
+                match step {
+                    "confirm" => {
+                        dialog = Some(Box::new(ss::launch_confirm(ctx.game(), h)));
+                        ss::viewer_ship(&ctx, h)
+                    }
+                    "nation" => {
+                        dialog = Some(Box::new(ss::nation_menu(ctx.game())));
+                        Box::new(civrs::ui::mapview::MapView::new())
+                    }
+                    "notice" => ss::launch_screens(&ctx, h).0,
+                    "part" => {
+                        let items = vec!["Habitation".into(), "Life Support".into(), "Solar Panel".into()];
+                        dialog = Some(Box::new(civrs::ui::widgets::MenuDialog::new(vec!["Type?".into()], items).with_pos(100, 80).no_cancel()));
+                        ss::ship_view(&ctx, h)
+                    }
+                    _ => ss::viewer_ship(&ctx, h),
+                }
+            }
             "news" => civrs::ui::eventpics::over_map(civrs::ui::eventpics::travelers_report(vec!["Babylonian civilization".into(), "destroyed by Romans!".into()])),
             "rednote" => civrs::ui::eventpics::over_map(civrs::ui::dialogs::error_screen(&ctx, &civrs::game::RuleError::Settlers).ok_or("no ERROR.TXT section")?),
             "nuke" => civrs::ui::eventpics::over_map(civrs::ui::eventpics::nuke_animation(200, 104)),

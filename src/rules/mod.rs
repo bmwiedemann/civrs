@@ -26,7 +26,7 @@ pub use difficulty::{Difficulty, DifficultyInfo, DIFFICULTY};
 pub use governments::{Government, Govt, GOVERNMENTS};
 pub use improvements::{improvement_by_name, improvement_ids, Improvement, IMPROVEMENTS};
 pub use misc::{
-    year_for_turn, year_text, ADJECTIVES, CITY_RADIUS, COMMODITIES, CUSTOM_WORLD_OPTIONS,
+    advance_year, calendar_year, year_for_turn, year_text, ADJECTIVES, CITY_RADIUS, COMMODITIES, CUSTOM_WORLD_OPTIONS,
     DEMOGRAPHIC_CATEGORIES, HISTORIANS, MAIN_MENU, MAP_H, MAP_W, NEWSPAPERS, RATINGS,
 };
 pub use terrain::{Special, Terraform, Terrain, TerrainInfo, CLEAN_POLLUTION_TURNS, FORTRESS_TURNS, TERRAIN};
@@ -357,6 +357,26 @@ mod tests {
         assert_eq!(year_text(1), "1 AD");
         assert_eq!(year_text(1850), "1850 AD");
         assert_eq!(year_text(0), "1 AD");
+    }
+
+    #[test]
+    fn year_advance_matches_the_turn_calendar() {
+        // without a launch the year stepping of 0x26ed is the replay's turn mapping, with 1 AD
+        // for year 0 and 20 AD after it
+        let mut y = -4000;
+        for t in 1..=600 {
+            y = advance_year(y, false);
+            assert_eq!(y, calendar_year(t), "turn {t}");
+        }
+        assert_eq!(calendar_year(200), 1);
+        assert_eq!(calendar_year(201), 20);
+        assert_eq!(advance_year(-20, true), 1);
+        // a launched ship only changes the 1750..1850 steps
+        assert_eq!(advance_year(1750, false), 1752);
+        assert_eq!(advance_year(1750, true), 1751);
+        assert_eq!(advance_year(1849, false), 1851);
+        assert_eq!(advance_year(1700, true), 1705);
+        assert_eq!(advance_year(1900, false), 1901);
     }
 
     #[test]

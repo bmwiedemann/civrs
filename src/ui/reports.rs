@@ -305,7 +305,8 @@ pub fn advisor(ctx: &UiContext, n: u8) -> Box<dyn Screen> {
         9 => Box::new(Page::new(BG_TEAL, w::paint_score)),
         10 => Box::new(Page::new(BLACK, w::paint_world_map)),
         11 => Box::new(Page::new(BG_TEAL, w::paint_demographics)),
-        _ => Box::new(Page::new(BG_BLUE, w::paint_spaceships)),
+        // the SpaceShips viewer of the WORLD menu (CIV.EXE o 0x18a9c)
+        _ => crate::ui::spaceship_ui::spaceship_viewer(),
     }
 }
 

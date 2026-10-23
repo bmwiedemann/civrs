@@ -146,6 +146,9 @@ pub enum GameEvent {
     /// A computer Diplomat of `by` sabotaged `city`: `improvement` destroyed, or else the
     /// stored shields of `production` (its name) lost (CIV.EXE o 0x1d8d7 / 0x1d91e).
     CitySabotaged { city: CityId, by: Slot, improvement: Option<u8>, production: String },
+    /// "<Title> <Leader> plans retirement in 20 years." for the human `Slot`, 20 years
+    /// before the end of the game (CIV.EXE 0x2a28).
+    RetirementWarning(Slot),
 }
 
 /// A choice the engine needs from the human player before continuing.
@@ -166,8 +169,9 @@ pub enum Decision {
     /// "Type?" for a finished SS Component (`kind` 1: Propulsion / Fuel) or SS Module (`kind`
     /// 2: Habitation / Life Support / Solar Panel) (CIV.EXE o 0x1853f).
     SpaceshipPart { slot: Slot, kind: u8 },
-    /// The ship screen's LAUNCH button: "Confirm spaceship launch." No Launch / Launch
-    /// CONFIRMED! (CIV.EXE o 0x180fe).
+    /// The ship screen after a human's part, with its LAUNCH button when the ship can go:
+    /// "Confirm spaceship launch." No Launch / Launch CONFIRMED! (CIV.EXE o 0x18842, 0x180fe);
+    /// `Choice(1)` launches.
     SpaceshipLaunch { slot: Slot },
 }
 

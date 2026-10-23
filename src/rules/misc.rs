@@ -32,10 +32,12 @@ pub const CITY_RADIUS: [(i8, i8); 21] = [
     (-1, -2),
 ];
 
-/// Calendar year for a game turn (turn 0 = 4000 BC).
+/// Calendar year for a game turn (turn 0 = 4000 BC), CIV.EXE o 0xd4f1: the fixed mapping the
+/// replay and the power graph (o 0x106e8) label their turns with.
 ///
 /// 20 years/turn until 1000 AD, 10 until 1500, 5 until 1750, 2 until 1850,
-/// then 1 year per turn.
+/// then 1 year per turn. Turn 200 maps to 0 here; the game's own year (`advance_year`, kept
+/// in `Game::year`) skips it, see `calendar_year`.
 pub fn year_for_turn(turn: u32) -> i32 {
     let t = turn as i32;
     if t <= 250 {
@@ -48,6 +50,38 @@ pub fn year_for_turn(turn: u32) -> i32 {
         1750 + 2 * (t - 350)
     } else {
         1850 + (t - 400)
+    }
+}
+
+/// The year after `year` (CIV.EXE 0x26ed, ds:0xb220): +20 below 1000 (0x3e8), +10 below 1500,
+/// +5 below 1750, +2 below 1850 unless a spaceship has been launched (`ds:0x4cd8 & 0xfe`, any
+/// of civs 1..7), else +1. Year 0 becomes 1 (the caller doubles every civ's beakers then) and
+/// the 21 that follows becomes 20, so the AD years run 1, 20, 40, ...
+pub fn advance_year(year: i32, ship_launched: bool) -> i32 {
+    let step = if year < 1000 {
+        20
+    } else if year < 1500 {
+        10
+    } else if year < 1750 {
+        5
+    } else if year < 1850 && !ship_launched {
+        2
+    } else {
+        1
+    };
+    match year + step {
+        0 => 1,
+        21 => 20,
+        y => y,
+    }
+}
+
+/// The year `advance_year` reaches after `turn` turns from 4000 BC without a spaceship launch:
+/// `year_for_turn` with the year 0 of turn 200 read as 1 AD.
+pub fn calendar_year(turn: u32) -> i32 {
+    match year_for_turn(turn) {
+        0 => 1,
+        y => y,
     }
 }
 

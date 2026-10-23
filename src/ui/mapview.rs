@@ -439,7 +439,11 @@ impl MapView {
                 v
             }
             2 => vec!["City Status      F1".into(), "Military Advisor F2".into(), "Intelligence     F3".into(), "Attitude Advisor F4".into(), "Trade Advisor    F5".into(), "Science Advisor  F6".into()],
-            3 => vec!["Wonders of World F7".into(), "Top 5 Cities     F8".into(), "Civ. Score       F9".into(), "World Map       F10".into(), "Demographics    F11".into(), "SpaceShips      F12".into()],
+            3 => {
+                // SpaceShips is greyed until some civ has started a ship (0x1c710)
+                disabled = vec![false, false, false, false, false, !crate::ui::spaceship_ui::any_ship_started(g)];
+                vec!["Wonders of World F7".into(), "Top 5 Cities     F8".into(), "Civ. Score       F9".into(), "World Map       F10".into(), "Demographics    F11".into(), "SpaceShips      F12".into()]
+            }
             _ => vec!["Complete".into(), "Civilization Advances".into(), "City Improvements".into(), "Military Units".into(), "Terrain Types".into(), "Miscellaneous".into()],
         };
         self.pending = Pending::BarMenu(i);

@@ -1,5 +1,5 @@
-//! The WORLD reports F7-F12: Wonders of the World, Top Five Cities, Civilization Score,
-//! World Map, Demographics and SpaceShips.
+//! The WORLD reports F7-F11: Wonders of the World, Top Five Cities, Civilization Score,
+//! World Map and Demographics (SpaceShips, F12, is the ship viewer of `spaceship_ui`).
 
 use crate::gfx::{Rect, Surface};
 use crate::rules::{self, Terrain, SLOT_COLOURS};
@@ -251,59 +251,4 @@ pub fn paint_demographics(fb: &mut Surface, ctx: &UiContext) {
         }
     }
     text_c_sh(fb, ctx, 160, 168, &format!("Civilizations ranked: {}", alive.len()), WHITE, BLACK);
-}
-
-// ---- F12 SpaceShips ----------------------------------------------------------------------------
-
-fn part_row(fb: &mut Surface, ctx: &UiContext, x: i32, y: i32, have: i32, max: i32, rgb: [u8; 3]) {
-    let on = col(ctx, rgb);
-    let off = col(ctx, DARK_GREY);
-    for i in 0..max {
-        fb.fill_rect(Rect::new(x + i * 6, y, 5, 5), if i < have { on } else { off });
-    }
-}
-
-pub fn paint_spaceships(fb: &mut Surface, ctx: &UiContext) {
-    title_block(fb, ctx, "SPACESHIPS");
-    let g = ctx.game();
-    let me = g.human_slot;
-    let mut slots: Vec<crate::game::Slot> = g.alive_slots().into_iter().filter(|s| *s == me || (g.player(*s).spaceship.parts() > 0 && g.human().has_contact(*s))).collect();
-    slots.sort_by_key(|s| if *s == me { 0 } else { 1 });
-    if !g.apollo_built {
-        text_sh(fb, ctx, 16, 36, "The Apollo Program has not been completed: no spaceship can be built.", WHITE, BLACK);
-    }
-    let mut y = if g.apollo_built { 34 } else { 48 };
-    for s in slots.iter().take(4) {
-        let p = g.player(*s);
-        let ss = p.spaceship;
-        let st = g.spaceship_stats(*s);
-        text_sh(fb, ctx, 16, y, &format!("{} spaceship", p.adjective()), WHITE, BLACK);
-        let status = if ss.lost {
-            "cancelled".to_string()
-        } else if ss.landed {
-            "landed".to_string()
-        } else if let (Some(l), Some(a)) = (ss.launched_turn, g.spaceship_arrival_year(*s)) {
-            format!("launched {}, arrives {}", rules::year_text(rules::year_for_turn(l)), rules::year_text(a))
-        } else if ss.parts() == 0 {
-            "no parts built".to_string()
-        } else if g.spaceship_can_launch(*s) {
-            "ready to launch".to_string()
-        } else {
-            "under construction".to_string()
-        };
-        text_sh(fb, ctx, 160, y, &status, CYAN, BLACK);
-        tiny(fb, ctx, 16, y + 9, &format!("STRUCTURALS {}/{}", ss.structurals, crate::game::spaceship::MAX_STRUCTURALS), WHITE);
-        part_row(fb, ctx, 100, y + 9, ss.structurals as i32, crate::game::spaceship::MAX_STRUCTURALS as i32, [182, 190, 210]);
-        tiny(fb, ctx, 16, y + 16, &format!("COMPONENTS  {}/{}", ss.components, crate::game::spaceship::MAX_COMPONENTS), WHITE);
-        part_row(fb, ctx, 100, y + 16, ss.components as i32, crate::game::spaceship::MAX_COMPONENTS as i32, PALE_YELLOW);
-        tiny(fb, ctx, 16, y + 23, &format!("MODULES     {}/{}", ss.modules, crate::game::spaceship::MAX_MODULES), WHITE);
-        part_row(fb, ctx, 100, y + 23, ss.modules as i32, crate::game::spaceship::MAX_MODULES as i32, LIGHT_GREEN);
-        // the stats column of the ship screen (CIV.EXE o 0x17b07..0x17f9d); percentages bare
-        tiny(fb, ctx, 204, y + 16, &format!("MASS {},{}00 TONS", st.mass / 10, st.mass % 10), CYAN);
-        tiny(fb, ctx, 204, y + 23, &format!("FLIGHT {}.{} YEARS", st.flight / 10, st.flight % 10), CYAN);
-        let pop = if st.habitation() > 0 { format!("{},000", st.habitation() * 10) } else { "0".into() };
-        let line = format!("POP {pop}  SUPPORT {}  ENERGY {}  FUEL {}  SUCCESS {}", st.support, st.energy, st.fuel, st.success);
-        tiny(fb, ctx, 16, y + 31, &line, CYAN);
-        y += 42;
-    }
 }

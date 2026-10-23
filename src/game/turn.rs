@@ -163,7 +163,7 @@ impl TurnRunner {
                     self.phase = Phase::NewTurn;
                 }
                 Phase::NewTurn => {
-                    g.turn += 1;
+                    g.advance_calendar();
                     let slot = g.human_slot;
                     g.reset_moves(slot);
                     g.progress_work(slot);
@@ -374,8 +374,14 @@ impl Game {
         self.global_warming_check();
         self.disaster_check();
         self.spaceship_arrivals();
+        // the coming year is the one CIV.EXE compares after its advance (0x2a28, 0x2a98):
+        // a warning 20 years ahead, the end in the year 2100 - 20 * difficulty itself
         let end_year = rules::DIFFICULTY[self.setup.difficulty as usize].end_year;
-        if self.ended.is_none() && !self.scoring_over && rules::year_for_turn(self.turn + 1) > end_year {
+        let year = self.next_year();
+        if year == end_year - 20 {
+            self.push_event(GameEvent::RetirementWarning(self.human_slot));
+        }
+        if self.ended.is_none() && !self.scoring_over && year >= end_year {
             self.ended = Some(EndReason::TimeLimit);
             self.push_event(GameEvent::GameEnded(EndReason::TimeLimit));
         }

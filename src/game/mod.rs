@@ -181,6 +181,10 @@ pub struct Game {
     /// game body in version-2 saves.
     #[serde(skip)]
     pub hints_shown: u32,
+    /// The calendar year ds:0xb220, advanced with the turn by `advance_calendar`; stored after
+    /// the game body in version-6 saves (older saves take `rules::calendar_year(turn)`).
+    #[serde(skip)]
+    pub year: i32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -262,6 +266,7 @@ impl Game {
             apollo_built: false,
             last_combat: None,
             hints_shown: 0,
+            year: rules::calendar_year(0),
         };
         game.place_starting_units(&slots);
         game.refresh_all_vision();
@@ -317,8 +322,35 @@ impl Game {
 
     // ---- queries -------------------------------------------------------------------------
 
+    /// The current year (ds:0xb220).
     pub fn year(&self) -> i32 {
-        rules::year_for_turn(self.turn)
+        self.year
+    }
+
+    /// The year the coming turn will have (0x26ed): one year per turn from 1750 on once any
+    /// civ's spaceship is in flight.
+    pub fn next_year(&self) -> i32 {
+        let launched = (1..8u8).any(|s| self.player(s).spaceship.launched());
+        rules::advance_year(self.year, launched)
+    }
+
+    /// Turn counter and year advance at the end of a turn (0x26ed..0x2769). Reaching 1 AD
+    /// doubles every civ's beakers (0x273f): from then on an advance costs twice as many.
+    pub fn advance_calendar(&mut self) {
+        let next = self.next_year();
+        if self.year < 0 && next >= 0 {
+            for p in self.players.iter_mut() {
+                p.beakers *= 2;
+            }
+        }
+        self.turn += 1;
+        self.year = next;
+    }
+
+    /// Put the game at `turn` with the year of the launch-free calendar (tests and tools).
+    pub fn set_turn(&mut self, turn: u32) {
+        self.turn = turn;
+        self.year = rules::calendar_year(turn);
     }
 
     pub fn year_text(&self) -> String {
@@ -703,4 +735,58 @@ pub fn roman(n: u32) -> String {
 /// Terrain helper used in several modules.
 pub fn terrain_is_land(t: Terrain) -> bool {
     t != Terrain::Ocean
+}
+
+#[cfg(test)]
+mod calendar_tests {
+    use super::*;
+
+    #[test]
+    fn calendar_skips_year_zero_and_doubles_the_beakers() {
+        let mut g = Game::new(GameSetup { seed: 9, ..Default::default() }, None);
+        assert_eq!((g.turn, g.year()), (0, -4000));
+        g.set_turn(199);
+        assert_eq!(g.year(), -20);
+        g.players[2].beakers = 7;
+        g.advance_calendar();
+        assert_eq!((g.turn, g.year()), (200, 1));
+        assert_eq!(g.players[2].beakers, 14);
+        g.advance_calendar();
+        assert_eq!((g.turn, g.year()), (201, 20));
+        assert_eq!(g.players[2].beakers, 14);
+    }
+
+    #[test]
+    fn a_launched_ship_slows_the_calendar_to_a_year_a_turn() {
+        let mut g = Game::new(GameSetup { seed: 9, ..Default::default() }, None);
+        g.set_turn(355);
+        assert_eq!(g.year(), 1760);
+        g.advance_calendar();
+        assert_eq!(g.year(), 1762);
+        g.players[3].spaceship.launched_turn = Some(g.turn);
+        g.advance_calendar();
+        assert_eq!((g.turn, g.year()), (357, 1763));
+        // a cancelled ship (capital captured) gives the two-year steps back
+        g.players[3].spaceship = Spaceship::default();
+        g.advance_calendar();
+        assert_eq!(g.year(), 1765);
+    }
+
+    #[test]
+    fn retirement_warning_and_end_of_game_years() {
+        let mut g = Game::new(GameSetup { seed: 9, difficulty: Difficulty::Chieftain, ..Default::default() }, None);
+        let h = g.human_slot;
+        g.set_turn(400);
+        g.year = 2079;
+        g.process_world();
+        assert!(g.take_events().iter().any(|e| *e == GameEvent::RetirementWarning(h)));
+        assert_eq!(g.ended, None);
+        g.year = 2098;
+        g.process_world();
+        assert_eq!(g.ended, None);
+        // the game ends as the calendar reaches 2100 - 20 * difficulty (0x2a98)
+        g.year = 2099;
+        g.process_world();
+        assert_eq!(g.ended, Some(EndReason::TimeLimit));
+    }
 }
