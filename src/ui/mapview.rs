@@ -407,12 +407,19 @@ impl MapView {
                 vec!["Tax Rate".into(), "Luxuries Rate".into(), "FindCity".into(), "Options".into(), "Save Game".into(), "REVOLUTION!".into(), "Retire".into(), "QUIT to DOS".into()]
             }
             1 => {
+                // the terraforming lines name the result as CIV.EXE 0x1c1fe does: a square
+                // whose irrigation or mine changes its terrain reads "Change to <terrain>"
+                let tile = g.active_unit.and_then(|a| g.unit_opt(a)).map(|u| g.map.tile(u.x, u.y).terrain.info());
+                let terraform = |f: Option<rules::Terraform>, build: &str, key: char| match f {
+                    Some(rules::Terraform::Becomes(t)) => format!("Change to {}  {key}", t.name()),
+                    _ => format!("{build}  {key}"),
+                };
                 let v: Vec<String> = vec![
                     "No Orders  space".into(),
                     "Found New City  b".into(),
                     "Build Road  r".into(),
-                    "Build Irrigation  i".into(),
-                    "Build Mines  m".into(),
+                    terraform(tile.map(|i| i.irrigate), "Build Irrigation", 'i'),
+                    terraform(tile.map(|i| i.mine), "Build Mines", 'm'),
                     "Build Fortress  F".into(),
                     "Fortify  f".into(),
                     "Wait  w".into(),
@@ -435,8 +442,8 @@ impl MapView {
                     !has_unit,
                     !settlers,
                     !settlers,
-                    !settlers,
-                    !settlers,
+                    !settlers || tile.map_or(true, |i| i.irrigate == rules::Terraform::No),
+                    !settlers || tile.map_or(true, |i| i.mine == rules::Terraform::No),
                     !settlers || !knows_construction,
                     !has_unit || settlers,
                     !has_unit,
