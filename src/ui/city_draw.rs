@@ -165,6 +165,18 @@ pub fn citizen(fb: &mut Surface, ctx: &UiContext, idx: u8, x: i32, y: i32) {
     fb.blit_part(&ctx.sp.surf, sp::citizen(idx), x, y, Some(0));
 }
 
+/// Replace colour `from` by `to` inside `r` (MGRAPHIC entry 3, `recolour(page, x, y, w, h,
+/// from, to)` via CIV.EXE 0:0x784).
+pub fn recolour(fb: &mut Surface, r: Rect, from: u8, to: u8) {
+    for y in r.y..r.bottom() {
+        for x in r.x..r.right() {
+            if fb.get(x, y) == from {
+                fb.put(x, y, to);
+            }
+        }
+    }
+}
+
 /// Colour map used for unit sprites on the city screen: civ colours for the box, the white
 /// frame line of the cell turns cyan (as in the original), the guide colour takes the dark shade.
 pub fn unit_remap(slot: Slot) -> [u8; 256] {

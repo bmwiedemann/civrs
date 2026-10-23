@@ -403,9 +403,13 @@ impl CityScreen {
         let mut x = CITIZEN_X;
         let mut pos = 0usize;
         for (count, kind) in [(h.happy, 0), (h.content, 1), (h.unhappy, 2)] {
-            for _ in 0..count.max(0) {
+            for i in 0..count.max(0) {
                 let idx = citizen_index(kind == 0, kind == 1, kind == 2, pos);
                 citizen(fb, ctx, idx, x, CITIZEN_Y);
+                // extra unhappiness beyond the size (ds:0x6542, CIV.EXE 0xc91:0x6eca)
+                if kind == 2 && i < h.extra {
+                    recolour(fb, Rect::new(x, CITIZEN_Y, 12, 14), 5, 12);
+                }
                 x += pitch;
                 pos += 1;
             }
@@ -641,21 +645,37 @@ impl CityScreen {
         }
     }
 
+    /// The HAPPY tab (CIV.EXE 0xf505..0xfbd0): one row of citizens per happiness step the
+    /// original draws, 16 px apart from y 116 with a line under each, and the step's
+    /// pictograms right of the citizens.
     fn draw_happy(&self, fb: &mut Surface, ctx: &UiContext) {
+        use crate::game::happiness::HappyRow;
+        use crate::ui::tilerender::{blit_sprite_remap, civ_remap, sp};
         let g = ctx.game();
         let c = g.city(self.city);
         let h = g.city_happiness(self.city);
-        let n = c.size as usize;
-        let pitch = (120 / n.max(1) as i32).clamp(2, 7);
-        for (r, (_, happy, content, unhappy)) in h.steps.iter().enumerate().take(5) {
+        // draw_citizens(city, 100, y, specialists, 92) (0xc91:0x6eca): 7 px apart, or
+        // 92 / size when that does not fit
+        let n = c.size as i32;
+        let pitch = if 7 * n > 92 { 92 / n.max(1) } else { 7 };
+        for (r, step) in h.steps.iter().enumerate().take(5) {
             let y = 116 + 16 * r as i32;
             let mut x = 102;
             let mut pos = 0usize;
-            for (count, kind) in [(*happy, 0), (*content, 1), (*unhappy, 2)] {
-                for _ in 0..count.max(0) {
+            for (count, kind) in [(step.happy, 0), (step.content, 1), (step.unhappy, 2)] {
+                for i in 0..count.max(0) {
                     citizen(fb, ctx, citizen_index(kind == 0, kind == 1, kind == 2, pos), x, y);
+                    // the first ds:0x6542 unhappy figures: recolour(x, y, 12, 14, 5 -> 12)
+                    if kind == 2 && i < step.extra {
+                        recolour(fb, Rect::new(x, y, 12, 14), 5, 12);
+                    }
                     x += pitch;
                     pos += 1;
+                }
+                // 2 px after the content group when it is not empty; the gap after the happy
+                // group tests a local the original never sets [approx: taken as "any happy"]
+                if count > 0 && kind < 2 {
+                    x += 2;
                 }
             }
             if !c.specialists.is_empty() {
@@ -663,6 +683,31 @@ impl CityScreen {
                 for s in &c.specialists {
                     citizen(fb, ctx, specialist_index(*s), x, y);
                     x += pitch;
+                }
+            }
+            match &step.row {
+                HappyRow::Base => {}
+                HappyRow::Luxuries => icon(fb, ctx, ICON_LUX, 208, y + 4, None),
+                HappyRow::Buildings(ids) => {
+                    for (i, id) in ids.iter().enumerate() {
+                        if let Some(cell) = improvement_cell(*id) {
+                            imp_icon(fb, ctx, cell, 208 + 16 * i as i32, y);
+                        }
+                    }
+                }
+                HappyRow::MartialLaw(kinds) => {
+                    let map = civ_remap(c.owner);
+                    for (i, k) in kinds.iter().enumerate() {
+                        blit_sprite_remap(fb, &ctx.sp.surf, sp::unit(*k), 208 - 2 * i as i32, y - 1, &map);
+                    }
+                }
+                HappyRow::Military(faces) => {
+                    for i in 0..*faces {
+                        icon(fb, ctx, ICON_UNHAPPY, 208 - 2 * i, y + 4, None);
+                    }
+                }
+                HappyRow::Wonders => {
+                    small_text(fb, ctx, 190, y + 5, WHITE, "WONDERS");
                 }
             }
             fb.hline(100, 222, y + 14, BORDER);

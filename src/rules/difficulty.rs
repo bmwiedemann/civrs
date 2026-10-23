@@ -45,7 +45,9 @@ pub struct DifficultyInfo {
     pub short: &'static str,
     /// Year at which the game ends (READ.ME).
     pub end_year: i32,
-    /// Citizens born content in every city.
+    /// Citizens born content in a human player's city before the empire-size penalty:
+    /// 6 − level (CIV.EXE 0xf40a: unhappy = size + penalty + level − 6). AI cities always
+    /// have 3 content citizens (0xf47f), whatever the level.
     pub content_base: u8,
     /// Settlers the human player starts with.
     pub human_start_settlers: u8,
@@ -73,9 +75,9 @@ const fn level(
 
 /// The 5 difficulty levels, easiest first.
 pub static DIFFICULTY: [DifficultyInfo; 5] = [
-    level("Chieftain", "Chief", 2100, 4, 2, 0),
-    level("Warlord", "Lord", 2080, 3, 1, 0),
-    level("Prince", "Prince", 2060, 2, 1, 1),
-    level("King", "King", 2040, 1, 1, 2),
-    level("Emperor", "Emperor", 2020, 0, 1, 3),
+    level("Chieftain", "Chief", 2100, 6, 2, 0),
+    level("Warlord", "Lord", 2080, 5, 1, 0),
+    level("Prince", "Prince", 2060, 4, 1, 1),
+    level("King", "King", 2040, 3, 1, 2),
+    level("Emperor", "Emperor", 2020, 2, 1, 3),
 ];
