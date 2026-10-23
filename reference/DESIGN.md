@@ -434,7 +434,7 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
 - Barbarians: huts + sea landings from turn 50 (Chieftain 150), `2+difficulty` era-appropriate units + leader (ransom 100 gold), attack nearest city, INVADER screens.
 - Wonders: effects as Civ1 (Pyramids no anarchy, Hanging Gardens +1 content, Colossus, Lighthouse, Great Library, Oracle, Great Wall, Magellan +1 sea move,
   Michelangelo, Copernicus, Shakespeare, Newton, Bach, Darwin, Hoover, Women's Suffrage, Manhattan, UN, Apollo (reveal map, SS parts for all), SETI, Cure for Cancer);
-  obsolete when owner learns advance; caravan help = 50 shields.
+  obsolete when any civ learns the advance (0xc91:0x6c8d); caravan help = 50 shields.
 - Spaceship: after Apollo; structural <=39, component <=16, module <=12; launch when >=1/2/3 and structurals cover; flight turns `max(6, 100/(2+components/2))`;
   success from life support/habitation; capital capture loses it; arrival wins.
 - Score: 2*happy + content + 20*wonders + 5*future tech + 3*peace turns (after 1 AD) - 10*polluted tiles + spaceship bonus; rating from RATINGS/ADJECTIVES;

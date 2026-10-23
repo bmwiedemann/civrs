@@ -65,12 +65,11 @@ impl Game {
         }
     }
 
-    /// Wonder is obsolete when its owner knows the obsoleting advance.
+    /// Wonder is obsolete as soon as any civilisation knows the obsoleting advance ("until the
+    /// development of ...", CIV.EXE 0xc91:0x6c8d checks civs 1..7, the owner among them).
     pub fn wonder_obsolete(&self, w: WonderId) -> bool {
-        let Some(c) = self.wonders_built[w as usize] else { return false };
-        let Some(city) = self.city_opt(c) else { return false };
         match rules::WONDERS[w as usize].obsolete_by {
-            Some(a) => self.player(city.owner).knows(a),
+            Some(a) => (1..8).any(|s| self.player(s).knows(a)),
             None => false,
         }
     }
@@ -1009,5 +1008,18 @@ mod tests {
         g.auto_assign(c);
         assert!(!g.city(c).works(4));
         assert!(g.city_yield(c).food_surplus() > 0);
+    }
+
+    #[test]
+    fn a_wonder_is_obsolete_once_any_civ_learns_the_advance() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        g.city_mut(c).add_wonder(won::COLOSSUS);
+        g.wonders_built[won::COLOSSUS as usize] = Some(c);
+        assert!(g.owner_has_wonder(slot, won::COLOSSUS));
+        let other = g.civ_slots().into_iter().find(|s| *s != slot).unwrap();
+        g.player_mut(other).learn(crate::rules::advance_ids::ELECTRICITY);
+        assert!(g.wonder_obsolete(won::COLOSSUS));
+        assert!(!g.owner_has_wonder(slot, won::COLOSSUS));
     }
 }

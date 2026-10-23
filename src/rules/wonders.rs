@@ -12,7 +12,7 @@ pub struct Wonder {
     /// Production cost in rows of 10 shields.
     pub cost: u8,
     pub prereq: Option<AdvanceId>,
-    /// Advance that cancels the wonder's effect once the owner learns it.
+    /// Advance that cancels the wonder's effect once any civilisation learns it.
     pub obsolete_by: Option<AdvanceId>,
 }
 

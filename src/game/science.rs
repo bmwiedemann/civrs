@@ -109,18 +109,18 @@ impl Game {
         if self.turn > 0 {
             self.player_mut(slot).research_count += 1;
         }
+        let new_to_world = !(1..8).any(|s| self.player(s).knows(a));
         self.player_mut(slot).learn(a);
         if self.player(slot).researching == Some(a) {
             self.player_mut(slot).researching = None;
         }
-        // wonders made obsolete by this advance
+        // wonders made obsolete by the first civilisation to learn this advance (CIV.EXE 0xc774)
         for w in 1..rules::WONDERS.len() as u8 {
-            if rules::WONDERS[w as usize].obsolete_by != Some(a) {
+            if !new_to_world || rules::WONDERS[w as usize].obsolete_by != Some(a) {
                 continue;
             }
-            let owned = self.wonders_built[w as usize].and_then(|c| self.city_opt(c)).map(|c| c.owner == slot).unwrap_or(false);
-            if owned {
-                self.push_event(GameEvent::WonderObsolete { wonder: w, owner: slot });
+            if let Some(owner) = self.wonders_built[w as usize].and_then(|c| self.city_opt(c)).map(|c| c.owner) {
+                self.push_event(GameEvent::WonderObsolete { wonder: w, owner });
             }
         }
         true
