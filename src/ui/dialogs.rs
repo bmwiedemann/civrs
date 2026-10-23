@@ -46,7 +46,8 @@ pub fn sound_for_event(ctx: &UiContext, ev: &GameEvent) {
 }
 
 /// The improvement a completed `item` adds to the city view, when the original shows it there
-/// (CIV.EXE 0xe676: Animations on, not the Palace, no spaceship part, no auto-build).
+/// (CIV.EXE 0xe676: Animations on, not the Palace, no spaceship part, no auto-build; wonders
+/// included).
 fn built_view_item(g: &Game, city: crate::game::CityId, item: crate::game::Production) -> Option<crate::ui::city_view::ViewItem> {
     use rules::improvement_ids as imp;
     let c = g.city_opt(city)?;
@@ -54,6 +55,7 @@ fn built_view_item(g: &Game, city: crate::game::CityId, item: crate::game::Produ
         crate::game::Production::Improvement(i) if g.options.animations && !c.auto_build && i != imp::PALACE && i < imp::SS_STRUCTURAL => {
             Some(crate::ui::city_view::improvement_item(i))
         }
+        crate::game::Production::Wonder(w) if g.options.animations && !c.auto_build => Some(crate::ui::city_view::wonder_item(w)),
         _ => None,
     }
 }
@@ -89,6 +91,12 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
         GameEvent::ProductionBlocked { city, item } if g.city(*city).owner == me => {
             msg(vec![format!("{} cannot complete {}.", city_name(*city), item.name())])
         }
+        // the human's own wonder goes through the same completion as an improvement: the city
+        // view adds it (CIV.EXE 0xe676), or a plain note without animations
+        GameEvent::WonderBuilt { city, wonder, owner } if *owner == me => match built_view_item(g, *city, crate::game::Production::Wonder(*wonder)) {
+            Some(view) => Some(crate::ui::city_view::built_view(ctx, *city, view)),
+            None => msg(vec![format!("{} builds", city_name(*city)), format!("{}.", rules::WONDERS[*wonder as usize].name)]),
+        },
         GameEvent::WonderBuilt { city, wonder, owner } => Some(crate::ui::wonderscreen::wonder_screen(ctx, *wonder, &city_name(*city), *owner)),
         GameEvent::WonderObsolete { wonder, owner } if *owner == me => msg(vec![format!("{} is now obsolete.", rules::WONDERS[*wonder as usize].name)]),
         GameEvent::Disorder(c) if g.city(*c).owner == me => Some(eventpics::disorder_screen(ctx, &city_name(*c))),

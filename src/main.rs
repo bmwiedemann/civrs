@@ -240,10 +240,18 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
             },
             "founded" => civrs::ui::cityfounded::city_founded(city.unwrap()),
             // city view after completing an improvement: screen:built:SEED:TURNS[:IMPROVEMENT]
+            // (24 + wonder id for a wonder)
             // (CIVRS_FRAMES=70 shows it after the new building has been added)
             "built" => {
                 let item: u8 = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(civrs::rules::improvement_ids::GRANARY);
-                ctx.game_mut().city_mut(city.unwrap()).add_improvement(item);
+                // items above 24 are wonders (24 + wonder id)
+                if item > 24 {
+                    let g = ctx.game_mut();
+                    g.city_mut(city.unwrap()).add_wonder(item - 24);
+                    g.wonders_built[(item - 24) as usize] = city;
+                } else {
+                    ctx.game_mut().city_mut(city.unwrap()).add_improvement(item);
+                }
                 civrs::ui::city_view::built_view(&ctx, city.unwrap(), item)
             }
             "city" => match parts.get(3) {
