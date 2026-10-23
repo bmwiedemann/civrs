@@ -57,8 +57,9 @@ pub static IMPROVEMENTS: [Improvement; 25] = [
     imp("NONE", 0, 0, None), // 0
     // Raw table upkeep is 5; the game charges no upkeep for the Palace.
     imp("Palace", 20, 0, Some(adv::MASONRY)), // 1
-    // Raw table upkeep is 0; in-game (and per the manual) Barracks cost 1.
-    imp("Barracks", 4, 1, None),                            // 2
+    // Table upkeep 0; CIV.EXE adds 1 each for Prince+, Emperor, Gunpowder and Combustion
+    // (`Game::improvement_upkeep`).
+    imp("Barracks", 4, 0, None),                            // 2
     imp("Granary", 6, 1, Some(adv::POTTERY)),               // 3
     imp("Temple", 4, 1, Some(adv::CEREMONIAL_BURIAL)),      // 4
     imp("MarketPlace", 8, 1, Some(adv::CURRENCY)),          // 5

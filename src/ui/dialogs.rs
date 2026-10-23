@@ -165,6 +165,10 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             let lines = ctx.texts.king.section("TAXES").map(paragraphs).unwrap_or_else(|| vec!["Treasury is low!".into()]);
             msg(lines)
         }
+        // "CITY\ncan't maintain\nBUILDING." (CIV.EXE 0x13154)
+        GameEvent::CantMaintain { city, improvement } if g.city(*city).owner == me => {
+            msg(vec![city_name(*city), "can't maintain".into(), format!("{}.", rules::IMPROVEMENTS[*improvement as usize].name)])
+        }
         GameEvent::ImprovementSold { city, improvement, gold } if g.city(*city).owner == me => {
             msg(vec![format!("{} sold in {} for {} gold.", rules::IMPROVEMENTS[*improvement as usize].name, city_name(*city), gold)])
         }

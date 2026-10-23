@@ -151,7 +151,7 @@ mod tests {
             "Palace"
         );
         assert_eq!(IMPROVEMENTS[improvement_ids::PALACE as usize].upkeep, 0);
-        assert_eq!(IMPROVEMENTS[improvement_ids::BARRACKS as usize].upkeep, 1);
+        assert_eq!(IMPROVEMENTS[improvement_ids::BARRACKS as usize].upkeep, 0);
         assert_eq!(
             IMPROVEMENTS[improvement_ids::SS_MODULE as usize].name,
             "SS Module"

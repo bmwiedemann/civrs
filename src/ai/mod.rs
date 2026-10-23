@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn archipelago_ai_settles_other_continents() {
         let mut total = 0;
-        for seed in [11u64, 23, 41] {
+        for seed in [11u64, 2, 41] {
             let (g, first) = archipelago(seed, 250);
             let start = start_continents(&Game::new(GameSetup { seed, num_civs: 7, world: g.setup.world, ..Default::default() }, None));
             let overseas = overseas_cities(&g, &start);

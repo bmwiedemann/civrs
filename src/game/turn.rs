@@ -410,11 +410,9 @@ impl Game {
             return;
         }
         // gold & science
-        self.player_mut(slot).gold += y.tax - y.gold_upkeep;
+        self.player_mut(slot).gold += y.tax;
         self.player_mut(slot).beakers += y.sci;
-        if self.player(slot).gold < 0 {
-            self.handle_bankruptcy(slot, c);
-        }
+        self.pay_upkeep(c);
         // hazards
         self.pollution_roll(c);
         self.meltdown_roll(c);
@@ -467,21 +465,25 @@ impl Game {
         }
     }
 
-    /// Treasury below zero after a city's upkeep: the human chooses what to sell, the AI sells
-    /// the cheapest improvement of the city.
-    fn handle_bankruptcy(&mut self, slot: Slot, c: CityId) {
-        let candidates = self.sellable_improvements(c);
-        if candidates.is_empty() {
-            if self.player(slot).human {
-                self.push_event(GameEvent::LowFunds { slot });
-            }
+    /// Pay the city's buildings one by one, in improvement order; one the treasury cannot pay
+    /// for is sold for its full cost, the treasury having been set to 0 ("CITY can't maintain
+    /// BUILDING.", CIV.EXE 0x13033..0x131cf).
+    fn pay_upkeep(&mut self, c: CityId) {
+        let slot = self.city(c).owner;
+        if !self.pays_upkeep(slot) {
             return;
         }
-        if self.player(slot).human {
-            self.push_event(GameEvent::NeedsDecision(Decision::SellForUpkeep { slot, city: c, candidates }));
-        } else {
-            let cheapest = candidates.into_iter().min_by_key(|i| rules::IMPROVEMENTS[*i as usize].cost).unwrap();
-            self.force_sell(c, cheapest);
+        for i in self.city(c).improvement_list() {
+            if i == imp::PALACE {
+                continue;
+            }
+            let cost = self.improvement_upkeep(slot, i);
+            self.player_mut(slot).gold -= cost;
+            if self.player(slot).gold < 0 {
+                self.player_mut(slot).gold = super::economy::sell_price(i);
+                self.city_mut(c).remove_improvement(i);
+                self.push_event(GameEvent::CantMaintain { city: c, improvement: i });
+            }
         }
     }
 
@@ -1154,14 +1156,34 @@ mod tests {
         g.process_city(c);
         assert!(g.city_yield(c).shield_surplus() >= 0);
         assert!(g.take_events().iter().any(|e| matches!(e, GameEvent::UnitDisbanded { .. })));
-        // bankruptcy: an AI city sells; the human is asked
+        // bankruptcy: the building the treasury cannot pay for is sold at once for its cost
+        g.player_mut(slot).tax = 0;
+        g.player_mut(slot).lux = 0;
         g.city_mut(c).add_improvement(imp::CATHEDRAL);
         g.player_mut(slot).gold = 0;
         g.process_city(c);
-        assert!(g.take_events().iter().any(|e| matches!(e, GameEvent::NeedsDecision(Decision::SellForUpkeep { .. }))));
-        g.apply_decision(&Decision::SellForUpkeep { slot, city: c, candidates: vec![imp::CATHEDRAL] }, DecisionReply::Choice(0));
+        assert!(g.take_events().iter().any(|e| *e == GameEvent::CantMaintain { city: c, improvement: imp::CATHEDRAL }));
         assert!(!g.city(c).has_improvement(imp::CATHEDRAL));
-        assert!(g.player(slot).gold >= 0);
+        assert_eq!(g.player(slot).gold, 160);
+    }
+
+    #[test]
+    fn only_the_human_pays_upkeep_and_barracks_get_dearer() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        g.city_mut(c).add_improvement(imp::TEMPLE);
+        g.city_mut(c).add_improvement(imp::BARRACKS);
+        g.setup.difficulty = crate::rules::Difficulty::Chieftain;
+        assert_eq!(g.city_upkeep(c), 1, "Barracks free at Chieftain");
+        g.setup.difficulty = crate::rules::Difficulty::Emperor;
+        g.player_mut(slot).learn(adv::GUNPOWDER);
+        g.player_mut(slot).learn(adv::COMBUSTION);
+        assert_eq!(g.city_upkeep(c), 1 + 4);
+        g.player_mut(slot).govt = Govt::Anarchy;
+        assert_eq!(g.city_upkeep(c), 0, "no upkeep under Anarchy");
+        g.player_mut(slot).govt = Govt::Despotism;
+        g.player_mut(slot).human = false;
+        assert_eq!(g.city_upkeep(c), 0, "computer players pay nothing");
     }
 
     #[test]

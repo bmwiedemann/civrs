@@ -87,6 +87,8 @@ pub enum GameEvent {
     Revolution { slot: Slot },
     AnarchyEnded { slot: Slot },
     GovernmentChanged { slot: Slot, govt: Govt },
+    /// No longer produced (buildings that cannot be paid for are sold); kept so that older
+    /// saves with one pending still load.
     LowFunds { slot: Slot },
     ImprovementSold { city: CityId, improvement: u8, gold: i32 },
     SpaceshipLaunched(Slot),
@@ -117,6 +119,8 @@ pub enum GameEvent {
     HintAt { section: String, city: CityId },
     /// The Nuclear Plant of a city in disorder melted down.
     Meltdown { city: CityId },
+    /// The treasury could not pay for a building, which was sold.
+    CantMaintain { city: CityId, improvement: u8 },
 }
 
 /// A choice the engine needs from the human player before continuing.
@@ -127,6 +131,8 @@ pub enum Decision {
     /// Opens the city screen because production completed / needs attention.
     ProductionChoice { city: CityId, reason: String },
     /// Treasury empty: pick an improvement to sell (candidates) or let the engine choose.
+    /// No longer produced (CIV.EXE sells without asking); kept so that older saves with one
+    /// pending still load.
     SellForUpkeep { slot: Slot, city: CityId, candidates: Vec<u8> },
     /// An AI leader requests an audience.
     Diplomacy(super::diplomacy::DiplomacyState),

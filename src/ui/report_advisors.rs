@@ -300,9 +300,10 @@ pub fn paint_trade(fb: &mut Surface, ctx: &UiContext) {
     let mut total = 0;
     for (imp, n) in counts.iter().enumerate().filter(|(_, n)| **n > 0) {
         let info = &rules::IMPROVEMENTS[imp];
-        let cost = *n * info.upkeep as i32;
+        let each = if imp as u8 == rules::improvement_ids::PALACE { 0 } else { g.improvement_upkeep(g.human_slot, imp as u8) };
+        let cost = *n * each;
         total += cost;
-        if y <= 176 && info.upkeep > 0 {
+        if y <= 176 && each > 0 {
             text(fb, ctx, 160, y, &format!("{} x{n}", info.name), PALE_YELLOW);
             text_r(fb, ctx, 276, y, &format!("{cost}{GLYPH_COIN}"), PALE_YELLOW);
             y += LINE_H;

@@ -355,7 +355,29 @@ impl Game {
     /// Gold per turn for the city's improvements.
     pub fn city_upkeep(&self, c: CityId) -> i32 {
         let city = self.city(c);
-        city.improvement_list().iter().map(|i| rules::IMPROVEMENTS[*i as usize].upkeep as i32).sum()
+        if !self.pays_upkeep(city.owner) {
+            return 0;
+        }
+        city.improvement_list().iter().filter(|i| **i != imp::PALACE).map(|i| self.improvement_upkeep(city.owner, *i)).sum()
+    }
+
+    /// Only the human player pays for buildings, and not under Anarchy (CIV.EXE 0x12ddd, 0x1307a).
+    pub fn pays_upkeep(&self, slot: Slot) -> bool {
+        let p = self.player(slot);
+        p.human && p.govt != Govt::Anarchy
+    }
+
+    /// Gold per turn for improvement `i` of `slot` (CIV.EXE 0x13084): the table value; Barracks
+    /// cost 1 more from Prince, again from Emperor, and after each of Gunpowder and Combustion.
+    pub fn improvement_upkeep(&self, slot: Slot, i: ImprovementId) -> i32 {
+        let mut u = rules::IMPROVEMENTS[i as usize].upkeep as i32;
+        if i == imp::BARRACKS {
+            let diff = self.setup.difficulty as i32;
+            let p = self.player(slot);
+            u += (diff >= 2) as i32 + (diff >= 4) as i32;
+            u += p.knows(rules::advance_ids::GUNPOWDER) as i32 + p.knows(rules::advance_ids::COMBUSTION) as i32;
+        }
+        u
     }
 
     /// Total per-turn gold change for a player.

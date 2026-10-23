@@ -173,8 +173,8 @@ game treats palace upkeep 0); 2 Barracks 4/0/-; 3 Granary 6/1/Pottery; 4 Temple 
 14 Colosseum 10/4/Construction; 15 Factory 20/4/Industrialization; 16 Mfg. Plant 32/6/Robotics;
 17 SDI Defense 20/4/SuperConductor; 18 Recycling Cntr. 20/2/Recycling; 19 Power Plant 16/4/Refining;
 20 Hydro Plant 24/4/Electronics; 21 Nuclear Plant 16/2/Nuclear Power; 22 SS Structural 8/0/Space Flight;
-23 SS Component 16/0/Plastics; 24 SS Module 32/0/Robotics. (Barracks upkeep is 1 in-game after
-Gunpowder/... per manual: use 0 as table says but manual says 1 -> use 1; Palace upkeep 0.)
+23 SS Component 16/0/Plastics; 24 SS Module 32/0/Robotics. (Barracks: table 0, CIV.EXE 0x13084
+adds 1 each for Prince+, Emperor, Gunpowder, Combustion; Palace free.)
 **Wonders** (W# name: cost x10, prereq, obsolete by): 1 Pyramids 30 Masonry/Communism;
 2 Hanging Gardens 30 Pottery/Invention; 3 Colossus 20 Bronze Working/Electricity;
 4 Lighthouse 20 MapMaking/Magnetism; 5 Great Library 30 Literacy/University;
@@ -410,7 +410,7 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
   cost = cost*10 shields; change-class penalty 50%; buy cost units `2r + r^2/20` (x2 if empty), improvements `2r`, wonders `4r`; trade routes `(ta+tb+4)/8`
   (x2 foreign, max 3); corruption by distance to palace * govt factor (4/3/2/2(Communism flat)/1/0), Courthouse halves; rates in 10% steps capped per govt
   (60/70/80/80/100, Anarchy all lux); Marketplace, then Bank +50% tax&lux each (compounding), Library/University +50% base sci (+1/3 each with Newton, all cities), Copernicus x2 city, SETI +50% all (0xf2f2);
-  specialists 2 each; upkeep paid, sell improvement if broke. Build menu (0xacd7): no Courthouse with Palace, no Factory with Mfg. Plant,
+  specialists 2 each; upkeep paid by the human only, not under Anarchy, building by building after taxes; one the treasury cannot pay is sold for its cost ("can't maintain", 0x13033). Build menu (0xacd7): no Courthouse with Palace, no Factory with Mfg. Plant,
   Bank needs Marketplace, University needs Library, Power Plant needs Factory, no plant with a Hoover Dam on the continent.
 - Happiness: content base 4..0 by difficulty; 2 lux per step; Temple 1 with Ceremonial Burial (2 with Mysticism, Oracle x2), Colosseum 3, Cathedral 4 with Religion (6 with Michelangelo),
   martial law max 3 under Anarchy/Desp/Mon/Comm; Republic 1 / Democracy 2
