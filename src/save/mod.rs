@@ -20,7 +20,9 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// when known, and 16 policies, ds:0xe698); older saves start with no goals and no policies.
 /// 10: then by the map's site-value layer (`Map::site`, 80 x 50 bytes, or none when the map
 /// has no layer: a u32 LE byte count first); older saves compute it from the terrain.
-pub const VERSION: u16 = 10;
+/// 11: then by the global warming counter (u16 LE, `Game::warming_counter`); older saves start
+/// it at 0.
+pub const VERSION: u16 = 11;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -91,6 +93,7 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     data.extend_from_slice(&ai_trailer(g));
     data.extend_from_slice(&(g.map.site.len() as u32).to_le_bytes());
     data.extend_from_slice(&g.map.site);
+    data.extend_from_slice(&g.warming_counter.to_le_bytes());
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -168,6 +171,10 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     if ver >= 10 {
         let n = rest.get(site..site + 4).map(|n| u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize).unwrap_or(0);
         g.map.site = rest.get(site + 4..site + 4 + n).map(|b| b.to_vec()).unwrap_or_default();
+    }
+    let warming = site + 4 + rest.get(site..site + 4).map(|n| u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize).unwrap_or(0);
+    if let Some(b) = rest.get(warming..warming + 2).filter(|_| ver >= 11) {
+        g.warming_counter = u16::from_le_bytes([b[0], b[1]]);
     }
     Ok(g)
 }
@@ -400,6 +407,24 @@ mod tests {
     }
 
     #[test]
+    fn warming_counter_survives_a_save_and_old_saves_start_at_zero() {
+        let mut g = Game::new(GameSetup { seed: 4, ..Default::default() }, None);
+        g.warming_counter = 13;
+        let dir = std::env::temp_dir().join(format!("civrs-warming-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        assert_eq!(super::load_game(&path).unwrap().warming_counter, 13);
+        let mut data = std::fs::read(&path).unwrap();
+        data[4..6].copy_from_slice(&10u16.to_le_bytes());
+        data.truncate(data.len() - 2);
+        std::fs::write(&path, &data).unwrap();
+        let old = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(old.warming_counter, 0);
+        assert_eq!(old.player(1).diplo, g.player(1).diplo);
+    }
+
+    #[test]
     fn diplomacy_flags_survive_a_save_and_old_saves_derive_them() {
         use crate::game::diplomacy::flags::*;
         use crate::game::Relation;
@@ -420,7 +445,7 @@ mod tests {
         // a version-7 file: no diplomacy trailer; relations and embassies of the body count
         let mut data = std::fs::read(&path).unwrap();
         data[4..6].copy_from_slice(&7u16.to_le_bytes());
-        data.truncate(data.len() - 8 * super::AI_TRAILER - 8 * super::DIPLO_TRAILER);
+        data.truncate(data.len() - 8 * super::DIPLO_TRAILER - 8 * super::AI_TRAILER - 4 - g.map.site.len() - 2);
         std::fs::write(&path, &data).unwrap();
         let mut old = super::load_game(&path).unwrap();
         // what a version-7 save stored
@@ -480,7 +505,7 @@ mod tests {
         // a version-5 file: same body, no city trailer
         let mut data = std::fs::read(&path).unwrap();
         data[4..6].copy_from_slice(&5u16.to_le_bytes());
-        data.truncate(data.len() - 8 * super::AI_TRAILER - 8 * super::DIPLO_TRAILER - 4 - g.cities.len() * super::CITY_TRAILER);
+        data.truncate(data.len() - 8 * super::AI_TRAILER - 4 - g.map.site.len() - 2 - 8 * super::DIPLO_TRAILER - 4 - g.cities.len() * super::CITY_TRAILER);
         std::fs::write(&path, &data).unwrap();
         let old = super::load_game(&path).unwrap();
         let _ = std::fs::remove_dir_all(dir);

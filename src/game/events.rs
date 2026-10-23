@@ -180,6 +180,9 @@ pub enum GameEvent {
     TreatyBroken { by: Slot, victim: Slot },
     /// The SCHISM note of HELP.TXT about `Slot` after an audience (CIV.EXE o 0x79c6).
     Schism(Slot),
+    /// "Scientists alarmed by\nrising temperatures.\nGlobal Warming feared!" (CIV.EXE 0x3b2e):
+    /// the warming counter reached 12 with more than 6 polluted squares.
+    GlobalWarmingFeared,
 }
 
 /// A choice the engine needs from the human player before continuing.

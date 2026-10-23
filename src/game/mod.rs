@@ -208,6 +208,11 @@ pub struct Game {
     /// civilization: the next move goes ahead (CIV.EXE 0x1a3b4 returned 1). Not saved.
     #[serde(skip)]
     pub treaty_break_ok: Option<Slot>,
+    /// The global warming counter ds:0xb1ea (0..99): one step a turn towards twice the
+    /// polluted squares minus four per warming so far (`global_warming_check`); stored after
+    /// the game body in version-9 saves.
+    #[serde(skip)]
+    pub warming_counter: u16,
 }
 
 fn no_audience() -> i8 {
@@ -334,6 +339,7 @@ impl Game {
             audience_pending: 0,
             diplo_latch: -1,
             treaty_break_ok: None,
+            warming_counter: 0,
         };
         game.place_starting_units(&slots, &world);
         game.refresh_all_vision();

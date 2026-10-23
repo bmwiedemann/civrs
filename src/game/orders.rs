@@ -24,7 +24,7 @@ impl UnitOrder {
 /// The special resource of a square whose terrain changed: specials are a pattern of the
 /// square (0x1a68:0x183c, rows 2..47), whatever the terrain; Grassland and River squares have
 /// none of their own (their resource is the shield pattern).
-fn positional_special(seed: u32, x: i32, y: i32, t: Terrain) -> bool {
+pub(super) fn positional_special(seed: u32, x: i32, y: i32, t: Terrain) -> bool {
     (2..48).contains(&y) && Map::special_at(seed, x, y) && t != Terrain::Grassland && t != Terrain::River
 }
 

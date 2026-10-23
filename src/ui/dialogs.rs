@@ -198,7 +198,9 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             let text = msg(vec!["Nuclear Catastrophe".into(), format!("in {}!", city_name(*city)), "Contamination feared!".into()]);
             Some(Box::new(Sequence { first: Some(anim), then: text }))
         }
-        GameEvent::GlobalWarming => msg(vec!["Global warming!".into(), "Polar ice caps melt, coastal areas flood.".into()]),
+        // ds:0x3b6a and ds:0x1df8, shown by the newspaper (overlay 21) in CIV.EXE
+        GameEvent::GlobalWarming => msg(vec!["Global temperature".into(), "rises! Icecaps melt.".into(), "Severe Drought.".into()]),
+        GameEvent::GlobalWarmingFeared => msg(vec!["Scientists alarmed by".into(), "rising temperatures.".into(), "Global Warming feared!".into()]),
         // the owner reads it all, anyone else who sees the city only the first line (CIV.EXE
         // o 0x1bf3b)
         GameEvent::Disaster { city, kind } if g.city_opt(*city).is_some_and(|c| c.owner == me || g.visible_to(me, c.x, c.y)) => {

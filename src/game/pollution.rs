@@ -5,14 +5,13 @@
 //! continent, else 1 (0xdc68), and `techs` counts Industrialization, Automobile, Mass Production
 //! and Plastics, none with Mass Transit (0xcc43). A square is polluted when twice that beats
 //! `random(256 - advances * difficulty / 2)`. Only the human player's cities pollute.
+//! Global warming (0x3ae7, overlay 7 +0x1ba8) follows a counter that tracks the number of
+//! polluted squares.
 
 use super::events::GameEvent;
 use super::map::{tile_flags, CityId};
 use super::Game;
 use crate::rules::{advance_ids as adv, improvement_ids as imp, wonder_ids as won, Terrain};
-
-/// Tiles changed by one episode of global warming.
-pub const WARMING_TILES: usize = 10;
 
 impl Game {
     /// Industrial pollution divisor: Recycling Center 3, clean power 2, otherwise 1.
@@ -42,49 +41,43 @@ impl Game {
         self.city_yield(c).shields / self.pollution_divisor(c) - 20 + city.size as i32 * techs / 4
     }
 
-    /// Roll for pollution in a city; pollutes a random worked land tile on success. Computer
-    /// players' cities never pollute: CIV.EXE 0x12ddd skips this for every civ but the human's.
+    /// Roll for pollution in a city (CIV.EXE 0x12de9): polluted when twice the points beat
+    /// `random(256 - research_count * difficulty / 2)`; the square is then one of the 20 of
+    /// the city radius around the centre, picked by `random(20)` from the table ds:0x2498 /
+    /// ds:0x24c2 — worked or not — and the city gets no pollution this turn when that square
+    /// is already polluted, Ocean or a city. Computer players' cities never pollute: CIV.EXE
+    /// 0x12ddd skips this for every civ but the human's.
     pub fn pollution_roll(&mut self, c: CityId) {
         if !self.player(self.city(c).owner).human {
             return;
         }
         let points = self.pollution_points(c);
-        if points <= 0 {
-            return;
-        }
         let owner = self.city(c).owner;
         let range = 256 - self.player(owner).research_count as i32 * self.setup.difficulty as i32 / 2;
         if 2 * points <= self.rng.below(range.max(1) as u32) as i32 {
             return;
         }
-        let mut cands = Vec::new();
-        for idx in 1..21u8 {
-            if !self.city(c).works(idx) {
-                continue;
-            }
-            if let Some((x, y)) = self.radius_tile(c, idx) {
-                let t = self.map.tile(x, y);
-                if t.is_land() && !t.has(tile_flags::POLLUTION) {
-                    cands.push((x, y));
-                }
-            }
+        let (dx, dy) = POLLUTION_SQUARES[self.rng.below(20) as usize];
+        let (cx, cy) = self.city(c).pos();
+        let (x, y) = (super::Map::wrap_x(cx + dx as i32), cy + dy as i32);
+        let Some(t) = self.map.get(x, y) else { return };
+        if t.has(tile_flags::POLLUTION) || t.is_ocean() || t.city.is_some() {
+            return;
         }
-        if let Some(&(x, y)) = self.rng.pick(&cands) {
-            self.map.get_mut(x, y).unwrap().set(tile_flags::POLLUTION, true);
-            self.polluted_tiles += 1;
-            self.push_event(GameEvent::Pollution { city: c, at: (x, y) });
-        }
+        self.map.get_mut(x, y).unwrap().set(tile_flags::POLLUTION, true);
+        self.polluted_tiles += 1;
+        self.push_event(GameEvent::Pollution { city: c, at: (x, y) });
     }
 
     /// "Risk of MELTDOWN!": a city in disorder with a Nuclear Plant melts down one turn in
     /// three until its owner knows Fusion Power (CIV.EXE 0x12f46, human cities only like
-    /// pollution).
+    /// pollution; the third is rolled before Fusion Power is looked at).
     pub fn meltdown_roll(&mut self, c: CityId) {
         let city = self.city(c);
-        if !self.player(city.owner).human || !city.disorder || !city.has_improvement(imp::NUCLEAR_PLANT) || self.player(city.owner).knows(adv::FUSION_POWER) {
+        if !self.player(city.owner).human || !city.disorder || !city.has_improvement(imp::NUCLEAR_PLANT) {
             return;
         }
-        if self.rng.below(3) == 0 {
+        if self.rng.below(3) == 0 && !self.player(self.city(c).owner).knows(adv::FUSION_POWER) {
             self.meltdown(c);
         }
     }
@@ -109,69 +102,64 @@ impl Game {
         self.push_event(GameEvent::Meltdown { city: c });
     }
 
-    /// Polluted tiles needed before global warming can strike (rises after each episode).
-    pub fn warming_threshold(&self) -> u16 {
-        8 + 4 * self.global_warming_count as u16
-    }
-
-    /// Global warming check for the whole world (once per turn).
+    /// The end-of-turn warming step (CIV.EXE 0x3ae7): `warming_counter` moves one step
+    /// towards `2 * polluted - 4 * warmings` (kept in 0..99); "Global Warming feared!" when it
+    /// is exactly 12 with more than 6 polluted squares; above 16 the world warms and the
+    /// counter starts again from 0.
     pub fn global_warming_check(&mut self) {
-        if self.polluted_tiles < self.warming_threshold() {
-            return;
+        let target = 2 * self.polluted_tiles as i32 - 4 * self.global_warming_count as i32;
+        let counter = self.warming_counter as i32;
+        self.warming_counter = (counter + (target - counter).signum()).clamp(0, 99) as u16;
+        if self.warming_counter == 12 && self.polluted_tiles > 6 {
+            self.push_event(GameEvent::GlobalWarmingFeared);
         }
-        if !self.rng.chance(self.polluted_tiles.min(100) as u32) {
-            return;
+        if self.warming_counter > 16 {
+            self.global_warming();
+            self.warming_counter = 0;
         }
-        self.global_warming();
     }
 
-    /// Apply one episode of global warming: coastal and low land turns drier / wetter.
+    /// One global warming (overlay 7 +0x1ba8 with `n` = the warmings before this one): every
+    /// Desert, Plains, Grassland and Forest square with at least `7 - n` Ocean neighbours
+    /// turns to Swamp (Forest to Jungle) and loses irrigation and mine; of the others, those
+    /// with `(11x + 13y) & 7 == n` dry up, Desert and Plains to Desert, Grassland and Forest
+    /// to Plains, keeping their improvements. City squares change too; a changed square's hut
+    /// is spent (es:0x740 |= 1).
     pub fn global_warming(&mut self) {
-        let mut changed = 0;
-        let mut tries = 0;
-        while changed < WARMING_TILES && tries < 2000 {
-            tries += 1;
-            let x = self.rng.below(crate::rules::MAP_W as u32) as i32;
-            let y = self.rng.below(crate::rules::MAP_H as u32) as i32;
-            let t = self.map.tile(x, y);
-            if t.is_ocean() || t.city.is_some() {
-                continue;
+        self.push_event(GameEvent::GlobalWarming);
+        let n = self.global_warming_count as i32;
+        let seed = self.map.seed;
+        for x in 0..crate::rules::MAP_W as i32 {
+            for y in 0..crate::rules::MAP_H as i32 {
+                let t = self.map.tile(x, y).terrain;
+                if !matches!(t, Terrain::Desert | Terrain::Plains | Terrain::Grassland | Terrain::Forest) {
+                    continue;
+                }
+                let oceans = super::Map::neighbours8(x, y).filter(|&(nx, ny)| self.map.is_ocean(nx, ny)).count() as i32;
+                let tm = self.map.get_mut(x, y).unwrap();
+                let nt = if oceans >= 7 - n {
+                    tm.set(tile_flags::IRRIGATION | tile_flags::MINE, false);
+                    if t == Terrain::Forest { Terrain::Jungle } else { Terrain::Swamp }
+                } else if (11 * x + 13 * y) & 7 == n {
+                    if matches!(t, Terrain::Desert | Terrain::Plains) { Terrain::Desert } else { Terrain::Plains }
+                } else {
+                    continue;
+                };
+                tm.terrain = nt;
+                tm.set(tile_flags::HUT, false);
+                tm.special = super::orders::positional_special(seed, x, y, nt);
             }
-            let coastal = self.map.is_coastal(x, y);
-            let new = match t.terrain {
-                Terrain::Grassland => Some(Terrain::Plains),
-                Terrain::Plains => Some(Terrain::Desert),
-                Terrain::Forest => Some(Terrain::Jungle),
-                Terrain::Jungle => Some(Terrain::Swamp),
-                Terrain::Swamp if coastal => Some(Terrain::Ocean),
-                Terrain::Tundra => Some(Terrain::Plains),
-                Terrain::Arctic => Some(Terrain::Tundra),
-                _ => None,
-            };
-            let Some(nt) = new else { continue };
-            // prefer coastal/low land: inland tiles only change half of the time
-            if !coastal && self.rng.chance(50) {
-                continue;
-            }
-            let tm = self.map.get_mut(x, y).unwrap();
-            tm.terrain = nt;
-            tm.special = false;
-            if nt == Terrain::Ocean {
-                tm.flags = 0;
-                tm.worked_by = None;
-            } else {
-                tm.set(tile_flags::IRRIGATION, false);
-                tm.set(tile_flags::MINE, false);
-            }
-            changed += 1;
-        }
-        if changed > 0 {
-            self.map.compute_continents();
         }
         self.global_warming_count = self.global_warming_count.saturating_add(1);
-        self.push_event(GameEvent::GlobalWarming);
     }
 }
+
+/// The 20 squares around a city in the order of CIV.EXE's table ds:0x2498 (dx) / ds:0x24c2
+/// (dy), which `pollution_roll` picks from.
+const POLLUTION_SQUARES: [(i8, i8); 20] = [
+    (0, -1), (1, 0), (0, 1), (-1, 0), (1, -1), (1, 1), (-1, 1), (-1, -1),
+    (0, -2), (2, 0), (0, 2), (-2, 0), (-1, -2), (1, -2), (2, -1), (2, 1), (1, 2), (-1, 2), (-2, 1), (-2, -1),
+];
 
 #[cfg(test)]
 mod tests {
@@ -246,5 +234,81 @@ mod tests {
             g.pollution_roll(c);
         }
         assert!(g.polluted_tiles > before);
+    }
+
+    #[test]
+    fn warming_counter_steps_towards_twice_the_pollution() {
+        // 0x3ae7: one step a turn towards 2 * polluted - 4 * warmings, warning at 12, warming
+        // above 16
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        g.polluted_tiles = 9;
+        let mut feared = 0;
+        for turn in 1..=16 {
+            g.global_warming_check();
+            assert_eq!(g.warming_counter, turn);
+            feared += g.take_events().iter().filter(|e| **e == GameEvent::GlobalWarmingFeared).count();
+        }
+        assert_eq!((feared, g.global_warming_count), (1, 0));
+        g.global_warming_check();
+        assert_eq!((g.warming_counter, g.global_warming_count), (0, 1));
+        // after one warming 9 squares only pull the counter towards 2*9 - 4 = 14
+        for _ in 0..40 {
+            g.global_warming_check();
+        }
+        assert_eq!((g.warming_counter, g.global_warming_count), (14, 1));
+        g.polluted_tiles = 0;
+        g.global_warming_check();
+        assert_eq!(g.warming_counter, 13);
+    }
+
+    #[test]
+    fn global_warming_floods_coasts_and_dries_the_pattern() {
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        // the fourth warming: 4 Ocean neighbours flood a square, (11x + 13y) & 7 == 3 dries it
+        g.global_warming_count = 3;
+        let before = g.map.clone();
+        g.global_warming();
+        let mut swamped = 0;
+        for x in 0..80 {
+            for y in 0..50 {
+                let (a, b) = (before.tile(x, y), g.map.tile(x, y));
+                let temperate = matches!(a.terrain, Terrain::Desert | Terrain::Plains | Terrain::Grassland | Terrain::Forest);
+                let oceans = crate::game::Map::neighbours8(x, y).filter(|&(nx, ny)| before.is_ocean(nx, ny)).count();
+                let want = if !temperate {
+                    a.terrain
+                } else if oceans >= 4 {
+                    swamped += 1;
+                    if a.terrain == Terrain::Forest { Terrain::Jungle } else { Terrain::Swamp }
+                } else if (11 * x + 13 * y) & 7 == 3 {
+                    if matches!(a.terrain, Terrain::Desert | Terrain::Plains) { Terrain::Desert } else { Terrain::Plains }
+                } else {
+                    a.terrain
+                };
+                assert_eq!(b.terrain, want, "({x},{y})");
+            }
+        }
+        assert!(swamped > 0);
+    }
+
+    #[test]
+    fn pollution_lands_on_any_square_of_the_radius() {
+        // 0x12e4b: random(20) of the table ds:0x2498, worked or not; a city square, Ocean or
+        // a polluted square means no pollution this turn
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        let slot = g.human_slot;
+        let settler = g.units_of(slot).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        for a in [adv::INDUSTRIALIZATION, adv::AUTOMOBILE, adv::MASS_PRODUCTION, adv::PLASTICS] {
+            g.player_mut(slot).learn(a);
+        }
+        g.city_mut(c).size = 120;
+        let (cx, cy) = g.city(c).pos();
+        for _ in 0..400 {
+            g.pollution_roll(c);
+        }
+        let worked: Vec<(i32, i32)> = (1..21u8).filter(|&i| g.city(c).works(i)).filter_map(|i| g.radius_tile(c, i)).collect();
+        let polluted: Vec<(i32, i32)> = (-2..=2).flat_map(|dx| (-2..=2).map(move |dy| (cx + dx, cy + dy))).filter(|&(x, y)| g.map.tile(x, y).has(tile_flags::POLLUTION)).collect();
+        assert!(polluted.iter().any(|p| !worked.contains(p)), "{polluted:?}");
+        assert!(polluted.iter().all(|&(x, y)| g.map.tile(x, y).is_land() && (x, y) != (cx, cy)));
     }
 }

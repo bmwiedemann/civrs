@@ -889,8 +889,9 @@ impl MapView {
         let cost = p.research_count as i32 * g.research_multiplier(g.human_slot, false) * k;
         let stage = (p.beakers * 4 / (cost + 1)).clamp(0, 3);
         fb.blit_part(&sheet.surf, Rect::new(160 + 8 * stage, 120, 8, 8), 48, 80, None);
-        if g.polluted_tiles > 0 {
-            let stage = (g.polluted_tiles as i32 / 4).clamp(0, 3);
+        // the sun follows the warming counter ds:0xb1ea (0x35b1): shown when it is not 0
+        if g.warming_counter > 0 {
+            let stage = (g.warming_counter as i32 / 4).clamp(0, 3);
             fb.blit_part(&sheet.surf, Rect::new(160 + 8 * stage, 128, 8, 8), 56, 80, None);
         }
         let sci = p.sci() / 10;
