@@ -412,8 +412,9 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
   (60/70/80/80/100, Anarchy all lux); Marketplace/Bank +50% tax&lux, Library/University +50% sci, Copernicus/Newton +100% city, SETI +50% all;
   specialists 2 each; upkeep paid, sell improvement if broke.
 - Happiness: content base 4..0 by difficulty; 2 lux per step; Temple 1 with Ceremonial Burial (2 with Mysticism, Oracle x2), Colosseum 3, Cathedral 4 with Religion (6 with Michelangelo),
-  Hanging Gardens/Cure for Cancer +1 content, Bach -2 unhappy, Shakespeare all content; martial law max 3 under Anarchy/Desp/Mon/Comm; Republic 1 / Democracy 2
-  unhappy per aggressive unit abroad (Women's Suffrage -1); disorder if unhappy > happy; celebration size>=3, happy > half, no unhappy; Democracy 2 turns disorder -> anarchy.
+  martial law max 3 under Anarchy/Desp/Mon/Comm; Republic 1 / Democracy 2
+  unhappy per aggressive unit abroad (Women's Suffrage -1); disorder if unhappy > happy; celebration size>=3, happy > half, no unhappy; Democracy 2 turns disorder -> anarchy;
+  then wonders: Hanging Gardens/Cure for Cancer +1 happy, Shakespeare all content, Bach -2 unhappy on its continent.
 - Science: cost `(n+1)*(8+2*difficulty)` beakers [approx]; research choice after each discovery; Future Tech after all; Great Library, Darwin's 2 advances.
 - Movement in thirds, road 1/3, rail free, no river bonus (CIV.EXE 0x6336); partial moves (0x634a): a land unit with exactly 1 MP always enters, otherwise it fails when random(3*cost) > moves left; sight 1/2/3; ZOC rule [ERROR ZOC]; trireme 50% loss away from coast
   (Lighthouse safe); air fuel (Fighter 1 turn, Bomber 2, Nuclear 1); transports/carriers; orders Fortify/Sentry/Goto(A*)/Road 2/Rail 6/Irrigate/Mine per table/

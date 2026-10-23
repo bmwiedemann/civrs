@@ -1,8 +1,8 @@
 //! Citizen happiness, civil disorder and "We love the King day" celebrations.
 //!
-//! Order of evaluation (as the city screen's "Happy" view shows it): base content by
-//! difficulty, luxuries, buildings (Temple/Colosseum/Cathedral), wonders, martial law or
-//! military unhappiness under Republic/Democracy.
+//! Order of evaluation (as the city screen's "Happy" view shows it, CIV.EXE 0xf3f8..0xfbe6):
+//! base content by difficulty, luxuries, buildings (Colosseum/Cathedral/Temple), martial law or
+//! military unhappiness under Republic/Democracy, wonders.
 
 use super::map::CityId;
 use super::Game;
@@ -103,6 +103,13 @@ impl Game {
         }
     }
 
+    /// The city lies on the continent of the city holding wonder `w`.
+    pub fn same_continent_as_wonder(&self, c: CityId, w: rules::WonderId) -> bool {
+        let Some(wc) = self.wonders_built[w as usize].and_then(|wc| self.city_opt(wc)) else { return false };
+        let city = self.city(c);
+        self.map.tile(wc.x, wc.y).continent == self.map.tile(city.x, city.y).continent
+    }
+
     /// Military units of the owner inside the city that can impose martial law.
     pub fn martial_law_units(&self, c: CityId) -> i32 {
         let city = self.city(c);
@@ -168,22 +175,6 @@ impl Game {
         make_content += self.cathedral_effect(c);
         h.pacify(make_content);
         h.steps.push(("Buildings", h.happy, h.content, h.unhappy));
-        // wonders
-        let mut wonder_content = 0;
-        if self.owner_has_wonder(slot, won::HANGING_GARDENS) {
-            wonder_content += 1;
-        }
-        if self.owner_has_wonder(slot, won::CURE_FOR_CANCER) {
-            wonder_content += 1;
-        }
-        if self.owner_has_wonder(slot, won::JS_BACHS_CATHEDRAL) {
-            wonder_content += 2;
-        }
-        h.pacify(wonder_content);
-        if city.has_wonder(won::SHAKESPEARES_THEATRE) && !self.wonder_obsolete(won::SHAKESPEARES_THEATRE) {
-            h.pacify(h.unhappy);
-        }
-        h.steps.push(("Wonders", h.happy, h.content, h.unhappy));
         // military
         let g = rules::GOVERNMENTS[p.govt as usize];
         if g.martial_law_max > 0 {
@@ -202,6 +193,21 @@ impl Game {
             }
             h.steps.push(("Military", h.happy, h.content, h.unhappy));
         }
+        // wonders: the Hanging Gardens and the Cure for Cancer add a happy citizen, J.S.Bach's
+        // Cathedral works on its own continent, Shakespeare's Theatre in its city (CIV.EXE 0xfa91)
+        if self.owner_has_wonder(slot, won::HANGING_GARDENS) {
+            h.improve_one();
+        }
+        if self.owner_has_wonder(slot, won::CURE_FOR_CANCER) {
+            h.improve_one();
+        }
+        if city.has_wonder(won::SHAKESPEARES_THEATRE) && !self.wonder_obsolete(won::SHAKESPEARES_THEATRE) {
+            h.pacify(h.unhappy);
+        }
+        if self.owner_has_wonder(slot, won::JS_BACHS_CATHEDRAL) && self.same_continent_as_wonder(c, won::JS_BACHS_CATHEDRAL) {
+            h.pacify(2);
+        }
+        h.steps.push(("Wonders", h.happy, h.content, h.unhappy));
         h.disorder = h.unhappy > h.happy;
         h.celebration = !h.disorder && city.size >= 3 && h.unhappy == 0 && h.happy * 2 >= city.size as i32;
         h
@@ -269,5 +275,31 @@ mod tests {
         // Michelangelo's Chapel is no Cathedral of its own
         g.city_mut(c).remove_improvement(imp::CATHEDRAL);
         assert_eq!(g.cathedral_effect(c), 0);
+    }
+
+    #[test]
+    fn wonder_happiness_follows_the_civilopedia() {
+        let (mut g, c) = emperor_fixture();
+        let slot = g.city(c).owner;
+        g.player_mut(slot).advances = 0;
+        g.player_mut(slot).lux = 0;
+        g.city_mut(c).size = 1;
+        g.city_mut(c).specialists.clear();
+        let base = g.city_happiness(c);
+        // the Hanging Gardens make a citizen happy, not just content
+        g.city_mut(c).add_wonder(won::HANGING_GARDENS);
+        g.wonders_built[won::HANGING_GARDENS as usize] = Some(c);
+        let h = g.city_happiness(c);
+        assert_eq!(h.happy, base.happy + 1, "{h:?}");
+        // J.S.Bach's Cathedral only helps cities on its continent
+        let (x, y) = g.city(c).pos();
+        let far = g.add_city(slot, "Far".into(), x + 6, y);
+        g.city_mut(far).add_wonder(won::JS_BACHS_CATHEDRAL);
+        g.wonders_built[won::JS_BACHS_CATHEDRAL as usize] = Some(far);
+        let cont = g.map.tile(x, y).continent;
+        g.map.get_mut(x + 6, y).unwrap().continent = cont;
+        assert!(g.same_continent_as_wonder(c, won::JS_BACHS_CATHEDRAL));
+        g.map.get_mut(x + 6, y).unwrap().continent = cont.wrapping_add(1);
+        assert!(!g.same_continent_as_wonder(c, won::JS_BACHS_CATHEDRAL));
     }
 }
