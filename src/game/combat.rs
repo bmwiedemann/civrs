@@ -852,8 +852,9 @@ mod tests {
         assert!(!g.city(c).has_improvement(imp::TEMPLE));
     }
 
-    /// An unhappy Republic city loses its food and shields to unrest, then defects to the civ
-    /// of the happiest city before it (CIV.EXE o 0x1bc5d, 0x1bd9d).
+    /// An unhappy city loses its food and shields to unrest and, when its owner has more than
+    /// three cities (ds:0x6b66), defects to the civ of the happiest city before it (CIV.EXE
+    /// o 0x1bc5d, 0x1bd9d).
     #[test]
     fn unrest_and_defection_to_an_admired_city() {
         use crate::game::events::Disaster;
@@ -868,15 +869,16 @@ mod tests {
         g.auto_assign(c);
         g.city_mut(c).food = 7;
         g.city_mut(c).shields = 9;
-        g.player_mut(1).govt = Govt::Monarchy;
         let h = g.city_happiness(c);
         assert!(h.happy < h.unhappy, "{h:?}");
         assert!(g.city_happiness(admired).happy > g.city_happiness(admired).unhappy);
         g.city_unrest(c);
         assert_eq!((g.city(c).food, g.city(c).shields), (0, 0));
-        assert_eq!(g.city(c).owner, 1, "no defection under Monarchy");
+        assert_eq!(g.city(c).owner, 1, "no defection with two cities");
         assert!(g.events.iter().any(|e| matches!(e, GameEvent::Disaster { kind: Disaster::Unrest { demand: Some(imp::TEMPLE), .. }, .. })));
-        g.player_mut(1).govt = Govt::Republic;
+        // later slots are not compared, so two more cities only change the count
+        g.add_city(1, "Third".into(), 25, 5);
+        g.add_city(1, "Fourth".into(), 5, 25);
         g.city_unrest(c);
         assert_eq!(g.city(c).owner, 2);
         assert!(g.events.iter().any(|e| matches!(e, GameEvent::CityDefected { city, admired: a, from: 1 } if *city == c && *a == admired)));

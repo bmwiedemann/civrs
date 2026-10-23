@@ -562,7 +562,8 @@ impl Game {
     }
 
     /// Once a turn after turn 50 (CIV.EXE 0x262d) a random one of the 128 city slots is tried:
-    /// a city of size 5 or more whose owner rules above Despotism meets `city_disaster`. (The
+    /// a city of size 5 or more whose owner has more than one city (ds:0x6b66) meets
+    /// `city_disaster`. (The
     /// original reuses its loop counter for the slot, so slots 0 and 1 lead to another try.)
     pub fn disaster_check(&mut self) {
         if self.turn <= 50 {
@@ -575,7 +576,7 @@ impl Game {
                 i += 1;
                 continue;
             };
-            if self.player(city.owner).govt as u8 > Govt::Despotism as u8 && city.size >= 5 {
+            if self.cities_of(city.owner).len() > 1 && city.size >= 5 {
                 self.city_disaster(i as CityId);
             }
             i += 1;
@@ -655,7 +656,8 @@ impl Game {
     /// Unrest (CIV.EXE o 0x1bc5d): a city with fewer happy than unhappy citizens loses its
     /// food and shields ("Rioting in / Corruption in / Scandal in CITY! Citizens demand ..."
     /// naming the first of Temple, Courthouse, Marketplace and Cathedral it lacks, else lower
-    /// taxes). Under the Republic and Democracy such a city, unless it has the Palace, then
+    /// taxes). If its owner has more than three cities (ds:0x6b66) such a city, unless it has
+    /// the Palace, then
     /// defects to the owner of the city with the best `32 * (happy - unhappy) / distance`
     /// above 4 among the city slots before it.
     pub(crate) fn city_unrest(&mut self, c: CityId) {
@@ -673,7 +675,7 @@ impl Game {
         let cm = self.city_mut(c);
         cm.food = 0;
         cm.shields = 0;
-        if city.has_improvement(imp::PALACE) || !matches!(self.player(city.owner).govt, Govt::Republic | Govt::Democracy) {
+        if city.has_improvement(imp::PALACE) || self.cities_of(city.owner).len() <= 3 {
             return;
         }
         let mut best = (4, None);
