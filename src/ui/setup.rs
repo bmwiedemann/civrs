@@ -49,8 +49,10 @@ pub fn start_flow(kind: usize) -> Box<dyn Screen> {
     })
 }
 
+/// The game seed from the clock as CIV.EXE takes it (`seed_random` 0x1d43:0x38: time(0) &
+/// 0x7fff), so a new world is one of the original's (see `Game::new`).
 fn seed_from_clock() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1)
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() & 0x7fff).unwrap_or(1)
 }
 
 impl SetupFlow {

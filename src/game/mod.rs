@@ -250,6 +250,9 @@ impl Game {
     /// of the slot's two) and then its start square (`mapgen::start_square`). "N
     /// Civilizations" lets slots 1..N play (ds:0x6b8a = 0xff >> (7 - N)); CIV.EXE only offers
     /// those slots' tribes, civrs lets the human's slot take the place of the highest one.
+    /// CIV.EXE draws no random number between `srand` and the world generator, so a game seed
+    /// below 0x8000 makes the same world and starts as CIV.EXE does with that clock seed
+    /// (checked in DOSBox, see the `mapgen` and `new_game_tests` tests).
     pub fn new(setup: GameSetup, earth: Option<&EarthMap>) -> Game {
         let rng = Rng::new(setup.seed);
         let seed32 = (setup.seed & 0xFFFF_FFFF) as u32 ^ (setup.seed >> 32) as u32;
