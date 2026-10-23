@@ -1,9 +1,10 @@
 //! Pollution and global warming.
 //!
-//! Pollution chance per city per turn [approx]: production beyond 20 shields (reduced by a
-//! Recycling Center to a third, halved by Hydro/Nuclear plants or the Hoover Dam) plus
-//! population pollution `size * techs / 2` where `techs` counts Industrialization, Automobile,
-//! Mass Production and Plastics (removed entirely by Mass Transit). The result is a percentage.
+//! Pollution per city per turn (CIV.EXE 0x12de9): `shields / f - 20 + size * techs / 4`, where
+//! `f` is 3 with a Recycling Center, else 2 with a Hydro or Nuclear Plant or a Hoover Dam on the
+//! continent, else 1 (0xdc68), and `techs` counts Industrialization, Automobile, Mass Production
+//! and Plastics, none with Mass Transit (0xcc43). A square is polluted when twice that beats
+//! `random(256 - advances * difficulty / 2)`.
 
 use super::events::GameEvent;
 use super::map::{tile_flags, CityId};
@@ -14,30 +15,42 @@ use crate::rules::{advance_ids as adv, improvement_ids as imp, wonder_ids as won
 pub const WARMING_TILES: usize = 10;
 
 impl Game {
-    /// Percent chance that the city pollutes a tile this turn.
-    pub fn pollution_chance(&self, c: CityId) -> i32 {
+    /// Industrial pollution divisor: Recycling Center 3, clean power 2, otherwise 1.
+    pub fn pollution_divisor(&self, c: CityId) -> i32 {
+        let city = self.city(c);
+        if city.has_improvement(imp::RECYCLING_CNTR) {
+            3
+        } else if city.has_improvement(imp::HYDRO_PLANT)
+            || city.has_improvement(imp::NUCLEAR_PLANT)
+            || (self.owner_has_wonder(city.owner, won::HOOVER_DAM) && self.same_continent_as_wonder(c, won::HOOVER_DAM))
+        {
+            2
+        } else {
+            1
+        }
+    }
+
+    /// Pollution points of the city this turn (0 or less: no pollution).
+    pub fn pollution_points(&self, c: CityId) -> i32 {
         let city = self.city(c);
         let p = self.player(city.owner);
-        let y = self.city_yield(c);
-        let mut prod = (y.shields - 20).max(0);
-        if city.has_improvement(imp::RECYCLING_CNTR) {
-            prod /= 3;
-        }
-        if city.has_improvement(imp::HYDRO_PLANT) || city.has_improvement(imp::NUCLEAR_PLANT) || self.owner_has_wonder(city.owner, won::HOOVER_DAM) {
-            prod /= 2;
-        }
-        let techs = [adv::INDUSTRIALIZATION, adv::AUTOMOBILE, adv::MASS_PRODUCTION, adv::PLASTICS].iter().filter(|a| p.knows(**a)).count() as i32;
-        let mut pop = city.size as i32 * techs / 2;
-        if city.has_improvement(imp::MASS_TRANSIT) {
-            pop = 0;
-        }
-        (prod + pop).clamp(0, 100)
+        let techs = if city.has_improvement(imp::MASS_TRANSIT) {
+            0
+        } else {
+            [adv::INDUSTRIALIZATION, adv::AUTOMOBILE, adv::MASS_PRODUCTION, adv::PLASTICS].iter().filter(|a| p.knows(**a)).count() as i32
+        };
+        self.city_yield(c).shields / self.pollution_divisor(c) - 20 + city.size as i32 * techs / 4
     }
 
     /// Roll for pollution in a city; pollutes a random worked land tile on success.
     pub fn pollution_roll(&mut self, c: CityId) {
-        let chance = self.pollution_chance(c);
-        if chance <= 0 || !self.rng.chance(chance as u32) {
+        let points = self.pollution_points(c);
+        if points <= 0 {
+            return;
+        }
+        let owner = self.city(c).owner;
+        let range = 256 - self.player(owner).research_count as i32 * self.setup.difficulty as i32 / 2;
+        if 2 * points <= self.rng.below(range.max(1) as u32) as i32 {
             return;
         }
         let mut cands = Vec::new();
@@ -130,19 +143,25 @@ mod tests {
     use crate::rules::unit_ids;
 
     #[test]
-    fn pollution_chance_grows_with_industry() {
+    fn pollution_grows_with_industry_and_population() {
         let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
         let slot = g.human_slot;
         let settler = g.units_of(slot).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
         let c = g.found_city(settler).unwrap();
-        assert_eq!(g.pollution_chance(c), 0);
-        g.player_mut(slot).learn(adv::INDUSTRIALIZATION);
-        g.player_mut(slot).learn(adv::AUTOMOBILE);
-        g.city_mut(c).size = 8;
-        g.fix_workers(c);
-        assert!(g.pollution_chance(c) > 0);
+        let shields = g.city_yield(c).shields;
+        assert_eq!(g.pollution_points(c), shields - 20);
+        for a in [adv::INDUSTRIALIZATION, adv::AUTOMOBILE, adv::MASS_PRODUCTION, adv::PLASTICS] {
+            g.player_mut(slot).learn(a);
+        }
+        let size = g.city(c).size as i32;
+        assert_eq!(g.pollution_points(c), shields - 20 + size);
         g.city_mut(c).add_improvement(imp::MASS_TRANSIT);
-        assert_eq!(g.pollution_chance(c), 0);
+        assert_eq!(g.pollution_points(c), shields - 20);
+        // a Recycling Center replaces the Hydro Plant's divisor
+        g.city_mut(c).add_improvement(imp::HYDRO_PLANT);
+        assert_eq!(g.pollution_divisor(c), 2);
+        g.city_mut(c).add_improvement(imp::RECYCLING_CNTR);
+        assert_eq!(g.pollution_divisor(c), 3);
         let before = g.global_warming_count;
         g.global_warming();
         assert_eq!(g.global_warming_count, before + 1);

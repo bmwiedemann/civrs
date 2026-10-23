@@ -423,7 +423,7 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
   winner 50% veteran; stack dies outside city/fortress; city shrinks on lost defence without walls; Fighters only vs air; ground units capture; capture plunders gold
   `gold*size/total`, steals an advance, 1/3 improvements destroyed, Palace destroyed; size-1 city destroyed; capital loss with >=6 cities -> civil war (ESCHISM);
   nukes (Manhattan) 3x3 kill + half size + pollution, SDI blocks.
-- Pollution chance = f(shields beyond 20, size * tech factor) with Mass Transit/Recycling/plant modifiers; global warming when polluted tiles >= 8+4k (terrain shifts).
+- Pollution (0x12de9): P = shields/f - 20 + size*techs/4 (f 3 Recycling / 2 Hydro,Nuclear,Hoover / 1; Mass Transit: techs 0), polluted when 2P > random(256 - advances*difficulty/2); global warming when polluted tiles >= 8+4k (terrain shifts).
 - Huts: gold 25/50/100, advance, mercenaries, barbarians (not for Settlers / near own city), empty [c1/approx].
 - Disasters D1..D6 after turn 10 (1/200 per city size>=3), each cancelled by the matching improvement; off after Medicine/Industrialization [approx].
 - Governments table (max rate / free units / unhappy per abroad unit / tile penalty / trade bonus / corruption / settler food / martial law):
