@@ -143,10 +143,11 @@ impl Game {
         if (g.trade_bonus || (celebrating && matches!(govt, Govt::Monarchy | Govt::Communism))) && tr >= 1 {
             tr += 1;
         }
+        // pollution halves each value, rounding up (CIV.EXE 0x1357d)
         if t.has(tile_flags::POLLUTION) {
-            f /= 2;
-            s /= 2;
-            tr /= 2;
+            f = (f + 1) / 2;
+            s = (s + 1) / 2;
+            tr = (tr + 1) / 2;
         }
         (f, s, tr)
     }
@@ -1246,5 +1247,18 @@ mod tests {
         g.add_city(slot, "Hilltop".into(), x, y);
         let t = g.map.tile(x, y);
         assert!(!t.has(tile_flags::FORTRESS) && !t.has(tile_flags::MINE) && t.has(tile_flags::ROAD));
+    }
+
+    #[test]
+    fn pollution_halves_rounding_up() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        let (x, y) = g.city(c).pos();
+        let t = g.map.get_mut(x + 1, y).unwrap();
+        t.terrain = Terrain::Forest;
+        t.special = false;
+        t.flags = tile_flags::POLLUTION;
+        // Forest 1/2/0 -> 1/1/0
+        assert_eq!(g.tile_yield(slot, x + 1, y, Some(c)), (1, 1, 0));
     }
 }

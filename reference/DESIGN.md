@@ -404,7 +404,7 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
   Earth: MAP.PIC terrain + fixed historical start table (snap to land).
 - Year/turn [spec]; end years 2100/2080/2060/2040/2020 by difficulty [READ.ME].
 - Tile yield: TERRAIN/special [spec]; irrigation/mine bonuses [spec]; road +1 trade on Desert/Grassland/Plains; railroad +50% food/shields/trade after Colossus, before govt (0x134fc); city centre auto-irrigated
-  + min 1 shield; Despotism/Anarchy -1 on tiles >2; Republic/Democracy +1 trade where >=1; pollution halves; Colossus +1 on squares with trade, before the government rules.
+  + min 1 shield; Despotism/Anarchy -1 on tiles >2; Republic/Democracy +1 trade where >=1; pollution halves, rounding up (0x1357d); Colossus +1 on squares with trade, before the government rules.
 - City turn: food surplus = food - 2*size - settlers upkeep (1; 2 Rep/Dem); growth at (size+1)*10, Granary keeps half, Aqueduct for >10; famine shrinks;
   shields minus unit upkeep (0xfc6e: 1 per unit; under Anarchy/Despotism units up to city size free; Diplomats/Caravans free); Factory +50% / Mfg. Plant +100%, plants/Hoover (same continent) +50% with either, counted in quarters (0xdc5d);
   cost = cost*10 shields; no penalty for changing production (none in CIV.EXE); buy cost units `2r + r^2/20` (x2 if empty), improvements `2r`, wonders `4r`; trade routes `(ta+tb+4)/8`
