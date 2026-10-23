@@ -281,8 +281,10 @@ pub fn draw_tile(fb: &mut Surface, ctx: &UiContext, game: &Game, slot: Slot, x: 
     if let Some(c) = game.city_at(x, y) {
         draw_city(fb, ctx, game, c, px, py);
     }
-    if game.visible_to(slot, x, y) {
-        let units: Vec<_> = game.units_at(x, y).into_iter().filter(|u| Some(*u) != hide_unit && game.unit(*u).carried_by.is_none() || game.unit(*u).carried_by.map(|c| game.unit_opt(c).is_none()).unwrap_or(false)).collect();
+    // the active unit's off phase shows the bare square, not the next unit of its stack
+    let blinking = hide_unit.is_some_and(|h| game.unit_opt(h).is_some_and(|u| u.pos() == (x, y)));
+    if game.visible_to(slot, x, y) && !blinking {
+        let units: Vec<_> = game.units_at(x, y).into_iter().filter(|u| game.unit(*u).carried_by.is_none() || game.unit(*u).carried_by.map(|c| game.unit_opt(c).is_none()).unwrap_or(false)).collect();
         if let Some(&top) = units.first() {
             // In a city only show units when there are no city sprites? Civ1 shows the city only.
             if game.city_at(x, y).is_none() || game.city(game.city_at(x, y).unwrap()).owner != game.unit(top).owner {
