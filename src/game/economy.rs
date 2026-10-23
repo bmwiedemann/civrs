@@ -1091,4 +1091,18 @@ mod tests {
         // the ocean's 3 is cut back to 2 by Despotism
         assert_eq!(trade(&g), [2, 0, 2]);
     }
+
+    #[test]
+    fn great_wall_brings_peace_offers_not_walls() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        assert!(!g.offered_peace(slot));
+        g.city_mut(c).add_wonder(won::GREAT_WALL);
+        g.wonders_built[won::GREAT_WALL as usize] = Some(c);
+        assert!(g.offered_peace(slot));
+        assert!(!g.city_has_walls(g.city(c)));
+        let other = g.civ_slots().into_iter().find(|s| *s != slot).unwrap();
+        g.player_mut(other).learn(crate::rules::advance_ids::GUNPOWDER);
+        assert!(!g.offered_peace(slot));
+    }
 }

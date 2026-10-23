@@ -123,7 +123,7 @@ fn propose(g: &mut Game, ai: Slot, human: Slot) -> Option<DiplomacyState> {
                 }
                 st.stage = 0;
                 Some(st)
-            } else if att > 0 {
+            } else if att > 0 || g.offered_peace(human) {
                 Some(state(g, ai, human, Proposal::Peace))
             } else if human_gold >= 50 && g.rng.chance(60) {
                 let mut st = state(g, ai, human, Proposal::Tribute);
@@ -140,11 +140,11 @@ fn propose(g: &mut Game, ai: Slot, human: Slot) -> Option<DiplomacyState> {
         Relation::Peace => {
             // provocation: human military next to our cities
             let provoked = g.all_units().any(|u| u.owner == human && u.is_military() && g.all_cities().any(|c| c.owner == ai && crate::game::Map::dist(c.pos(), u.pos()) <= 1));
-            if att < -60 && ratio > 150 && !g.senate_blocks_war(ai, human) {
+            if att < -60 && ratio > 150 && !g.senate_blocks_war(ai, human) && !g.offered_peace(human) {
                 g.declare_war(ai, human);
                 return Some(state(g, ai, human, Proposal::Rid));
             }
-            if att < -40 && provoked && ratio > 100 {
+            if att < -40 && provoked && ratio > 100 && !g.offered_peace(human) {
                 g.declare_war(ai, human);
                 return Some(state(g, ai, human, Proposal::Provoke));
             }
@@ -254,14 +254,14 @@ fn ai_relations(g: &mut Game, slot: Slot) {
                 let ab = attitude(g, slot, o);
                 let ba = attitude(g, o, slot);
                 let aggressive = g.player(slot).civ().aggressive as i32;
-                if ab < -25 - 10 * aggressive.min(0) && ba < 10 && !g.senate_blocks_war(slot, o) && g.rng.chance(25) {
+                if ab < -25 - 10 * aggressive.min(0) && ba < 10 && !g.senate_blocks_war(slot, o) && !g.offered_peace(o) && g.rng.chance(25) {
                     g.declare_war(slot, o);
                 }
             }
             Relation::War => {
                 let ab = attitude(g, slot, o);
                 let ba = attitude(g, o, slot);
-                if ab + ba > -40 && g.rng.chance(40) {
+                if g.offered_peace(slot) || g.offered_peace(o) || (ab + ba > -40 && g.rng.chance(40)) {
                     g.make_peace(slot, o);
                 }
             }
@@ -280,7 +280,7 @@ pub fn human_audience(g: &mut Game, ai_slot: Slot) -> DiplomacyState {
     }
     if g.relation(ai_slot, human) == Relation::War {
         let att = attitude(g, ai_slot, human);
-        if att < -50 && g.power_ratio(ai_slot, human) > 150 && g.united_nations_owner() != Some(human) {
+        if att < -50 && g.power_ratio(ai_slot, human) > 150 && !g.offered_peace(human) {
             st.proposal = Proposal::AtWar;
             return st;
         }
@@ -458,8 +458,7 @@ fn respond_threat(g: &mut Game, st: &DiplomacyState, choice: usize, att: i32) ->
     match choice {
         0 => {
             if at_war {
-                let un = g.united_nations_owner() == Some(human);
-                if un || ratio < 100 || att > 0 {
+                if g.offered_peace(human) || ratio < 100 || att > 0 {
                     g.make_peace(ai, human);
                     remember(g, ai, human, 10);
                     Some(treaty(g, ai, human))

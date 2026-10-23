@@ -204,13 +204,10 @@ impl Game {
         matches!(self.player(slot).govt, Govt::Republic | Govt::Democracy) && self.relation(slot, on) == Relation::Peace
     }
 
-    /// Owner of the United Nations (forces everyone to accept its peace proposals).
-    pub fn united_nations_owner(&self) -> Option<Slot> {
-        let c = self.wonders_built[won::UNITED_NATIONS as usize]?;
-        if self.wonder_obsolete(won::UNITED_NATIONS) {
-            return None;
-        }
-        self.city_opt(c).map(|c| c.owner)
+    /// "Other civilizations always offer to make peace with you": the owner of the Great Wall
+    /// or the United Nations (CIV.EXE o 0x66d1, and 0x151b2 between computer players).
+    pub fn offered_peace(&self, slot: Slot) -> bool {
+        self.owner_has_wonder(slot, won::GREAT_WALL) || self.owner_has_wonder(slot, won::UNITED_NATIONS)
     }
 
     /// Power ratio of `a` relative to `b` in percent (100 = equal); uses `score::power`.

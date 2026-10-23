@@ -6,7 +6,7 @@
 
 use super::map::{tile_flags, CityId, Map, Slot, UnitId};
 use super::{EndReason, Game, GameEvent, MoveOutcome, Player, Relation, Unit, UnitOrder};
-use crate::rules::{self, improvement_ids as imp, unit_ids, wonder_ids as won, Govt};
+use crate::rules::{self, improvement_ids as imp, unit_ids, Govt};
 
 impl Game {
     /// Attack strength x8 (veteran bonus included).
@@ -20,7 +20,7 @@ impl Game {
 
     /// Defence strength x8 including terrain, fortification, fortress, walls and veteran status.
     ///
-    /// `attacker` selects the walls rule (City Walls / Great Wall only count against land
+    /// `attacker` selects the walls rule (City Walls only count against land
     /// attackers).
     pub fn defense_strength(&self, u: &Unit, attacker: Option<&Unit>) -> i32 {
         let t = self.map.tile(u.x, u.y);
@@ -51,9 +51,9 @@ impl Game {
         d
     }
 
-    /// City Walls or the (non-obsolete) Great Wall of the owner.
+    /// City Walls (the Great Wall is a diplomatic wonder in CIV.EXE, not walls).
     pub fn city_has_walls(&self, city: &super::City) -> bool {
-        city.has_improvement(imp::CITY_WALLS) || self.owner_has_wonder(city.owner, won::GREAT_WALL)
+        city.has_improvement(imp::CITY_WALLS)
     }
 
     /// Chance in percent that `attacker` beats the best defender on (x,y) (0 when no defender).

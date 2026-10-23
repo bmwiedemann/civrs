@@ -419,7 +419,7 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
 - Movement in thirds, road 1/3, rail free, no river bonus (CIV.EXE 0x6336); partial moves (0x634a): a land unit with exactly 1 MP always enters, otherwise it fails when random(3*cost) > moves left; sight 1/2/3; ZOC rule [ERROR ZOC]; trireme 50% loss away from coast;
   air fuel (Fighter 1 turn, Bomber 2, Nuclear 1); transports/carriers; orders Fortify/Sentry/Goto(A*)/Road 2/Rail 6/Irrigate/Mine per table/
   Fortress 3/Clean 3/Pillage order per READ.ME §3; irrigation needs water; settlers join city <10; found city not adjacent to city; Esc undo.
-- Combat: `A = att*8*vet1.5`, `D = def*8*terrain/2*fortified1.5*fortress2*walls3(land attackers, Great Wall)*vet1.5`; loop rolling `rng.below(A)` vs `rng.below(D)`;
+- Combat: `A = att*8*vet1.5`, `D = def*8*terrain/2*fortified1.5*fortress2*walls3(land attackers)*vet1.5`; loop rolling `rng.below(A)` vs `rng.below(D)`;
   winner 50% veteran; stack dies outside city/fortress; city shrinks on lost defence without walls; Fighters only vs air; ground units capture; capture plunders gold
   `gold*size/total`, steals an advance, 1/3 improvements destroyed, Palace destroyed; size-1 city destroyed; capital loss with >=6 cities -> civil war (ESCHISM);
   nukes (Manhattan) 3x3 kill + half size + pollution, SDI blocks.
@@ -431,7 +431,7 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
   Democracy 100/0/2/no/yes/0/2/0. Revolution: 1-4 turns anarchy (0 with Pyramids) -> choose govt menu -> GOVT screen; senate auto-accepts peace under Rep/Dem.
 - Diplomacy (peace/war): contact on adjacency; AI audience on first contact and periodically by attitude; attitude = traits + treaty + embassies - war - power ratio +
   random; proposals EXCHANGE/CANCEL/TRIBUTE/TAKECIV/PEACE/GIVECIV/GIVECASH/GROVEL/THREAT/TREATY/HELPME/CRUSADE/... from KING.TXT; human audience menu
-  (peace / military proposal / demand tribute); embassies reveal intel; UN forces peace acceptance; AI-AI relations rolled every 10 turns.
+  (peace / military proposal / demand tribute); embassies reveal intel; Great Wall/UN owner always offered peace (o 0x66d1, 0x151b2); AI-AI relations rolled every 10 turns.
 - Barbarians: huts + sea landings from turn 50 (Chieftain 150), `2+difficulty` era-appropriate units + leader (ransom 100 gold), attack nearest city, INVADER screens.
 - Wonders: effects as Civ1 (Pyramids no anarchy, Hanging Gardens +1 content, Colossus, Lighthouse +1 sea move (not with Magellan), Great Library, Oracle, Great Wall, Magellan +1 sea move,
   Michelangelo, Copernicus, Shakespeare, Newton, Bach, Darwin, Hoover, Women's Suffrage, Manhattan, UN, Apollo (reveal map, SS parts for all), SETI, Cure for Cancer);
