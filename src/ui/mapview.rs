@@ -110,13 +110,15 @@ impl MapView {
         }
     }
 
+    /// The view's left column wraps around with the map (`vx` in 0..MAP_W).
     pub fn center_on(&mut self, x: i32, y: i32) {
-        self.vx = (x - 6).clamp(0, MAP_W as i32 - VIEW_W);
+        self.vx = Map::wrap_x(x - 6);
         self.vy = (y - 5).clamp(0, MAP_H as i32 - VIEW_H);
     }
 
     fn ensure_visible(&mut self, x: i32, y: i32) {
-        if x < self.vx + 1 || x >= self.vx + VIEW_W - 1 || y < self.vy + 1 || y >= self.vy + VIEW_H - 1 {
+        let rel = Map::wrap_x(x - self.vx);
+        if rel < 1 || rel >= VIEW_W - 1 || y < self.vy + 1 || y >= self.vy + VIEW_H - 1 {
             self.center_on(x, y);
         }
     }
@@ -125,7 +127,7 @@ impl MapView {
         if px < VIEW_X || py < VIEW_Y || px >= VIEW_X + VIEW_W * TILE || py >= VIEW_Y + VIEW_H * TILE {
             return None;
         }
-        let x = self.vx + (px - VIEW_X) / TILE;
+        let x = Map::wrap_x(self.vx + (px - VIEW_X) / TILE);
         let y = self.vy + (py - VIEW_Y) / TILE;
         if Map::in_bounds(x, y) {
             Some((x, y))
@@ -614,7 +616,7 @@ impl MapView {
         };
         if let Some(d) = d {
             let (dx, dy) = d.delta();
-            let nx = (cursor.0 + dx).clamp(0, MAP_W as i32 - 1);
+            let nx = Map::wrap_x(cursor.0 + dx);
             let ny = (cursor.1 + dy).clamp(0, MAP_H as i32 - 1);
             self.mode = Mode::Goto { cursor: (nx, ny) };
             self.ensure_visible(nx, ny);
@@ -728,7 +730,7 @@ impl MapView {
         fb.set_clip(Some(Rect::new(VIEW_X, VIEW_Y, VIEW_W * TILE, VIEW_H * TILE)));
         for ty in 0..VIEW_H {
             for tx in 0..VIEW_W {
-                let (x, y) = (self.vx + tx, self.vy + ty);
+                let (x, y) = (Map::wrap_x(self.vx + tx), self.vy + ty);
                 let (px, py) = (VIEW_X + tx * TILE, VIEW_Y + ty * TILE);
                 // the active unit blinks: hide it on the off phase
                 let hide = if !self.blink { active.filter(|a| g.unit_opt(*a).map(|u| u.pos() == (x, y)).unwrap_or(false)) } else { None };
@@ -749,7 +751,7 @@ impl MapView {
         // city names
         for ty in 0..VIEW_H {
             for tx in 0..VIEW_W {
-                let (x, y) = (self.vx + tx, self.vy + ty);
+                let (x, y) = (Map::wrap_x(self.vx + tx), self.vy + ty);
                 if !g.explored(me, x, y) {
                     continue;
                 }
@@ -762,7 +764,7 @@ impl MapView {
             }
         }
         if let Mode::Goto { cursor } = self.mode {
-            let (px, py) = (VIEW_X + (cursor.0 - self.vx) * TILE, VIEW_Y + (cursor.1 - self.vy) * TILE);
+            let (px, py) = (VIEW_X + Map::wrap_x(cursor.0 - self.vx) * TILE, VIEW_Y + (cursor.1 - self.vy) * TILE);
             tilerender::blit_sprite(fb, &ctx.sp.surf, tilerender::cell(tilerender::sp::CURSOR_GO.0, tilerender::sp::CURSOR_GO.1), px, py);
         }
         fb.set_clip(None);
@@ -795,7 +797,17 @@ impl MapView {
                 fb.put(MINIMAP.x + c.x, MINIMAP.y + c.y, SLOT_COLOURS[(c.owner & 7) as usize].light);
             }
         }
-        fb.rect_outline(Rect::new(MINIMAP.x + self.vx, MINIMAP.y + self.vy, VIEW_W, VIEW_H), theme::WHITE);
+        // the view box, split in two where it runs over the east-west edge
+        let (top, bottom) = (MINIMAP.y + self.vy, MINIMAP.y + self.vy + VIEW_H - 1);
+        for i in 0..VIEW_W {
+            let x = MINIMAP.x + Map::wrap_x(self.vx + i);
+            fb.put(x, top, theme::WHITE);
+            fb.put(x, bottom, theme::WHITE);
+        }
+        for y in top..=bottom {
+            fb.put(MINIMAP.x + self.vx, y, theme::WHITE);
+            fb.put(MINIMAP.x + Map::wrap_x(self.vx + VIEW_W - 1), y, theme::WHITE);
+        }
     }
 
     fn draw_sidebar(&self, fb: &mut Surface, ctx: &UiContext) {
@@ -1164,7 +1176,7 @@ impl Screen for MapView {
                     }
                     // scroll the view when no unit is active
                     let (dx, dy) = d.delta();
-                    self.vx = (self.vx + dx).clamp(0, MAP_W as i32 - VIEW_W);
+                    self.vx = Map::wrap_x(self.vx + dx);
                     self.vy = (self.vy + dy).clamp(0, MAP_H as i32 - VIEW_H);
                     return Transition::None;
                 }
@@ -1361,7 +1373,7 @@ impl MapView {
             _ => None,
         };
         if let Some(at) = blast {
-            self.vx = (at.0 - VIEW_W / 2).clamp(0, MAP_W as i32 - VIEW_W);
+            self.vx = Map::wrap_x(at.0 - VIEW_W / 2);
             self.vy = (at.1 - VIEW_H / 2).clamp(0, MAP_H as i32 - VIEW_H);
         }
         dialogs::screen_for_event(ctx, e)

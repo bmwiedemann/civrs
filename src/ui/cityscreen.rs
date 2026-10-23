@@ -461,7 +461,7 @@ impl CityScreen {
                 if dx * dx == 4 && dy * dy == 4 {
                     continue;
                 }
-                let (tx, ty) = (c.x + dx, c.y + dy);
+                let (tx, ty) = (crate::game::Map::wrap_x(c.x + dx), c.y + dy);
                 let px = MAP_ORIGIN.0 + (dx + 2) * 16;
                 let py = MAP_ORIGIN.1 + (dy + 2) * 16;
                 // unexplored (and off-map) squares leave the panel background, as in the original

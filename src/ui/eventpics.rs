@@ -416,7 +416,7 @@ pub fn nuke_animation(cx: i32, cy: i32) -> Box<dyn Screen> {
 /// Explosion over map tile (`x`, `y`) given the map view origin (`vx`, `vy`).
 pub fn nuke_animation_at_tile(x: i32, y: i32, vx: i32, vy: i32) -> Box<dyn Screen> {
     use crate::ui::mapview::{VIEW_X, VIEW_Y};
-    let px = VIEW_X + (x - vx) * crate::ui::tilerender::TILE + 8;
+    let px = VIEW_X + crate::game::Map::wrap_x(x - vx) * crate::ui::tilerender::TILE + 8;
     let py = VIEW_Y + (y - vy) * crate::ui::tilerender::TILE + 8;
     nuke_animation(px, py)
 }
