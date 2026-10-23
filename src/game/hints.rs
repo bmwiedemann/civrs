@@ -3,7 +3,7 @@
 
 use super::events::{Decision, GameEvent};
 use super::map::{tile_flags, Map};
-use super::{CityId, Game, Production, UnitId};
+use super::{Game, Production, UnitId};
 use crate::rules::{self, advance_ids, unit_ids, Govt, Terrain};
 
 /// HELP.TXT sections used as in-game hints; the index is the bit in `Game::hints_shown`.
@@ -23,8 +23,9 @@ impl Game {
     }
 
     /// The hint for `section` unless it was already shown (or there is no human player).
+    /// `civ_note` (CIV.EXE o 0x3a48) only speaks in BC years.
     pub fn hint(&mut self, section: &str) -> Option<GameEvent> {
-        (self.player(self.human_slot).human && self.claim_hint(section)).then(|| GameEvent::Hint(section.into()))
+        (self.player(self.human_slot).human && self.year() < 0 && self.claim_hint(section)).then(|| GameEvent::Hint(section.into()))
     }
 
     /// Hints that belong in front of (`before`) or after an event about to be queued.
@@ -56,11 +57,15 @@ impl Game {
         (before, after)
     }
 
-    /// Advice for the human's active Settlers on its current tile: BUILDCITY before the first
-    /// city, then MINING / IRRIGATE / ROAD inside a city's radius.
+    /// Advice for the human's active Settlers on its current tile (`settler_advice`, CIV.EXE
+    /// o 0x3824): BUILDCITY on a good site, any time; else, next to one of the human's cities
+    /// (the nearest city at distance 1), MINING on Hills, IRRIGATE on Plains with water, ROAD
+    /// on a square of move cost 1 other than River while the human has fewer than two Settlers
+    /// (ds:0xb3be); none without improvements there. CIV.EXE shows the notes at the first
+    /// Settlers of each turn, civrs each once a game.
     pub fn settler_hint(&mut self, id: UnitId) -> Option<GameEvent> {
         let u = self.unit_opt(id)?;
-        if u.kind != unit_ids::SETTLERS || u.owner != self.human_slot || !self.player(u.owner).human {
+        if u.kind != unit_ids::SETTLERS || u.owner != self.human_slot || !self.player(u.owner).human || self.year() >= 0 {
             return None;
         }
         let (x, y) = u.pos();
@@ -68,22 +73,18 @@ impl Game {
         if !t.is_land() || t.city.is_some() {
             return None;
         }
-        if self.cities_of(u.owner).is_empty() {
-            if self.good_city_site(x, y) {
-                return self.hint("BUILDCITY");
-            }
-            return None;
+        if self.good_city_site(x, y) {
+            return self.hint("BUILDCITY");
         }
-        let city = self.radius_city(x, y)?;
-        let section = if t.terrain == Terrain::Hills && !t.has(tile_flags::MINE) && !t.has(tile_flags::IRRIGATION) {
+        let (city, d) = self.nearest_city_exe(x, y);
+        let city = city.filter(|c| self.city(*c).owner == self.human_slot && d == 1)?;
+        let bare = !t.has(tile_flags::MINE) && !t.has(tile_flags::IRRIGATION);
+        let settlers = self.all_units().filter(|o| o.owner == self.human_slot && o.kind == unit_ids::SETTLERS).count();
+        let section = if t.terrain == Terrain::Hills && bare {
             "MINING"
-        } else if matches!(t.terrain, Terrain::Grassland | Terrain::Plains | Terrain::Desert | Terrain::River)
-            && !t.has(tile_flags::IRRIGATION)
-            && !t.has(tile_flags::MINE)
-            && self.irrigation_water(x, y)
-        {
+        } else if t.terrain == Terrain::Plains && bare && self.irrigation_water(x, y) {
             "IRRIGATE"
-        } else if matches!(t.terrain, Terrain::Grassland | Terrain::Plains | Terrain::Desert) && !t.has(tile_flags::ROAD) {
+        } else if t.terrain.info().move_cost == 1 && t.terrain != Terrain::River && !t.has(tile_flags::ROAD) && settlers < 2 {
             "ROAD"
         } else {
             return None;
@@ -115,15 +116,6 @@ impl Game {
             let (nx, ny) = (x + dx, y + dy);
             !Map::in_bounds(nx, ny) || super::mapgen::site_score(&self.map, nx, ny) <= score
         })
-    }
-
-    /// The human's nearest city whose radius covers (x,y).
-    fn radius_city(&self, x: i32, y: i32) -> Option<CityId> {
-        self.all_cities()
-            .filter(|c| c.owner == self.human_slot)
-            .filter(|c| rules::CITY_RADIUS.iter().any(|(dx, dy)| c.x + *dx as i32 == x && c.y + *dy as i32 == y))
-            .min_by_key(|c| Map::dist((c.x, c.y), (x, y)))
-            .map(|c| c.id)
     }
 }
 
@@ -157,6 +149,9 @@ mod tests {
         assert_eq!(g.hint("FIRSTCIV"), Some(GameEvent::Hint("FIRSTCIV".into())));
         assert_eq!(g.hint("FIRSTCIV"), None);
         assert_eq!(g.hint("NOSUCHHINT"), None);
+        // civ_note (o 0x3a48) is silent from 1 AD
+        g.set_turn(250);
+        assert_eq!(g.hint("MONARCHY"), None);
     }
 
     #[test]
@@ -209,13 +204,18 @@ mod tests {
         let s = g.add_unit(me, unit_ids::SETTLERS, 21, 20);
         assert_eq!(g.settler_hint(s), Some(GameEvent::HintAt { section: "MINING".into(), city: c }));
         assert_eq!(g.settler_hint(s), None);
-        // plains next to nothing wet: no irrigation, but a road
-        let s = g.add_unit(me, unit_ids::SETTLERS, 22, 21);
+        // two squares away: nothing (only next to the city, distance 1)
+        let s2 = g.add_unit(me, unit_ids::SETTLERS, 22, 21);
+        assert_eq!(g.settler_hint(s2), None);
+        // plains next to the city with nothing wet: no irrigation, and a road only while
+        // the human has fewer than two Settlers
+        g.remove_unit(s2);
+        g.remove_unit(s);
+        let s = g.add_unit(me, unit_ids::SETTLERS, 19, 19);
         assert_eq!(g.settler_hint(s), Some(GameEvent::HintAt { section: "ROAD".into(), city: c }));
-        // outside every city radius: nothing
         g.hints_shown = 0;
-        let far = g.add_unit(me, unit_ids::SETTLERS, 26, 26);
-        assert_eq!(g.settler_hint(far), None);
+        g.add_unit(me, unit_ids::SETTLERS, 26, 26);
+        assert_eq!(g.settler_hint(s), None);
     }
 
     #[test]
