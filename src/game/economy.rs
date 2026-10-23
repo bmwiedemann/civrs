@@ -1234,4 +1234,17 @@ mod tests {
         g.map.get_mut(x + 1, y).unwrap().flags |= tile_flags::RAILROAD;
         assert_eq!(g.tile_yield(slot, x + 1, y, Some(c)), (4, 1, 1));
     }
+
+    #[test]
+    fn a_new_city_destroys_fortress_and_mine() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        let (x, y) = (g.city(c).x + 6, g.city(c).y);
+        let t = g.map.get_mut(x, y).unwrap();
+        t.terrain = Terrain::Hills;
+        t.flags = tile_flags::FORTRESS | tile_flags::MINE;
+        g.add_city(slot, "Hilltop".into(), x, y);
+        let t = g.map.tile(x, y);
+        assert!(!t.has(tile_flags::FORTRESS) && !t.has(tile_flags::MINE) && t.has(tile_flags::ROAD));
+    }
 }

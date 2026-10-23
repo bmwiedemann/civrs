@@ -588,6 +588,11 @@ impl Game {
             t.city = Some(id);
             t.set(tile_flags::HUT, false);
             t.set(tile_flags::POLLUTION, false);
+            // "A city founded in a Fortress square destroys the Fortress"; the mine goes too and
+            // the square gets a road (CIV.EXE o 0x1b4f2)
+            t.set(tile_flags::FORTRESS, false);
+            t.set(tile_flags::MINE, false);
+            t.set(tile_flags::ROAD, true);
         }
         self.auto_assign(id);
         // a city sees only its 3x3 block (14_city_screen / 26_turn_12 captures)
