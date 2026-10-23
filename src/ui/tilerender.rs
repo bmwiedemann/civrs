@@ -42,8 +42,11 @@ pub mod sp {
     pub fn rail(d: usize) -> Rect {
         cell(8 + d as i32, 6)
     }
-    pub fn river(mask: u8) -> Rect {
-        cell(mask as i32, 4)
+    /// River sprite for the mask of River/Ocean neighbours: row 4, or row 5 for the squares
+    /// the world generator marked (`tile_flags::RIVER_ALT`; CIV.EXE 0x1aedd, sprites cut at
+    /// o 0x58f7 / 0x5903).
+    pub fn river(mask: u8, alt: bool) -> Rect {
+        cell(mask as i32, if alt { 5 } else { 4 })
     }
     pub fn special(t: crate::rules::Terrain) -> Rect {
         cell(t as i32, 7)
@@ -133,7 +136,7 @@ pub fn draw_terrain(fb: &mut Surface, ctx: &UiContext, game: &Game, x: i32, y: i
                 blit_sprite(fb, sp, cell(sp::IRRIGATION.0, sp::IRRIGATION.1), px, py);
             }
             let mask = map.river_mask(x, y);
-            blit_sprite(fb, sp, sp::river(mask), px, py);
+            blit_sprite(fb, sp, sp::river(mask, t.has(tile_flags::RIVER_ALT)), px, py);
         }
         land => {
             fb.blit_part(sp, cell(sp::BASE_LAND.0, sp::BASE_LAND.1), px, py, None);

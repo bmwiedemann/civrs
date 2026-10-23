@@ -97,51 +97,16 @@ impl Game {
         self.barbarian_memory.oceans.as_ref().and_then(|(_, sizes)| sizes.get(id)).copied().unwrap_or(0) as i32
     }
 
-    /// Number the bodies of water (8-connected, like the landmasses) by size. Unverified:
-    /// CIV.EXE numbers them in world generation (o 0x097a8) with a run-merging scan whose
-    /// cap on the number of ids was not decoded; here every body gets its own number.
+    /// Number the bodies of water as the world generator does (the water pass of o 0x097b1,
+    /// `Map::ocean_numbers`: by size, 15 for all beyond the 14th, sizes ds:0xdd7e with 1 for
+    /// number 15), from the terrain as it is now. Unverified: CIV.EXE keeps the numbers it gave
+    /// at world creation, when the polar rows were still sea.
     fn ocean_bodies(&mut self) {
         if self.barbarian_memory.oceans.is_some() {
             return;
         }
-        let n = MAP_W * MAP_H;
-        let mut label = vec![0u16; n];
-        let mut sizes: Vec<(u16, u16)> = Vec::new();
-        let mut stack = Vec::new();
-        for i in 0..n {
-            if label[i] != 0 || !self.map.tiles[i].is_ocean() {
-                continue;
-            }
-            let lab = sizes.len() as u16 + 1;
-            let mut size = 0u16;
-            label[i] = lab;
-            stack.push(i);
-            while let Some(j) = stack.pop() {
-                size += 1;
-                let (x, y) = ((j % MAP_W) as i32, (j / MAP_W) as i32);
-                for (nx, ny) in Map::neighbours8(x, y) {
-                    let k = Map::idx(nx, ny);
-                    if label[k] == 0 && self.map.tiles[k].is_ocean() {
-                        label[k] = lab;
-                        stack.push(k);
-                    }
-                }
-            }
-            sizes.push((lab, size));
-        }
-        let mut ranked = sizes.clone();
-        ranked.sort_by(|a, b| b.1.cmp(&a.1));
-        let mut rank = vec![0u8; sizes.len() + 1];
-        let mut by_rank = vec![0u16; ranked.len().min(254) + 1];
-        for (r, (lab, size)) in ranked.iter().enumerate() {
-            let r = (r + 1).min(255);
-            rank[*lab as usize] = r as u8;
-            if r < by_rank.len() {
-                by_rank[r] = *size;
-            }
-        }
-        let ids = label.iter().map(|l| if *l == 0 { 0 } else { rank[*l as usize] }).collect();
-        self.barbarian_memory.oceans = Some((ids, by_rank));
+        let (ids, sizes) = self.map.ocean_numbers();
+        self.barbarian_memory.oceans = Some((ids, sizes.to_vec()));
     }
 
     /// The civ last on a square (map layer x+160, see `BarbarianMemory::occupant`).
