@@ -70,10 +70,11 @@ pub fn astar_limited(g: &Game, u: &Unit, goal: (i32, i32), limit: usize) -> Opti
     }
     let grid = build_grid(g, u);
     let n = MAP_W * MAP_H;
-    // step costs in ninths of a move: a railroad 1, a road 3, open terrain 9 and up; the
-    // estimate counts the cheapest step a square can cost the unit, so that it never
-    // overestimates and roads and railroads are followed when they are faster
-    let min_step = if u.is_land() { 1 } else { 9 };
+    // step costs in hundredths of a third of a move, a railroad step (free in the game) 1:
+    // a road 100, open terrain 300 and up; even a rail line across the whole map costs less
+    // than one road step. The estimate counts the cheapest step a square can cost the unit,
+    // so that it never overestimates and roads and railroads are followed when faster.
+    let min_step = if u.is_land() { 1 } else { 300 };
     let h = |p: (i32, i32)| Map::dist(p, goal) * min_step;
     let mut open: BinaryHeap<Reverse<(i32, i32, usize)>> = BinaryHeap::new();
     let mut best: Vec<i32> = vec![i32::MAX; n];
@@ -114,7 +115,7 @@ pub fn astar_limited(g: &Game, u: &Unit, goal: (i32, i32), limit: usize) -> Opti
             }
             let step = match g.move_cost(u, cp, (nx, ny)) {
                 0 => 1,
-                c => 3 * c as i32,
+                c => 100 * c as i32,
             };
             let nc = cost + step;
             if nc < best[ni] {
@@ -190,5 +191,31 @@ mod tests {
         let u = g.add_unit(1, unit_ids::LEGION, 10, 10);
         let path = astar(&g, g.unit(u), (30, 10)).expect("path");
         assert!(path.contains(&(20, 12)), "takes the road: {path:?}");
+    }
+
+    #[test]
+    fn astar_prefers_free_railroad_moves() {
+        let mut g = Game::new(GameSetup { seed: 3, num_civs: 7, ..Default::default() }, None);
+        for y in 0..20 {
+            for x in 2..30 {
+                let t = g.map.get_mut(x, y).unwrap();
+                t.terrain = Terrain::Grassland;
+                t.flags = 0;
+            }
+        }
+        let ids: Vec<_> = g.all_units().map(|u| u.id).collect();
+        for id in ids {
+            g.remove_unit(id);
+        }
+        // two moves straight across, or 20 free squares around a railroad loop
+        let rail = crate::game::tile_flags::RAILROAD;
+        for y in 1..=10 {
+            g.map.get_mut(10, y).unwrap().flags |= rail;
+            g.map.get_mut(12, y).unwrap().flags |= rail;
+        }
+        g.map.get_mut(11, 1).unwrap().flags |= rail;
+        let u = g.add_unit(1, unit_ids::LEGION, 10, 10);
+        let path = astar(&g, g.unit(u), (12, 10)).expect("path");
+        assert!(path.contains(&(11, 1)), "takes the railroad: {path:?}");
     }
 }
