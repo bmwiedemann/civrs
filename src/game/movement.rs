@@ -94,7 +94,8 @@ impl Game {
                 if u.is_land() && target.is_ocean() {
                     return Ok(MoveOutcome::Blocked);
                 }
-                if u.is_sea() && target.is_land() && city_here.is_none() {
+                // ships bombard units on land, all but the Submarine (CIV.EXE 0x5efb)
+                if u.kind == unit_ids::SUBMARINE && target.is_land() {
                     return Ok(MoveOutcome::Blocked);
                 }
                 if u.carried_by.is_some() && u.is_land() {
@@ -400,5 +401,26 @@ mod tests {
             assert_eq!(g.unit(f).carried_by.is_some(), n < 8, "fighter {n}");
         }
         assert_eq!(g.cargo_count(carrier), 8);
+    }
+
+    #[test]
+    fn ships_but_submarines_bombard_land_units() {
+        let mut g = Game::new(GameSetup { seed: 1, ..Default::default() }, None);
+        let slot = g.human_slot;
+        let enemy = g.civ_slots().into_iter().find(|s| *s != slot).unwrap();
+        g.players[slot as usize].relations[enemy as usize] = crate::game::Relation::War;
+        g.players[enemy as usize].relations[slot as usize] = crate::game::Relation::War;
+        let (x, y) = (40, 25);
+        for xx in x - 1..=x {
+            let t = g.map.get_mut(xx, y).unwrap();
+            t.terrain = if xx == x { Terrain::Ocean } else { Terrain::Grassland };
+            t.city = None;
+        }
+        g.add_unit(enemy, unit_ids::SETTLERS, x - 1, y);
+        let sub = g.add_unit(slot, unit_ids::SUBMARINE, x, y);
+        assert_eq!(g.try_move(sub, Dir8::W), Ok(MoveOutcome::Blocked));
+        let bb = g.add_unit(slot, unit_ids::BATTLESHIP, x, y);
+        assert!(matches!(g.try_move(bb, Dir8::W), Ok(MoveOutcome::Attacked { .. })));
+        assert_eq!(g.unit(bb).pos(), (x, y));
     }
 }
