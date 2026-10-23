@@ -447,7 +447,7 @@ impl Game {
         if !self.city(c).disorder {
             self.city_mut(c).shields += y.shield_surplus().max(0);
             let prod = self.city(c).production;
-            if self.city(c).shields >= prod.cost() {
+            if self.city(c).shields >= self.production_cost(c, prod) {
                 self.complete_production(c, prod);
             }
         }
@@ -499,7 +499,7 @@ impl Game {
             }
             return;
         }
-        let full = self.city(c).granary_size();
+        let full = self.food_box(c);
         if self.city(c).food >= full {
             let aqueduct = self.city(c).has_improvement(imp::AQUEDUCT);
             if self.city(c).size >= 10 && !aqueduct {
@@ -509,7 +509,8 @@ impl Game {
             let granary = self.city(c).has_improvement(imp::GRANARY);
             let cm = self.city_mut(c);
             cm.size += 1;
-            cm.food = if granary { full / 2 } else { 0 };
+            // a Granary refills 5 * new size + 5, whatever the cost factor (CIV.EXE 0xd1c7)
+            cm.food = if granary { 5 * cm.size as i32 + 5 } else { 0 };
             self.fix_workers(c);
             self.push_event(GameEvent::CityGrew(c));
         }
@@ -747,7 +748,7 @@ impl Game {
                     self.unit_mut(id).home = Some(c);
                     let (tx, ty) = self.city(target).pos();
                     self.set_goto(id, tx, ty);
-                    self.city_mut(c).shields -= prod.cost();
+                    self.city_mut(c).shields -= self.production_cost(c, prod);
                     self.refresh_vision(owner);
                     self.push_event(GameEvent::ItemBuilt { city: c, item: prod });
                     return;
@@ -763,7 +764,7 @@ impl Game {
                     self.city_mut(c).size -= 1;
                     self.fix_workers(c);
                 }
-                self.city_mut(c).shields -= prod.cost();
+                self.city_mut(c).shields -= self.production_cost(c, prod);
                 self.refresh_vision(owner);
                 self.push_event(GameEvent::ItemBuilt { city: c, item: prod });
                 // a computer city re-chooses after every unit (city_rechoose_production 0x18c4c,
@@ -780,7 +781,7 @@ impl Game {
                     self.after_building(c, human);
                     return;
                 }
-                self.city_mut(c).shields -= prod.cost();
+                self.city_mut(c).shields -= self.production_cost(c, prod);
                 if matches!(i, imp::SS_STRUCTURAL | imp::SS_COMPONENT | imp::SS_MODULE) {
                     // the part goes on the ship after an AI city re-chose its production
                     // (CIV.EXE 0xe719 before 0xe766)
@@ -815,9 +816,10 @@ impl Game {
                     return;
                 }
                 self.wonders_built[w as usize] = Some(c);
+                let cost = self.production_cost(c, prod);
                 let cm = self.city_mut(c);
                 cm.add_wonder(w);
-                cm.shields -= prod.cost();
+                cm.shields -= cost;
                 cm.caravan_shields = 0;
                 self.push_event(GameEvent::WonderBuilt { city: c, wonder: w, owner });
                 self.on_wonder_built(owner, w);
@@ -1470,7 +1472,7 @@ mod tests {
     #[test]
     fn city_grows_with_food() {
         let (mut g, c) = fixture();
-        g.city_mut(c).food = g.city(c).granary_size() - 1;
+        g.city_mut(c).food = g.food_box(c) - 1;
         let y = g.city_yield(c);
         assert!(y.food_surplus() >= 1, "{y:?}");
         g.process_city(c);
@@ -1839,9 +1841,10 @@ mod diplomat_tests {
         g.unit_mut(warrior).x = 9;
         assert!(!g.ai_diplomat_site_exists(a));
         g.city_mut(home).production = Production::Unit(unit_ids::DIPLOMAT);
-        g.city_mut(home).shields = 30;
+        let cost = g.production_cost(home, Production::Unit(unit_ids::DIPLOMAT));
+        g.city_mut(home).shields = cost;
         g.complete_production(home, Production::Unit(unit_ids::DIPLOMAT));
-        assert_eq!(g.city(home).shields, 30, "the shields are given back");
+        assert_eq!(g.city(home).shields, cost, "the shields are given back");
         assert!(!g.all_units().any(|u| u.kind == unit_ids::DIPLOMAT));
         // near enough, but at peace with the human: none either
         g.unit_mut(warrior).x = 16;

@@ -691,10 +691,37 @@ impl Game {
 
     // ---- production ----------------------------------------------------------------------
 
+    /// Shields per row of the production box and food per row of the food box (CIV.EXE
+    /// 0xcccc..0xcd28, [bp-0x4a] of the city routine): 10 for the human; for a computer civ
+    /// 16 - 2 * difficulty, and 2 less from 1 AD on above Prince while the human is the
+    /// strongest civilization (rank 7).
+    pub fn cost_factor(&self, slot: Slot) -> i32 {
+        if self.player(slot).human {
+            return 10;
+        }
+        let diff = self.setup.difficulty as i32;
+        let mut f = 16 - 2 * diff;
+        if self.year >= 0 && diff > 1 && self.power_rank(self.human_slot) == 7 {
+            f -= 2;
+        }
+        f
+    }
+
+    /// Shields `p` costs in city `c`: the table cost times the owner's `cost_factor`.
+    pub fn production_cost(&self, c: CityId, p: Production) -> i32 {
+        p.cost() * self.cost_factor(self.city(c).owner) / 10
+    }
+
+    /// Food needed to grow (CIV.EXE 0xd195): `(size + 1) * cost_factor`.
+    pub fn food_box(&self, c: CityId) -> i32 {
+        let city = self.city(c);
+        (city.size as i32 + 1) * self.cost_factor(city.owner)
+    }
+
     /// Gold needed to complete the current production right now.
     pub fn buy_cost(&self, c: CityId) -> i32 {
         let city = self.city(c);
-        let remaining = city.production.cost() - city.shields;
+        let remaining = self.production_cost(c, city.production) - city.shields;
         buy_price(city.production, remaining, city.shields <= 0)
     }
 
@@ -726,7 +753,7 @@ impl Game {
             return Err(RuleError::NotEnoughGold);
         }
         self.player_mut(slot).gold -= cost;
-        let total = self.city(c).production.cost();
+        let total = self.production_cost(c, self.city(c).production);
         let cm = self.city_mut(c);
         cm.shields = total;
         cm.bought = true;
@@ -1432,4 +1459,27 @@ mod tests {
         // Forest 1/2/0 -> 1/1/0
         assert_eq!(g.tile_yield(slot, x + 1, y, Some(c)), (1, 1, 0));
     }
+    /// CIV.EXE 0xcccc..0xcd28: the human 10, the computer 16 - 2 * difficulty, 2 less from
+    /// 1 AD above Prince while the human is the strongest; costs and the food box scale with it.
+    #[test]
+    fn computer_costs_and_food_box_follow_the_cost_factor() {
+        use crate::rules::Difficulty;
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        let human = g.human_slot;
+        let ai = (1..8).find(|s| *s != human && g.player(*s).alive && !g.units_of(*s).is_empty()).unwrap();
+        let settler = g.units_of(ai).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        let militia = Production::Unit(unit_ids::MILITIA);
+        assert_eq!(g.cost_factor(human), 10);
+        assert_eq!((g.cost_factor(ai), g.production_cost(c, militia), g.food_box(c)), (16, 16, 32));
+        g.setup.difficulty = Difficulty::Emperor;
+        assert_eq!((g.cost_factor(ai), g.production_cost(c, militia), g.food_box(c)), (8, 8, 16));
+        // the human strongest from 1 AD on: 2 less
+        g.year = 1;
+        g.player_mut(human).gold = 30_000;
+        assert_eq!(g.cost_factor(ai), 6);
+        g.setup.difficulty = Difficulty::Warlord;
+        assert_eq!(g.cost_factor(ai), 14, "not at Warlord");
+    }
+
 }

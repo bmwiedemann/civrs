@@ -431,7 +431,8 @@ impl Game {
         // spaceship part switches to the next kind (0xe7d1..0xe831)
         if ret != 0 && kind < 2 {
             let part = imp::SS_STRUCTURAL + kind;
-            self.city_mut(c).shields += Production::Improvement(part).cost();
+            let refund = self.production_cost(c, Production::Improvement(part));
+            self.city_mut(c).shields += refund;
             if matches!(self.city(c).production, Production::Improvement(i) if (imp::SS_STRUCTURAL..=imp::SS_MODULE).contains(&i)) && self.can_build_improvement(c, part + 1) {
                 self.city_mut(c).production = Production::Improvement(part + 1);
             }
@@ -474,7 +475,7 @@ impl Game {
     /// ds:0x803c[civ]: 7 for the strongest of civs 1..7 down to 1 (power ranking 0x3121:
     /// gold / 32 + 8 * citizens + research count + sum of unit costs; ties go to the lower
     /// slot). CIV.EXE ranks once per turn; this ranks on the spot.
-    fn power_rank(&self, slot: Slot) -> i32 {
+    pub(crate) fn power_rank(&self, slot: Slot) -> i32 {
         let strength = |s: Slot| -> i32 {
             let p = self.player(s);
             if !p.in_game || !p.alive {
@@ -772,7 +773,7 @@ mod tests {
         g.city_mut(c).production = Production::Improvement(imp::SS_STRUCTURAL);
         g.city_mut(c).shields = 0;
         g.spaceship_part_built(c, 0);
-        assert_eq!(g.city(c).shields, Production::Improvement(imp::SS_STRUCTURAL).cost());
+        assert_eq!(g.city(c).shields, g.production_cost(c, Production::Improvement(imp::SS_STRUCTURAL)));
         assert_eq!(g.city(c).production, Production::Improvement(imp::SS_COMPONENT));
         assert_eq!(g.player(ai).spaceship.structurals, 8);
         // keep building what the ship takes: the AI launches at some point

@@ -38,7 +38,7 @@ pub fn paint_city_status(fb: &mut Surface, ctx: &UiContext) {
         let res = format!("{}-{}{GLYPH_FOOD} {}{GLYPH_SHIELD} {}{GLYPH_TRADE}", c.size, yl.food, yl.shields, yl.trade);
         text(fb, ctx, 80, y, &res, WHITE);
         let end = text(fb, ctx, 172, y, c.production.name(), WHITE);
-        text(fb, ctx, end + 4, y, &format!("({}/{})", c.shields, c.production.cost()), GREY);
+        text(fb, ctx, end + 4, y, &format!("({}/{})", c.shields, g.production_cost(c.id, c.production)), GREY);
     }
 }
 

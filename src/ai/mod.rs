@@ -243,7 +243,7 @@ mod tests {
                 let cont = g.map.tile(city.x, city.y).continent;
                 let land = g.map.tiles.iter().filter(|t| t.continent == cont).count();
                 let y = g.city_yield(c);
-                eprintln!("     {} size {} prod {:?} shields {} food {}/{} surplus {} site {:?} continent {} ({} tiles) defenders {}", city.name, city.size, city.production, city.shields, city.food, city.granary_size(), y.food_surplus(), site, cont, land, unit_ai::defenders_in(g, c));
+                eprintln!("     {} size {} prod {:?} shields {} food {}/{} surplus {} site {:?} continent {} ({} tiles) defenders {}", city.name, city.size, city.production, city.shields, city.food, g.food_box(c), y.food_surplus(), site, cont, land, unit_ai::defenders_in(g, c));
             }
             eprintln!("     relations {:?} embassies {:#x}", p.relations, p.embassies);
             eprintln!("     overseas plan {:?} transport kind {:?}", naval_ai::plan(g, s), naval_ai::transport_kind(g, s));
@@ -273,9 +273,18 @@ mod tests {
     }
 
     /// Small land mass = many islands: the AI must cross water to keep expanding.
+    /// An archipelago game at King, where the computer's cost factor (16 - 2 * difficulty,
+    /// `Game::cost_factor`) is 10 like the human's: at Chieftain CIV.EXE's 1.6x production
+    /// costs slow every computer civ down so much that a 250-turn test says little about the
+    /// overseas settling itself (12 seeds: 49 overseas cities and 3 seeds without any at
+    /// Chieftain, 173 and none at King).
     fn archipelago(seed: u64, turns: usize) -> (Game, Option<u32>) {
+        archipelago_at(seed, turns, crate::rules::Difficulty::King)
+    }
+
+    fn archipelago_at(seed: u64, turns: usize, difficulty: crate::rules::Difficulty) -> (Game, Option<u32>) {
         use crate::game::{WorldParams, WorldSource};
-        let setup = GameSetup { seed, num_civs: 7, world: WorldSource::Random(WorldParams { land_mass: 0, ..WorldParams::normal() }), ..Default::default() };
+        let setup = GameSetup { seed, num_civs: 7, difficulty, world: WorldSource::Random(WorldParams { land_mass: 0, ..WorldParams::normal() }), ..Default::default() };
         let start = start_continents(&Game::new(setup.clone(), None));
         let mut first: Option<u32> = None;
         let g = soak_setup(setup, turns, &mut |g| {

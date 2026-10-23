@@ -145,9 +145,6 @@ impl City {
         (1..=21u8).filter(|i| self.has_wonder(*i)).collect()
     }
     /// Food needed to grow.
-    pub fn granary_size(&self) -> i32 {
-        (self.size as i32 + 1) * 10
-    }
     /// Population display figure (Civ1: sum of 10000 * i for i in 1..=size).
     pub fn population(&self) -> i64 {
         let n = self.size as i64;

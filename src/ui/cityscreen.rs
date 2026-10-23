@@ -277,7 +277,7 @@ impl CityScreen {
                 if *p == c.production {
                     sel = i;
                 }
-                let remaining = (p.cost() - if *p == c.production { c.shields } else { 0 }).max(0);
+                let remaining = (g.production_cost(self.city, *p) - if *p == c.production { c.shields } else { 0 }).max(0);
                 let turns = ((remaining + surplus - 1) / surplus).max(1);
                 match p {
                     Production::Unit(k) => {
@@ -639,7 +639,7 @@ impl CityScreen {
         if c.has_improvement(improvement_ids::GRANARY) {
             fb.hline(5, (cols - 1) * pitch_x + 9, 155, 1);
         }
-        let n = c.food.clamp(0, c.granary_size());
+        let n = c.food.clamp(0, ctx.game().food_box(self.city));
         for k in 0..n {
             let (col, row) = (k % cols, k / cols);
             if row >= FOOD_ROWS {
@@ -796,7 +796,7 @@ impl CityScreen {
     fn draw_production(&self, fb: &mut Surface, ctx: &UiContext) {
         let g = ctx.game();
         let c = g.city(self.city);
-        let cost = c.production.cost();
+        let cost = g.production_cost(self.city, c.production);
         let (_, pitch, r) = stock_layout(cost);
         panel(fb, r);
         fb.fill_rect(Rect::new(r.x + 1, r.y + 1, r.w - 2, 115 - r.y - 1), BORDER);

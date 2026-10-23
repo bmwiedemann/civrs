@@ -80,7 +80,7 @@ pub fn city_turn_purchase(g: &mut Game, c: CityId, net_shields: i32) {
     }
     let city = g.city(c).clone();
     let gold = g.player(slot).gold;
-    let missing = city.production.cost() - city.shields;
+    let missing = g.production_cost(c, city.production) - city.shields;
     let mut amount = 0;
     if let Production::Unit(u) = city.production {
         if net_shields != 0 {
@@ -193,6 +193,9 @@ mod tests {
     /// A new computer city building Militia with 4 shields stored and nobody inside.
     fn empty_ai_city() -> (Game, CityId) {
         let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        // King: the computer's cost factor is 16 - 2 * 3 = 10, as for the human, so a Militia
+        // costs 10 shields
+        g.setup.difficulty = crate::rules::Difficulty::King;
         let slot = (1..8).find(|s| *s != g.human_slot && g.player(*s).alive && !g.units_of(*s).is_empty()).unwrap();
         let settler = g.units_of(slot).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
         let c = g.found_city(settler).unwrap();
@@ -244,7 +247,7 @@ mod tests {
         assert_eq!(g.city(c).production, advice);
         assert!(!g.city(c).auto_build);
         if matches!(advice, Production::Unit(_)) {
-            assert_eq!(g.city(c).shields, advice.cost());
+            assert_eq!(g.city(c).shields, g.production_cost(c, advice));
         }
     }
 
