@@ -278,6 +278,37 @@ mod tests {
         dump(&g);
     }
 
+    /// Cities of the computer players on a normal map at Chieftain, 7 civilizations, every 25
+    /// turns, over 6 seeds (`cargo test --release --lib ai::tests::normal_map_expansion --
+    /// --ignored --nocapture`), to compare with games of the original.
+    #[test]
+    #[ignore]
+    fn normal_map_expansion() {
+        let seeds = [1u64, 2, 3, 4, 5, 6];
+        let rows: Vec<Vec<(u32, usize, usize)>> = std::thread::scope(|s| {
+            let hs: Vec<_> = seeds
+                .iter()
+                .map(|&seed| {
+                    s.spawn(move || {
+                        let mut out = Vec::new();
+                        soak_setup(GameSetup { seed, num_civs: 7, ..Default::default() }, 150, &mut |g| {
+                            if g.turn % 25 == 0 {
+                                let ai = |c: &&crate::game::City| c.owner != 0 && c.owner != g.human_slot;
+                                let civs = g.civ_slots().iter().filter(|s| **s != g.human_slot && g.player(**s).alive).count();
+                                out.push((g.turn, g.all_cities().filter(ai).count(), civs));
+                            }
+                        });
+                        out
+                    })
+                })
+                .collect();
+            hs.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        for (seed, r) in seeds.iter().zip(rows) {
+            eprintln!("EXPANSION seed {seed}: {:?}", r);
+        }
+    }
+
     /// The 12-seed archipelago statistics at King, 250 turns: overseas cities, seeds without
     /// any, all cities and barbarian cities (`cargo test --release --lib
     /// ai::tests::archipelago_statistics -- --ignored --nocapture`).
