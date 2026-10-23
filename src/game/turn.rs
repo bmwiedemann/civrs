@@ -1755,12 +1755,12 @@ mod tests {
     fn caravan_trade_route() {
         let (mut g, c) = fixture();
         let slot = g.city(c).owner;
-        // second city far away
+        // second city far away, on a coast off the polar rows (it works the sea's trade)
         let (cx, cy) = g.city(c).pos();
         let mut other = None;
-        for y in 0..rules::MAP_H as i32 {
+        for y in 2..rules::MAP_H as i32 - 2 {
             for x in 0..rules::MAP_W as i32 {
-                if g.map.is_land(x, y) && Map::dist((x, y), (cx, cy)) >= 12 && Map::neighbours8(x, y).all(|(nx, ny)| g.city_at(nx, ny).is_none()) {
+                if g.map.is_land(x, y) && g.map.is_coastal(x, y) && Map::dist((x, y), (cx, cy)) >= 12 && Map::neighbours8(x, y).all(|(nx, ny)| g.city_at(nx, ny).is_none()) {
                     other = Some((x, y));
                     break;
                 }

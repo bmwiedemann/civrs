@@ -18,7 +18,9 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// 9: then by each civilization's `AI_TRAILER` bytes: the 16 persistent AI goals (x, y, type,
 /// priority as signed bytes, CIV.EXE ds:0xd76e..) and the continent policies (a flag byte, 1
 /// when known, and 16 policies, ds:0xe698); older saves start with no goals and no policies.
-pub const VERSION: u16 = 9;
+/// 10: then by the map's site-value layer (`Map::site`, 80 x 50 bytes, or none when the map
+/// has no layer: a u32 LE byte count first); older saves compute it from the terrain.
+pub const VERSION: u16 = 10;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -87,6 +89,8 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
         data.extend_from_slice(&p.last_contact.to_le_bytes());
     }
     data.extend_from_slice(&ai_trailer(g));
+    data.extend_from_slice(&(g.map.site.len() as u32).to_le_bytes());
+    data.extend_from_slice(&g.map.site);
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -159,6 +163,11 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
         if let Some(b) = rest.get(ai..ai + 8 * AI_TRAILER) {
             read_ai_trailer(&mut g, b);
         }
+    }
+    let site = ai + 8 * AI_TRAILER;
+    if ver >= 10 {
+        let n = rest.get(site..site + 4).map(|n| u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize).unwrap_or(0);
+        g.map.site = rest.get(site + 4..site + 4 + n).map(|b| b.to_vec()).unwrap_or_default();
     }
     Ok(g)
 }
@@ -375,6 +384,19 @@ mod tests {
         }
         assert_eq!(l.human().advance_source(adv::CURRENCY), 2);
         assert_eq!(l.human().advance_source(adv::POTTERY), -2);
+    }
+
+    #[test]
+    fn the_site_layer_survives_a_save() {
+        let g = Game::new(GameSetup { seed: 5, ..Default::default() }, None);
+        assert_eq!(g.map.site.len(), 80 * 50);
+        let dir = std::env::temp_dir().join(format!("civrs-save-site-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        let l = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(l.map.site, g.map.site);
+        assert_eq!(l.map, g.map);
     }
 
     #[test]

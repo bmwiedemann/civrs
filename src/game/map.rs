@@ -1,4 +1,4 @@
-//! The world map: 80x50 tiles, no horizontal wrap.
+//! The world map: 80x50 tiles, wrapping east-west.
 
 use crate::rules::{Terrain, MAP_H, MAP_W};
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,9 @@ pub mod tile_flags {
     pub const FORTRESS: u16 = 1 << 4;
     pub const POLLUTION: u16 = 1 << 5;
     pub const HUT: u16 = 1 << 6;
+    /// A River square drawn with the second set of river sprites (bit 0x80 of the improvement
+    /// nibbles, set by the world generator's river walk, o 0x09497; read by 0x1aedd).
+    pub const RIVER_ALT: u16 = 1 << 7;
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -87,6 +90,11 @@ pub struct Map {
     pub params: WorldParams,
     pub earth: bool,
     pub seed: u32,
+    /// The site-value layer of the map page (x+80, y), 80x50 row-major, as the world generator
+    /// left it (`mapgen::site_value_with`, o 0x09c5f); not part of the bincode body (the save
+    /// appends it), empty for maps made otherwise.
+    #[serde(skip)]
+    pub site: Vec<u8>,
 }
 
 /// 8 compass directions in the order used for keypad moves and sprite sheets.
@@ -151,7 +159,14 @@ impl Dir8 {
 
 impl Map {
     pub fn empty(params: WorldParams, seed: u32) -> Map {
-        Map { tiles: vec![Tile::default(); MAP_W * MAP_H], params, earth: false, seed }
+        Map { tiles: vec![Tile::default(); MAP_W * MAP_H], params, earth: false, seed, site: Vec::new() }
+    }
+
+    /// 0 <= x < 80 and 0 <= y < 50 (`in_map` 0x1a68:0x132c), for the passes of the world
+    /// generator, which do not wrap.
+    #[inline]
+    pub fn in_bounds_strict(x: i32, y: i32) -> bool {
+        (0..MAP_W as i32).contains(&x) && (0..MAP_H as i32).contains(&y)
     }
 
     #[inline]
@@ -309,9 +324,33 @@ impl Map {
         dx.max(dy) + dx.min(dy) / 2
     }
 
-    /// Does the tile carry the special resource pattern? (Civ1 formula.)
+    /// The special-resource pattern (`tile_has_special` 0x1a68:0x183c): rows 2..47 only, and
+    /// ((x >> 2) * 13 + (y >> 2) * 11 + seed) & 15 == (x & 3) * 4 + (y & 3), seed = the map
+    /// seed ds:0x6e80. CIV.EXE tests it on every draw; civrs stores it in `Tile::special`.
     pub fn special_at(seed: u32, x: i32, y: i32) -> bool {
-        ((x % 4) * 4 + (y % 4)) as u32 == ((x / 4) as u32 * 13 + (y / 4) as u32 * 11 + seed) % 16
+        let x = Map::wrap_x(x);
+        (2..48).contains(&y) && ((x >> 2) * 13 + (y >> 2) * 11 + seed as i32) & 15 == (x & 3) * 4 + (y & 3)
+    }
+
+    /// The hut pattern (`tile_has_hut` 0x1a68:0x189a, which also needs land, no city and the
+    /// "hut taken" bit 0 of the tile's visibility byte clear): rows 2..47 and
+    /// ((x >> 2) * 13 + (y >> 2) * 11 + seed + 8) & 31 == (x & 3) * 4 + (y & 3), so a hut in half
+    /// of the 4x4 blocks. civrs stores it as `tile_flags::HUT`.
+    pub fn hut_at(seed: u32, x: i32, y: i32) -> bool {
+        let x = Map::wrap_x(x);
+        (2..48).contains(&y) && ((x >> 2) * 13 + (y >> 2) * 11 + seed as i32 + 8) & 31 == (x & 3) * 4 + (y & 3)
+    }
+
+    /// The site-value layer at (x,y) (see `Map::site`); computed from the terrain as it is now
+    /// when the map has no stored layer.
+    pub fn site_at(&self, x: i32, y: i32) -> u8 {
+        if !Map::in_bounds(x, y) {
+            return 0;
+        }
+        match self.site.get(Map::idx(x, y)) {
+            Some(v) => *v,
+            None => super::mapgen::site_value(self, Map::wrap_x(x), y),
+        }
     }
 
     /// Grassland and River squares that give a shield (CIV.EXE 0x134b0): bit 1 of the low
@@ -324,42 +363,31 @@ impl Map {
         self.tiles.iter().filter(|t| t.is_land()).count()
     }
 
-    /// Flood-fill landmasses (8-connected), numbering them by size (1 = largest).
+    /// Number the landmasses as the world generator does (o 0x097b1, `mapgen::number_bodies`):
+    /// by size, 1 = largest, 1..14, and 15 for all smaller ones; 8-connected, not around the
+    /// east-west edge. Ocean squares get 0.
     pub fn compute_continents(&mut self) {
-        let n = MAP_W * MAP_H;
-        let mut label = vec![0u16; n];
-        let mut sizes: Vec<(u16, usize)> = Vec::new();
-        let mut next = 1u16;
-        let mut stack = Vec::new();
-        for i in 0..n {
-            if label[i] != 0 || self.tiles[i].is_ocean() {
-                continue;
+        let mut page = super::mapgen::Page::from_map(self);
+        super::mapgen::number_bodies(&mut page);
+        for y in 0..MAP_H as i32 {
+            for x in 0..MAP_W as i32 {
+                let t = &mut self.tiles[Map::idx(x, y)];
+                t.continent = if t.is_land() { page.plane(x, y) } else { 0 };
             }
-            let mut size = 0;
-            stack.push(i);
-            label[i] = next;
-            while let Some(j) = stack.pop() {
-                size += 1;
-                let (x, y) = ((j % MAP_W) as i32, (j / MAP_W) as i32);
-                for (nx, ny) in Map::neighbours8(x, y) {
-                    let k = Map::idx(nx, ny);
-                    if label[k] == 0 && self.tiles[k].is_land() {
-                        label[k] = next;
-                        stack.push(k);
-                    }
-                }
-            }
-            sizes.push((next, size));
-            next += 1;
         }
-        sizes.sort_by(|a, b| b.1.cmp(&a.1));
-        let mut rank = vec![0u8; next as usize];
-        for (r, (lab, _)) in sizes.iter().enumerate() {
-            rank[*lab as usize] = (r + 1).min(255) as u8;
-        }
-        for i in 0..n {
-            self.tiles[i].continent = if label[i] == 0 { 0 } else { rank[label[i] as usize] };
-        }
+    }
+
+    /// The numbers of the bodies of water (the water pass of o 0x097b1: by size, 1 = largest,
+    /// 15 for all beyond the 14th; 0 on land) and their sizes (ds:0xdd7e: ranks 1..14, 1 for
+    /// rank 15), from the terrain as it is now.
+    pub fn ocean_numbers(&self) -> (Vec<u8>, [u16; 16]) {
+        let mut page = super::mapgen::Page::from_map(self);
+        let (_, sizes) = super::mapgen::number_bodies(&mut page);
+        let ids = (0..MAP_H as i32)
+            .flat_map(|y| (0..MAP_W as i32).map(move |x| (x, y)))
+            .map(|(x, y)| if self.is_ocean(x, y) { page.plane(x, y) } else { 0 })
+            .collect();
+        (ids, sizes)
     }
 
     pub fn explore(&mut self, slot: Slot, x: i32, y: i32, radius: i32) {

@@ -121,6 +121,9 @@ mod tests {
         let s: Vec<Slot> = g.alive_slots().into_iter().filter(|s| *s != g.human_slot).collect();
         let (a, b) = (s[0], s[1]);
         g.players[a as usize].civ = 7; // Gandhi: civilized 0, the values are the interests
+        // without the advances the start gave them
+        g.players[a as usize].advances = 0;
+        g.players[b as usize].advances = 0;
         for x in [adv::ALPHABET, adv::POTTERY, adv::MONARCHY, adv::BRONZE_WORKING] {
             g.player_mut(b).learn(x);
         }

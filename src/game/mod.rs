@@ -243,31 +243,57 @@ pub enum MoveOutcome {
 
 impl Game {
     /// Create a new game: generate the world, place civilisations and starting units.
+    ///
+    /// As CIV.EXE: the world generator's random numbers (`MsRand`) go on into the new-game
+    /// setup (o 0x04175: the random-event timer draws random(50)) and `civ_init` (o 0x0493c) for
+    /// slots 1..7 in turn: a computer civilization draws its tribe (random(16) until it is one
+    /// of the slot's two) and then its start square (`mapgen::start_square`). "N
+    /// Civilizations" lets slots 1..N play (ds:0x6b8a = 0xff >> (7 - N)); CIV.EXE only offers
+    /// those slots' tribes, civrs lets the human's slot take the place of the highest one.
     pub fn new(setup: GameSetup, earth: Option<&EarthMap>) -> Game {
-        let mut rng = Rng::new(setup.seed);
+        let rng = Rng::new(setup.seed);
         let seed32 = (setup.seed & 0xFFFF_FFFF) as u32 ^ (setup.seed >> 32) as u32;
-        let map = match (&setup.world, earth) {
+        let world = match (&setup.world, earth) {
             (WorldSource::Earth, Some(em)) => mapgen::earth(em, seed32),
             (WorldSource::Random(p), _) => mapgen::generate(*p, seed32),
             (WorldSource::Earth, None) => mapgen::generate(WorldParams::normal(), seed32),
         };
+        let mut wr = world.rng;
+        wr.random(50);
         let human_slot = rules::slot_for_civ(setup.human_civ);
+        let n = setup.num_civs.clamp(3, 7);
+        let mut active: Vec<u8> = (1..=n).collect();
+        if !active.contains(&human_slot) {
+            active[n as usize - 1] = human_slot;
+        }
+        let mut unit0 = [(0i32, 0i32); 8];
+        let mut slots: Vec<(u8, u8, (i32, i32))> = Vec::new();
+        for s in 1..8u8 {
+            if !active.contains(&s) {
+                continue;
+            }
+            let human = s == human_slot;
+            let civ = if human {
+                setup.human_civ
+            } else {
+                loop {
+                    let r = wr.random(16) as u8;
+                    if r & 7 == s {
+                        break r;
+                    }
+                }
+            };
+            if let Some(p) = mapgen::start_square(&world.map, &world.sites, &mut wr, &unit0[1..s as usize], human, civ) {
+                unit0[s as usize] = p;
+                slots.push((s, civ, p));
+            }
+        }
         let mut players: Vec<Player> = (0..8u8).map(|s| {
             let mut p = Player::new(s, s, false);
             p.in_game = s == 0;
             p
         }).collect();
-        // choose rival slots (slot 0 is barbarians)
-        let mut free: Vec<u8> = (1..8u8).filter(|s| *s != human_slot).collect();
-        rng.shuffle(&mut free);
-        let n_rivals = (setup.num_civs.clamp(3, 7) - 1) as usize;
-        let mut slots: Vec<(u8, u8)> = vec![(human_slot, setup.human_civ)];
-        for s in free.into_iter().take(n_rivals) {
-            let pair = rules::civs_for_slot(s);
-            let civ = pair[rng.below(2) as usize];
-            slots.push((s, civ));
-        }
-        for (s, civ) in &slots {
+        for (s, civ, _) in &slots {
             let human = *s == human_slot;
             let mut p = Player::new(*s, *civ, human);
             p.in_game = true;
@@ -276,6 +302,7 @@ impl Game {
             }
             players[*s as usize] = p;
         }
+        let map = world.map.clone();
         let mut game = Game {
             map,
             units: Vec::new(),
@@ -305,55 +332,39 @@ impl Game {
             diplo_latch: -1,
             treaty_break_ok: None,
         };
-        game.place_starting_units(&slots);
+        game.place_starting_units(&slots, &world);
         game.refresh_all_vision();
         game.active_unit = game.next_active_unit();
         game
     }
 
-    fn place_starting_units(&mut self, slots: &[(u8, u8)]) {
-        let diff = self.setup.difficulty as usize;
-        let positions: Vec<(i32, i32)> = if self.map.earth {
-            slots.iter().map(|(_, civ)| mapgen::snap_to_land(&self.map, mapgen::earth_start(*civ))).collect()
-        } else {
-            let mut rng = self.rng.clone();
-            let p = mapgen::start_positions(&self.map, slots.len(), &mut rng);
-            self.rng = rng;
-            p
-        };
-        // remove huts near start positions
-        for p in &positions {
-            for y in (p.1 - 2)..=(p.1 + 2) {
-                for x in (p.0 - 2)..=(p.0 + 2) {
-                    if let Some(t) = self.map.get_mut(x, y) {
-                        t.set(tile_flags::HUT, false);
-                    }
+    /// The start units (`civ_init` o 0x0493c: one Settlers on the start square) and the
+    /// make-up of `start_report` (o 0x0515b, `mapgen::start_bonuses`): an extra Settlers for a
+    /// start more than 3 points worse than the best and one free advance per point still
+    /// missing (`choose_research` 0xa5e:0x156a, which grants at once at turn 0; civrs draws them
+    /// with the computer's research choice). Every civ starts without gold, the human with 50
+    /// at Chieftain (o 0x0476d).
+    fn place_starting_units(&mut self, slots: &[(u8, u8, (i32, i32))], world: &mapgen::World) {
+        for &(slot, _, (x, y)) in slots {
+            self.add_unit(slot, rules::unit_ids::SETTLERS, x, y);
+            self.players[slot as usize].gold = 0;
+            self.map.explore(slot, x, y, 1);
+        }
+        let starts: Vec<(Slot, (i32, i32))> = slots.iter().map(|&(s, _, p)| (s, p)).collect();
+        let bonus = mapgen::start_bonuses(&self.map, &world.land_sizes, &starts);
+        for (&(slot, (x, y)), b) in starts.iter().zip(&bonus) {
+            if b.settlers {
+                self.add_unit(slot, rules::unit_ids::SETTLERS, x, y);
+            }
+            for _ in 0..b.advances {
+                if let Some(a) = crate::ai::tech_ai::choose(self, slot) {
+                    self.grant_advance(slot, a, science::AdvanceSource::Discovered);
                 }
             }
         }
-        for (i, (slot, _civ)) in slots.iter().enumerate() {
-            let Some(&(x, y)) = positions.get(i) else { continue };
-            let human = *slot == self.human_slot;
-            let n_settlers = if human {
-                rules::DIFFICULTY[diff].human_start_settlers
-            } else if diff >= 3 {
-                2
-            } else {
-                1
-            };
-            for _ in 0..n_settlers {
-                self.add_unit(*slot, rules::unit_ids::SETTLERS, x, y);
-            }
-            // starting knowledge: 1-2 advances (AI gets extra at higher levels), 50 gold
-            let n = 1 + self.rng.below(2) as u8 + if human { 0 } else { rules::DIFFICULTY[diff].ai_start_techs };
-            for _ in 0..n {
-                let opts = self.researchable(*slot);
-                if let Some(a) = self.rng.pick(&opts).copied() {
-                    self.players[*slot as usize].learn(a);
-                }
-            }
-            self.players[*slot as usize].gold = 50;
-            self.map.explore(*slot, x, y, 1);
+        if self.setup.difficulty == Difficulty::Chieftain {
+            let h = self.human_slot as usize;
+            self.players[h].gold = 50;
         }
     }
 
@@ -838,5 +849,36 @@ mod calendar_tests {
         g.year = 2099;
         g.process_world();
         assert_eq!(g.ended, Some(EndReason::TimeLimit));
+    }
+}
+
+#[cfg(test)]
+mod new_game_tests {
+    use super::*;
+
+    #[test]
+    fn a_new_game_starts_where_civ_exe_does() {
+        // the DOSBox game of `mapgen::tests::matches_a_world_made_by_civ_exe`
+        let g = Game::new(GameSetup { seed: 0x5fa8, ..Default::default() }, None);
+        let mut starts: Vec<(Slot, u8, (i32, i32))> = Vec::new();
+        for u in g.all_units() {
+            assert_eq!(u.kind, rules::unit_ids::SETTLERS);
+            starts.push((u.owner, g.player(u.owner).civ, u.pos()));
+        }
+        starts.sort();
+        let want: Vec<(Slot, u8, (i32, i32))> =
+            [(70, 34), (10, 23), (41, 35), (32, 37), (15, 32), (50, 39), (34, 27)].iter().enumerate().map(|(i, p)| (i as u8 + 1, i as u8 + 1, *p)).collect();
+        assert_eq!(starts, want);
+        assert_eq!(g.player(1).gold, 50);
+        assert!((2..8).all(|s| g.player(s).gold == 0));
+        assert_eq!((1..8).map(|s| g.player(s).advance_count()).collect::<Vec<_>>(), vec![1, 0, 1, 1, 1, 2, 3]);
+    }
+
+    #[test]
+    fn fewer_civilizations_play_the_first_slots() {
+        let g = Game::new(GameSetup { seed: 77, num_civs: 3, human_civ: 2, ..Default::default() }, None);
+        assert_eq!(g.alive_slots(), vec![1, 2, 3]);
+        let g = Game::new(GameSetup { seed: 77, num_civs: 3, human_civ: 14, ..Default::default() }, None);
+        assert_eq!(g.alive_slots(), vec![1, 2, 6]);
     }
 }

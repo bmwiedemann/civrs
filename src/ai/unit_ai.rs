@@ -1778,6 +1778,8 @@ mod tests {
         }
         g.cities.clear();
         g.barbarian_memory = Default::default();
+        // the generator's stored site layer describes the old world: compute from the arena
+        g.map.site.clear();
         g.ai_memory = Default::default();
         g
     }

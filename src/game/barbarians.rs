@@ -4,10 +4,11 @@
 
 use std::collections::HashMap;
 
+#[cfg(test)]
 use super::economy::EXE_RADIUS;
 use super::map::{tile_flags, Dir8, Map, Slot, UnitId};
 use super::{CityId, Game, GameEvent, HutOutcome, UnitOrder};
-use crate::rules::{self, advance_ids as adv, unit_ids, AiRole, Domain, Terrain, UnitTypeId, MAP_H, MAP_W};
+use crate::rules::{self, advance_ids as adv, unit_ids, AiRole, Domain, UnitTypeId, MAP_H, MAP_W};
 
 /// CIV.EXE's direction offsets 1..8 (ds:0x1882 dx / ds:0x18e4 dy): N, NE, E, SE, S, SW, W, NW,
 /// the same order as `Dir8::ALL`.
@@ -24,12 +25,6 @@ const CLAIM: [(i32, i32); 45] = [
     (0, -3), (1, -3), (2, -3), (3, -2), (3, -1), (3, 0), (3, 1), (3, 2), (2, 3), (1, 3), (0, 3), (-1, 3), (-2, 3),
     (-3, 2), (-3, 1), (-3, 0), (-3, -1), (-3, -2), (-2, -3), (-1, -3),
 ];
-
-/// Site score of each terrain (0..11) and of its special-resource variant (12..23), as
-/// `compute_site_values` (o 0x09c5f) builds it from the terrain table ds:0x28e (0x13 bytes per
-/// terrain): 3 * food + trade, plus 2 * shields except for Grassland and River, plus twice the
-/// bonus `-1 - v` of the first negative of the mine (ds:0x44e) or irrigation (ds:0x44a) effect.
-const SITE_SCORE: [i32; 24] = [4, 7, 8, 7, 9, 4, 3, 0, 3, 3, 5, 7, 13, 11, 8, 13, 13, 10, 9, 6, 11, 7, 11, 7];
 
 /// Bookkeeping CIV.EXE keeps in its unit records and map layers but the civrs save does not
 /// carry; it starts empty after a load, as the original's layers start on a new map.
@@ -172,22 +167,22 @@ impl Game {
         m[Map::idx(Map::wrap_x(x), y)] = slot;
     }
 
-    /// Value of the site-value layer (page 2, x+80) at a square away from every city, as
-    /// `compute_site_values` (o 0x09c5f) left it at world creation: 0 unless the square is
-    /// Plains, Grassland or River in columns 2..77 and rows 2..47, else 8 + clamp((S - 120) / 8,
-    /// 1, 15) / 2 with S summed over the 21 squares of a city radius in CIV.EXE's order
-    /// (ds:0x2498): SITE_SCORE of the terrain (special variant per tile_has_special), +2 for a
-    /// Grassland/River shield, doubled for indices 0..8 and doubled again for index 0 (the square
-    /// north of the centre, which is index 20); minus 16 when a Grassland/River centre has no
-    /// shield. A city founded later claims 45 squares and lowers values >= 8 to 8 (o 0x1b375).
-    /// Unverified: worked squares (which the city routine overwrites with their owner, 0x13233)
-    /// and terrain changed since the world was made are not modelled.
+    /// The site-value layer (page 2, x+80) at a square: the value the world generator left
+    /// there (`Map::site_at`, `mapgen::site_value_with`, o 0x09c5f), then the claims of the
+    /// cities in founding order (found_city o 0x1b702): the 21 squares of a city radius take
+    /// the founder's number, the other 24 squares within 3 lower values >= 8 to 8.
+    /// Unverified: CIV.EXE also writes the owner over the squares a city works (0x13233),
+    /// clears another civ's number where a unit steps (0x683a) and restores the generator's
+    /// values (kept at (x+80, y+50)) when a city is destroyed (0xa8f3); none of that is modelled.
     pub fn hut_site_value(&self, x: i32, y: i32) -> i32 {
-        let mut value = self.site_value_pristine(x, y);
         let x = Map::wrap_x(x);
-        let claimed = self.all_cities().any(|c| CLAIM.iter().any(|(dx, dy)| (Map::wrap_x(c.x + dx), c.y + dy) == (x, y)));
-        if claimed && value >= 8 {
-            value = 8;
+        let mut value = self.map.site_at(x, y) as i32;
+        for c in self.all_cities() {
+            match CLAIM.iter().position(|(dx, dy)| (Map::wrap_x(c.x + dx), c.y + dy) == (x, y)) {
+                Some(0..=20) => value = c.owner as i32,
+                Some(_) if value >= 8 => value = 8,
+                _ => {}
+            }
         }
         value
     }
@@ -196,37 +191,13 @@ impl Game {
     /// the square: the copy at page 2 (x+80, y+50), which nothing changes later (read by the
     /// computer's Settlers near the human's border, 0x16c24).
     pub fn site_value_pristine(&self, x: i32, y: i32) -> i32 {
-        let x = Map::wrap_x(x);
-        let centre = self.map.terrain(x, y);
-        if !(2..78).contains(&x) || !(2..48).contains(&y) || !matches!(centre, Terrain::Plains | Terrain::Grassland | Terrain::River) {
-            return 0;
-        }
-        let shield = |t: Terrain, x: i32, y: i32| matches!(t, Terrain::Grassland | Terrain::River) && (7 * x + 11 * y) & 2 == 0;
-        let mut total = 0;
-        for (i, (dx, dy)) in EXE_RADIUS.iter().enumerate() {
-            let (nx, ny) = (x + *dx as i32, y + *dy as i32);
-            let t = self.map.terrain(nx, ny);
-            let mut v = if shield(t, nx, ny) { 2 } else { 0 };
-            let special = (2..48).contains(&ny) && Map::special_at(self.map.seed, nx, ny);
-            v += SITE_SCORE[t as usize + if special { 12 } else { 0 }];
-            if i < 9 {
-                v *= 2;
-            }
-            if i == 0 {
-                v *= 2;
-            }
-            total += v;
-        }
-        if centre != Terrain::Plains && !shield(centre, x, y) {
-            total -= 16;
-        }
-        ((total - 120) / 8).clamp(1, 15) / 2 + 8
+        self.map.site_at(Map::wrap_x(x), y) as i32
     }
 
     /// The square's byte of map layer (x+80, y) as the computer's units read it (0x16ac5): the
     /// owner of the city that works the square (written by the city routine, 0x13233; civrs
-    /// takes `territory_owner`), else the site value of `hut_site_value`. Values of 8 and more
-    /// are city sites, lower ones owners.
+    /// takes `territory_owner`), else `hut_site_value` (the generator's value with the city
+    /// claims). Values of 8 and more are city sites, lower ones owners.
     pub fn site_layer(&self, x: i32, y: i32) -> i32 {
         if !Map::in_bounds(x, y) {
             return 0;
@@ -727,6 +698,8 @@ mod tests {
             }
         }
         g.map.compute_continents();
+        // the generator's site layer no longer fits the terrain: compute it from the terrain
+        g.map.site.clear();
         let ids: Vec<UnitId> = g.all_units().map(|u| u.id).collect();
         for id in ids {
             g.remove_unit(id);

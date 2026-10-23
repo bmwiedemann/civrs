@@ -900,6 +900,7 @@ mod tests {
                 t.flags = 0;
             }
         }
+        g.map.compute_continents();
         let ids: Vec<_> = g.all_units().map(|u| u.id).collect();
         for id in ids {
             g.remove_unit(id);
@@ -1072,6 +1073,10 @@ mod tests {
     fn exchange_swaps_one_advance_each() {
         let (mut g, human, ai) = meeting_game();
         g.set_relation(human, ai, Relation::Peace);
+        // whatever the start gave them: the leader knows only Alphabet of the three
+        for a in [crate::rules::advance_ids::POTTERY, crate::rules::advance_ids::BRONZE_WORKING] {
+            g.player_mut(ai).forget(a);
+        }
         g.player_mut(ai).learn(crate::rules::advance_ids::ALPHABET);
         g.player_mut(human).learn(crate::rules::advance_ids::POTTERY);
         g.player_mut(human).learn(crate::rules::advance_ids::BRONZE_WORKING);
