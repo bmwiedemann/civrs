@@ -31,7 +31,6 @@ pub mod theme;
 pub mod tilerender;
 pub mod title;
 pub mod unit_actions;
-pub mod unit_actions_impl;
 pub mod widgets;
 pub mod wonderscreen;
 

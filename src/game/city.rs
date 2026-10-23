@@ -69,8 +69,8 @@ pub struct City {
     pub celebrating: bool,
     /// Something was bought this turn (no further changes allowed).
     pub bought: bool,
-    /// Unused: CIV.EXE has no penalty for changing production (kept for the save layout).
-    pub changed_class: bool,
+    /// A Diplomat stole an advance here; no other can (CIV.EXE city status bit 0x20).
+    pub tech_stolen: bool,
     pub auto_build: bool,
     pub founded_turn: u32,
     /// Accumulated pollution chance bookkeeping.

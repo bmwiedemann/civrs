@@ -51,15 +51,23 @@ pub struct CityScreen {
     start: Option<String>,
     /// First improvement slot of the listed page (MORE flips between 0 and the overflow).
     imp_start: usize,
+    /// A foreign city seen by an investigating Diplomat: only the tabs work, anything else
+    /// closes the screen.
+    view_only: bool,
 }
 
 pub fn city_screen(c: CityId) -> Box<dyn Screen> {
-    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0 })
+    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0, view_only: false })
 }
 
 /// City screen that opens on a tab or dialog: "happy", "map", "view", "change", "buy", "rename", "sell".
 pub fn city_screen_at(c: CityId, start: &str) -> Box<dyn Screen> {
-    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: Some(start.to_string()), imp_start: 0 })
+    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: Some(start.to_string()), imp_start: 0, view_only: false })
+}
+
+/// City screen of a foreign city investigated by a Diplomat (CIV.EXE o 0x1d6a2).
+pub fn city_screen_view(c: CityId) -> Box<dyn Screen> {
+    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0, view_only: true })
 }
 
 // ---- layout (coordinates include the 1-px borders) ---------------------------------------
@@ -759,6 +767,20 @@ impl Screen for CityScreen {
     fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
         if ctx.game().city_opt(self.city).is_none() {
             return Transition::Pop(DialogResult::Done);
+        }
+        if self.view_only {
+            return match ev {
+                Event::Key { key: Key::Unknown, .. } => Transition::None,
+                Event::Key { key: Key::Char('i'), down: true, .. } => self.tab_click(0),
+                Event::Key { key: Key::Char('h'), down: true, .. } => self.tab_click(1),
+                Event::Key { key: Key::Char('m'), down: true, .. } => self.tab_click(2),
+                Event::Key { down: true, .. } => Transition::Pop(DialogResult::Done),
+                Event::MouseButton { button: MouseButton::Left, x, y, down: true } => match TAB_RECTS.iter().position(|r| r.contains(*x, *y)) {
+                    Some(i) => self.tab_click(i),
+                    None => Transition::Pop(DialogResult::Done),
+                },
+                _ => Transition::None,
+            };
         }
         match ev {
             Event::Key { key, mods, down: true, .. } => match key {

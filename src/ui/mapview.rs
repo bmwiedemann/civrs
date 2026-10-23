@@ -36,7 +36,7 @@ enum Mode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Pending {
+pub(crate) enum Pending {
     None,
     Decision,
     Event,
@@ -55,6 +55,12 @@ enum Pending {
     CaravanMenu(UnitId, crate::game::CityId, Dir8),
     /// A Diplomat's offer to bribe a lone foreign unit: (diplomat, unit, direction).
     Bribe(UnitId, UnitId, Dir8),
+    /// The menu of a Diplomat at a foreign city.
+    Diplomat(UnitId, crate::game::CityId),
+    /// "We have signed a peace treaty..." before a Diplomat steals from a treaty partner.
+    TreatyBreak(UnitId, crate::game::CityId),
+    /// "Dissidents in ... will revolt for $N."
+    Incite(UnitId, crate::game::CityId),
 }
 
 pub struct MapView {
@@ -309,16 +315,11 @@ impl MapView {
     }
 
     fn foreign_city_menu(&mut self, ctx: &mut UiContext, id: UnitId, c: crate::game::CityId) -> Transition {
-        let g = ctx.game();
-        let u = g.unit(id);
-        let name = g.city(c).name.clone();
-        if u.kind == rules::unit_ids::CARAVAN {
+        if ctx.game().unit(id).kind == rules::unit_ids::CARAVAN {
             // a caravan entering a foreign city sets up the route at once (CIV.EXE 0x5d15)
             return self.caravan_choice(ctx, id, c, 1);
         }
-        {
-            Transition::Push(Box::new(MenuDialog::new(vec![format!("Diplomat arrives at {name}.")], vec!["Establish embassy".into(), "Investigate city".into(), "Sabotage production".into(), "Steal technology".into(), "Incite a revolt".into(), "Keep moving".into()])))
-        }
+        crate::ui::unit_actions::diplomat_menu(self, ctx, id, c)
     }
 
     /// "Will you?" when a caravan reaches one of our cities (CIV.EXE 0x5cbe): the trade
@@ -1136,15 +1137,19 @@ impl Screen for MapView {
                 }
                 Transition::None
             }
-            Pending::None => {
-                // generic menus (caravan/diplomat) handled here
-                if let DialogResult::Choice(i) = result {
-                    if let Some(id) = ctx.game().active_unit {
-                        return self.special_unit_choice(ctx, id, i);
-                    }
-                }
-                Transition::None
-            }
+            Pending::Diplomat(id, c) => match result {
+                DialogResult::Choice(i) => crate::ui::unit_actions::diplomat_choice(self, ctx, id, c, i),
+                _ => Transition::None,
+            },
+            Pending::TreatyBreak(id, c) => match result {
+                DialogResult::Choice(1) => crate::ui::unit_actions::treaty_broken(self, ctx, id, c),
+                _ => Transition::None,
+            },
+            Pending::Incite(id, c) => match result {
+                DialogResult::Choice(i) => crate::ui::unit_actions::incite_choice(self, ctx, id, c, i),
+                _ => Transition::None,
+            },
+            Pending::None => Transition::None,
         }
     }
 
@@ -1321,9 +1326,6 @@ impl Screen for MapView {
 }
 
 impl MapView {
-    fn special_unit_choice(&mut self, ctx: &mut UiContext, id: UnitId, choice: usize) -> Transition {
-        crate::ui::unit_actions::special_unit_choice(self, ctx, id, choice)
-    }
 
     /// Event dialog with map-view specific preparation (centre on nuclear strikes).
     /// Queue the game's new events and return the dialog for the first one that has one.
@@ -1379,12 +1381,21 @@ impl MapView {
         dialogs::screen_for_event(ctx, e)
     }
 
-    pub fn set_pending_event(&mut self) {
-        self.pending = Pending::Event;
+    pub(crate) fn set_pending(&mut self, p: Pending) {
+        self.pending = p;
     }
 
-    pub fn finish_unit(&mut self, ctx: &mut UiContext) {
-        self.activate_next(ctx);
+    /// Show the next queued game event, or else move on to the next unit when the active
+    /// one is gone.
+    pub(crate) fn show_events(&mut self, ctx: &mut UiContext) -> Transition {
+        if let Some(s) = self.next_event_screen(ctx) {
+            self.pending = Pending::Event;
+            return Transition::Push(s);
+        }
+        if ctx.game().active_unit.is_none() {
+            self.activate_next(ctx);
+        }
+        Transition::None
     }
 
     pub fn show_error(&mut self, ctx: &mut UiContext, e: &crate::game::RuleError) -> Transition {

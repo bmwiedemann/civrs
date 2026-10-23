@@ -220,7 +220,7 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
         }
         // the city screen needs a city: found one with the human's first settler
         let mut city = None;
-        if matches!(parts.first(), Some(&"city" | &"founded" | &"built")) {
+        if matches!(parts.first(), Some(&"city" | &"founded" | &"built" | &"diplomat")) {
             let slot = game.human_slot;
             let id = game.units_of(slot).into_iter().find(|id| game.unit(*id).kind == civrs::rules::unit_ids::SETTLERS).ok_or("no settler")?;
             city = Some(game.found_city(id).map_err(|e| format!("{e:?}"))?);
@@ -274,6 +274,29 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
                 st.advance = Some(civrs::rules::advance_ids::BRONZE_WORKING);
                 st.human_initiated = true;
                 civrs::ui::diplomacy_ui::audience_screen(st)
+            }
+            // the menu of a Diplomat at a foreign city (the human's first city handed to slot 2):
+            // screen:diplomat:SEED:TURNS[:LINE] with LINE the menu line to answer
+            "diplomat" => {
+                let c = city.unwrap();
+                let g = ctx.game_mut();
+                g.players[2].in_game = true;
+                g.players[2].alive = true;
+                g.city_mut(c).owner = 2;
+                g.city_mut(c).size = 5;
+                g.player_mut(g.human_slot).gold = 900;
+                let (x, y) = g.city(c).pos();
+                let (dx, dy) = civrs::game::Map::neighbours8(x, y).find(|p| g.map.is_land(p.0, p.1)).ok_or("no land next to the city")?;
+                let d = g.add_unit(g.human_slot, civrs::rules::unit_ids::DIPLOMAT, dx, dy);
+                let mut view = civrs::ui::mapview::MapView::new();
+                let mut t = civrs::ui::unit_actions::diplomat_menu(&mut view, &mut ctx, d, c);
+                if let Some(line) = parts.get(3).and_then(|s| s.parse::<usize>().ok()) {
+                    t = civrs::ui::unit_actions::diplomat_choice(&mut view, &mut ctx, d, c, line);
+                }
+                match t {
+                    civrs::ui::screen::Transition::Push(s) => civrs::ui::eventpics::over_map(s),
+                    _ => return Err("the diplomat's choice shows nothing".into()),
+                }
             }
             // crowd marches over the human's first city (10 frames per step of the march)
             "riot" => civrs::ui::eventpics::disorder_screen(&ctx, ctx.game().cities_of(ctx.game().human_slot)[0]),

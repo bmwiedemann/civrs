@@ -217,6 +217,15 @@ impl Game {
         MoveOutcome::Attacked { won: true, at: (x, y), defender: unit_ids::NUCLEAR }
     }
 
+    /// Gold taken with a city (CIV.EXE 0x143fd): `owner's gold * size / (all the owner's
+    /// citizens + 1)`.
+    pub fn plunder_value(&self, c: CityId) -> i32 {
+        let city = self.city(c);
+        let total: i32 = self.all_cities().filter(|cc| cc.owner == city.owner).map(|cc| cc.size as i32).sum();
+        let gold = self.player(city.owner).gold.max(0);
+        (gold * city.size as i32 / (total + 1)).clamp(0, gold)
+    }
+
     /// Ground unit `id` enters undefended enemy city `c`.
     pub fn capture_city(&mut self, id: UnitId, c: CityId) -> MoveOutcome {
         let attacker = self.unit(id).clone();
@@ -240,9 +249,7 @@ impl Game {
             self.check_destroyed(from);
             return MoveOutcome::DestroyedCity;
         }
-        // plunder: owner's gold * size / total size
-        let total: i32 = self.all_cities().filter(|cc| cc.owner == from).map(|cc| cc.size as i32).sum::<i32>().max(1);
-        let gold = (self.player(from).gold.max(0) * city.size as i32 / total).max(0);
+        let gold = self.plunder_value(c);
         self.player_mut(from).gold -= gold;
         self.player_mut(by).gold += gold;
         // steal an advance
@@ -560,10 +567,11 @@ mod tests {
         assert_eq!(city.owner, 1);
         assert_eq!(city.size, 2);
         assert!(!city.has_improvement(imp::PALACE));
-        assert_eq!(g.player(1).gold - before, 300, "all of the loser's gold (only city)");
-        assert_eq!(g.player(2).gold, 0);
+        // CIV.EXE 0x143fd: gold * size / (citizens + 1) = 300 * 3 / 4
+        assert_eq!(g.player(1).gold - before, 225);
+        assert_eq!(g.player(2).gold, 75);
         assert_eq!(g.unit(a).pos(), (20, 20));
-        assert!(g.events.iter().any(|e| matches!(e, GameEvent::CityCaptured { city, by: 1, from: 2, gold: 300, .. } if *city == c)));
+        assert!(g.events.iter().any(|e| matches!(e, GameEvent::CityCaptured { city, by: 1, from: 2, gold: 225, .. } if *city == c)));
     }
 
     #[test]
@@ -663,5 +671,106 @@ mod tests {
                 g.remove_unit(d);
             }
         }
+    }
+
+    /// Slot 2 with its capital at (8, 20) and a size-4 city "Target" at (20, 20), a Diplomat of
+    /// slot 1 next to it.
+    fn diplomat_game() -> (Game, CityId, UnitId) {
+        let mut g = flat_game();
+        g.add_city(2, "Capital".into(), 8, 20);
+        let c = g.add_city(2, "Target".into(), 20, 20);
+        g.city_mut(c).size = 4;
+        g.auto_assign(c);
+        let d = g.add_unit(1, unit_ids::DIPLOMAT, 19, 20);
+        (g, c, d)
+    }
+
+    #[test]
+    fn diplomat_menu_greys_embassy_stolen_and_palace_lines() {
+        let (mut g, c, _) = diplomat_game();
+        assert_eq!(g.diplomat_menu_disabled(1, c), [false; 6]);
+        g.establish_embassy(1, 2);
+        g.city_mut(c).tech_stolen = true;
+        g.city_mut(c).add_improvement(imp::PALACE);
+        assert_eq!(g.diplomat_menu_disabled(1, c), [true, false, true, false, true, false]);
+        let cap = g.player(2).capital.unwrap();
+        assert_eq!(g.incite_cost(cap), None, "no revolt in the capital itself");
+    }
+
+    #[test]
+    fn diplomat_incites_a_revolt_at_the_original_price() {
+        use crate::game::turn::{DiplomatAction, DiplomatResult};
+        let (mut g, c, d) = diplomat_game();
+        g.player_mut(2).gold = 300;
+        g.player_mut(1).gold = 2000;
+        let guard = g.add_unit(2, unit_ids::PHALANX, 20, 20);
+        g.city_mut(c).add_improvement(imp::TEMPLE);
+        // CIV.EXE o 0x1d9b7: (300 + 1000) / (12 + 3) * 4 = 344, halved in disorder
+        assert_eq!(g.incite_cost(c), Some(344));
+        g.city_mut(c).disorder = true;
+        assert_eq!(g.incite_cost(c), Some(172));
+        let gold = g.player(1).gold;
+        let r = g.diplomat_action(d, DiplomatAction::InciteRevolt { subvert: false }, c).unwrap();
+        assert_eq!(r, DiplomatResult::Incited { cost: 172 });
+        let city = g.city(c);
+        assert_eq!(city.owner, 1);
+        assert_eq!(city.size, 3);
+        assert!(city.has_improvement(imp::TEMPLE), "improvements survive a revolt");
+        assert_eq!(g.unit(guard).owner, 1, "the garrison changes sides");
+        assert!(g.unit_opt(d).is_none());
+        // plunder 300 * 4 / (5 + 1) = 200
+        assert_eq!(g.player(1).gold, gold - 172 + 200);
+    }
+
+    #[test]
+    fn diplomat_subverts_only_at_peace_and_keeps_it() {
+        use crate::game::turn::DiplomatAction;
+        let (mut g, c, d) = diplomat_game();
+        g.player_mut(1).gold = 5000;
+        assert!(g.diplomat_action(d, DiplomatAction::InciteRevolt { subvert: true }, c).is_err());
+        g.set_relation(1, 2, Relation::Peace);
+        let (cost, plunder) = (g.incite_cost(c).unwrap(), g.plunder_value(c));
+        g.diplomat_action(d, DiplomatAction::InciteRevolt { subvert: true }, c).unwrap();
+        assert_eq!(g.relation(1, 2), Relation::Peace);
+        assert_eq!(g.city(c).owner, 1);
+        assert_eq!(g.player(1).gold, 5000 - 2 * cost + plunder);
+    }
+
+    #[test]
+    fn diplomat_steals_once_per_city() {
+        use crate::game::turn::{DiplomatAction, DiplomatResult};
+        use crate::rules::advance_ids as adv;
+        let (mut g, c, d) = diplomat_game();
+        let known: Vec<_> = g.player(1).known_advances();
+        for a in known {
+            g.player_mut(2).learn(a);
+        }
+        g.player_mut(2).learn(adv::ALPHABET);
+        let fresh = g.player(2).known_advances().into_iter().filter(|a| !g.player(1).knows(*a)).collect::<Vec<_>>();
+        let Ok(DiplomatResult::Stole(a)) = g.diplomat_action(d, DiplomatAction::StealTech, c) else { panic!("nothing stolen") };
+        assert!(fresh.contains(&a) && g.player(1).knows(a));
+        assert!(g.city(c).tech_stolen);
+        let d2 = g.add_unit(1, unit_ids::DIPLOMAT, 19, 20);
+        assert!(g.diplomat_action(d2, DiplomatAction::StealTech, c).is_err());
+        // a city with nothing new to steal leaves the diplomat in place
+        let c2 = g.add_city(2, "Poor".into(), 24, 24);
+        let d3 = g.add_unit(1, unit_ids::DIPLOMAT, 23, 24);
+        g.player_mut(1).learn(adv::ALPHABET);
+        let all: Vec<_> = g.player(2).known_advances();
+        for a in all {
+            g.player_mut(1).learn(a);
+        }
+        assert_eq!(g.diplomat_action(d3, DiplomatAction::StealTech, c2).unwrap(), DiplomatResult::NoTechnology);
+        assert!(g.unit_opt(d3).is_some());
+    }
+
+    #[test]
+    fn diplomat_sabotages_an_improvement_when_nothing_is_stored() {
+        use crate::game::turn::{DiplomatAction, DiplomatResult};
+        let (mut g, c, d) = diplomat_game();
+        g.city_mut(c).shields = 0;
+        g.city_mut(c).add_improvement(imp::TEMPLE);
+        assert_eq!(g.diplomat_action(d, DiplomatAction::Sabotage, c).unwrap(), DiplomatResult::Sabotaged(Some(imp::TEMPLE)));
+        assert!(!g.city(c).has_improvement(imp::TEMPLE));
     }
 }

@@ -10,7 +10,7 @@
 
 use super::events::{Decision, DecisionReply, Disaster, EndReason, GameEvent};
 use super::map::{CityId, Map, Slot, UnitId};
-use super::{Game, Production, RuleError};
+use super::{Game, Production, Relation, RuleError, UnitOrder};
 use crate::ai::AiDriver;
 use crate::rules::{self, advance_ids as adv, improvement_ids as imp, unit_ids, wonder_ids as won, AdvanceId, Govt, ImprovementId, UnitTypeId};
 use serde::{Deserialize, Serialize};
@@ -210,26 +210,51 @@ pub enum CaravanAction {
     KeepMoving,
 }
 
-/// What a diplomat does when it reaches a foreign city.
+/// What a diplomat does when it reaches a foreign city: the lines of CIV.EXE's menu (o 0x1d575)
+/// in order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DiplomatAction {
     Embassy,
     Investigate,
-    Sabotage,
     StealTech,
-    InciteRevolt,
+    Sabotage,
+    /// `subvert`: pay twice the price so that a treaty partner keeps the peace (offered only
+    /// at peace).
+    InciteRevolt { subvert: bool },
+    MeetKing,
 }
+
+impl DiplomatAction {
+    /// The menu line `i` (0..=5) of "Diplomat arrives in ...".
+    pub fn from_menu(i: usize) -> Option<DiplomatAction> {
+        Some(match i {
+            0 => DiplomatAction::Embassy,
+            1 => DiplomatAction::Investigate,
+            2 => DiplomatAction::StealTech,
+            3 => DiplomatAction::Sabotage,
+            4 => DiplomatAction::InciteRevolt { subvert: false },
+            5 => DiplomatAction::MeetKing,
+            _ => return None,
+        })
+    }
+}
+
+/// Lines of the diplomat's menu.
+pub const DIPLOMAT_MENU: [&str; 6] = ["Establish Embassy", "Investigate City", "Steal Technology", "Industrial Sabotage", "Incite a Revolt", "Meet with King"];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DiplomatResult {
     Embassy,
     Investigated,
-    /// What was destroyed (improvement name or "production").
-    Sabotaged(String),
+    /// The improvement destroyed, or None when the production was lost.
+    Sabotaged(Option<ImprovementId>),
     Stole(AdvanceId),
-    /// `done` is false when the player could not afford `cost`.
-    Incited { cost: i32, done: bool },
-    Failed,
+    /// The city revolted; `cost` gold was paid.
+    Incited { cost: i32 },
+    /// "No new technology found." (the diplomat stays).
+    NoTechnology,
+    /// An audience with the city owner's leader follows (the diplomat stays, without moves).
+    MetKing,
 }
 
 /// Chance (1 in N) of a disaster per city per turn [approx].
@@ -241,16 +266,6 @@ pub const CARAVAN_WONDER_SHIELDS: i32 = 50;
 
 /// Goods a caravan carries in the arrival message, by unit number (CIV.EXE ds:0x1972).
 pub const CARAVAN_GOODS: [&str; 8] = ["Silk", "Silver", "Wine", "Copper", "Gems", "Dye", "Salt", "Spice"];
-
-/// Gold needed to incite a revolt [approx]: `(size * 100 + 1000) / (distance to capital + 2)`,
-/// halved when the city is in disorder, clamped to 50..=9999.
-pub fn incite_cost(size: u8, dist_to_capital: i32, disorder: bool) -> i32 {
-    let mut c = (size as i32 * 100 + 1000) / (dist_to_capital.max(0) + 2);
-    if disorder {
-        c /= 2;
-    }
-    c.clamp(50, 9999)
-}
 
 impl Game {
     /// Distance from (x, y) to the nearest city of `slot` with a Palace, at most 16 (CIV.EXE
@@ -1016,7 +1031,35 @@ impl Game {
 
     // ---- diplomats --------------------------------------------------------------------------
 
-    /// A diplomat next to a foreign city acts.
+    /// Greyed lines of the diplomat's menu (`DIPLOMAT_MENU`) for a diplomat of `slot` at `city`
+    /// (CIV.EXE o 0x1d575, mask ds:0xb276): the embassy when there is one already or the city
+    /// is barbarian, stealing when this city was robbed before, inciting a city with a Palace,
+    /// and meeting the king of the barbarians.
+    pub fn diplomat_menu_disabled(&self, slot: Slot, city: CityId) -> [bool; 6] {
+        let c = self.city(city);
+        let barbarian = c.owner == 0;
+        [self.player(slot).has_embassy(c.owner) || barbarian, false, c.tech_stolen, false, c.has_improvement(imp::PALACE), barbarian]
+    }
+
+    /// Price of inciting `city` to revolt (CIV.EXE o 0x1d9b7): `(owner's gold + 1000) /
+    /// (distance to the owner's capital + 3) * size`, halved when the city is in disorder.
+    /// None for the capital itself.
+    pub fn incite_cost(&self, city: CityId) -> Option<i32> {
+        let c = self.city(city);
+        let dist = self.capital_distance(c.owner, c.x, c.y);
+        if dist == 0 {
+            return None;
+        }
+        let mut cost = (self.player(c.owner).gold + 1000) / (dist + 3) * c.size as i32;
+        if c.disorder {
+            cost /= 2;
+        }
+        Some(cost)
+    }
+
+    /// A diplomat next to a foreign city acts (CIV.EXE o 0x1d575). Stealing from a civilisation
+    /// at peace breaks the treaty (the caller asks first, `senate_blocks_war` permitting), and so
+    /// does inciting one unless it is a subversion at twice the price.
     pub fn diplomat_action(&mut self, id: UnitId, action: DiplomatAction, city: CityId) -> Result<DiplomatResult, RuleError> {
         let u = self.unit_opt(id).cloned().ok_or(RuleError::Other("No such unit."))?;
         if u.kind != unit_ids::DIPLOMAT {
@@ -1031,108 +1074,137 @@ impl Game {
         if them == us {
             return Err(RuleError::Other("That is one of your own cities."));
         }
-        match action {
+        let result = match action {
             DiplomatAction::Embassy => {
-                self.player_mut(us).embassies |= 1 << them;
-                self.remove_unit(id);
-                self.refresh_vision(us);
-                Ok(DiplomatResult::Embassy)
+                self.establish_embassy(us, them);
+                DiplomatResult::Embassy
             }
-            DiplomatAction::Investigate => Ok(DiplomatResult::Investigated),
-            DiplomatAction::Sabotage => {
-                let hit_production = target.shields > 0 && (self.rng.chance(50) || self.sellable_improvements(city).is_empty());
-                let result = if hit_production {
-                    self.city_mut(city).shields = 0;
-                    DiplomatResult::Sabotaged("production".into())
-                } else if let Some(i) = self.destroy_random_improvement(city) {
-                    DiplomatResult::Sabotaged(rules::IMPROVEMENTS[i as usize].name.to_string())
-                } else {
-                    DiplomatResult::Failed
-                };
-                self.remove_unit(id);
-                self.refresh_vision(us);
-                self.diplomatic_incident(us, them);
-                Ok(result)
-            }
+            DiplomatAction::Investigate => DiplomatResult::Investigated,
             DiplomatAction::StealTech => {
-                let known: Vec<AdvanceId> = self.player(them).known_advances().into_iter().filter(|a| !self.player(us).knows(*a)).collect();
-                let result = match self.rng.pick(&known).copied() {
-                    Some(a) => {
-                        self.grant_advance(us, a, super::science::AdvanceSource::From(them));
-                        self.player_mut(us).stats.techs_stolen += 1;
-                        self.push_event(GameEvent::AdvanceAcquired { slot: us, adv: a, source: format!("stolen from {}", target.name) });
-                        DiplomatResult::Stole(a)
-                    }
-                    None => DiplomatResult::Failed,
-                };
-                self.remove_unit(id);
-                self.refresh_vision(us);
-                Ok(result)
-            }
-            DiplomatAction::InciteRevolt => {
-                if self.player(them).capital == Some(city) || target.has_improvement(imp::PALACE) {
-                    return Err(RuleError::Other("A capital cannot be incited to revolt."));
+                if target.tech_stolen {
+                    return Err(RuleError::Other("Technology was stolen from this city before."));
                 }
-                let dist = match self.player(them).capital.and_then(|cap| self.city_opt(cap)) {
-                    Some(cap) => Map::dist((cap.x, cap.y), (target.x, target.y)),
-                    None => 32,
-                };
-                let cost = incite_cost(target.size, dist, target.disorder);
+                if self.relation(us, them) == Relation::Peace {
+                    self.declare_war(us, them);
+                }
+                // 72 tries from a random advance on: the first one the owner knows and we lack
+                let start = self.rng.below(rules::advances::ADVANCE_COUNT as u32) as usize;
+                let found = (0..rules::advances::ADVANCE_COUNT)
+                    .map(|i| ((start + i) % rules::advances::ADVANCE_COUNT) as AdvanceId)
+                    .find(|a| us != 0 && self.player(them).knows(*a) && !self.player(us).knows(*a));
+                let Some(a) = found else { return Ok(DiplomatResult::NoTechnology) };
+                self.grant_advance(us, a, super::science::AdvanceSource::From(them));
+                self.player_mut(us).stats.techs_stolen += 1;
+                self.city_mut(city).tech_stolen = true;
+                DiplomatResult::Stole(a)
+            }
+            DiplomatAction::Sabotage => {
+                // half of the time (or when nothing is stored) a random improvement other than
+                // the Palace, found within 99 draws; otherwise the stored shields
+                let mut destroyed = None;
+                if self.rng.below(2) != 0 || target.shields == 0 {
+                    for _ in 0..98 {
+                        let i = self.rng.below(24) as ImprovementId + 1;
+                        if i != imp::PALACE && target.has_improvement(i) {
+                            destroyed = Some(i);
+                            break;
+                        }
+                    }
+                }
+                match destroyed {
+                    Some(i) => self.city_mut(city).remove_improvement(i),
+                    None => self.city_mut(city).shields = 0,
+                }
+                DiplomatResult::Sabotaged(destroyed)
+            }
+            DiplomatAction::InciteRevolt { subvert } => {
+                let Some(cost) = self.incite_cost(city) else { return Err(RuleError::Other("A capital cannot be incited to revolt.")) };
+                let at_peace = self.relation(us, them) == Relation::Peace;
+                if subvert && !at_peace {
+                    return Err(RuleError::Other("Only a city at peace can be subverted."));
+                }
+                let cost = if subvert { cost * 2 } else { cost };
                 if self.player(us).gold < cost {
-                    return Ok(DiplomatResult::Incited { cost, done: false });
+                    return Err(RuleError::NotEnoughGold);
+                }
+                if at_peace && !subvert {
+                    self.declare_war(us, them);
                 }
                 self.player_mut(us).gold -= cost;
-                self.transfer_city(city, us);
                 self.remove_unit(id);
+                self.transfer_city(city, us);
                 self.refresh_vision(us);
                 self.refresh_vision(them);
-                self.diplomatic_incident(us, them);
-                self.push_event(GameEvent::CityCaptured { city, by: us, from: them, gold: 0, adv: None });
                 self.check_destroyed(them);
-                Ok(DiplomatResult::Incited { cost, done: true })
+                return Ok(DiplomatResult::Incited { cost });
+            }
+            DiplomatAction::MeetKing => {
+                if them == 0 {
+                    return Err(RuleError::Other("The barbarians have no king to meet."));
+                }
+                self.unit_mut(id).moves_left = 0;
+                return Ok(DiplomatResult::MetKing);
+            }
+        };
+        self.remove_unit(id);
+        self.refresh_vision(us);
+        Ok(result)
+    }
+
+    /// A city revolts to `to` (CIV.EXE o 0x1e06a, then 0x13d76 with `by_diplomat` set): the old
+    /// owner's units next to it on land change sides, those homed there elsewhere are disbanded;
+    /// the city is plundered, an advance is taken and it loses one citizen (never the last),
+    /// but its improvements survive.
+    pub fn transfer_city(&mut self, c: CityId, to: Slot) {
+        let (pos, from, size) = {
+            let city = self.city(c);
+            (city.pos(), city.owner, city.size)
+        };
+        let gold = self.plunder_value(c);
+        self.player_mut(from).gold -= gold;
+        if to != 0 {
+            self.player_mut(to).gold += gold;
+        }
+        let known: Vec<AdvanceId> = self.player(from).known_advances().into_iter().filter(|a| !self.player(to).knows(*a)).collect();
+        let adv = self.rng.pick(&known).copied();
+        if let Some(a) = adv {
+            self.grant_advance(to, a, super::science::AdvanceSource::From(from));
+        }
+        let mut gone = Vec::new();
+        for u in self.units.iter_mut().flatten().filter(|u| u.owner == from) {
+            if Map::dist((u.x, u.y), pos) <= 1 && !self.map.is_ocean(u.x, u.y) {
+                u.owner = to;
+                u.order = UnitOrder::None;
+                if u.home != Some(c) {
+                    u.home = None;
+                }
+            } else if u.home == Some(c) {
+                gone.push(u.id);
             }
         }
-    }
-
-    /// A hostile act against a civilisation we are at peace with starts a war.
-    fn diplomatic_incident(&mut self, us: Slot, them: Slot) {
-        if them == 0 || us == 0 {
-            return;
+        for id in gone {
+            self.remove_unit(id);
         }
-        if self.player(us).relation(them) == super::Relation::Peace {
-            self.player_mut(us).relations[them as usize] = super::Relation::War;
-            self.player_mut(them).relations[us as usize] = super::Relation::War;
-            self.push_event(GameEvent::WarDeclared { a: them, b: us });
+        for other in self.cities.iter_mut().flatten() {
+            other.trade_routes.retain(|r| *r != c);
         }
-    }
-
-    /// Hand a city (and the units in it) to another player without combat.
-    pub fn transfer_city(&mut self, c: CityId, to: Slot) {
-        let (x, y, from) = {
-            let city = self.city(c);
-            (city.x, city.y, city.owner)
-        };
         {
             let cm = self.city_mut(c);
             cm.owner = to;
+            cm.size = if size > 1 { size - 1 } else { size };
             cm.disorder = false;
             cm.celebrating = false;
             cm.disorder_turns = 0;
             cm.trade_routes.clear();
+            cm.specialists.clear();
             cm.production = Production::Unit(unit_ids::MILITIA);
             cm.shields = 0;
-        }
-        for u in self.units.iter_mut().flatten() {
-            if u.owner == from && (u.x, u.y) == (x, y) {
-                u.owner = to;
-                u.home = Some(c);
-            } else if u.home == Some(c) {
-                u.home = None;
-            }
+            cm.caravan_shields = 0;
         }
         self.players[to as usize].stats.cities_captured += 1;
         self.players[from as usize].stats.cities_lost += 1;
-        self.fix_workers(c);
+        self.auto_assign(c);
+        self.push_event(GameEvent::CityCaptured { city: c, by: to, from, gold, adv });
     }
 }
 

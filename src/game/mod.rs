@@ -577,7 +577,7 @@ impl Game {
             disorder_turns: 0,
             celebrating: false,
             bought: false,
-            changed_class: false,
+            tech_stolen: false,
             auto_build: false,
             founded_turn: self.turn,
             pollution_pending: 0,
