@@ -112,6 +112,15 @@ impl Game {
         if is_centre && s < 1 {
             s = 1;
         }
+        // Colossus: +1 trade on every square of its city that has trade, before the government
+        // rules (CIV.EXE 0x134dc)
+        if tr > 0 {
+            if let Some(c) = city {
+                if self.city_opt(c).map(|cc| cc.has_wonder(won::COLOSSUS)).unwrap_or(false) && !self.wonder_obsolete(won::COLOSSUS) {
+                    tr += 1;
+                }
+            }
+        }
         // government
         let g = rules::GOVERNMENTS[govt as usize];
         let celebrating = city.and_then(|c| self.city_opt(c)).map(|c| c.celebrating).unwrap_or(false);
@@ -129,14 +138,6 @@ impl Game {
         // Republic/Democracy trade bonus; a celebrating Monarchy/Communism gets the same
         if (g.trade_bonus || (celebrating && matches!(govt, Govt::Monarchy | Govt::Communism))) && tr >= 1 {
             tr += 1;
-        }
-        // Colossus: +1 trade on ocean tiles of that city
-        if t.is_ocean() {
-            if let Some(c) = city {
-                if self.city_opt(c).map(|cc| cc.has_wonder(won::COLOSSUS)).unwrap_or(false) && !self.wonder_obsolete(won::COLOSSUS) {
-                    tr += 1;
-                }
-            }
         }
         if t.has(tile_flags::POLLUTION) {
             f /= 2;
@@ -1072,5 +1073,22 @@ mod tests {
         g.city_mut(other).add_wonder(won::SETI_PROGRAM);
         g.wonders_built[won::SETI_PROGRAM as usize] = Some(other);
         assert_eq!(boost(&g, 10, 12).2, 96);
+    }
+
+    #[test]
+    fn colossus_adds_trade_on_every_trade_square() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        let (x, y) = g.city(c).pos();
+        g.map.get_mut(x, y).unwrap().terrain = Terrain::Grassland;
+        g.map.get_mut(x + 1, y).unwrap().terrain = Terrain::Forest;
+        g.map.get_mut(x - 1, y).unwrap().terrain = Terrain::Ocean;
+        g.map.get_mut(x - 1, y).unwrap().special = false;
+        let trade = |g: &Game| [(x, y), (x + 1, y), (x - 1, y)].map(|(tx, ty)| g.tile_yield(slot, tx, ty, Some(c)).2);
+        assert_eq!(trade(&g), [1, 0, 2]);
+        g.city_mut(c).add_wonder(won::COLOSSUS);
+        g.wonders_built[won::COLOSSUS as usize] = Some(c);
+        // the ocean's 3 is cut back to 2 by Despotism
+        assert_eq!(trade(&g), [2, 0, 2]);
     }
 }
