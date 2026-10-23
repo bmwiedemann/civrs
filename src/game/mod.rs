@@ -199,6 +199,9 @@ pub enum MoveOutcome {
     CaravanArrived(CityId),
     /// Move not possible (no error text).
     Blocked,
+    /// A human's Diplomat met this lone foreign unit: the UI offers to bribe it
+    /// (`Game::bribe_cost`, `Game::bribe_unit`) and moves on after a bribe.
+    BribeOffer(UnitId),
 }
 
 impl Game {

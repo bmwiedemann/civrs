@@ -122,6 +122,8 @@ pub enum GameEvent {
     Meltdown { city: CityId },
     /// The treasury could not pay for a building, which was sold.
     CantMaintain { city: CityId, improvement: u8 },
+    /// A Diplomat of `by` bought a unit of `from`.
+    UnitBribed { kind: UnitTypeId, from: Slot, by: Slot, at: (i32, i32) },
 }
 
 /// A choice the engine needs from the human player before continuing.

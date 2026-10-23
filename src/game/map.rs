@@ -280,6 +280,12 @@ impl Map {
         (a.0 - b.0).abs().max((a.1 - b.1).abs())
     }
 
+    /// CIV.EXE's travel distance (0x1d62e): the longer axis plus half the shorter one.
+    pub fn civ_distance(a: (i32, i32), b: (i32, i32)) -> i32 {
+        let (dx, dy) = ((a.0 - b.0).abs(), (a.1 - b.1).abs());
+        dx.max(dy) + dx.min(dy) / 2
+    }
+
     /// Does the tile carry the special resource pattern? (Civ1 formula.)
     pub fn special_at(seed: u32, x: i32, y: i32) -> bool {
         ((x % 4) * 4 + (y % 4)) as u32 == ((x / 4) as u32 * 13 + (y / 4) as u32 * 11 + seed) % 16

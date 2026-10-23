@@ -53,6 +53,8 @@ enum Pending {
     CityFounded(crate::game::CityId),
     /// The "Will you?" menu of a caravan stopped before one of our cities.
     CaravanMenu(UnitId, crate::game::CityId, Dir8),
+    /// A Diplomat's offer to bribe a lone foreign unit: (diplomat, unit, direction).
+    Bribe(UnitId, UnitId, Dir8),
 }
 
 pub struct MapView {
@@ -284,6 +286,7 @@ impl MapView {
                 let t = match outcome {
                     MoveOutcome::EnteredForeignCity(c) => self.foreign_city_menu(ctx, id, c),
                     MoveOutcome::CaravanArrived(c) => self.caravan_menu(ctx, id, c, d),
+                    MoveOutcome::BribeOffer(t) => self.bribe_offer(ctx, id, t, d),
                     _ => Transition::None,
                 };
                 // show any events (huts, captures)
@@ -331,6 +334,25 @@ impl MapView {
         let disabled = items.iter().enumerate().map(|(i, _)| i == 1 && wonder && near).collect();
         self.pending = Pending::CaravanMenu(id, c, d);
         Transition::Push(Box::new(MenuDialog::new(vec!["Will you?".into()], items).with_pos(100, 80).with_disabled(disabled)))
+    }
+
+    /// "ADJ UNIT\nwill desert for N$.\nTreasury: N$" with "Forget it." / "Pay", the latter only
+    /// when the treasury holds the price (CIV.EXE o 0x1dc4b).
+    fn bribe_offer(&mut self, ctx: &mut UiContext, id: UnitId, t: UnitId, d: Dir8) -> Transition {
+        let g = ctx.game();
+        let tu = g.unit(t);
+        let cost = g.bribe_cost(t);
+        let gold = g.human().gold;
+        let lines = vec![
+            format!("{} {}", g.player(tu.owner).adjective(), tu.info().name),
+            format!("will desert for {cost}$."),
+            format!("Treasury: {gold}$"),
+        ];
+        if cost > gold {
+            return Transition::Push(Box::new(MessageBox::new(lines)));
+        }
+        self.pending = Pending::Bribe(id, t, d);
+        Transition::Push(Box::new(MenuDialog::new(lines, vec!["Forget it.".into(), "Pay".into()])))
     }
 
     /// Carry out a caravan's choice at city `c`: 0 keep moving, 1 trade route, 2 help build
@@ -1081,6 +1103,14 @@ impl Screen for MapView {
             Pending::CityFounded(c) => {
                 self.pending = Pending::Event;
                 Transition::Push(crate::ui::cityfounded::city_founded(c))
+            }
+            Pending::Bribe(_, t, d) => {
+                if result == DialogResult::Choice(1) && ctx.game().unit_opt(t).is_some() {
+                    let slot = ctx.game().human_slot;
+                    ctx.game_mut().bribe_unit(slot, t);
+                    return self.move_active(ctx, d, false);
+                }
+                Transition::None
             }
             Pending::CaravanMenu(id, c, d) => match result {
                 DialogResult::Choice(0) => self.move_active(ctx, d, true),

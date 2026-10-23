@@ -80,6 +80,20 @@ impl Game {
             let at_war = slot == 0 || o == 0 || self.player(slot).at_war(o);
             let city_here = self.city_at(tx, ty);
             let units_here = self.units_at(tx, ty);
+            // a Diplomat meeting a lone foreign unit outside a city may bribe it, at war or not
+            // (CIV.EXE 0x5da5, o 0x1dbae): the human is asked; the computer pays when half its
+            // treasury covers the price; then the Diplomat moves on to its new unit
+            if u.kind == unit_ids::DIPLOMAT && city_here.is_none() && units_here.len() == 1 {
+                let target_id = units_here[0];
+                if self.is_human(slot) {
+                    return Ok(MoveOutcome::BribeOffer(target_id));
+                }
+                if self.player(slot).gold / 2 < self.bribe_cost(target_id) {
+                    return Ok(MoveOutcome::Blocked);
+                }
+                self.bribe_unit(slot, target_id);
+                return self.step(id, d, ask_caravan);
+            }
             if !at_war {
                 // Caravan / diplomat may enter foreign cities at peace.
                 if city_here.is_some() && matches!(u.kind, unit_ids::CARAVAN | unit_ids::DIPLOMAT) {
@@ -473,5 +487,38 @@ mod tests {
         assert_eq!(g.unit(sentried).pos(), (x + 1, y));
         assert_eq!(g.unit(sentried).carried_by, Some(ship));
         assert_eq!(g.unit(idle).pos(), (x, y));
+    }
+
+    #[test]
+    fn diplomats_bribe_lone_units() {
+        let mut g = Game::new(GameSetup { seed: 1, ..Default::default() }, None);
+        let human = g.human_slot;
+        let other = g.civ_slots().into_iter().find(|s| *s != human).unwrap();
+        let (x, y) = (40, 25);
+        for xx in x - 1..=x + 1 {
+            let t = g.map.get_mut(xx, y).unwrap();
+            t.terrain = Terrain::Grassland;
+            t.city = None;
+        }
+        // no capital: distance 16, so (gold + 750) / 18 x cost, halved for a Phalanx
+        for c in g.all_cities().map(|c| c.id).collect::<Vec<_>>() {
+            g.remove_city(c);
+        }
+        g.player_mut(other).gold = 150;
+        let phalanx = g.add_unit(other, unit_ids::PHALANX, x, y);
+        assert_eq!(g.bribe_cost(phalanx), 900 / 18 * 2 / 2);
+        // the human is asked first
+        let dip = g.add_unit(human, unit_ids::DIPLOMAT, x - 1, y);
+        assert_eq!(g.try_move(dip, Dir8::E), Ok(MoveOutcome::BribeOffer(phalanx)));
+        // a computer player with enough gold buys the unit and moves on to it
+        g.remove_unit(dip);
+        let third = g.civ_slots().into_iter().find(|s| *s != human && *s != other).unwrap();
+        g.player_mut(third).gold = 100;
+        let dip = g.add_unit(third, unit_ids::DIPLOMAT, x + 1, y);
+        assert_eq!(g.try_move(dip, Dir8::W), Ok(MoveOutcome::Moved));
+        let at: Vec<_> = g.units_at(x, y).into_iter().map(|u| (g.unit(u).owner, g.unit(u).kind)).collect();
+        assert!(at.contains(&(third, unit_ids::PHALANX)) && at.contains(&(third, unit_ids::DIPLOMAT)), "{at:?}");
+        assert!(!at.iter().any(|(o, _)| *o == other));
+        assert_eq!(g.player(third).gold, 50);
     }
 }

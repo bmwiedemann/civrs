@@ -166,6 +166,10 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             msg(lines)
         }
         // "CITY\ncan't maintain\nBUILDING." (CIV.EXE 0x13154)
+        // "ADJ UNIT unit\nbribed by PLURAL!" (CIV.EXE o 0x1dd83)
+        GameEvent::UnitBribed { kind, from, by, .. } if *from == me => {
+            msg(vec![format!("{} {} unit", g.player(*from).adjective(), rules::UNITS[*kind as usize].name), format!("bribed by {}!", g.player(*by).plural())])
+        }
         GameEvent::CantMaintain { city, improvement } if g.city(*city).owner == me => {
             msg(vec![city_name(*city), "can't maintain".into(), format!("{}.", rules::IMPROVEMENTS[*improvement as usize].name)])
         }

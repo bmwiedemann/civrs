@@ -253,6 +253,39 @@ pub fn incite_cost(size: u8, dist_to_capital: i32, disorder: bool) -> i32 {
 }
 
 impl Game {
+    /// Distance from (x, y) to the nearest city of `slot` with a Palace, at most 16 (CIV.EXE
+    /// 0x156ed).
+    pub fn capital_distance(&self, slot: Slot, x: i32, y: i32) -> i32 {
+        self.all_cities().filter(|c| c.owner == slot && c.has_improvement(imp::PALACE)).map(|c| Map::civ_distance(c.pos(), (x, y))).fold(16, i32::min)
+    }
+
+    /// Gold a Diplomat pays to bribe unit `target` (CIV.EXE o 0x1dbfa): (its owner's gold +
+    /// 750) / (distance to its capital + 2) x the unit's cost in tens, halved for anything but
+    /// Settlers.
+    pub fn bribe_cost(&self, target: UnitId) -> i32 {
+        let t = self.unit(target);
+        let cost = (self.player(t.owner).gold + 750) / (self.capital_distance(t.owner, t.x, t.y) + 2) * t.info().cost as i32;
+        if t.kind == unit_ids::SETTLERS {
+            cost
+        } else {
+            cost / 2
+        }
+    }
+
+    /// `by` pays for unit `target`, which is replaced by a new unit of the same type of its own
+    /// (CIV.EXE o 0x1de0d). Returns the new unit.
+    pub fn bribe_unit(&mut self, by: Slot, target: UnitId) -> UnitId {
+        let cost = self.bribe_cost(target);
+        let t = self.unit(target).clone();
+        self.remove_unit(target);
+        let new = self.add_unit(by, t.kind, t.x, t.y);
+        self.player_mut(by).gold -= cost;
+        self.refresh_vision(by);
+        self.refresh_vision(t.owner);
+        self.push_event(GameEvent::UnitBribed { kind: t.kind, from: t.owner, by, at: (t.x, t.y) });
+        new
+    }
+
     /// Begin end-of-turn processing for the human player.
     pub fn end_turn(&mut self) -> TurnRunner {
         TurnRunner::new()
