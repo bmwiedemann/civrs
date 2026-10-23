@@ -353,4 +353,27 @@ mod tests {
             assert_eq!(g.unit(ship).moves_left, full + 3);
         }
     }
+
+    #[test]
+    fn cruisers_see_two_squares_but_only_over_ocean() {
+        let mut g = Game::new(GameSetup { seed: 1, ..Default::default() }, None);
+        let slot = g.human_slot;
+        let (x, y) = (40, 25);
+        for yy in y - 4..=y + 4 {
+            for xx in x - 4..=x + 4 {
+                let t = g.map.get_mut(xx, yy).unwrap();
+                t.terrain = Terrain::Ocean;
+                t.city = None;
+            }
+        }
+        g.map.get_mut(x + 2, y).unwrap().terrain = Terrain::Grassland;
+        g.map.get_mut(x + 1, y + 1).unwrap().terrain = Terrain::Grassland;
+        g.units.iter_mut().flatten().filter(|u| u.owner == slot).for_each(|u| { u.x = 0; u.y = 0; });
+        g.add_unit(slot, unit_ids::CRUISER, x, y);
+        g.refresh_vision(slot);
+        assert!(g.visible_to(slot, x + 1, y + 1), "land next to the ship");
+        assert!(g.visible_to(slot, x - 2, y + 2), "ocean two squares away");
+        assert!(!g.visible_to(slot, x + 2, y), "land two squares away");
+        assert!(!g.visible_to(slot, x + 3, y), "three squares away");
+    }
 }

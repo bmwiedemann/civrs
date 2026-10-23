@@ -116,4 +116,13 @@ impl Unit {
     pub fn full_moves(&self) -> u8 {
         self.info().moves * 3
     }
+    /// Squares the unit sees around it: 2 with the table's sight flag 2 (Fighter, Bomber,
+    /// Cruiser, Battleship, Submarine, Carrier), else 1.
+    pub fn sight_range(&self) -> i32 {
+        if self.info().sight & 2 != 0 {
+            2
+        } else {
+            1
+        }
+    }
 }

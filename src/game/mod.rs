@@ -447,25 +447,23 @@ impl Game {
         for v in self.vision.iter_mut() {
             *v &= !bit;
         }
-        let mut spots: Vec<(i32, i32, i32)> = Vec::new();
+        // (x, y, radius, outer ring on ocean only)
+        let mut spots: Vec<(i32, i32, i32, bool)> = Vec::new();
         for u in self.all_units() {
             if u.owner == slot {
-                let s = match u.info().sight {
-                    0 => 1,
-                    n => n as i32,
-                };
-                spots.push((u.x, u.y, s));
+                spots.push((u.x, u.y, u.sight_range(), u.is_sea()));
             }
         }
         for c in self.all_cities() {
             if c.owner == slot {
-                spots.push((c.x, c.y, 1));
+                spots.push((c.x, c.y, 1, false));
             }
         }
-        for (x, y, r) in spots {
+        for (x, y, r, sea) in spots {
             for yy in (y - r)..=(y + r) {
                 for xx in (x - r)..=(x + r) {
-                    if Map::in_bounds(xx, yy) {
+                    let outer = (xx - x).abs() > 1 || (yy - y).abs() > 1;
+                    if Map::in_bounds(xx, yy) && !(sea && outer && !self.map.tile(xx, yy).is_ocean()) {
                         self.vision[Map::idx(xx, yy)] |= bit;
                         self.map.tiles[Map::idx(xx, yy)].explored |= bit;
                     }

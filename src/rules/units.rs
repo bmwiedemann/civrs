@@ -93,7 +93,8 @@ pub struct UnitType {
     pub def: u8,
     /// Production cost in rows of 10 shields.
     pub cost: u8,
-    /// Extra sight range (0 = normal 1 tile).
+    /// Sight flags as in CIV.EXE's table: bit 1 (value 2) = sees two squares far, for ships
+    /// only over ocean (CIV.EXE 0x80a1); bit 0 is not used for sight.
     pub sight: u8,
     /// Number of units carried (transports / carriers).
     pub capacity: u8,
