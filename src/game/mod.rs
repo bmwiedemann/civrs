@@ -185,6 +185,9 @@ pub struct Game {
     /// the game body in version-6 saves (older saves take `rules::calendar_year(turn)`).
     #[serde(skip)]
     pub year: i32,
+    /// Barbarian headings and the last-occupant map layer (not saved).
+    #[serde(skip)]
+    pub barbarian_memory: barbarians::BarbarianMemory,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -267,6 +270,7 @@ impl Game {
             last_combat: None,
             hints_shown: 0,
             year: rules::calendar_year(0),
+            barbarian_memory: Default::default(),
         };
         game.place_starting_units(&slots);
         game.refresh_all_vision();
@@ -530,6 +534,7 @@ impl Game {
             self.units[id as usize] = Some(u);
         }
         self.players[owner as usize].stats.units_built += 1;
+        self.note_occupant(owner, x, y);
         id
     }
 

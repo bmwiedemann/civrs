@@ -56,7 +56,6 @@ impl Ai {
 impl AiDriver for Ai {
     fn play_turn(&mut self, g: &mut Game, slot: Slot, sink: &mut dyn FnMut(TurnStep)) {
         if slot == 0 {
-            g.expire_barbarians();
             unit_ai::play_barbarians(g, sink);
             return;
         }

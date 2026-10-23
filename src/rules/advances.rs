@@ -11,9 +11,9 @@ pub struct Advance {
     pub name: &'static str,
     /// Up to two prerequisite advances.
     pub prereq: [Option<AdvanceId>; 2],
-    /// AI research interest (2..8 in the original table).
+    /// AI research interest, 2..8 (CIV.EXE ds:0xb0a + 2 * advance).
     pub ai_interest: u8,
-    /// AI lean by "civilized" trait (-2..2 in the original table).
+    /// Multiplied by the leader's "civilized" trait, -2..2 (ds:0xb0b + 2 * advance).
     pub ai_lean: i8,
 }
 
@@ -94,17 +94,14 @@ pub const ADVANCE_COUNT: usize = 72;
 /// Number of real (researchable, named) advances excluding Future Tech.
 pub const REAL_ADVANCE_COUNT: usize = 67;
 
-// The per-tech AI weights (interest 2..8, civilized lean -2..2) were not
-// transcribed from the executable; neutral defaults are used until they are.
-const DEFAULT_INTEREST: u8 = 4;
-const DEFAULT_LEAN: i8 = 0;
-
-const fn adv(name: &'static str, p1: Option<AdvanceId>, p2: Option<AdvanceId>) -> Advance {
+/// `ai_interest` / `ai_lean` are the bytes ds:0xb0a / ds:0xb0b + 2 * advance of CIV.EXE,
+/// read by `advance_ai_value` (0x0c8dd).
+const fn adv(name: &'static str, p1: Option<AdvanceId>, p2: Option<AdvanceId>, ai_interest: u8, ai_lean: i8) -> Advance {
     Advance {
         name,
         prereq: [p1, p2],
-        ai_interest: DEFAULT_INTEREST,
-        ai_lean: DEFAULT_LEAN,
+        ai_interest,
+        ai_lean,
     }
 }
 
@@ -119,78 +116,78 @@ const fn placeholder() -> Advance {
 
 /// The 72 advances, in CIV.EXE order.
 pub static ADVANCES: [Advance; ADVANCE_COUNT] = [
-    adv("Alphabet", None, None),                    // 0
-    adv("Code of Laws", Some(0), None),             // 1
-    adv("Currency", Some(17), None),                // 2
-    adv("Atomic Theory", Some(51), Some(11)),       // 3
-    adv("Democracy", Some(28), Some(30)),           // 4
-    adv("Monarchy", Some(25), Some(1)),             // 5
-    adv("Astronomy", Some(26), Some(9)),            // 6
-    adv("MapMaking", Some(0), None),                // 7
-    adv("Navigation", Some(7), Some(6)),            // 8
-    adv("Mathematics", Some(0), Some(16)),          // 9
-    adv("Medicine", Some(28), Some(24)),            // 10
-    adv("Physics", Some(9), Some(8)),               // 11
-    adv("Engineering", Some(33), Some(45)),         // 12
-    adv("University", Some(9), Some(28)),           // 13
-    adv("Magnetism", Some(8), Some(11)),            // 14
-    adv("Electronics", Some(12), Some(54)),         // 15
-    adv("Masonry", None, None),                     // 16
-    adv("Bronze Working", None, None),              // 17
-    adv("Iron Working", Some(17), None),            // 18
-    adv("Bridge Building", Some(18), Some(45)),     // 19
-    adv("Invention", Some(12), Some(30)),           // 20
-    adv("Computers", Some(9), Some(15)),            // 21
-    adv("Writing", Some(0), None),                  // 22
-    adv("Steam Engine", Some(11), Some(20)),        // 23
-    adv("Trade", Some(2), Some(1)),                 // 24
-    adv("Ceremonial Burial", None, None),           // 25
-    adv("Mysticism", Some(25), None),               // 26
-    adv("Nuclear Fission", Some(41), Some(3)),      // 27
-    adv("Philosophy", Some(26), Some(30)),          // 28
-    adv("Religion", Some(28), Some(22)),            // 29
-    adv("Literacy", Some(22), Some(1)),             // 30
-    adv("Horseback Riding", None, None),            // 31
-    adv("Feudalism", Some(16), Some(5)),            // 32
-    adv("The Wheel", None, None),                   // 33
-    adv("Gunpowder", Some(20), Some(18)),           // 34
-    adv("Industrialization", Some(49), Some(53)),   // 35
-    adv("Chemistry", Some(13), Some(10)),           // 36
-    adv("Combustion", Some(55), Some(56)),          // 37
-    adv("Flight", Some(37), Some(11)),              // 38
-    adv("Advanced Flight", Some(38), Some(54)),     // 39
-    adv("Space Flight", Some(21), Some(46)),        // 40
-    adv("Mass Production", Some(58), Some(47)),     // 41
-    adv("Pottery", None, None),                     // 42
-    adv("Communism", Some(28), Some(35)),           // 43
-    adv("The Republic", Some(1), Some(30)),         // 44
-    adv("Construction", Some(16), Some(2)),         // 45
-    adv("Rocketry", Some(39), Some(15)),            // 46
-    adv("The Corporation", Some(53), Some(35)),     // 47
-    adv("Metallurgy", Some(34), Some(13)),          // 48
-    adv("RailRoad", Some(23), Some(19)),            // 49
-    adv("Nuclear Power", Some(27), Some(15)),       // 50
-    adv("Theory of Gravity", Some(6), Some(13)),    // 51
-    adv("Steel", Some(48), Some(35)),               // 52
-    adv("Banking", Some(24), Some(44)),             // 53
-    adv("Electricity", Some(48), Some(14)),         // 54
-    adv("Refining", Some(36), Some(47)),            // 55
-    adv("Explosives", Some(34), Some(36)),          // 56
-    adv("SuperConductor", Some(60), Some(41)),      // 57
-    adv("Automobile", Some(37), Some(52)),          // 58
-    adv("Genetic Engineering", Some(10), Some(47)), // 59
-    adv("Plastics", Some(55), Some(40)),            // 60
-    adv("Recycling", Some(41), Some(4)),            // 61
-    adv("Chivalry", Some(32), Some(31)),            // 62
-    adv("Robotics", Some(60), Some(21)),            // 63
-    adv("Conscription", Some(44), Some(56)),        // 64
-    adv("Labor Union", Some(41), Some(43)),         // 65
-    adv("Fusion Power", Some(50), Some(57)),        // 66
+    adv("Alphabet", None, None, 5, 0), // 0
+    adv("Code of Laws", Some(0), None, 4, 1), // 1
+    adv("Currency", Some(17), None, 4, 1), // 2
+    adv("Atomic Theory", Some(51), Some(11), 4, 0), // 3
+    adv("Democracy", Some(28), Some(30), 3, 2), // 4
+    adv("Monarchy", Some(25), Some(1), 6, 1), // 5
+    adv("Astronomy", Some(26), Some(9), 4, 0), // 6
+    adv("MapMaking", Some(0), None, 6, -1), // 7
+    adv("Navigation", Some(7), Some(6), 6, -1), // 8
+    adv("Mathematics", Some(0), Some(16), 6, -1), // 9
+    adv("Medicine", Some(28), Some(24), 4, 0), // 10
+    adv("Physics", Some(9), Some(8), 3, 0), // 11
+    adv("Engineering", Some(33), Some(45), 4, 0), // 12
+    adv("University", Some(9), Some(28), 3, 1), // 13
+    adv("Magnetism", Some(8), Some(11), 3, -2), // 14
+    adv("Electronics", Some(12), Some(54), 3, 0), // 15
+    adv("Masonry", None, None, 3, 1), // 16
+    adv("Bronze Working", None, None, 6, -1), // 17
+    adv("Iron Working", Some(17), None, 5, -2), // 18
+    adv("Bridge Building", Some(18), Some(45), 3, 0), // 19
+    adv("Invention", Some(12), Some(30), 4, 0), // 20
+    adv("Computers", Some(9), Some(15), 3, 0), // 21
+    adv("Writing", Some(0), None, 3, 1), // 22
+    adv("Steam Engine", Some(11), Some(20), 4, -1), // 23
+    adv("Trade", Some(2), Some(1), 4, 1), // 24
+    adv("Ceremonial Burial", None, None, 5, 0), // 25
+    adv("Mysticism", Some(25), None, 4, 0), // 26
+    adv("Nuclear Fission", Some(41), Some(3), 8, -2), // 27
+    adv("Philosophy", Some(26), Some(30), 3, 1), // 28
+    adv("Religion", Some(28), Some(22), 3, 2), // 29
+    adv("Literacy", Some(22), Some(1), 3, 2), // 30
+    adv("Horseback Riding", None, None, 4, -1), // 31
+    adv("Feudalism", Some(16), Some(5), 5, -1), // 32
+    adv("The Wheel", None, None, 4, -2), // 33
+    adv("Gunpowder", Some(20), Some(18), 8, -2), // 34
+    adv("Industrialization", Some(49), Some(53), 5, -1), // 35
+    adv("Chemistry", Some(13), Some(10), 5, -1), // 36
+    adv("Combustion", Some(55), Some(56), 6, -1), // 37
+    adv("Flight", Some(37), Some(11), 4, -1), // 38
+    adv("Advanced Flight", Some(38), Some(54), 5, -1), // 39
+    adv("Space Flight", Some(21), Some(46), 4, 1), // 40
+    adv("Mass Production", Some(58), Some(47), 6, 0), // 41
+    adv("Pottery", None, None, 6, 1), // 42
+    adv("Communism", Some(28), Some(35), 2, 0), // 43
+    adv("The Republic", Some(1), Some(30), 5, 1), // 44
+    adv("Construction", Some(16), Some(2), 4, 0), // 45
+    adv("Rocketry", Some(39), Some(15), 6, -2), // 46
+    adv("The Corporation", Some(53), Some(35), 4, 0), // 47
+    adv("Metallurgy", Some(34), Some(13), 6, -2), // 48
+    adv("RailRoad", Some(23), Some(19), 4, 0), // 49
+    adv("Nuclear Power", Some(27), Some(15), 3, 0), // 50
+    adv("Theory of Gravity", Some(6), Some(13), 3, 1), // 51
+    adv("Steel", Some(48), Some(35), 4, -1), // 52
+    adv("Banking", Some(24), Some(44), 4, 1), // 53
+    adv("Electricity", Some(48), Some(14), 3, 1), // 54
+    adv("Refining", Some(36), Some(47), 4, 0), // 55
+    adv("Explosives", Some(34), Some(36), 5, -1), // 56
+    adv("SuperConductor", Some(60), Some(41), 2, 1), // 57
+    adv("Automobile", Some(37), Some(52), 8, -1), // 58
+    adv("Genetic Engineering", Some(10), Some(47), 2, 2), // 59
+    adv("Plastics", Some(55), Some(40), 4, 1), // 60
+    adv("Recycling", Some(41), Some(4), 2, 1), // 61
+    adv("Chivalry", Some(32), Some(31), 5, -2), // 62
+    adv("Robotics", Some(60), Some(21), 5, -1), // 63
+    adv("Conscription", Some(44), Some(56), 6, -1), // 64
+    adv("Labor Union", Some(41), Some(43), 4, -1), // 65
+    adv("Fusion Power", Some(50), Some(57), 3, 0), // 66
     placeholder(),                                  // 67
     placeholder(),                                  // 68
     placeholder(),                                  // 69
     placeholder(),                                  // 70
-    adv("Future Tech.", None, None),                // 71
+    adv("Future Tech.", None, None, 0, 0), // 71
 ];
 
 /// True for the 67 named advances and Future Tech; false for the four

@@ -164,13 +164,29 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
         }
         GameEvent::CivilWar { slot, new_slot } if *slot == me || *new_slot == me => msg(vec!["Civil war!".into()]),
         GameEvent::CivDestroyed { slot, by } => news(vec![format!("{} civilization", g.civ_name(*slot)), "destroyed".into(), format!("by {}!", civ(*by))]),
-        GameEvent::BarbariansLanded { near_city, target, .. } if *target == me => {
-            let near = near_city.map(city_name).unwrap_or_default();
-            let lines = if near.is_empty() { vec!["Barbarians land!".into()] } else { vec!["Barbarians land".into(), format!("near {near}!")] };
-            Some(eventpics::invaders_screen(ctx, *near_city, lines))
+        // CIV.EXE 0x18fb1 (ds:0x2a70), drawn as the Defense Minister's box at (100,32); the
+        // minister's portrait is not drawn here
+        GameEvent::BarbariansLanded { near_city, target, .. } if *target == me => Some(Box::new(
+            MessageBox::new(vec!["Barbarian raiding party".into(), format!("lands near {}!", near_city.map(city_name).unwrap_or_default()), "Citizens are alarmed.".into()]).with_pos(100, 32),
+        )),
+        // CIV.EXE 0x2fd3 (ds:0x1d12..0x1d6c): the variant follows the first discovery of
+        // Industrialization or Gunpowder by anyone
+        GameEvent::BarbarianUprising { at, target } if *target == me => {
+            let what = if g.discovered_by_anyone(rules::advance_ids::INDUSTRIALIZATION) {
+                "Guerrilla uprising"
+            } else if g.discovered_by_anyone(rules::advance_ids::GUNPOWDER) {
+                "Native unrest"
+            } else {
+                "Barbarian uprising"
+            };
+            let near = g.nearest_city_exe(at.0, at.1).0.map(city_name).unwrap_or_default();
+            news(vec!["Travellers report:".into(), what.into(), format!("near {near}!")])
         }
-        GameEvent::BarbarianUprising { target, .. } if *target == me => Some(eventpics::invaders_screen(ctx, None, vec!["Barbarian uprising!".into()])),
-        GameEvent::BarbarianLeaderCaptured { slot, gold } if *slot == me => msg(vec!["Barbarian leader captured!".into(), format!("{gold} gold ransom paid.")]),
+        // KING.TXT *LEADER (combat 0x1a04c)
+        GameEvent::BarbarianLeaderCaptured { slot, gold } if *slot == me => {
+            let lines = ctx.texts.king.section("LEADER").map(paragraphs).unwrap_or_else(|| vec!["Barbarian leader captured!".into(), format!("{gold}$ ransom paid.")]);
+            msg(lines)
+        }
         GameEvent::Pollution { city, .. } if g.city(*city).owner == me => msg(vec![format!("Pollution near {}!", city_name(*city))]),
         // the explosion over the city, then "Nuclear Catastrophe\nin CITY!\nContamination
         // feared!" (CIV.EXE 0x12fab..0x1301f)
@@ -260,14 +276,15 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             "Trade route established".into(),
             format!("Revenue: ${bonus}."),
         ]),
+        // the boxes of hut_outcome (CIV.EXE 0x0978d, ds:0x212c..0x21e6)
         GameEvent::HutEntered { slot, outcome, .. } if *slot == me => {
+            let found = |what: &[&str]| std::iter::once("You have discovered").chain(what.iter().copied()).map(String::from).collect::<Vec<_>>();
             let text = match outcome {
-                HutOutcome::Gold(n) => vec![format!("You have discovered {n}$ of valuable metals.")],
-                HutOutcome::Advance(a) => vec!["You have discovered".into(), "scrolls of ancient wisdom.".into(), format!("({})", rules::ADVANCES[*a as usize].name)],
-                HutOutcome::Mercenaries(k) => vec![format!("A band of {} mercenaries", rules::UNITS[*k as usize].name), "joins your civilization.".into()],
+                HutOutcome::Gold(n) => found(&["valuable metal deposits", &format!("worth {n}$")]),
+                HutOutcome::Advance(_) | HutOutcome::EmptyScrolls => found(&["scrolls of ancient wisdom."]),
+                HutOutcome::Mercenaries(_) | HutOutcome::Settlers => found(&["a friendly tribe of", "skilled mercenaries."]),
                 HutOutcome::Barbarians => vec!["You have unleashed".into(), "a horde of barbarians!".into()],
-                HutOutcome::Empty => vec!["The tribe is friendly,".into(), "but has nothing to offer.".into()],
-                HutOutcome::Settlers => vec!["A friendly tribe".into(), "joins your civilization.".into()],
+                HutOutcome::AdvancedTribe(_) | HutOutcome::Empty => found(&["an advanced tribe."]),
             };
             match outcome {
                 HutOutcome::Advance(a) => with_pedia(msg(text), *a),
@@ -275,6 +292,21 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             }
         }
         GameEvent::CityFounded { .. } => None,
+        // CIV.EXE 0x0bfde..0x0c0f2 (ds:0x2327..0x2369): the units and buildings the advance
+        // allows, the box at (8, 168 - 8 * their number); the advisor's portrait is not drawn
+        GameEvent::ScienceAdvice { slot, adv } if *slot == me => {
+            let mut lines = vec!["Science Advisor:".into(), "I recommend we".into(), format!("develop {}.", rules::ADVANCES[*adv as usize].name)];
+            let units = rules::UNITS.iter().filter(|u| u.prereq == Some(*adv)).map(|u| u.name);
+            // improvements 0..23: the SS Module (24) is left out
+            let buildings = rules::IMPROVEMENTS.iter().take(24).filter(|i| i.prereq == Some(*adv)).map(|i| i.name);
+            let items: Vec<String> = units.chain(buildings).map(|n| format!("-{n}")).collect();
+            let n = items.len() as i32;
+            if n > 0 {
+                lines.push("So we can build:".into());
+                lines.extend(items);
+            }
+            Some(Box::new(MessageBox::new(lines).with_pos(8, 168 - 8 * n)))
+        }
         GameEvent::Hint(section) => {
             if !g.options.instant_advice {
                 return None;
@@ -364,9 +396,16 @@ impl Screen for Sequence {
 pub fn screen_for_decision(ctx: &mut UiContext, d: &Decision) -> Box<dyn Screen> {
     let g: &Game = ctx.game.as_ref().expect("game");
     match d {
-        Decision::ChooseResearch { options, .. } => {
-            let items: Vec<String> = options.iter().map(|a| rules::ADVANCES[*a as usize].name.to_string()).collect();
-            Box::new(MenuDialog::new(vec!["Which discovery should".into(), "our wise men pursue?".into()], items).no_cancel())
+        // choose_research (CIV.EXE 0x0c103..0x0c23b, ds:0x236c..0x23d5) at (80,64)
+        Decision::ChooseResearch { slot, options } => {
+            let p = g.player(*slot);
+            let items: Vec<String> = options
+                .iter()
+                .map(|a| if *a == rules::advance_ids::FUTURE_TECH { format!("Future Technology {}", p.future_techs + 1) } else { rules::ADVANCES[*a as usize].name.to_string() })
+                .collect();
+            let who = if p.knows(rules::advance_ids::INVENTION) { "scientists" } else { "wise men" };
+            let head = vec!["Which discovery should our".into(), format!("{who} be pursuing, sire?"), "Pick one...".into()];
+            Box::new(MenuDialog::new(head, items).with_pos(80, 64).no_cancel())
         }
         Decision::ChooseGovernment { options, .. } => {
             let items: Vec<String> = options.iter().map(|gv| rules::GOVERNMENTS[*gv as usize].name.to_string()).collect();
@@ -390,6 +429,11 @@ pub fn screen_for_decision(ctx: &mut UiContext, d: &Decision) -> Box<dyn Screen>
         }
         // the ship with its LAUNCH button (CIV.EXE o 0x18842); confirming answers Choice(1)
         Decision::SpaceshipLaunch { slot } => crate::ui::spaceship_ui::launch_prompt(ctx, *slot),
+        // steal_advance (CIV.EXE 0x14550, ds:0x28f6) at (80,32)
+        Decision::StealAdvance { options, .. } => {
+            let items: Vec<String> = options.iter().map(|a| rules::ADVANCES[*a as usize].name.to_string()).collect();
+            Box::new(MenuDialog::new(vec!["Select one...".into()], items).with_pos(80, 32).no_cancel())
+        }
     }
 }
 

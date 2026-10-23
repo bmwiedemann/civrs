@@ -50,14 +50,25 @@ impl Disaster {
     }
 }
 
+/// What a goody hut held (CIV.EXE `hut_outcome` 0x0978d).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum HutOutcome {
+    /// "valuable metal deposits worth 50$".
     Gold(i32),
+    /// "scrolls of ancient wisdom" with this advance.
     Advance(AdvanceId),
+    /// "a friendly tribe of skilled mercenaries".
     Mercenaries(UnitTypeId),
+    /// "You have unleashed a horde of barbarians!"
     Barbarians,
+    /// No longer produced; kept so that older saves load.
     Empty,
+    /// No longer produced; kept so that older saves load.
     Settlers,
+    /// "an advanced tribe": a city founded on the square (none past the city limit).
+    AdvancedTribe(Option<CityId>),
+    /// The scrolls held no advance the civ could learn.
+    EmptyScrolls,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -152,6 +163,9 @@ pub enum GameEvent {
     /// "Population decrease\nin CITY.": the human's city has more working squares than
     /// citizens at its turn and places its workers anew (CIV.EXE 0xd70d, ds:0x255f).
     PopulationDecrease(CityId),
+    /// "Science Advisor: I recommend we develop ADV." before the human's research menu on
+    /// Chieftain with Instant Advice (CIV.EXE 0x0bfc1).
+    ScienceAdvice { slot: Slot, adv: AdvanceId },
 }
 
 /// A choice the engine needs from the human player before continuing.
@@ -176,6 +190,9 @@ pub enum Decision {
     /// "Confirm spaceship launch." No Launch / Launch CONFIRMED! (CIV.EXE o 0x18842, 0x180fe);
     /// `Choice(1)` launches.
     SpaceshipLaunch { slot: Slot },
+    /// "Select one...": the advance a human captor takes from `from` with a city
+    /// (`steal_advance` CIV.EXE 0x14468); the menu cannot be cancelled.
+    StealAdvance { slot: Slot, from: Slot, options: Vec<AdvanceId> },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

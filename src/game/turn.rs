@@ -151,7 +151,14 @@ impl TurnRunner {
                 }
                 Phase::Barbarians => {
                     g.reset_moves(0);
+                    // the raids of `barbarians()` (end of turn, CIV.EXE 0x2620) move at once, as
+                    // civ 0 opens the next turn's civ loop; then its cities and units (0x24cf)
                     g.barbarian_spawn();
+                    for c in g.cities_of(0) {
+                        if g.city_opt(c).is_some() {
+                            g.process_city(c);
+                        }
+                    }
                     self.run_ai(g, ai, 0);
                     g.process_unit_hazards(0);
                     self.drain_events(g);
@@ -199,7 +206,7 @@ fn decision_slot(g: &Game, d: &Decision) -> Slot {
         Decision::ProductionChoice { city, .. } => g.city_opt(*city).map(|c| c.owner).unwrap_or(g.human_slot),
         Decision::Diplomacy(s) => s.human,
         Decision::KeepPlaying { .. } => g.human_slot,
-        Decision::SpaceshipPart { slot, .. } | Decision::SpaceshipLaunch { slot } => *slot,
+        Decision::SpaceshipPart { slot, .. } | Decision::SpaceshipLaunch { slot } | Decision::StealAdvance { slot, .. } => *slot,
     }
 }
 
@@ -864,6 +871,19 @@ impl Game {
         if !self.player(slot).alive {
             return;
         }
+        // a computer player gets the advance `choose_research` draws once the beakers are
+        // full; they are spent even when it draws nothing (CIV.EXE 0x12d94, 0x0bb4a)
+        if !self.player(slot).human {
+            self.player_mut(slot).researching = None;
+            if self.research_complete(slot) {
+                self.player_mut(slot).beakers = 0;
+                if let Some(a) = crate::ai::tech_ai::choose(self, slot) {
+                    self.grant_advance(slot, a, super::science::AdvanceSource::Discovered);
+                    self.push_event(GameEvent::AdvanceDiscovered { slot, adv: a });
+                }
+            }
+            return;
+        }
         if self.player(slot).researching.is_none() && self.player(slot).beakers > 0 {
             self.pick_research(slot);
         }
@@ -871,9 +891,15 @@ impl Game {
             // the surplus is lost (CIV.EXE 0x12d94)
             if self.research_complete(slot) {
                 self.player_mut(slot).beakers = 0;
+                // the science advisor's pick is drawn like a computer's before the advance is
+                // granted, leaving out the goal itself (choose_research 0x0bb5d, 0x0bfc1)
+                let advice = (self.setup.difficulty == rules::Difficulty::Chieftain && self.options.instant_advice).then(|| crate::ai::tech_ai::draw(self, slot, Some(a))).flatten();
                 self.grant_advance(slot, a, super::science::AdvanceSource::Discovered);
                 self.player_mut(slot).researching = None;
                 self.push_event(GameEvent::AdvanceDiscovered { slot, adv: a });
+                if let Some(adv) = advice {
+                    self.push_event(GameEvent::ScienceAdvice { slot, adv });
+                }
                 self.pick_research(slot);
             }
         }
@@ -1044,6 +1070,14 @@ impl Game {
             Decision::SpaceshipLaunch { slot } => {
                 if matches!(reply, DecisionReply::Choice(1) | DecisionReply::Yes) && self.spaceship_can_launch(*slot) {
                     let _ = self.launch_spaceship(*slot);
+                }
+            }
+            Decision::StealAdvance { slot, from, options } => {
+                let i = if let DecisionReply::Choice(i) = reply { i } else { 0 };
+                if let Some(a) = options.get(i).or(options.first()).copied() {
+                    if self.grant_advance(*slot, a, super::science::AdvanceSource::From(*from)) {
+                        self.push_event(GameEvent::AdvanceAcquired { slot: *slot, adv: a, source: "conquest".into() });
+                    }
                 }
             }
         }

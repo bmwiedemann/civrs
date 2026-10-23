@@ -275,6 +275,8 @@ impl Game {
         if u.order == UnitOrder::Fortified || u.order == UnitOrder::Fortify {
             u.order = UnitOrder::None;
         }
+        let owner = u.owner;
+        self.note_occupant(owner, x, y);
     }
 
     pub fn cargo_count(&self, ship: UnitId) -> usize {

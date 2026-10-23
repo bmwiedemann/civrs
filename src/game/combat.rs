@@ -76,30 +76,45 @@ impl Game {
         if targets.is_empty() {
             return MoveOutcome::Blocked;
         }
-        // Barbarian leader alone on the tile: captured for ransom instead of fighting.
-        if targets.iter().all(|t| self.unit(*t).leader && self.unit(*t).owner == 0) {
-            for t in targets {
-                self.remove_unit(t);
-            }
-            self.player_mut(attacker.owner).gold += 100;
-            self.unit_mut(id).moves_left = attacker.moves_left.saturating_sub(3);
-            self.push_event(GameEvent::BarbarianLeaderCaptured { slot: attacker.owner, gold: 100 });
-            self.refresh_vision(0);
-            return MoveOutcome::Attacked { won: true, at: (x, y), defender: unit_ids::DIPLOMAT };
-        }
         let Some(def_id) = self.best_defender(x, y, Some(&attacker)) else { return MoveOutcome::Blocked };
         let defender = self.unit(def_id).clone();
-        let a = self.attack_strength(&attacker).max(1) as u32;
+        let mut a = self.attack_strength(&attacker);
         let d = self.defense_strength(&defender, Some(&attacker)).max(1) as u32;
-        let won = loop {
-            let ra = self.rng.below(a);
-            let rd = self.rng.below(d);
-            if ra > rd {
-                break true;
+        // barbarian attackers (CIV.EXE 0x1981e, 0x19908; applied there before the veteran
+        // bonus): (difficulty + 1) quarters against the human, half against the computer; at a
+        // city nothing against its owner's only city, half again against a Palace, and the
+        // attack must win a second roll (0x19a4b)
+        let mut second_roll = false;
+        if attacker.owner == 0 {
+            a = if defender.owner == self.human_slot { a * (self.setup.difficulty as i32 + 1) / 4 } else { a / 2 };
+            if let Some(c) = self.city_at(x, y) {
+                if self.cities_of(defender.owner).len() == 1 {
+                    a = 0;
+                }
+                if self.city(c).has_improvement(imp::PALACE) {
+                    a /= 2;
+                }
+                second_roll = true;
             }
-            if rd > ra {
-                break false;
-            }
+        }
+        let won = if attacker.owner == 0 && a <= 0 {
+            false
+        } else {
+            let a = a.max(1) as u32;
+            let won = loop {
+                let ra = self.rng.below(a);
+                let rd = self.rng.below(d);
+                if ra > rd {
+                    break true;
+                }
+                if rd > ra {
+                    break false;
+                }
+            };
+            won && !(second_roll && {
+                let rd = self.rng.below(d);
+                self.rng.below(a) < rd
+            })
         };
         self.last_combat = Some(((attacker.x, attacker.y), (x, y), won));
         // a computer city that is attacked, whoever wins, goes on alert (city status 0x10,
@@ -113,6 +128,12 @@ impl Game {
         // Bomber's attack ends its turn (READ.ME §2, CIV.EXE 0x60e4)
         self.unit_mut(id).moves_left = if attacker.kind == unit_ids::BOMBER { 0 } else { attacker.moves_left.saturating_sub(3) };
         if won {
+            // beating a barbarian Diplomat (the leader) pays 100$ ransom, "*LEADER" for the
+            // human (CIV.EXE 0x1a018); the stack then dies as usual
+            if defender.owner == 0 && defender.kind == unit_ids::DIPLOMAT {
+                self.player_mut(attacker.owner).gold += 100;
+                self.push_event(GameEvent::BarbarianLeaderCaptured { slot: attacker.owner, gold: 100 });
+            }
             let t = self.map.tile(x, y);
             let stack_safe = t.city.is_some() || t.has(tile_flags::FORTRESS);
             let victims: Vec<UnitId> = if stack_safe { vec![def_id] } else { self.units_at(x, y) };
@@ -244,8 +265,9 @@ impl Game {
         let from = city.owner;
         let by = attacker.owner;
         let was_capital = self.player(from).capital == Some(c);
-        if city.size <= 1 || by == 0 {
-            // size-1 cities are destroyed; barbarians raze everything they take
+        if city.size <= 1 || (by == 0 && attacker.info().att <= 2) {
+            // size-1 cities are destroyed, and so is any city a barbarian with attack 2 or less
+            // takes (CIV.EXE 0x13e89; ds:0x28bc is only set by a Diplomat's incite)
             let name = city.name.clone();
             self.remove_city(c);
             self.push_event(GameEvent::CityDestroyed { name, at: (city.x, city.y), by, from });
@@ -260,13 +282,21 @@ impl Game {
             self.check_destroyed(from);
             return MoveOutcome::DestroyedCity;
         }
+        // the plunder leaves the loser even when the barbarians take the city (0x13f52)
         let gold = self.plunder_value(c);
         self.player_mut(from).gold -= gold;
-        self.player_mut(by).gold += gold;
-        // steal an advance
+        if by != 0 {
+            self.player_mut(by).gold += gold;
+        }
+        // steal an advance (steal_advance 0x14468): a computer captor takes the one it values
+        // most, the human picks one from a menu
         let mut adv = None;
-        let known: Vec<u8> = self.player(from).known_advances().into_iter().filter(|a| !self.player(by).knows(*a)).collect();
-        if let Some(a) = self.rng.pick(&known).copied() {
+        if self.is_human(by) {
+            let options = crate::ai::tech_ai::stealable(self, by, from);
+            if !options.is_empty() {
+                self.push_event(GameEvent::NeedsDecision(super::Decision::StealAdvance { slot: by, from, options }));
+            }
+        } else if let Some(a) = crate::ai::tech_ai::best_to_steal(self, by, from) {
             self.grant_advance(by, a, super::science::AdvanceSource::From(from));
             adv = Some(a);
             self.push_event(GameEvent::AdvanceAcquired { slot: by, adv: a, source: "conquest".into() });
@@ -587,31 +617,49 @@ mod tests {
     }
 
     #[test]
-    fn size_one_city_is_destroyed_and_barbarians_raze() {
+    fn size_one_city_is_destroyed_and_weak_barbarians_raze() {
         let mut g = flat_game();
         let c = g.add_city(2, "Tiny".into(), 20, 20);
         let a = g.add_unit(1, unit_ids::LEGION, 19, 20);
         assert_eq!(g.try_move(a, crate::game::Dir8::E).unwrap(), MoveOutcome::DestroyedCity);
         assert!(g.city_opt(c).is_none());
+        // a barbarian with attack 2 or less razes what it takes (CIV.EXE 0x13e89)
         let c2 = g.add_city(2, "Big".into(), 25, 25);
         g.city_mut(c2).size = 5;
-        let b = g.add_unit(0, unit_ids::LEGION, 24, 25);
+        let b = g.add_unit(0, unit_ids::CAVALRY, 24, 25);
         assert_eq!(g.try_move(b, crate::game::Dir8::E).unwrap(), MoveOutcome::DestroyedCity);
         assert!(g.city_opt(c2).is_none());
+        // a stronger one keeps the city, and the plunder is lost to both sides
+        let c3 = g.add_city(2, "Rich".into(), 15, 15);
+        g.city_mut(c3).size = 5;
+        g.player_mut(2).gold = 300;
+        let l = g.add_unit(0, unit_ids::LEGION, 14, 15);
+        assert_eq!(g.try_move(l, crate::game::Dir8::E).unwrap(), MoveOutcome::CapturedCity(c3));
+        assert_eq!(g.city(c3).owner, 0);
+        assert_eq!(g.city(c3).size, 4);
+        assert!(g.player(2).gold < 300);
+        assert_eq!(g.player(0).gold, 0);
     }
 
     #[test]
     fn barbarian_leader_alone_is_ransomed() {
-        let mut g = flat_game();
-        let l = g.add_unit(0, unit_ids::DIPLOMAT, 11, 10);
-        g.unit_mut(l).leader = true;
-        let a = g.add_unit(1, unit_ids::LEGION, 10, 10);
-        let gold = g.player(1).gold;
-        let out = g.try_move(a, crate::game::Dir8::E).unwrap();
-        assert!(matches!(out, MoveOutcome::Attacked { won: true, .. }));
-        assert_eq!(g.player(1).gold, gold + 100);
-        assert!(g.unit_opt(l).is_none());
-        assert!(g.events.iter().any(|e| matches!(e, GameEvent::BarbarianLeaderCaptured { slot: 1, gold: 100 })));
+        // the leader fights (defence 1) and pays the ransom only when beaten
+        let mut ransomed = 0;
+        for seed in 0..20 {
+            let mut g = flat_game();
+            g.rng = crate::game::Rng::new(seed);
+            let l = g.add_unit(0, unit_ids::DIPLOMAT, 11, 10);
+            g.unit_mut(l).leader = true;
+            let a = g.add_unit(1, unit_ids::LEGION, 10, 10);
+            let gold = g.player(1).gold;
+            let MoveOutcome::Attacked { won, .. } = g.try_move(a, crate::game::Dir8::E).unwrap() else { panic!("no fight") };
+            let paid = g.events.iter().any(|e| matches!(e, GameEvent::BarbarianLeaderCaptured { slot: 1, gold: 100 }));
+            assert_eq!(won, paid);
+            assert_eq!(g.player(1).gold, gold + if won { 100 } else { 0 });
+            assert_eq!(g.unit_opt(l).is_none(), won);
+            ransomed += won as usize;
+        }
+        assert!(ransomed > 0);
     }
 
     #[test]

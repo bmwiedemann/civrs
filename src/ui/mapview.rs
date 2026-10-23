@@ -1382,6 +1382,21 @@ impl MapView {
             self.vx = Map::wrap_x(at.0 - VIEW_W / 2);
             self.vy = (at.1 - VIEW_H / 2).clamp(0, MAP_H as i32 - VIEW_H);
         }
+        // barbarians: an uprising shows its city (0x2fcb), a landing scrolls only when the
+        // square is outside the inner window (scroll_to 0x09505)
+        let me = ctx.game().human_slot;
+        let view = match e {
+            crate::game::GameEvent::BarbarianUprising { at, target } if *target == me => ctx.game().nearest_city_exe(at.0, at.1).0.map(|c| ctx.game().city(c).pos()),
+            crate::game::GameEvent::BarbariansLanded { at, target, .. } if *target == me => {
+                let inside = (2..=13).contains(&Map::delta_x(self.vx, at.0)) && (self.vy + 2..=self.vy + 9).contains(&at.1);
+                (!inside).then_some(*at)
+            }
+            _ => None,
+        };
+        if let Some(at) = view {
+            self.vx = Map::wrap_x(at.0 - 8);
+            self.vy = (at.1 - 6).clamp(0, MAP_H as i32 - VIEW_H);
+        }
         dialogs::screen_for_event(ctx, e)
     }
 

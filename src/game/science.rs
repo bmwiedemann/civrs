@@ -126,38 +126,41 @@ impl Game {
         true
     }
 
-    /// Pick what a player researches next: the human is asked (a decision is queued), the AI
-    /// chooses immediately. Returns true when a decision was queued.
+    /// Pick what a player researches next: the human is asked (a decision is queued);
+    /// computer players keep no goal in CIV.EXE (their advance is drawn when the beakers are
+    /// full, `tech_ai::choose`). Returns true when a decision was queued.
+    ///
+    /// The human's menu (`choose_research` 0x0bb4a, 0x0c150..0x0c20c) lists the reachable
+    /// advances in index order; above Chieftain, after the first two entries, those whose
+    /// index less the research count is a multiple of 3 are left out.
     pub fn pick_research(&mut self, slot: Slot) -> bool {
-        if self.player(slot).researching.is_some() {
+        if self.player(slot).researching.is_some() || !self.player(slot).human {
             return false;
         }
         let opts = self.researchable(slot);
         if opts.is_empty() {
             return false;
         }
-        if self.player(slot).human {
-            self.push_event(GameEvent::NeedsDecision(super::Decision::ChooseResearch { slot, options: opts }));
-            true
-        } else {
-            let a = crate::ai::tech_ai::choose(self, slot).or_else(|| opts.first().copied());
-            self.player_mut(slot).researching = a;
-            false
+        let count = self.player(slot).research_count as i32;
+        let all = self.setup.difficulty == rules::Difficulty::Chieftain;
+        let mut shown: Vec<AdvanceId> = Vec::new();
+        for a in opts {
+            if shown.len() <= 1 || (a as i32 - count) % 3 != 0 || all || a == rules::advance_ids::FUTURE_TECH {
+                shown.push(a);
+            }
         }
+        self.push_event(GameEvent::NeedsDecision(super::Decision::ChooseResearch { slot, options: shown }));
+        true
     }
 
-    /// Complete the current research (or the first researchable advance) for free.
+    /// Complete the current research (or the first researchable advance) for free; a computer
+    /// player draws one as at the end of its research (`choose_research`, used twice by
+    /// Darwin's Voyage).
     fn free_advance(&mut self, slot: Slot) -> Option<AdvanceId> {
         let a = match self.player(slot).researching {
             Some(a) => a,
-            None => {
-                let opts = self.researchable(slot);
-                if self.player(slot).human {
-                    *opts.first()?
-                } else {
-                    crate::ai::tech_ai::choose(self, slot).or_else(|| opts.first().copied())?
-                }
-            }
+            None if self.player(slot).human => *self.researchable(slot).first()?,
+            None => crate::ai::tech_ai::choose(self, slot)?,
         };
         self.grant_advance(slot, a, AdvanceSource::Discovered);
         self.player_mut(slot).researching = None;
@@ -201,6 +204,34 @@ impl Game {
 mod tests {
     use super::*;
     use crate::game::GameSetup;
+
+    #[test]
+    fn human_menu_hides_every_third_advance_above_chieftain() {
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        let me = g.human_slot;
+        g.player_mut(me).advances = 0;
+        g.player_mut(me).researching = None;
+        g.player_mut(me).research_count = 4;
+        g.setup.difficulty = rules::Difficulty::King;
+        let all = g.researchable(me);
+        g.take_events();
+        assert!(g.pick_research(me));
+        let shown = g.take_events().into_iter().find_map(|e| match e {
+            GameEvent::NeedsDecision(super::super::Decision::ChooseResearch { options, .. }) => Some(options),
+            _ => None,
+        });
+        let shown = shown.expect("menu");
+        // the first two always, then only those with (a - 4) % 3 != 0 (choose_research 0x0c19c)
+        let want: Vec<AdvanceId> = all.iter().enumerate().filter(|(i, a)| *i < 2 || (**a as i32 - 4) % 3 != 0).map(|(_, a)| *a).collect();
+        assert_eq!(shown, want);
+        assert!(shown.len() < all.len(), "{all:?}");
+        // Chieftain lists everything; computer players keep no goal
+        g.setup.difficulty = rules::Difficulty::Chieftain;
+        assert!(g.pick_research(me));
+        let ai = g.alive_slots().into_iter().find(|s| *s != me).unwrap();
+        assert!(!g.pick_research(ai));
+        assert_eq!(g.player(ai).researching, None);
+    }
 
     #[test]
     fn research_cost_positive_and_growing() {

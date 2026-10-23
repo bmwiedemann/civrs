@@ -942,62 +942,54 @@ pub fn play_units(g: &mut Game, slot: Slot, sink: &mut dyn FnMut(TurnStep)) {
     }
 }
 
-/// Barbarians: every unit heads for the nearest city or unit of any civilisation within 8
-/// tiles and attacks it; otherwise it wanders. Leaders stay with their band.
+/// Move the barbarians as CIV.EXE's `move_units` (0x403e) does for civ 0: units in index
+/// order, sentried and fortified ones skipped, each asked for orders by the barbarian routine
+/// (`Game::barbarian_command`, 0x18dc3) while it has moves, at most five times (0x4464).
 pub fn play_barbarians(g: &mut Game, sink: &mut dyn FnMut(TurnStep)) {
-    let ids = g.units_of(0);
+    use crate::game::barbarians::BarbarianCommand as Cmd;
+    let mut ids = g.units_of(0);
+    ids.sort_unstable();
     for id in ids {
-        let Some(u) = g.unit_opt(id).cloned() else { continue };
-        if u.moves_left == 0 || u.carried_by.is_some() {
-            continue;
-        }
-        if u.leader || u.info().att == 0 {
-            // follow the nearest barbarian warrior
-            let friend = g.all_units().filter(|o| o.owner == 0 && o.id != id && o.info().att > 0 && Map::dist(o.pos(), u.pos()) <= 6).min_by_key(|o| Map::dist(o.pos(), u.pos())).map(|o| o.pos());
-            if let Some(f) = friend {
-                if Map::dist(f, u.pos()) > 1 {
-                    move_toward(g, id, f, sink);
+        for _ in 0..5 {
+            let Some(u) = g.unit_opt(id) else { break };
+            if u.moves_left == 0 || matches!(u.order, UnitOrder::Sentry | UnitOrder::Fortified) {
+                break;
+            }
+            match g.barbarian_command(id) {
+                Cmd::Step(d) => {
+                    if g.unit_opt(id).is_some() {
+                        g.unit_mut(id).goto = None;
+                    }
+                    if step(g, id, d, sink).is_err() {
+                        break;
+                    }
                 }
-            }
-            continue;
-        }
-        let mut attacks = 0;
-        let mut acted = false;
-        while attacks < 3 {
-            let Some(cur) = g.unit_opt(id).cloned() else { break };
-            if cur.moves_left == 0 {
-                acted = true;
-                break;
-            }
-            let Some(t) = find_target(g, &cur, 8, 25) else { break };
-            acted = true;
-            if Map::dist(t, cur.pos()) == 1 {
-                let Some(d) = Dir8::from_delta(t.0 - cur.x, t.1 - cur.y) else { break };
-                match step(g, id, d, sink) {
-                    Ok(MoveOutcome::Attacked { .. }) => attacks += 1,
-                    _ => break,
+                Cmd::Goto => {
+                    let Some(d) = g.next_goto_step(id) else { break };
+                    if !matches!(step(g, id, d, sink), Ok(MoveOutcome::Moved) | Ok(MoveOutcome::EnteredHut)) {
+                        break;
+                    }
                 }
-            } else {
-                move_toward(g, id, t, sink);
-                break;
-            }
-        }
-        if acted {
-            continue;
-        }
-        // wander
-        let mut dirs = Dir8::ALL;
-        g.rng.shuffle(&mut dirs);
-        for d in dirs {
-            let Some(cur) = g.unit_opt(id) else { break };
-            let (dx, dy) = d.delta();
-            let (x, y) = (Map::wrap_x(cur.x + dx), cur.y + dy);
-            if !g.map.is_land(x, y) || g.city_at(x, y).is_some() {
-                continue;
-            }
-            if matches!(step(g, id, d, sink), Ok(MoveOutcome::Moved) | Ok(MoveOutcome::EnteredHut)) {
-                break;
+                Cmd::Skip => {
+                    g.unit_mut(id).moves_left = 0;
+                    break;
+                }
+                Cmd::Fortify => {
+                    let um = g.unit_mut(id);
+                    um.order = UnitOrder::Fortify;
+                    um.moves_left = 0;
+                    break;
+                }
+                // the passengers wake up; those after the ship in unit order move this turn
+                Cmd::Unload => {
+                    for c in g.cargo_of(id) {
+                        g.unit_mut(c).order = UnitOrder::None;
+                    }
+                    break;
+                }
+                Cmd::Disband => break,
             }
         }
     }
+    g.refresh_vision(0);
 }

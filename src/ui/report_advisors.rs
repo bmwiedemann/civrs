@@ -122,8 +122,9 @@ pub fn paint_intelligence(fb: &mut Surface, ctx: &UiContext) {
             );
             text(fb, ctx, 16, y + 8, &line, CYAN);
             let cap = p.capital.and_then(|c| g.city_opt(c)).map(|c| c.name.clone()).unwrap_or_else(|| "none".into());
-            let researching = p.researching.map(|a| rules::ADVANCES[a as usize].name).unwrap_or("nothing");
-            text(fb, ctx, 16, y + 16, &format!("Capital: {cap}. Researching {researching}."), CYAN);
+            // computer players keep no research goal (CIV.EXE choose_research 0x0bb4a)
+            let researching = p.researching.map(|a| format!(" Researching {}.", rules::ADVANCES[a as usize].name)).unwrap_or_default();
+            text(fb, ctx, 16, y + 16, &format!("Capital: {cap}.{researching}"), CYAN);
         } else {
             text(fb, ctx, 16, y + 8, "No embassy: no further information.", GREY);
         }
