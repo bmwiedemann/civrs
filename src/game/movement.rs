@@ -29,28 +29,26 @@ impl Game {
         tt.terrain.info().move_cost * 3
     }
 
-    /// Would moving the land unit from `from` to `to` violate zones of control? Any foreign
-    /// land unit next to both squares exerts it, treaty or not (CIV.EXE 0x7e6:0x174c
-    /// `enemy_adjacent` reads no diplomacy flag).
+    /// Would moving the land unit from `from` to `to` violate zones of control? As CIV.EXE's
+    /// move code has it (0x5ac7): only onto an empty square, never off a ship, and only when
+    /// both squares are `zoc_blocked` (0x9581): no city there and a unit of another civ on a
+    /// neighbouring square of the same kind (`enemy_adjacent` 0x95ac, land beside land),
+    /// treaty or not, barbarians too.
     pub fn zoc_blocks(&self, unit: &super::Unit, from: (i32, i32), to: (i32, i32)) -> bool {
         if !unit.is_land() || matches!(unit.kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN) {
             return false;
         }
-        // entering own city or tile with own unit is always allowed
-        if let Some(c) = self.city_at(to.0, to.1) {
-            if self.city(c).owner == unit.owner {
-                return false;
-            }
-        }
-        if self.all_units().any(|u| u.owner == unit.owner && u.id != unit.id && (u.x, u.y) == to && !u.is_air()) {
+        if self.map.tile(from.0, from.1).is_ocean() || self.all_units().any(|u| u.id != unit.id && (u.x, u.y) == to) {
             return false;
         }
-        let adj_enemy = |p: (i32, i32)| {
-            Map::neighbours8(p.0, p.1).any(|(nx, ny)| {
-                self.all_units().any(|u| u.x == nx && u.y == ny && u.is_land() && u.owner != unit.owner)
-            })
+        let blocked = |p: (i32, i32)| {
+            let land = self.map.is_land(p.0, p.1);
+            self.city_at(p.0, p.1).is_none()
+                && Map::neighbours8(p.0, p.1).any(|(nx, ny)| {
+                    self.map.is_land(nx, ny) == land && self.all_units().any(|u| u.x == nx && u.y == ny && u.owner != unit.owner)
+                })
         };
-        adj_enemy(from) && adj_enemy(to)
+        blocked(from) && blocked(to)
     }
 
     /// Try to move the unit one step. Handles combat, city capture, huts and boarding.
@@ -587,5 +585,57 @@ mod tests {
         assert!(at.contains(&(third, unit_ids::PHALANX)) && at.contains(&(third, unit_ids::DIPLOMAT)), "{at:?}");
         assert!(!at.iter().any(|(o, _)| *o == other));
         assert_eq!(g.player(third).gold, 50);
+    }
+}
+
+#[cfg(test)]
+mod zoc_tests {
+    use crate::game::map::Dir8;
+    use crate::game::{Game, GameSetup, MoveOutcome, RuleError};
+    use crate::rules::{unit_ids, Terrain};
+
+    /// A human Legion at (40,25) on open grassland, the units of everyone else removed.
+    fn open_field() -> (Game, crate::game::map::UnitId) {
+        let mut g = Game::new(GameSetup { seed: 1, ..Default::default() }, None);
+        for y in 20..31 {
+            for x in 35..46 {
+                let t = g.map.get_mut(x, y).unwrap();
+                t.terrain = Terrain::Grassland;
+                t.flags = 0;
+                t.city = None;
+            }
+        }
+        let ids: Vec<_> = g.all_units().map(|u| u.id).collect();
+        for id in ids {
+            g.remove_unit(id);
+        }
+        let id = g.add_unit(g.human_slot, unit_ids::LEGION, 40, 25);
+        g.unit_mut(id).moves_left = 3;
+        (g, id)
+    }
+
+    #[test]
+    fn zoc_stops_a_move_between_squares_next_to_a_foreign_unit() {
+        let (mut g, id) = open_field();
+        let other = if g.human_slot == 2 { 3 } else { 2 };
+        g.add_unit(other, unit_ids::MILITIA, 41, 26);
+        assert_eq!(g.try_move(id, Dir8::E), Err(RuleError::Zoc));
+        // away from the foreign unit is fine
+        let mut away = g.clone();
+        assert_eq!(away.try_move(id, Dir8::N), Ok(MoveOutcome::Moved));
+        // onto one of our own units, or out of a city, is fine too
+        let mut stacked = g.clone();
+        stacked.add_unit(stacked.human_slot, unit_ids::SETTLERS, 41, 25);
+        assert_eq!(stacked.try_move(id, Dir8::E), Ok(MoveOutcome::Moved));
+        let mut city = g.clone();
+        city.add_city(city.human_slot, "Rome".into(), 40, 25);
+        assert_eq!(city.try_move(id, Dir8::E), Ok(MoveOutcome::Moved));
+        // a foreign ship off the coast exerts none on land
+        let mut coast = g.clone();
+        let militia = coast.all_units().find(|u| u.owner == other).unwrap().id;
+        coast.remove_unit(militia);
+        coast.map.get_mut(41, 26).unwrap().terrain = Terrain::Ocean;
+        coast.add_unit(other, unit_ids::TRIREME, 41, 26);
+        assert_eq!(coast.try_move(id, Dir8::E), Ok(MoveOutcome::Moved));
     }
 }
