@@ -25,8 +25,10 @@ pub mod sp {
     pub const CURSOR_GO: (i32, i32) = (2, 2);
     pub const POLLUTION: (i32, i32) = (3, 2);
     pub const IRRIGATION: (i32, i32) = (4, 2);
-    pub const HUT: (i32, i32) = (5, 2);
-    pub const MINE: (i32, i32) = (7, 2);
+    /// Map icons 5 and 0x1f of CIV.EXE's icon table (ds:0xd4ce, filled at o 0x59d7): icons
+    /// 0..6 are cells (i, 2), icons 0x10.. row 7. Cell (7, 2) is the TORCH cursor.
+    pub const MINE: (i32, i32) = (5, 2);
+    pub const HUT: (i32, i32) = (15, 7);
     /// 15x15 overlays drawn at (+1,+1): city buildings (colour 5 = owner's dark shade), walls
     pub const CITY_TEXTURE: (i32, i32) = (193, 113);
     pub const CITY_WALLS: (i32, i32) = (209, 113);
