@@ -23,11 +23,22 @@ enum Tab {
 
 enum Pending {
     None,
-    Change(Vec<Production>),
+    /// The production menu's entries (None = "more...") and the page "more..." opens.
+    Change(Vec<Option<Production>>, ChangePage),
     Buy,
     Sell(u8),
     Rename,
     Ignore,
+}
+
+/// Pages of the production menu (CIV.EXE 0xa9fd): everything while it fits in 30 lines
+/// (the title included), else the units, then the improvements and wonders, each ending
+/// in "more..." that opens the other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChangePage {
+    All,
+    Units,
+    Buildings,
 }
 
 pub struct CityScreen {
@@ -170,16 +181,42 @@ impl CityScreen {
     // ---- actions ---------------------------------------------------------------------------
 
     fn change(&mut self, ctx: &mut UiContext) -> Transition {
+        self.change_page(ctx, ChangePage::All)
+    }
+
+    fn change_page(&mut self, ctx: &mut UiContext, page: ChangePage) -> Transition {
         let g = ctx.game();
         let c = g.city(self.city);
         let y = g.city_yield(self.city);
         let surplus = y.shield_surplus().max(1);
-        let list = g.available_production(self.city);
+        let all = g.available_production(self.city);
+        let page = match page {
+            ChangePage::All if 1 + all.len() > 30 => ChangePage::Units,
+            p => p,
+        };
+        let mut list: Vec<Option<Production>> = all
+            .iter()
+            .filter(|p| match page {
+                ChangePage::All => true,
+                ChangePage::Units => matches!(p, Production::Unit(_)),
+                ChangePage::Buildings => !matches!(p, Production::Unit(_)),
+            })
+            .map(|p| Some(*p))
+            .collect();
+        let next = match page {
+            ChangePage::All => ChangePage::All,
+            ChangePage::Units => ChangePage::Buildings,
+            ChangePage::Buildings => ChangePage::Units,
+        };
+        if page != ChangePage::All {
+            list.push(None);
+        }
         let mut sel = 0;
         let items: Vec<String> = list
             .iter()
             .enumerate()
             .map(|(i, p)| {
+                let Some(p) = p else { return "more...".to_string() };
                 if *p == c.production {
                     sel = i;
                 }
@@ -197,7 +234,7 @@ impl CityScreen {
         // advisors: the best defender and the first useful improvement
         let defender = g.best_defender_type(self.city);
         let military = produce_text(ctx, defender.name()).unwrap_or_else(|| format!("WE SHOULD BUILD {}.", defender.name().to_ascii_uppercase()));
-        let domestic = list
+        let domestic = all
             .iter()
             .find_map(|p| match p {
                 Production::Improvement(i) if *i != improvement_ids::PALACE => produce_text(ctx, p.name()),
@@ -206,8 +243,11 @@ impl CityScreen {
             .unwrap_or_else(|| "OUR CITIES ARE WELL PROVIDED FOR.".to_string());
         self.advisors = Some((military, domestic));
         let title = format!("What shall we build in {}?", c.name);
-        self.pending = Pending::Change(list);
-        Transition::Push(Box::new(MenuDialog::new(vec![title], items).with_pos(81, 9).with_selection(sel).with_title_colour(crate::ui::theme::WHITE)))
+        // the small font (CIV.EXE's font 2) from 21 lines on and on either page (0xb9fe)
+        let small = 1 + all.len() > 20 || page != ChangePage::All;
+        self.pending = Pending::Change(list, next);
+        let menu = MenuDialog::new(vec![title], items).with_pos(81, 9).with_selection(sel).with_title_colour(crate::ui::theme::WHITE);
+        Transition::Push(Box::new(if small { menu.with_font(1) } else { menu }))
     }
 
     fn buy(&mut self, ctx: &mut UiContext) -> Transition {
@@ -750,8 +790,9 @@ impl Screen for CityScreen {
             return Transition::Pop(DialogResult::Done);
         }
         let r = match (pending, result) {
-            (Pending::Change(list), DialogResult::Choice(i)) => match list.get(i) {
-                Some(p) => ctx.game_mut().set_production(self.city, *p),
+            (Pending::Change(list, next), DialogResult::Choice(i)) => match list.get(i) {
+                Some(Some(p)) => ctx.game_mut().set_production(self.city, *p),
+                Some(None) => return self.change_page(ctx, next),
                 None => Ok(()),
             },
             (Pending::Buy, DialogResult::Yes) => ctx.game_mut().buy(self.city),

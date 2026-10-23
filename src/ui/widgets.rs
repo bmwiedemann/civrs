@@ -126,6 +126,9 @@ pub struct MenuDialog {
     pub gaps: Vec<usize>,
     pub top_pad: i32,
     pub title_colour: Option<u8>,
+    /// Font of title and items (`FONT` unless `with_font`), and its row pitch.
+    pub font: usize,
+    line_h: i32,
     hover: Option<usize>,
 }
 
@@ -147,12 +150,20 @@ impl MenuDialog {
             gaps: Vec::new(),
             top_pad: 4,
             title_colour: None,
+            font: FONT,
+            line_h: LINE_H,
             hover: None,
         }
     }
 
     pub fn with_title_colour(mut self, c: u8) -> Self {
         self.title_colour = Some(c);
+        self
+    }
+
+    /// Use another font; rows are its line height apart.
+    pub fn with_font(mut self, f: usize) -> Self {
+        self.font = f;
         self
     }
 
@@ -194,11 +205,11 @@ impl MenuDialog {
 
     fn row_y(&self, i: usize) -> i32 {
         let gaps_before = self.gaps.iter().filter(|g| **g <= i).count() as i32;
-        self.items_top() + (i as i32 + gaps_before) * LINE_H
+        self.items_top() + (i as i32 + gaps_before) * self.line_h
     }
 
     fn items_top(&self) -> i32 {
-        self.rect.y + self.top_pad + self.title.len() as i32 * LINE_H
+        self.rect.y + self.top_pad + self.title.len() as i32 * self.line_h
     }
 
     pub fn with_top_pad(mut self, p: i32) -> Self {
@@ -207,18 +218,22 @@ impl MenuDialog {
     }
 
     fn layout(&mut self, ctx: &UiContext) {
+        if self.font != FONT {
+            self.line_h = ctx.fonts.get(self.font).line_height();
+        }
         let mut w = self.min_width;
         for t in self.title.iter().chain(self.items.iter()) {
-            w = w.max(text_width(&ctx.fonts, FONT, t) + 20);
+            w = w.max(text_width(&ctx.fonts, self.font, t) + 20);
         }
         let rows = self.items.len() as i32 + self.gaps.len() as i32 + self.title.len() as i32;
-        let h = (self.top_pad + 4 + rows * LINE_H).max(self.min_height);
+        let h = (self.top_pad + 4 + rows * self.line_h).max(self.min_height);
         let (x, y) = match self.pos {
             Some(p) => p,
             None => (80 + (240 - w) / 2, 8 + (192 - h) / 2),
         };
-        let x = x.clamp(0, 320 - w);
-        let y = y.clamp(0, 200 - h);
+        // a menu larger than the screen is kept at the top left rather than failing
+        let x = x.clamp(0, (320 - w).max(0));
+        let y = y.clamp(0, (200 - h).max(0));
         self.rect = Rect::new(x, y, w, h);
     }
 
@@ -228,7 +243,7 @@ impl MenuDialog {
         }
         (0..self.items.len()).find(|&i| {
             let y = self.row_y(i);
-            my >= y - 1 && my < y + LINE_H - 1
+            my >= y - 1 && my < y + self.line_h - 1
         })
     }
 
@@ -317,14 +332,14 @@ impl Screen for MenuDialog {
         let mut y = self.rect.y + self.top_pad;
         let title_colour = self.title_colour.unwrap_or(cols.title);
         for t in &self.title {
-            draw_text(fb, &ctx.fonts, &TextStyle::new(FONT, title_colour), self.rect.x + 8, y, t);
-            y += LINE_H;
+            draw_text(fb, &ctx.fonts, &TextStyle::new(self.font, title_colour), self.rect.x + 8, y, t);
+            y += self.line_h;
         }
         for (i, it) in self.items.iter().enumerate() {
             let y = self.row_y(i);
             let selected = i == self.sel && !self.disabled[i];
             if selected {
-                fb.fill_rect(Rect::new(self.rect.x + 2, y - 1, self.rect.w - 4, LINE_H), cols.hilite_bar);
+                fb.fill_rect(Rect::new(self.rect.x + 2, y - 1, self.rect.w - 4, self.line_h), cols.hilite_bar);
             }
             let colour = if self.disabled[i] {
                 cols.disabled
@@ -333,7 +348,7 @@ impl Screen for MenuDialog {
             } else {
                 cols.text
             };
-            draw_text(fb, &ctx.fonts, &TextStyle::new(FONT, colour), self.rect.x + 10, y, it);
+            draw_text(fb, &ctx.fonts, &TextStyle::new(self.font, colour), self.rect.x + 10, y, it);
         }
     }
 }
