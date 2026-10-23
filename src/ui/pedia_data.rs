@@ -100,7 +100,7 @@ impl Entry {
     /// History text (paragraphs) of the entry.
     pub fn blurb(self, ctx: &UiContext) -> Vec<String> {
         match self.blurb_key() {
-            Some((file, key)) => ctx.texts.blurb[file].section(&key).map(paragraphs).unwrap_or_default(),
+            Some((file, key)) => correct(self, ctx.texts.blurb[file].section(&key).map(paragraphs).unwrap_or_default()),
             None => Vec::new(),
         }
     }
@@ -113,9 +113,29 @@ impl Entry {
         };
         match self {
             Entry::Wonder(w) => mark_missing_obsolescence(w, text),
-            _ => text,
+            _ => correct(self, text),
         }
     }
+}
+
+/// Civilopedia sentences that contradict CIV.EXE's rules, with the wording that matches them:
+/// (concept key, original, replacement).
+const CORRECTIONS: [(&str, &str, &str); 2] = [
+    // a Democracy falls only when a city is still in disorder on the next turn (0x127ba)
+    (
+        "DEMOCRACY",
+        "slips into civil disorder, the government is immediately overthrown",
+        "stays in civil disorder for two turns in a row, the government is overthrown",
+    ),
+    ("DEMOCRACY", "Civil disorder leads to Anarchy.", "Two turns of civil disorder lead to Anarchy."),
+];
+
+fn correct(entry: Entry, text: Vec<String>) -> Vec<String> {
+    let Entry::Concept(c) = entry else { return text };
+    let key = CONCEPTS[c].key;
+    text.into_iter()
+        .map(|p| CORRECTIONS.iter().filter(|(k, _, _)| *k == key).fold(p, |p, (_, old, new)| p.replace(old, new)))
+        .collect()
 }
 
 /// A wonder whose page says it works "until the development of" an advance, while the rules
@@ -363,5 +383,17 @@ mod tests {
         );
         // wonders that do become obsolete keep their text
         assert_eq!(mark_missing_obsolescence(won::ORACLE, text.clone()), text);
+    }
+
+    #[test]
+    fn democracy_pages_say_two_turns_of_disorder() {
+        let democracy = Entry::Concept(CONCEPTS.iter().position(|c| c.key == "DEMOCRACY").unwrap());
+        let page1 = vec!["Also, if any city in a democracy slips into civil disorder, the government is immediately overthrown and becomes an anarchy for several turns.".to_string()];
+        assert_eq!(
+            correct(democracy, page1),
+            vec!["Also, if any city in a democracy stays in civil disorder for two turns in a row, the government is overthrown and becomes an anarchy for several turns.".to_string()]
+        );
+        let page2 = vec!["No corruption. Civil disorder leads to Anarchy.".to_string()];
+        assert_eq!(correct(democracy, page2), vec!["No corruption. Two turns of civil disorder lead to Anarchy.".to_string()]);
     }
 }
