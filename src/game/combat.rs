@@ -50,6 +50,60 @@ impl Game {
         d
     }
 
+    /// The odds CIV.EXE's `combat` (0x19724) returns with `resolve` = 0, as the computer's
+    /// move scoring asks for them (0x1826e): attack * 8 / (defence + 1) with the routine's
+    /// strengths, x8 fixed point. Attack: attack * 8, for a barbarian attacker x (difficulty
+    /// + 1) / 4 against the human and / 2 against others, none against a civilization with
+    /// one city and halved against a Palace; +50% veteran; x moves / 3 below one full move.
+    /// Defence: defence x terrain (in halves) x 8 in a fortress (tile bit 0x20), x 6 fortified,
+    /// else x 4; aircraft and ships defence * 8; City Walls defence x terrain x 12 unless the
+    /// attacker has attack 12 or the defender flies; +50% veteran. The difficulty factors of the
+    /// resolution (0x199c2..) are not part of the odds.
+    pub fn combat_odds(&self, attacker: UnitId, defender: UnitId) -> i32 {
+        let a = self.unit(attacker);
+        let d = self.unit(defender);
+        let t = self.map.tile(d.x, d.y);
+        let terrain = t.terrain.info().defense as i32;
+        let def = d.info().def as i32;
+        let mut att = a.info().att as i32 * 8;
+        let mut dv = if t.has(tile_flags::FORTRESS) {
+            def * terrain * 8
+        } else if d.order == UnitOrder::Fortified {
+            def * terrain * 12 / 2
+        } else {
+            def * terrain * 4
+        };
+        if a.owner == 0 {
+            att = if d.owner == self.human_slot { att * (self.setup.difficulty as i32 + 1) / 4 } else { att / 2 };
+        }
+        if !d.is_land() {
+            dv = def * 8;
+        }
+        if let Some(c) = t.city.and_then(|c| self.city_opt(c)) {
+            if self.city_has_walls(c) && a.info().att != 12 && !d.is_air() {
+                dv = terrain * def * 12;
+            }
+            if a.owner == 0 {
+                if self.cities_of(d.owner).len() == 1 {
+                    att = 0;
+                }
+                if c.has_improvement(imp::PALACE) {
+                    att /= 2;
+                }
+            }
+        }
+        if a.veteran {
+            att += att / 2;
+        }
+        if d.veteran {
+            dv += dv / 2;
+        }
+        if a.moves_left < 3 {
+            att = att * a.moves_left as i32 / 3;
+        }
+        att * 8 / (dv + 1)
+    }
+
     /// City Walls (the Great Wall is a diplomatic wonder in CIV.EXE, not walls).
     pub fn city_has_walls(&self, city: &super::City) -> bool {
         city.has_improvement(imp::CITY_WALLS)

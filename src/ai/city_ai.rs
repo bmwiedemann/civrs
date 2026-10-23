@@ -1,7 +1,6 @@
 //! City management for computer players: production choice, purchases and tax rates. Workers
 //! and entertainers are the city turn's business (`Game::assign_workers`), as in CIV.EXE.
 
-use super::naval_ai::{self, Plan};
 use crate::game::{CityId, Game, Map, Production, Slot};
 use crate::rules::{self, improvement_ids as imp, unit_ids, Govt, Terrain};
 
@@ -26,7 +25,7 @@ pub fn rechoose(g: &mut Game, slot: Slot, k: Option<usize>) {
 }
 
 /// Per-turn management of one AI city.
-pub fn manage(g: &mut Game, c: CityId, plan: &Plan) {
+pub fn manage(g: &mut Game, c: CityId) {
     if g.city_opt(c).is_none() {
         return;
     }
@@ -35,17 +34,6 @@ pub fn manage(g: &mut Game, c: CityId, plan: &Plan) {
     if g.production_invalid(c) {
         let p = choose_production(g, c);
         g.city_mut(c).production = p;
-    }
-    // civrs's own overseas planner (`naval_ai`, not CIV.EXE's) pays for the expedition's ship
-    // at the BUY price; CIV.EXE's purchases are `city_turn_purchase`
-    let slot = g.city(c).owner;
-    let gold = g.player(slot).gold;
-    let cost = g.buy_cost(c);
-    if cost > 0 && !g.city(c).bought && !g.city(c).disorder {
-        let prod = g.city(c).production;
-        if plan.wants_transport && matches!(prod, Production::Unit(k) if naval_ai::is_transport_kind(k)) && gold >= cost + 50 {
-            let _ = g.buy(c);
-        }
     }
 }
 

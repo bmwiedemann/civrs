@@ -183,6 +183,19 @@ impl Game {
     /// Unverified: worked squares (which the city routine overwrites with their owner, 0x13233)
     /// and terrain changed since the world was made are not modelled.
     pub fn hut_site_value(&self, x: i32, y: i32) -> i32 {
+        let mut value = self.site_value_pristine(x, y);
+        let x = Map::wrap_x(x);
+        let claimed = self.all_cities().any(|c| CLAIM.iter().any(|(dx, dy)| (Map::wrap_x(c.x + dx), c.y + dy) == (x, y)));
+        if claimed && value >= 8 {
+            value = 8;
+        }
+        value
+    }
+
+    /// The site value as `compute_site_values` (o 0x09c5f) wrote it, before any city claimed
+    /// the square: the copy at page 2 (x+80, y+50), which nothing changes later (read by the
+    /// computer's Settlers near the human's border, 0x16c24).
+    pub fn site_value_pristine(&self, x: i32, y: i32) -> i32 {
         let x = Map::wrap_x(x);
         let centre = self.map.terrain(x, y);
         if !(2..78).contains(&x) || !(2..48).contains(&y) || !matches!(centre, Terrain::Plains | Terrain::Grassland | Terrain::River) {
@@ -207,12 +220,21 @@ impl Game {
         if centre != Terrain::Plains && !shield(centre, x, y) {
             total -= 16;
         }
-        let mut value = ((total - 120) / 8).clamp(1, 15) / 2 + 8;
-        let claimed = self.all_cities().any(|c| CLAIM.iter().any(|(dx, dy)| (Map::wrap_x(c.x + dx), c.y + dy) == (x, y)));
-        if claimed && value >= 8 {
-            value = 8;
+        ((total - 120) / 8).clamp(1, 15) / 2 + 8
+    }
+
+    /// The square's byte of map layer (x+80, y) as the computer's units read it (0x16ac5): the
+    /// owner of the city that works the square (written by the city routine, 0x13233; civrs
+    /// takes `territory_owner`), else the site value of `hut_site_value`. Values of 8 and more
+    /// are city sites, lower ones owners.
+    pub fn site_layer(&self, x: i32, y: i32) -> i32 {
+        if !Map::in_bounds(x, y) {
+            return 0;
         }
-        value
+        match self.territory_owner(Map::wrap_x(x), y) {
+            Some(o) => o as i32,
+            None => self.hut_site_value(x, y),
+        }
     }
 
     /// Unit `id` has just entered a hut tile (`hut_outcome` 0x0978d): barbarians and air
@@ -522,12 +544,11 @@ impl Game {
                 sign = (-2, -2);
             }
             if sign.0 != -2 {
-                // goto the city for the pathfinder's first step (0x1db0:0x4), kept as the heading
-                if let Some(path) = crate::ai::path::astar(self, &u, city.pos()) {
-                    if let Some(d) = path.get(1).and_then(|n| Dir8::from_delta(n.0 - u.x, n.1 - u.y)) {
-                        self.barbarian_memory.heading.insert(id, d as u8 + 1);
-                    }
-                }
+                // goto the city for the pathfinder's step (0x1db0:0x4, with its side effects),
+                // kept as the heading (0x19261; -1 becomes 0xff, none)
+                self.unit_mut(id).goto = Some(city.pos());
+                let d = self.goto_direction(id);
+                self.set_heading(id, d as u8);
             }
         }
         self.unit_mut(id).goto = None;

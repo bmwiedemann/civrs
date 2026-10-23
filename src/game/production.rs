@@ -34,7 +34,7 @@ pub fn continent_index(cont: u8) -> usize {
 }
 
 /// The census 0x1579a takes at the start of each civilization's turn, for every civilization.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Census {
     /// ds:0x6cac: summed defence of the civ's units (Nuclear excluded) standing on land of
     /// the continent (0x158b1).

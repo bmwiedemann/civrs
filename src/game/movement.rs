@@ -41,14 +41,7 @@ impl Game {
         if self.map.tile(from.0, from.1).is_ocean() || self.all_units().any(|u| u.id != unit.id && (u.x, u.y) == to) {
             return false;
         }
-        let blocked = |p: (i32, i32)| {
-            let land = self.map.is_land(p.0, p.1);
-            self.city_at(p.0, p.1).is_none()
-                && Map::neighbours8(p.0, p.1).any(|(nx, ny)| {
-                    self.map.is_land(nx, ny) == land && self.all_units().any(|u| u.x == nx && u.y == ny && u.owner != unit.owner)
-                })
-        };
-        blocked(from) && blocked(to)
+        self.zoc_blocked(unit.owner, from.0, from.1) && self.zoc_blocked(unit.owner, to.0, to.1)
     }
 
     /// Try to move the unit one step. Handles combat, city capture, huts and boarding.
@@ -242,18 +235,25 @@ impl Game {
         }
         let had_hut = target.has(tile_flags::HUT);
         // a ship leaving a city takes along the sentried units of its kind there, land units
-        // onto transports and aircraft onto a Carrier, up to its capacity (CIV.EXE 0x6932)
+        // onto transports and aircraft onto a Carrier, up to its capacity (CIV.EXE 0x6932); a
+        // computer's ship takes every unit that is not fortified or fortifying (0x693f), and
+        // they travel sentried (0x69e5). Deviation: civrs leaves units at work behind.
         if u.is_sea() && u.info().capacity > 0 && self.map.tile(u.x, u.y).is_land() {
             let air = u.kind == unit_ids::CARRIER;
+            let computer = !self.is_human(slot);
             let waiting: Vec<UnitId> = self
                 .all_units()
-                .filter(|o| o.owner == slot && o.id != id && (o.x, o.y) == (u.x, u.y) && o.carried_by.is_none() && o.order == UnitOrder::Sentry)
+                .filter(|o| o.owner == slot && o.id != id && (o.x, o.y) == (u.x, u.y) && o.carried_by.is_none())
+                .filter(|o| o.order == UnitOrder::Sentry || (computer && !matches!(o.order, UnitOrder::Fortify | UnitOrder::Fortified) && o.order_turns == 0))
                 .filter(|o| if air { o.is_air() } else { o.is_land() })
                 .map(|o| o.id)
                 .collect();
             let room = (u.info().capacity as usize).saturating_sub(self.cargo_count(id));
             for o in waiting.into_iter().take(room) {
-                self.unit_mut(o).carried_by = Some(id);
+                let ou = self.unit_mut(o);
+                ou.carried_by = Some(id);
+                ou.order = UnitOrder::Sentry;
+                self.ai_memory.heading.remove(&o);
             }
         }
         self.place_unit(id, tx, ty, cost);

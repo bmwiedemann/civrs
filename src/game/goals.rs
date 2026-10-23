@@ -95,6 +95,9 @@ pub struct AiMemory {
     pub moving: Option<Slot>,
     pub goto_cache: GotoCache,
     pub links: Option<BlockLinks>,
+    /// The census of the last AI turn (the tables ds:0x6cac, 0x807a, 0x6b96, ...), read by the
+    /// unit routine while the civilization moves.
+    pub census: super::production::Census,
 }
 
 impl Default for AiMemory {
@@ -109,6 +112,7 @@ impl Default for AiMemory {
             moving: None,
             goto_cache: GotoCache::default(),
             links: None,
+            census: Default::default(),
         }
     }
 }
