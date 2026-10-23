@@ -355,8 +355,9 @@ pub fn site_score(map: &Map, x: i32, y: i32) -> i32 {
         let info = nt.terrain.info();
         let (f, s, tr) = match (&info.special, nt.special) {
             (Some(sp), true) => (sp.food as i32, sp.shields as i32, sp.trade as i32),
-            _ => (info.food as i32, info.shields as i32 + if nt.shield && nt.terrain == Terrain::Grassland { 1 } else { 0 }, info.trade as i32),
+            _ => (info.food as i32, info.shields as i32, info.trade as i32),
         };
+        let s = if matches!(nt.terrain, Terrain::Grassland | Terrain::River) { nt.shield as i32 } else { s };
         let w = if i == 0 { 3 } else if i < 9 { 2 } else { 1 };
         score += w * (f * 3 + s * 2 + tr);
         if nt.terrain == Terrain::River {

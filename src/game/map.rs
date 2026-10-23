@@ -285,9 +285,10 @@ impl Map {
         ((x % 4) * 4 + (y % 4)) as u32 == ((x / 4) as u32 * 13 + (y / 4) as u32 * 11 + seed) % 16
     }
 
-    /// Grassland shield pattern.
+    /// Grassland and River squares that give a shield (CIV.EXE 0x134b0): bit 1 of the low
+    /// byte of 7x + 11y is clear.
     pub fn shield_at(x: i32, y: i32) -> bool {
-        (x * 3 + y * 5 + (x / 4) + (y / 4)).rem_euclid(4) < 2
+        (7 * x + 11 * y) & 2 == 0
     }
 
     pub fn count_land(&self) -> usize {

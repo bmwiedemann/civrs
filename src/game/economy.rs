@@ -83,8 +83,9 @@ impl Game {
             (Some(sp), true) => (sp.food as i32, sp.shields as i32, sp.trade as i32),
             _ => (info.food as i32, info.shields as i32, info.trade as i32),
         };
-        if t.terrain == Terrain::Grassland && t.shield {
-            s += 1;
+        // Grassland and River give their shield only on the squares of the pattern
+        if matches!(t.terrain, Terrain::Grassland | Terrain::River) {
+            s = t.shield as i32;
         }
         let is_centre = city.is_some() && t.city == city;
         let govt = self.player(slot).govt;

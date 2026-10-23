@@ -135,6 +135,10 @@ pub fn draw_terrain(fb: &mut Surface, ctx: &UiContext, game: &Game, x: i32, y: i
     if t.special {
         blit_sprite(fb, sp, sp::special(t.terrain), px, py);
     }
+    // the shield of a Grassland square (CIV.EXE 0x1afac): SP257 icon 15 at (+4, +4)
+    if t.terrain == Terrain::Grassland && t.shield {
+        fb.blit_part(sp, Rect::new(153, 41, 7, 7), px + 4, py + 4, Some(0));
+    }
     if t.has(tile_flags::IRRIGATION) {
         blit_sprite(fb, sp, cell(sp::IRRIGATION.0, sp::IRRIGATION.1), px, py);
     }
