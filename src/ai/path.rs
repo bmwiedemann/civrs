@@ -70,14 +70,18 @@ pub fn astar_limited(g: &Game, u: &Unit, goal: (i32, i32), limit: usize) -> Opti
     }
     let grid = build_grid(g, u);
     let n = MAP_W * MAP_H;
-    let h = |p: (i32, i32)| Map::dist(p, goal);
+    // step costs in ninths of a move: a railroad 1, a road 3, open terrain 9 and up; the
+    // estimate counts the cheapest step a square can cost the unit, so that it never
+    // overestimates and roads and railroads are followed when they are faster
+    let min_step = if u.is_land() { 1 } else { 9 };
+    let h = |p: (i32, i32)| Map::dist(p, goal) * min_step;
     let mut open: BinaryHeap<Reverse<(i32, i32, usize)>> = BinaryHeap::new();
     let mut best: Vec<i32> = vec![i32::MAX; n];
     let mut came: Vec<u16> = vec![u16::MAX; n];
     let si = Map::idx(start.0, start.1);
     let gi = Map::idx(goal.0, goal.1);
     best[si] = 0;
-    open.push(Reverse((h(start) * 3, 0, si)));
+    open.push(Reverse((h(start), 0, si)));
     let mut expanded = 0;
     while let Some(Reverse((_, cost, cur))) = open.pop() {
         if cur == gi {
@@ -108,12 +112,15 @@ pub fn astar_limited(g: &Game, u: &Unit, goal: (i32, i32), limit: usize) -> Opti
             if !is_goal && grid.foreign[ni] {
                 continue;
             }
-            let step = g.move_cost(u, cp, (nx, ny)).max(1) as i32;
+            let step = match g.move_cost(u, cp, (nx, ny)) {
+                0 => 1,
+                c => 3 * c as i32,
+            };
             let nc = cost + step;
             if nc < best[ni] {
                 best[ni] = nc;
                 came[ni] = cur as u16;
-                open.push(Reverse((nc + h((nx, ny)) * 3, nc, ni)));
+                open.push(Reverse((nc + h((nx, ny)), nc, ni)));
             }
         }
     }
@@ -155,5 +162,33 @@ mod tests {
         // a ship goes around the land
         let s = g.add_unit(1, unit_ids::SAIL, 10, 1);
         assert!(astar(&g, g.unit(s), (11, 30)).is_some());
+    }
+
+    #[test]
+    fn astar_follows_a_road_detour() {
+        let mut g = Game::new(GameSetup { seed: 3, num_civs: 7, ..Default::default() }, None);
+        for y in 2..20 {
+            for x in 2..30 {
+                let t = g.map.get_mut(x, y).unwrap();
+                t.terrain = Terrain::Grassland;
+                t.flags = 0;
+            }
+        }
+        let ids: Vec<_> = g.all_units().map(|u| u.id).collect();
+        for id in ids {
+            g.remove_unit(id);
+        }
+        // a road two rows below, behind an ocean strip that leaves one way onto it, back at
+        // (9,11): 20 moves straight, about 10 over the road; an estimate that counts a full
+        // move per square never looks at the step back
+        for x in 10..30 {
+            g.map.get_mut(x, 11).unwrap().terrain = Terrain::Ocean;
+        }
+        for x in 8..=30 {
+            g.map.get_mut(x, 12).unwrap().flags |= crate::game::tile_flags::ROAD;
+        }
+        let u = g.add_unit(1, unit_ids::LEGION, 10, 10);
+        let path = astar(&g, g.unit(u), (30, 10)).expect("path");
+        assert!(path.contains(&(20, 12)), "takes the road: {path:?}");
     }
 }
