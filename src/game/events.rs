@@ -140,6 +140,12 @@ pub enum GameEvent {
     /// The capital fell: "<Adj> spaceship returns to Earth." (launched) / "construction
     /// cancelled." (CIV.EXE 0x14364). Replaces `SpaceshipLost`.
     SpaceshipCancelled { slot: Slot, launched: bool },
+    /// A computer Diplomat of `by` stole `adv` in `city` of `from` (CIV.EXE o 0x1d7c6; the
+    /// human is told whoever was involved). New variants go last: saves keep loading.
+    DiplomatStole { by: Slot, from: Slot, adv: AdvanceId, city: CityId },
+    /// A computer Diplomat of `by` sabotaged `city`: `improvement` destroyed, or else the
+    /// stored shields of `production` (its name) lost (CIV.EXE o 0x1d8d7 / 0x1d91e).
+    CitySabotaged { city: CityId, by: Slot, improvement: Option<u8>, production: String },
 }
 
 /// A choice the engine needs from the human player before continuing.

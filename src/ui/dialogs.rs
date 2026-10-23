@@ -292,6 +292,18 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             Some(Box::new(Sequence { first: Some(anim), then: Some(eventpics::travelers_report(text)) }))
         }
         GameEvent::GameEnded(reason) => Some(crate::ui::endgame::end_screen(ctx, *reason)),
+        // a computer Diplomat's deeds are announced to the human whoever was involved
+        // (CIV.EXE o 0x1d817 / 0x1d9a3, popups at (80,80))
+        GameEvent::DiplomatStole { by, adv, .. } => {
+            Some(Box::new(MessageBox::new(vec![format!("{} steal", g.player(*by).plural()), format!("{}.", rules::ADVANCES[*adv as usize].name)]).with_pos(80, 80)))
+        }
+        GameEvent::CitySabotaged { city, improvement, production, .. } => {
+            let first = match improvement {
+                Some(i) => format!("{} destroyed", rules::IMPROVEMENTS[*i as usize].name),
+                None => format!("{production} production sabotaged"),
+            };
+            Some(Box::new(MessageBox::new(vec![first, format!("in {}.", city_name(*city))]).with_pos(80, 80)))
+        }
         _ => None,
     }
 }

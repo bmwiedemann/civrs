@@ -720,6 +720,20 @@ impl Game {
                     self.push_event(GameEvent::ProductionBlocked { city: c, item: prod });
                     return;
                 }
+                // a computer Diplomat starts out next to a human city, heading for it; with no
+                // such city the shields are given back and nothing is built (CIV.EXE 0xded6,
+                // 0xe124..0xe379)
+                if k == unit_ids::DIPLOMAT && !human {
+                    let Some(((dx, dy), target)) = self.ai_diplomat_site(owner) else { return };
+                    let id = self.add_unit(owner, k, dx, dy);
+                    self.unit_mut(id).home = Some(c);
+                    let (tx, ty) = self.city(target).pos();
+                    self.set_goto(id, tx, ty);
+                    self.city_mut(c).shields -= prod.cost();
+                    self.refresh_vision(owner);
+                    self.push_event(GameEvent::ItemBuilt { city: c, item: prod });
+                    return;
+                }
                 let id = self.add_unit(owner, k, x, y);
                 self.unit_mut(id).home = Some(c);
                 // "New units are Veterans when produced at a city containing a BARRACKS": every
@@ -1175,36 +1189,10 @@ impl Game {
                 if self.relation(us, them) == Relation::Peace {
                     self.declare_war(us, them);
                 }
-                // 72 tries from a random advance on: the first one the owner knows and we lack
-                let start = self.rng.below(rules::advances::ADVANCE_COUNT as u32) as usize;
-                let found = (0..rules::advances::ADVANCE_COUNT)
-                    .map(|i| ((start + i) % rules::advances::ADVANCE_COUNT) as AdvanceId)
-                    .find(|a| us != 0 && self.player(them).knows(*a) && !self.player(us).knows(*a));
-                let Some(a) = found else { return Ok(DiplomatResult::NoTechnology) };
-                self.grant_advance(us, a, super::science::AdvanceSource::From(them));
-                self.player_mut(us).stats.techs_stolen += 1;
-                self.city_mut(city).tech_stolen = true;
+                let Some(a) = self.steal_advance(id, city) else { return Ok(DiplomatResult::NoTechnology) };
                 DiplomatResult::Stole(a)
             }
-            DiplomatAction::Sabotage => {
-                // half of the time (or when nothing is stored) a random improvement other than
-                // the Palace, found within 99 draws; otherwise the stored shields
-                let mut destroyed = None;
-                if self.rng.below(2) != 0 || target.shields == 0 {
-                    for _ in 0..98 {
-                        let i = self.rng.below(24) as ImprovementId + 1;
-                        if i != imp::PALACE && target.has_improvement(i) {
-                            destroyed = Some(i);
-                            break;
-                        }
-                    }
-                }
-                match destroyed {
-                    Some(i) => self.city_mut(city).remove_improvement(i),
-                    None => self.city_mut(city).shields = 0,
-                }
-                DiplomatResult::Sabotaged(destroyed)
-            }
+            DiplomatAction::Sabotage => DiplomatResult::Sabotaged(self.sabotage_city(city)),
             DiplomatAction::InciteRevolt { subvert } => {
                 let Some(cost) = self.incite_cost(city) else { return Err(RuleError::Other("A capital cannot be incited to revolt.")) };
                 let at_peace = self.relation(us, them) == Relation::Peace;
@@ -1237,6 +1225,134 @@ impl Game {
         self.remove_unit(id);
         self.refresh_vision(us);
         Ok(result)
+    }
+
+    /// Steal Technology (CIV.EXE o 0x1d757): 72 tries from a random advance on, the first one
+    /// the city's owner knows and the thief lacks (a barbarian thief never finds one); it is
+    /// granted and the city marked as robbed. None when nothing was found.
+    fn steal_advance(&mut self, id: UnitId, city: CityId) -> Option<AdvanceId> {
+        let us = self.unit(id).owner;
+        let them = self.city(city).owner;
+        let start = self.rng.below(rules::advances::ADVANCE_COUNT as u32) as usize;
+        let a = (0..rules::advances::ADVANCE_COUNT)
+            .map(|i| ((start + i) % rules::advances::ADVANCE_COUNT) as AdvanceId)
+            .find(|a| us != 0 && self.player(them).knows(*a) && !self.player(us).knows(*a))?;
+        self.grant_advance(us, a, super::science::AdvanceSource::From(them));
+        self.player_mut(us).stats.techs_stolen += 1;
+        self.city_mut(city).tech_stolen = true;
+        Some(a)
+    }
+
+    /// Industrial Sabotage (CIV.EXE o 0x1d84a): half of the time (or when nothing is stored) a
+    /// random improvement other than the Palace, found within 99 draws; otherwise (or when none
+    /// was found) the stored shields. Returns the improvement destroyed.
+    fn sabotage_city(&mut self, city: CityId) -> Option<ImprovementId> {
+        let target = self.city(city).clone();
+        let mut destroyed = None;
+        if self.rng.below(2) != 0 || target.shields == 0 {
+            for _ in 0..98 {
+                let i = self.rng.below(24) as ImprovementId + 1;
+                if i != imp::PALACE && target.has_improvement(i) {
+                    destroyed = Some(i);
+                    break;
+                }
+            }
+        }
+        match destroyed {
+            Some(i) => self.city_mut(city).remove_improvement(i),
+            None => self.city_mut(city).shields = 0,
+        }
+        destroyed
+    }
+
+    /// A computer Diplomat next to the foreign city `city` (CIV.EXE o 0x1d681): when the city
+    /// is a human's who is at peace with the Diplomat's civilization the Diplomat simply
+    /// leaves (it is deleted, None). Otherwise it always steals, without breaking any treaty;
+    /// at a city robbed before, or when it finds nothing to steal, it sabotages instead. The
+    /// Diplomat is used up either way. Everyone is told, whoever was involved: "PLURAL
+    /// steal\nADVANCE." or "ITEM production sabotaged\nin CITY." / "BUILDING destroyed\nin
+    /// CITY." (popups at (80,80), 0x1d817 / 0x1d9a3), as `DiplomatStole` / `CitySabotaged`.
+    pub fn ai_diplomat_action(&mut self, id: UnitId, city: CityId) -> Option<DiplomatResult> {
+        let u = self.unit_opt(id)?.clone();
+        let target = self.city_opt(city)?.clone();
+        let (us, them) = (u.owner, target.owner);
+        if u.kind != unit_ids::DIPLOMAT || them == us || Map::dist(u.pos(), target.pos()) > 1 {
+            return None;
+        }
+        if self.is_human(them) && self.relation(them, us) == Relation::Peace {
+            self.remove_unit(id);
+            self.refresh_vision(us);
+            return None;
+        }
+        let stolen = if target.tech_stolen { None } else { self.steal_advance(id, city) };
+        let result = match stolen {
+            Some(adv) => {
+                self.push_event(GameEvent::DiplomatStole { by: us, from: them, adv, city });
+                DiplomatResult::Stole(adv)
+            }
+            None => {
+                let production = target.production.name().to_string();
+                let improvement = self.sabotage_city(city);
+                self.push_event(GameEvent::CitySabotaged { city, by: us, improvement, production });
+                DiplomatResult::Sabotaged(improvement)
+            }
+        };
+        self.remove_unit(id);
+        self.refresh_vision(us);
+        Some(result)
+    }
+
+    /// Where a computer civilization's new Diplomat goes (CIV.EXE 0xe12e): it is not set up in
+    /// the city that built it but next to a human city. For every human city the unit of
+    /// `slot` nearest to it is taken (0x1d43:0x16d); the score |distance − 3| (3 for a city
+    /// robbed before) must be at most 3, the unit must stand on land on the city's continent;
+    /// the lowest score wins, ties by a running random choice. Nothing while `slot` is at peace
+    /// with the human. Returns the unit's square and the target city.
+    pub fn ai_diplomat_site(&mut self, slot: Slot) -> Option<((i32, i32), CityId)> {
+        let mut rng = self.rng.clone();
+        let r = self.diplomat_site_with(slot, &mut |n| rng.below(n as u32) as i32);
+        self.rng = rng;
+        r
+    }
+
+    /// Is there an `ai_diplomat_site` for `slot` (without drawing random numbers)?
+    pub fn ai_diplomat_site_exists(&self, slot: Slot) -> bool {
+        self.diplomat_site_with(slot, &mut |_| 1).is_some()
+    }
+
+    fn diplomat_site_with(&self, slot: Slot, random: &mut dyn FnMut(i32) -> i32) -> Option<((i32, i32), CityId)> {
+        let mut best: Option<((i32, i32), CityId)> = None;
+        let mut best_score = 0x7fff;
+        let mut ties = 0;
+        for city in self.all_cities().filter(|c| self.is_human(c.owner)) {
+            // the unit of `slot` closest to the city (the first one of equal distance)
+            let Some(u) = self.all_units().filter(|u| u.owner == slot).min_by_key(|u| Map::civ_distance(u.pos(), city.pos())) else { continue };
+            let score = if city.tech_stolen { 3 } else { (Map::civ_distance(u.pos(), city.pos()) - 3).abs() };
+            if score > best_score {
+                continue;
+            }
+            if score == best_score {
+                ties += 1;
+                if random(ties) != 0 {
+                    continue;
+                }
+            }
+            if self.map.is_ocean(u.x, u.y) || self.map.tile(u.x, u.y).continent != self.map.tile(city.x, city.y).continent {
+                continue;
+            }
+            // (0xe287: a tie that is taken restarts the count at 1, a new best keeps it)
+            if score == best_score {
+                ties = 1;
+            } else {
+                best_score = score;
+            }
+            best = Some((u.pos(), city.id));
+        }
+        let humans_at_peace = (1..8).any(|h| self.is_human(h) && self.relation(slot, h) == Relation::Peace);
+        if best_score > 3 || humans_at_peace {
+            return None;
+        }
+        best
     }
 
     /// A city revolts to `to` (CIV.EXE o 0x1e06a, then 0x13d76 with `by_diplomat` set): the old
@@ -1579,5 +1695,145 @@ mod tests {
         // CIV.EXE 0xf141: a route between own cities adds (partner + own trade + 4) / 16
         let t = g.raw_trade(c);
         assert_eq!(g.city_yield(c).trade, t + (g.visible_trade(c2) + t + 4) / 16);
+    }
+}
+
+#[cfg(test)]
+mod diplomat_tests {
+    use super::*;
+    use crate::game::GameSetup;
+
+    /// A flat grassland arena (x, y in 5..30) on one continent, emptied of units; the human
+    /// and two computer slots `a` and `b`, all at war.
+    fn arena() -> (Game, Slot, Slot, Slot) {
+        let mut g = Game::new(GameSetup { seed: 7, ..Default::default() }, None);
+        let h = g.human_slot;
+        let others: Vec<Slot> = (1..8).filter(|s| *s != h).take(2).collect();
+        let (a, b) = (others[0], others[1]);
+        for s in [a, b] {
+            g.players[s as usize].in_game = true;
+            g.players[s as usize].alive = true;
+        }
+        let ids: Vec<UnitId> = g.all_units().map(|u| u.id).collect();
+        for id in ids {
+            g.remove_unit(id);
+        }
+        for y in 5..30 {
+            for x in 5..30 {
+                let t = g.map.get_mut(x, y).unwrap();
+                t.terrain = Terrain::Grassland;
+                t.flags = 0;
+                t.continent = 1;
+            }
+        }
+        g.set_relation(h, a, Relation::War);
+        g.set_relation(h, b, Relation::War);
+        g.set_relation(a, b, Relation::War);
+        (g, h, a, b)
+    }
+
+    /// A city of `owner` at (20, 20) knowing everything `thief` knows plus the Alphabet.
+    fn steal_target(g: &mut Game, owner: Slot, thief: Slot) -> CityId {
+        let c = g.add_city(owner, "Target".into(), 20, 20);
+        g.player_mut(thief).advances &= !(1u128 << adv::ALPHABET);
+        let known = g.player(thief).known_advances();
+        for a in known {
+            g.player_mut(owner).learn(a);
+        }
+        g.player_mut(owner).learn(adv::ALPHABET);
+        c
+    }
+
+    #[test]
+    fn ai_diplomat_steals_at_peace_without_breaking_it_then_sabotages() {
+        let (mut g, _h, a, b) = arena();
+        g.set_relation(a, b, Relation::Peace);
+        let c = steal_target(&mut g, b, a);
+        let d = g.add_unit(a, unit_ids::DIPLOMAT, 19, 20);
+        assert_eq!(g.ai_diplomat_action(d, c), Some(DiplomatResult::Stole(adv::ALPHABET)));
+        assert!(g.player(a).knows(adv::ALPHABET) && g.city(c).tech_stolen);
+        assert_eq!(g.relation(a, b), Relation::Peace, "an AI theft breaks no treaty");
+        assert!(g.unit_opt(d).is_none());
+        assert!(g.take_events().iter().any(|e| matches!(e, GameEvent::DiplomatStole { by, adv: x, .. } if *by == a && *x == adv::ALPHABET)));
+        // the city was robbed: the next one sabotages
+        g.city_mut(c).shields = 25;
+        g.city_mut(c).add_improvement(imp::BARRACKS);
+        let d2 = g.add_unit(a, unit_ids::DIPLOMAT, 19, 20);
+        let Some(DiplomatResult::Sabotaged(what)) = g.ai_diplomat_action(d2, c) else { panic!("no sabotage") };
+        match what {
+            Some(i) => assert!(i == imp::BARRACKS && !g.city(c).has_improvement(imp::BARRACKS)),
+            None => assert_eq!(g.city(c).shields, 0),
+        }
+        assert!(g.unit_opt(d2).is_none());
+        assert!(g.take_events().iter().any(|e| matches!(e, GameEvent::CitySabotaged { city, by, .. } if *city == c && *by == a)));
+    }
+
+    #[test]
+    fn ai_diplomat_sabotages_when_nothing_can_be_stolen() {
+        let (mut g, _h, a, b) = arena();
+        let c = g.add_city(b, "Poor".into(), 20, 20);
+        g.player_mut(b).advances = 0;
+        g.city_mut(c).shields = 10;
+        let d = g.add_unit(a, unit_ids::DIPLOMAT, 19, 20);
+        assert_eq!(g.ai_diplomat_action(d, c), Some(DiplomatResult::Sabotaged(None)));
+        assert_eq!(g.city(c).shields, 0);
+        assert!(!g.city(c).tech_stolen);
+    }
+
+    #[test]
+    fn ai_diplomat_leaves_a_human_at_peace_alone() {
+        let (mut g, h, a, _b) = arena();
+        let c = steal_target(&mut g, h, a);
+        g.set_relation(h, a, Relation::Peace);
+        let d = g.add_unit(a, unit_ids::DIPLOMAT, 19, 20);
+        assert_eq!(g.ai_diplomat_action(d, c), None);
+        assert!(g.unit_opt(d).is_none(), "the Diplomat is deleted");
+        assert!(!g.player(a).knows(adv::ALPHABET) && !g.city(c).tech_stolen);
+        // at war it steals from the human too
+        g.set_relation(h, a, Relation::War);
+        let d = g.add_unit(a, unit_ids::DIPLOMAT, 19, 20);
+        assert_eq!(g.ai_diplomat_action(d, c), Some(DiplomatResult::Stole(adv::ALPHABET)));
+    }
+
+    #[test]
+    fn ai_diplomat_is_built_next_to_a_human_city() {
+        let (mut g, h, a, _b) = arena();
+        let target = g.add_city(h, "Target".into(), 20, 20);
+        let home = g.add_city(a, "Home".into(), 8, 8);
+        let warrior = g.add_unit(a, unit_ids::MILITIA, 16, 21);
+        assert_eq!(Map::civ_distance((16, 21), (20, 20)), 4);
+        assert_eq!(g.ai_diplomat_site(a), Some(((16, 21), target)));
+        // too far: |distance - 3| above 3
+        g.unit_mut(warrior).x = 9;
+        assert!(!g.ai_diplomat_site_exists(a));
+        g.city_mut(home).production = Production::Unit(unit_ids::DIPLOMAT);
+        g.city_mut(home).shields = 30;
+        g.complete_production(home, Production::Unit(unit_ids::DIPLOMAT));
+        assert_eq!(g.city(home).shields, 30, "the shields are given back");
+        assert!(!g.all_units().any(|u| u.kind == unit_ids::DIPLOMAT));
+        // near enough, but at peace with the human: none either
+        g.unit_mut(warrior).x = 16;
+        g.set_relation(h, a, Relation::Peace);
+        assert!(!g.ai_diplomat_site_exists(a));
+        g.set_relation(h, a, Relation::War);
+        g.complete_production(home, Production::Unit(unit_ids::DIPLOMAT));
+        let d = g.all_units().find(|u| u.kind == unit_ids::DIPLOMAT).unwrap();
+        assert_eq!((d.pos(), d.goto, d.home), ((16, 21), Some((20, 20)), Some(home)));
+        assert_eq!(g.city(home).shields, 0);
+    }
+
+    #[test]
+    fn ai_diplomat_heads_for_the_nearest_city_or_disbands() {
+        let (mut g, _h, a, b) = arena();
+        g.add_city(a, "Own".into(), 10, 10);
+        let foreign = g.add_city(b, "Foreign".into(), 20, 10);
+        let d = g.add_unit(a, unit_ids::DIPLOMAT, 12, 10);
+        crate::ai::unit_ai::act(&mut g, d, &mut |_| {});
+        assert!(g.unit_opt(d).is_none(), "nearest city is its own: disbanded");
+        let d = g.add_unit(a, unit_ids::DIPLOMAT, 17, 10);
+        crate::ai::unit_ai::act(&mut g, d, &mut |_| {});
+        let u = g.unit(d);
+        assert_eq!(u.goto, Some(g.city(foreign).pos()));
+        assert!(Map::dist(u.pos(), g.city(foreign).pos()) <= 1);
     }
 }

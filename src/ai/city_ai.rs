@@ -250,7 +250,9 @@ pub fn choose_production(g: &Game, c: CityId, plan: &Plan) -> Production {
         }
     }
     let diplomats = g.all_units().filter(|u| u.owner == slot && u.kind == unit_ids::DIPLOMAT).count();
-    if diplomats == 0 && has_unit(&avail, unit_ids::DIPLOMAT) && size >= 4 && g.contacts_of(slot).iter().any(|o| !p.has_embassy(*o)) {
+    // a Diplomat only gets built when it would have a human city to go to (CIV.EXE 0xe124
+    // gives the shields back otherwise; the computer never seeks embassies)
+    if diplomats == 0 && has_unit(&avail, unit_ids::DIPLOMAT) && size >= 4 && g.ai_diplomat_site_exists(slot) {
         return Production::Unit(unit_ids::DIPLOMAT);
     }
     if size >= 5 && has_unit(&avail, unit_ids::SETTLERS) && settlers_out < 2 && site_near() {

@@ -789,43 +789,46 @@ fn act_air(g: &mut Game, id: UnitId, sink: &mut dyn FnMut(TurnStep)) {
     }
 }
 
+/// A computer Diplomat (CIV.EXE 0x16a39): one with a goto keeps going (a new Diplomat is
+/// sent towards a human city when it is built, `Game::ai_diplomat_site`); otherwise it makes
+/// for the nearest city (of anyone, 0x1d43:0xf8) when that is foreign and disbands when it is
+/// its own. Coming into a foreign city it steals or sabotages (`Game::ai_diplomat_action`);
+/// the computer never establishes embassies (only the human's Diplomats do, o 0x1d6c1).
 fn act_diplomat(g: &mut Game, id: UnitId, sink: &mut dyn FnMut(TurnStep)) {
     let u = g.unit(id).clone();
     let slot = u.owner;
-    let cont = g.map.tile(u.x, u.y).continent;
-    // target: foreign city without embassy (any contact state) or an enemy city for theft
-    let target = g
-        .all_cities()
-        .filter(|c| c.owner != slot && c.owner != 0 && g.map.tile(c.x, c.y).continent == cont && Map::dist(c.pos(), u.pos()) <= 20)
-        .filter(|c| !g.player(slot).has_embassy(c.owner) || g.player(slot).at_war(c.owner))
-        .min_by_key(|c| Map::dist(c.pos(), u.pos()) + if g.player(slot).has_embassy(c.owner) { 5 } else { 0 })
-        .map(|c| c.id);
-    let Some(c) = target else {
-        if let Some(h) = nearest_own_city(g, slot, u.pos(), None) {
-            let p = g.city(h).pos();
-            if p == u.pos() {
-                let _ = g.give_order(id, UnitOrder::Sentry);
-            } else {
-                g.set_goto(id, p.0, p.1);
-                move_toward(g, id, p, sink);
+    // the goto of a Diplomat whose target is gone or became its own is dropped
+    let goto = u.goto.filter(|(x, y)| g.city_at(*x, *y).is_some_and(|c| g.city(c).owner != slot));
+    let target = match goto {
+        Some(t) => t,
+        None => {
+            let Some(c) = g.all_cities().min_by_key(|c| Map::civ_distance(c.pos(), u.pos())).map(|c| c.id) else { return };
+            if g.city(c).owner == slot {
+                g.remove_unit(id);
+                g.refresh_vision(slot);
+                return;
             }
+            let p = g.city(c).pos();
+            g.set_goto(id, p.0, p.1);
+            p
         }
-        return;
     };
-    let p = g.city(c).pos();
-    g.set_goto(id, p.0, p.1);
-    if let Progress::Outcome(MoveOutcome::EnteredForeignCity(cid)) = move_toward(g, id, p, sink) {
-        let owner = g.city(cid).owner;
-        if !g.player(slot).has_embassy(owner) {
-            g.establish_embassy(slot, owner);
-        } else if g.player(slot).at_war(owner) {
-            if let Some(a) = g.advance_to_share(owner, slot) {
-                g.transfer_advance(owner, slot, a, "stolen");
-                g.player_mut(slot).stats.techs_stolen += 1;
+    match move_toward(g, id, target, sink) {
+        Progress::Outcome(MoveOutcome::EnteredForeignCity(cid)) => {
+            g.ai_diplomat_action(id, cid);
+        }
+        // no way there [approx: the original's goto handling for a blocked unit is not
+        // decoded]: look for the nearest city again next turn
+        Progress::Blocked => {
+            if let Some(u) = g.unit_opt(id) {
+                if u.goto.is_some() {
+                    let um = g.unit_mut(id);
+                    um.goto = None;
+                    um.order = UnitOrder::None;
+                }
             }
         }
-        g.remove_unit(id);
-        g.refresh_vision(slot);
+        _ => {}
     }
 }
 
