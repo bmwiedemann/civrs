@@ -290,6 +290,7 @@ impl Game {
         self.refresh_vision(slot);
         // unit_look: the civilizations whose units are next to it meet (0x8491)
         self.look_for_contacts(id);
+        self.unit_look_goals(id);
         if had_hut {
             self.map.get_mut(tx, ty).unwrap().set(tile_flags::HUT, false);
             self.enter_hut(id);
@@ -379,6 +380,7 @@ impl Game {
         for (id, (x, y)) in looking {
             self.reveal_garrisons_near(slot, x, y);
             self.look_for_contacts(id);
+            self.unit_look_goals(id);
         }
         for id in fortified {
             // an earlier stash may have taken the unit off the map already

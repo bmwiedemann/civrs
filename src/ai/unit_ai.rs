@@ -293,7 +293,9 @@ fn task_units(g: &mut Game, slot: Slot, reserve: i32) {
     let turn = g.turn as i32;
     for id in g.units_of(slot) {
         let Some(u) = g.unit_opt(id).cloned() else { continue };
-        if g.ai_memory.busy.contains(&id) || u.kind == unit_ids::NUCLEAR {
+        // civrs: units at work are left at it. CIV.EXE clears their order bits but keeps the
+        // work counter (+5), and the unit routine gives the same work key again on the square.
+        if g.ai_memory.busy.contains(&id) || u.kind == unit_ids::NUCLEAR || u.order_turns > 0 {
             continue;
         }
         let cont = g.continent_exe(u.x, u.y);

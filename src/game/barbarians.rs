@@ -339,6 +339,8 @@ impl Game {
         }
         let name = self.next_city_name(slot);
         let c = self.add_city(slot, name, x, y);
+        // found_city o 0x1b375 drops the city-site goals within 4 (0x1b38c)
+        self.remove_goals_near(slot, super::goals::goal::SETTLE, x, y, 4);
         if !self.player(slot).human {
             let p = self.ai_production(c);
             self.city_mut(c).production = p;

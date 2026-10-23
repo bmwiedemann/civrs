@@ -104,6 +104,13 @@ impl Game {
                     return Err(RuleError::Pillage);
                 }
                 self.start_work(id, UnitOrder::Pillage, 1);
+                // the owner of the nearest city wants the pillager attacked (0x4db2)
+                if let (Some(c), _) = self.nearest_city_exe(u.x, u.y) {
+                    let o = self.city(c).owner;
+                    if o != u.owner {
+                        self.add_goal(o, u.x, u.y, super::goals::goal::ATTACK, 4);
+                    }
+                }
             }
         }
         Ok(())
@@ -239,6 +246,8 @@ impl Game {
         }
         let name = self.next_city_name(u.owner);
         let c = self.add_city(u.owner, name, u.x, u.y);
+        // found_city o 0x1b375 drops the city-site goals within 4 (0x1b38c)
+        self.remove_goals_near(u.owner, super::goals::goal::SETTLE, u.x, u.y, 4);
         self.remove_unit(id);
         self.refresh_vision(u.owner);
         // the computer asks its production advisor at once (found_city o 0x1b375)

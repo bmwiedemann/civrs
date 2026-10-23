@@ -351,6 +351,8 @@ impl Game {
             self.check_destroyed(from);
             return MoveOutcome::DestroyedCity;
         }
+        // the captor's city-site goals around it are dropped (0x13faf)
+        self.remove_goals_near(by, super::goals::goal::SETTLE, city.x, city.y, 4);
         // the plunder leaves the loser even when the barbarians take the city (0x13f52)
         let gold = self.plunder_value(c);
         self.player_mut(from).gold -= gold;

@@ -246,6 +246,103 @@ impl Game {
     }
 }
 
+impl Game {
+    /// The goal and goto side of `unit_look` (0x8038), run where civrs's unit looks around
+    /// (after every move and at the start of its civilization's turn, with `look_for_contacts`).
+    ///
+    /// For each of the 8 neighbours n:
+    /// - a city of another civ o that the looking civ has no treaty with gets o's attack (1,
+    ///   priority 4) and defend (2, priority 2) goals on itself (0x8124 path at 0x82ea);
+    /// - units of another civ o2 there: their sentried units on land wake, the first one's goto
+    ///   is dropped unless it is at sea and the looker on land; the looker's goto is dropped
+    ///   unless it stands on land beside a ship (aircraft always). Between land units on land
+    ///   without a treaty the looker's civ gets an attack goal on n (priority 3, or 1 against
+    ///   barbarians, a Diplomat or a fortified defender) and, unless the looker is a Diplomat,
+    ///   o2 a defend goal on the looker's square (priority 2, 1 when the looker is a barbarian);
+    ///   a foreign ship (not barbarian, no treaty) is a sea goal (3, 2) of the looker's civ.
+    ///
+    /// For the 16 squares of the outer ring: a looker that sees two squares far (sight bit 2,
+    /// ships over water only) makes foreign ships there sea goals (3, 2) of its civ; a foreign
+    /// unit there that sees two squares far (a ship only with the looker at sea) wakes, drops
+    /// its goto and, on water, gives its civ a sea goal (3, 2) on the looker (0x8546..0x8642),
+    /// not for a looking Submarine.
+    pub fn unit_look_goals(&mut self, id: UnitId) {
+        use super::diplomacy::flags::PEACE;
+        use crate::rules::{unit_ids, AiRole, Domain};
+        let Some(u) = self.unit_opt(id).cloned() else { return };
+        let civ = u.owner;
+        let here_ocean = self.map.is_ocean(u.x, u.y);
+        let land = u.info().domain == Domain::Land;
+        let peace = |g: &Game, a: Slot, b: Slot| g.diplo(a, b) & PEACE != 0;
+        for k in 1..=24usize {
+            let (nx, ny) = (Map::wrap_x(u.x + super::goto::DX[k]), u.y + super::goto::DY[k]);
+            if !Map::in_bounds(nx, ny) {
+                continue;
+            }
+            let n_ocean = self.map.is_ocean(nx, ny);
+            let first = self.units_at(nx, ny).into_iter().find(|o| self.unit(*o).owner != civ);
+            if k <= 8 {
+                if let Some(c) = self.city_at(nx, ny) {
+                    let o = self.city(c).owner;
+                    if o != civ && !peace(self, civ, o) {
+                        self.add_goal(o, nx, ny, goal::ATTACK, 4);
+                        self.add_goal(o, nx, ny, goal::DEFEND, 2);
+                    }
+                }
+                let Some(f) = first else { continue };
+                let fu = self.unit(f).clone();
+                let o2 = fu.owner;
+                for w in self.units_at(nx, ny) {
+                    let wu = self.unit_mut(w);
+                    if wu.order == super::UnitOrder::Sentry && !n_ocean {
+                        wu.order = super::UnitOrder::None;
+                    }
+                }
+                if !n_ocean || here_ocean {
+                    self.clear_goto(f);
+                }
+                if !(n_ocean && !here_ocean && !u.is_air()) {
+                    self.clear_goto(id);
+                }
+                if land && !here_ocean && !n_ocean && !fu.is_air() {
+                    if !peace(self, civ, o2) {
+                        let defender = fu.order == super::UnitOrder::Fortified && fu.info().role == AiRole::Defend;
+                        let p = if o2 != 0 && fu.kind != unit_ids::DIPLOMAT && !defender { 3 } else { 1 };
+                        self.add_goal(civ, nx, ny, goal::ATTACK, p);
+                        if u.kind != unit_ids::DIPLOMAT {
+                            self.add_goal(o2, u.x, u.y, goal::DEFEND, if civ == 0 { 1 } else { 2 });
+                        }
+                    }
+                }
+                if n_ocean && o2 != 0 && !peace(self, civ, o2) {
+                    self.add_goal(civ, nx, ny, goal::SEA, 2);
+                }
+            } else {
+                let Some(f) = first else { continue };
+                let fu = self.unit(f).clone();
+                let o2 = fu.owner;
+                if u.kind == unit_ids::SUBMARINE {
+                    continue;
+                }
+                let far = u.info().sight & 2 != 0 && (u.info().domain != Domain::Sea || n_ocean);
+                if far && fu.kind != unit_ids::SUBMARINE && n_ocean && o2 != 0 && !peace(self, civ, o2) {
+                    self.add_goal(civ, nx, ny, goal::SEA, 2);
+                }
+                if fu.info().sight & 2 != 0 && (fu.info().domain != Domain::Sea || here_ocean) {
+                    let fm = self.unit_mut(f);
+                    if fm.order == super::UnitOrder::Sentry {
+                        fm.order = super::UnitOrder::None;
+                    }
+                    self.clear_goto(f);
+                    if n_ocean && o2 != 0 && !peace(self, civ, o2) {
+                        self.add_goal(o2, u.x, u.y, goal::SEA, 2);
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

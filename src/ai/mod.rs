@@ -58,73 +58,84 @@ impl AiDriver for Ai {
     }
 }
 
-/// Government the civilisation would like to have given what it knows and its traits.
-pub fn desired_government(g: &Game, slot: Slot) -> Govt {
-    let p = g.player(slot);
-    let civ = p.civ();
-    let avail = g.governments_available(slot);
-    let at_war = !g.enemies_of(slot).is_empty();
-    let has = |gv: Govt| avail.contains(&gv);
-    if civ.aggressive > 0 && has(Govt::Communism) {
-        return Govt::Communism;
-    }
-    if civ.civilized > 0 && !at_war {
-        if has(Govt::Democracy) && civ.aggressive < 0 {
-            return Govt::Democracy;
+/// The sums CIV.EXE's city routine leaves for the government choice when it runs over a
+/// civilization's cities in "compute" mode (`update_civ_tax_rates` 0xa5e2, which clears them):
+/// ds:0xe3c2, the case for Despotism, and ds:0xdb42, the case for the Republic.
+///
+/// Per city (0x102f5..0x10378): e3c2 += 5 x the military units it supports beyond its shields
+/// (ds:0xdeb8 - ds:0x70dc, the units of `supported_units` below the Diplomat and the stashed
+/// garrison) + those units up to the city size; db42 -= ((a Marketplace, bit 0x10 of the
+/// improvements: 5, else 7) - the leader's "civilized" trait) x its military units outside the
+/// city (ds:0x6546). Per worked square and value (0x1353a / 0x13552): e3c2 -= 2 for every food,
+/// shield or trade value above 2 (what Despotism takes away) outside a celebrating city;
+/// db42 += 1 per square with trade. db42 is -999 while the world gangs up on the human and the
+/// civ has fewer advances than he (0xfe74). civrs takes the square values under Monarchy (no
+/// government rule; CIV.EXE reads them before its government rule; unverified equivalence for
+/// the Colossus and railroads).
+pub fn government_sums(g: &mut Game, slot: Slot) -> (i32, i32) {
+    use crate::game::city::NO_GARRISON;
+    use crate::rules::{improvement_ids as imp, unit_ids, CITY_RADIUS};
+    let (mut despot, mut republic) = (0, 0);
+    let civilized = g.player(slot).civ().civilized as i32;
+    let real = g.player(slot).govt;
+    for c in g.cities_of(slot) {
+        let city = g.city(c).clone();
+        let supported: Vec<_> = g.supported_units(c).into_iter().filter(|u| g.unit(*u).kind < unit_ids::DIPLOMAT).collect();
+        let units = supported.len() as i32 + city.garrison.iter().filter(|x| **x != NO_GARRISON).count() as i32;
+        let away = supported.iter().filter(|u| {
+            let u = g.unit(**u);
+            u.info().att > 0 && (u.is_air() || u.pos() != city.pos())
+        }).count() as i32;
+        let shields = g.city_shields(c);
+        despot += 5 * (units - shields).max(0) + units.clamp(0, city.size as i32);
+        republic -= (if city.has_improvement(imp::MARKETPLACE) { 5 } else { 7 } - civilized) * away;
+        g.player_mut(slot).govt = Govt::Monarchy;
+        for (i, (dx, dy)) in CITY_RADIUS.iter().enumerate() {
+            if !city.works(i as u8) {
+                continue;
+            }
+            let (x, y) = (crate::game::Map::wrap_x(city.x + *dx as i32), city.y + *dy as i32);
+            let (f, s, t) = g.tile_yield(slot, x, y, Some(c));
+            if !city.celebrating {
+                despot -= 2 * [f, s, t].iter().filter(|v| **v > 2).count() as i32;
+            }
+            if t > 0 {
+                republic += 1;
+            }
         }
-        if has(Govt::Republic) {
-            return Govt::Republic;
-        }
+        g.player_mut(slot).govt = real;
     }
-    if has(Govt::Monarchy) {
-        return Govt::Monarchy;
+    let h = g.human_slot;
+    if g.world_gangs_up() && g.player(slot).research_count < g.player(h).research_count {
+        republic = -999;
     }
-    if has(Govt::Communism) {
-        return Govt::Communism;
-    }
-    if has(Govt::Republic) && !at_war {
-        return Govt::Republic;
-    }
-    Govt::Despotism
+    (despot, republic)
 }
 
-/// Rank used to decide whether a revolution is worth the anarchy.
-fn govt_rank(gv: Govt) -> i32 {
-    match gv {
-        Govt::Anarchy => 0,
-        Govt::Despotism => 1,
-        Govt::Monarchy => 2,
-        Govt::Communism => 3,
-        Govt::Republic => 3,
-        Govt::Democracy => 4,
-    }
-}
-
-/// Government management for an AI: run through anarchy, pick a government, start a
-/// revolution when a clearly better government is known. Uses `Game::revolution` /
-/// `choose_government` semantics locally (those engine entry points are not available yet).
+/// The government choice of `ai_civ_turn` (0x15f98..0x16054) for a computer player, on turns
+/// where (civ + turn) & 7 == 0: Despotism while the city routine's case for it is positive,
+/// else the Republic when known and its case is not negative, else Communism when known with
+/// more than 10 cities, else Monarchy when known; nothing otherwise. `set_government`
+/// (0x14df7) puts it in force at once for a computer player, without anarchy.
 pub fn govern(g: &mut Game, slot: Slot) {
-    let p = g.player(slot).clone();
-    if p.govt == Govt::Anarchy {
-        // the engine's start-of-turn processing counts down anarchy and picks the government
+    use crate::rules::advance_ids as adv;
+    if g.player(slot).govt == Govt::Anarchy || (slot as u32 + g.turn) & 7 != 0 {
         return;
     }
-    if g.turn < 10 {
+    let (despot, republic) = government_sums(g, slot);
+    let p = g.player(slot);
+    let want = if despot > 0 {
+        Govt::Despotism
+    } else if p.knows(adv::THE_REPUBLIC) && republic >= 0 {
+        Govt::Republic
+    } else if p.knows(adv::COMMUNISM) && g.cities_of(slot).len() > 10 {
+        Govt::Communism
+    } else if p.knows(adv::MONARCHY) {
+        Govt::Monarchy
+    } else {
         return;
-    }
-    let want = desired_government(g, slot);
-    // only move "up" (Despotism -> anything, Monarchy -> Republic/Democracy...) so the AI does
-    // not flip-flop through anarchy every few turns
-    if govt_rank(want) <= govt_rank(p.govt) {
-        return;
-    }
-    // no revolution while a city is in disorder or an enemy is at the gates
-    if g.all_cities().any(|c| c.owner == slot && c.disorder) {
-        return;
-    }
-    g.revolution(slot);
-    if g.player(slot).govt != Govt::Anarchy {
-        // Pyramids: immediate change
+    };
+    if want != g.player(slot).govt {
         g.choose_government(slot, want);
     }
 }
