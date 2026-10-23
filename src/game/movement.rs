@@ -173,6 +173,21 @@ impl Game {
             return Ok(MoveOutcome::Blocked);
         }
         let had_hut = target.has(tile_flags::HUT);
+        // a ship leaving a city takes along the sentried units of its kind there, land units
+        // onto transports and aircraft onto a Carrier, up to its capacity (CIV.EXE 0x6932)
+        if u.is_sea() && u.info().capacity > 0 && self.map.tile(u.x, u.y).is_land() {
+            let air = u.kind == unit_ids::CARRIER;
+            let waiting: Vec<UnitId> = self
+                .all_units()
+                .filter(|o| o.owner == slot && o.id != id && (o.x, o.y) == (u.x, u.y) && o.carried_by.is_none() && o.order == UnitOrder::Sentry)
+                .filter(|o| if air { o.is_air() } else { o.is_land() })
+                .map(|o| o.id)
+                .collect();
+            let room = (u.info().capacity as usize).saturating_sub(self.cargo_count(id));
+            for o in waiting.into_iter().take(room) {
+                self.unit_mut(o).carried_by = Some(id);
+            }
+        }
         self.place_unit(id, tx, ty, cost);
         // land unit leaving a ship
         if u.carried_by.is_some() && target.is_land() {
@@ -422,5 +437,24 @@ mod tests {
         let bb = g.add_unit(slot, unit_ids::BATTLESHIP, x, y);
         assert!(matches!(g.try_move(bb, Dir8::W), Ok(MoveOutcome::Attacked { .. })));
         assert_eq!(g.unit(bb).pos(), (x, y));
+    }
+
+    #[test]
+    fn sentried_units_board_a_ship_leaving_their_city() {
+        use crate::game::UnitOrder;
+        let mut g = Game::new(GameSetup { seed: 1, ..Default::default() }, None);
+        let slot = g.human_slot;
+        let (x, y) = (40, 25);
+        g.map.get_mut(x, y).unwrap().terrain = Terrain::Grassland;
+        g.map.get_mut(x + 1, y).unwrap().terrain = Terrain::Ocean;
+        g.add_city(slot, "Port".into(), x, y);
+        let ship = g.add_unit(slot, unit_ids::SAIL, x, y);
+        let sentried = g.add_unit(slot, unit_ids::MILITIA, x, y);
+        g.unit_mut(sentried).order = UnitOrder::Sentry;
+        let idle = g.add_unit(slot, unit_ids::MILITIA, x, y);
+        assert_eq!(g.try_move(ship, Dir8::E), Ok(MoveOutcome::Moved));
+        assert_eq!(g.unit(sentried).pos(), (x + 1, y));
+        assert_eq!(g.unit(sentried).carried_by, Some(ship));
+        assert_eq!(g.unit(idle).pos(), (x, y));
     }
 }
