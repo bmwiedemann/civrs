@@ -180,6 +180,32 @@ impl Game {
         true
     }
 
+    /// The units the city supports, each with whether it costs a shield (CIV.EXE 0xfc6e):
+    /// Diplomats and Caravans never do; under Anarchy and Despotism the others are free up to
+    /// the city's size; under the other governments each costs one.
+    pub fn shield_costs(&self, c: CityId) -> Vec<(super::UnitId, bool)> {
+        let city = self.city(c);
+        let free = rules::GOVERNMENTS[self.player(city.owner).govt as usize].free_units_up_to_size;
+        let mut paying = 0;
+        self.supported_units(c)
+            .into_iter()
+            .map(|id| {
+                if matches!(self.unit(id).kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN) {
+                    return (id, false);
+                }
+                paying += 1;
+                (id, !free || paying > city.size as i32)
+            })
+            .collect()
+    }
+
+    /// Would one more supported unit (not a Diplomat or Caravan) cost the city a shield?
+    pub fn next_unit_costs_shield(&self, c: CityId) -> bool {
+        let city = self.city(c);
+        let paying = self.supported_units(c).into_iter().filter(|id| !matches!(self.unit(*id).kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN)).count() as i32;
+        !rules::GOVERNMENTS[self.player(city.owner).govt as usize].free_units_up_to_size || paying + 1 > city.size as i32
+    }
+
     /// Units drawing shield upkeep from the city (every unit homed there, Settlers included).
     pub fn supported_units(&self, c: CityId) -> Vec<super::UnitId> {
         self.all_units().filter(|u| u.home == Some(c)).map(|u| u.id).collect()
@@ -236,10 +262,7 @@ impl Game {
         let g = rules::GOVERNMENTS[p.govt as usize];
         let settlers = self.all_units().filter(|u| u.home == Some(c) && u.kind == unit_ids::SETTLERS).count() as i32;
         y.food_upkeep = city.size as i32 * 2 + settlers * g.settler_food as i32;
-        // shield upkeep: 1 per supported unit beyond the free ones
-        let supported = self.supported_units(c).len() as i32;
-        let free = g.free_units_per_city as i32;
-        y.shield_upkeep = (supported - free).max(0);
+        y.shield_upkeep = self.shield_costs(c).iter().filter(|(_, cost)| *cost).count() as i32;
         y.shields = self.boosted_shields(c, y.shields);
         // corruption and the tax/lux/sci split
         y.corruption = self.corruption(c, y.trade);
@@ -1172,5 +1195,23 @@ mod tests {
         g.apollo_reveal(slot);
         assert!(g.map.tile(fx, fy).explored_by(slot));
         assert!(!g.map.tile(fx + 1, fy).explored_by(slot));
+    }
+
+    #[test]
+    fn unit_support_by_government_as_in_civ_exe() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        let (x, y) = g.city(c).pos();
+        g.city_mut(c).size = 2;
+        for k in [unit_ids::MILITIA, unit_ids::MILITIA, unit_ids::DIPLOMAT, unit_ids::MILITIA] {
+            let id = g.add_unit(slot, k, x, y);
+            g.unit_mut(id).home = Some(c);
+        }
+        let paid = |g: &Game| g.shield_costs(c).iter().filter(|(_, p)| *p).count();
+        g.player_mut(slot).govt = Govt::Despotism;
+        assert_eq!(paid(&g), 1, "two free for a size-2 city, the Diplomat free");
+        g.player_mut(slot).govt = Govt::Monarchy;
+        assert_eq!(paid(&g), 3);
+        assert!(g.next_unit_costs_shield(c));
     }
 }

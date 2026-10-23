@@ -555,9 +555,7 @@ pub fn port_needs(g: &Game, c: CityId, plan: &Plan) -> Option<(usize, bool, usiz
 /// Shield surplus the city would keep after taking over the support of one more unit.
 fn surplus_after_support(g: &Game, c: CityId) -> i32 {
     let y = g.city_yield(c);
-    let free = rules::GOVERNMENTS[g.player(g.city(c).owner).govt as usize].free_units_per_city as i32;
-    let supported = g.supported_units(c).len() as i32;
-    y.shield_surplus() - if supported + 1 > free { 1 } else { 0 }
+    y.shield_surplus() - if g.next_unit_costs_shield(c) { 1 } else { 0 }
 }
 
 /// Re-home a unit standing in city `c` there when that city can support it better than its

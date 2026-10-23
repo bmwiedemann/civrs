@@ -404,9 +404,9 @@ impl CityScreen {
         let c = g.city(self.city);
         let govt = rules::GOVERNMENTS[g.player(c.owner).govt as usize];
         let (mut x, mut y) = (8, 69);
-        for (i, id) in g.supported_units(self.city).into_iter().enumerate() {
+        for (id, costs) in g.shield_costs(self.city) {
             let u = g.unit(id);
-            if i >= govt.free_units_per_city as usize {
+            if costs {
                 icon(fb, ctx, ICON_SHIELD, x + 8, y + 12, None);
             }
             let (src, n) = if u.kind == rules::unit_ids::SETTLERS {

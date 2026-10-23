@@ -53,8 +53,9 @@ pub struct Government {
     pub title_f: &'static str,
     /// Maximum tax or science rate in percent (0 = luxuries only, Anarchy).
     pub max_rate: u8,
-    /// Units per city supported without shield upkeep.
-    pub free_units_per_city: u8,
+    /// Units up to the city's size need no shields (Anarchy, Despotism); otherwise every unit
+    /// but Diplomats and Caravans costs one (CIV.EXE 0xfcdd).
+    pub free_units_up_to_size: bool,
     /// Unhappy citizens caused by each aggressive unit outside a city.
     pub unhappy_per_aggressive_unit: u8,
     /// Tiles producing more than 2 of anything lose 1.
@@ -79,7 +80,7 @@ pub static GOVERNMENTS: [Government; 6] = [
         title_m: "Mr.",
         title_f: "Mr.", // no female form in the executable
         max_rate: 0,
-        free_units_per_city: 3,
+        free_units_up_to_size: true,
         unhappy_per_aggressive_unit: 0,
         tile_penalty: true,
         trade_bonus: false,
@@ -94,7 +95,7 @@ pub static GOVERNMENTS: [Government; 6] = [
         title_m: "Emperor",
         title_f: "Empress",
         max_rate: 60,
-        free_units_per_city: 3,
+        free_units_up_to_size: true,
         unhappy_per_aggressive_unit: 0,
         tile_penalty: true,
         trade_bonus: false,
@@ -109,7 +110,7 @@ pub static GOVERNMENTS: [Government; 6] = [
         title_m: "King",
         title_f: "Queen",
         max_rate: 70,
-        free_units_per_city: 3,
+        free_units_up_to_size: false,
         unhappy_per_aggressive_unit: 0,
         tile_penalty: false,
         trade_bonus: false,
@@ -124,7 +125,7 @@ pub static GOVERNMENTS: [Government; 6] = [
         title_m: "Comrade",
         title_f: "Comrade",
         max_rate: 80,
-        free_units_per_city: 3,
+        free_units_up_to_size: false,
         unhappy_per_aggressive_unit: 0,
         tile_penalty: false,
         trade_bonus: false,
@@ -139,7 +140,7 @@ pub static GOVERNMENTS: [Government; 6] = [
         title_m: "President",
         title_f: "President",
         max_rate: 80,
-        free_units_per_city: 0,
+        free_units_up_to_size: false,
         unhappy_per_aggressive_unit: 1,
         tile_penalty: false,
         trade_bonus: true,
@@ -154,7 +155,7 @@ pub static GOVERNMENTS: [Government; 6] = [
         title_m: "President",
         title_f: "President",
         max_rate: 100,
-        free_units_per_city: 0,
+        free_units_up_to_size: false,
         unhappy_per_aggressive_unit: 2,
         tile_penalty: false,
         trade_bonus: true,

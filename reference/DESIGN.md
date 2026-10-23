@@ -406,7 +406,7 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
 - Tile yield: TERRAIN/special [spec]; irrigation/mine bonuses [spec]; road +1 trade on Desert/Grassland/Plains; railroad +50% shields; city centre auto-irrigated
   + min 1 shield; Despotism/Anarchy -1 on tiles >2; Republic/Democracy +1 trade where >=1; pollution halves; Colossus +1 on squares with trade, before the government rules.
 - City turn: food surplus = food - 2*size - settlers upkeep (1; 2 Rep/Dem); growth at (size+1)*10, Granary keeps half, Aqueduct for >10; famine shrinks;
-  shields minus unit upkeep beyond free units (3 under Anarchy/Despotism/Monarchy/Communism, 0 Rep/Dem); Factory +50% / Mfg. Plant +100%, plants/Hoover (same continent) +50% with either, counted in quarters (0xdc5d);
+  shields minus unit upkeep (0xfc6e: 1 per unit; under Anarchy/Despotism units up to city size free; Diplomats/Caravans free); Factory +50% / Mfg. Plant +100%, plants/Hoover (same continent) +50% with either, counted in quarters (0xdc5d);
   cost = cost*10 shields; no penalty for changing production (none in CIV.EXE); buy cost units `2r + r^2/20` (x2 if empty), improvements `2r`, wonders `4r`; trade routes `(ta+tb+4)/8`
   (x2 foreign, max 3); corruption by distance to palace * govt factor (4/3/2/2(Communism flat)/1/0), Courthouse halves; rates in 10% steps capped per govt
   (60/70/80/80/100, Anarchy all lux); Marketplace, then Bank +50% tax&lux each (compounding), Library/University +50% base sci (+1/3 each with Newton, all cities), Copernicus x2 city, SETI +50% all (0xf2f2);
@@ -428,7 +428,7 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
 - Huts: gold 25/50/100, advance, mercenaries, barbarians (not for Settlers / near own city), empty [c1/approx].
 - Disasters D1..D6 after turn 10 (1/200 per city size>=3), each cancelled by the matching improvement; off after Medicine/Industrialization [approx].
 - Governments table (max rate / free units / unhappy per abroad unit / tile penalty / trade bonus / corruption / settler food / martial law):
-  Anarchy lux-only/3/0/yes/no/4/1/3; Despotism 60/3/0/yes/no/3/1/3; Monarchy 70/3/0/no/no/2/1/3; Communism 80/3/0/no/no/2 flat/1/3; Republic 80/0/1/no/yes/1/2/0;
+  Anarchy lux-only/size/0/yes/no/4/1/3; Despotism 60/size/0/yes/no/3/1/3; Monarchy 70/0/0/no/no/2/1/3; Communism 80/0/0/no/no/2 flat/1/3; Republic 80/0/1/no/yes/1/2/0;
   Democracy 100/0/2/no/yes/0/2/0. Revolution: 1-4 turns anarchy (0 with Pyramids) -> choose govt menu -> GOVT screen; senate auto-accepts peace under Rep/Dem.
 - Diplomacy (peace/war): contact on adjacency; AI audience on first contact and periodically by attitude; attitude = traits + treaty + embassies - war - power ratio +
   random; proposals EXCHANGE/CANCEL/TRIBUTE/TAKECIV/PEACE/GIVECIV/GIVECASH/GROVEL/THREAT/TREATY/HELPME/CRUSADE/... from KING.TXT; human audience menu

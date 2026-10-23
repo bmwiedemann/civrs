@@ -422,10 +422,11 @@ impl Game {
         }
     }
 
-    /// Supported unit farthest from its home city (disbanded first on shortages).
+    /// Supported unit farthest from its home city (disbanded first on shortages); Diplomats
+    /// and Caravans cost no shields and are never chosen (CIV.EXE 0xfdd9).
     fn farthest_supported_unit(&self, c: CityId) -> Option<UnitId> {
         let city = self.city(c);
-        self.supported_units(c).into_iter().max_by_key(|id| {
+        self.supported_units(c).into_iter().filter(|id| !matches!(self.unit(*id).kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN)).max_by_key(|id| {
             let u = self.unit(*id);
             (Map::dist((u.x, u.y), (city.x, city.y)), *id)
         })
@@ -1145,7 +1146,8 @@ mod tests {
         let (mut g, c) = fixture();
         let slot = g.city(c).owner;
         let (x, y) = g.city(c).pos();
-        // despotism: 3 free units; the 5th and 6th need shields the size-1 city cannot make
+        // despotism: units up to the city's size are free; the others need shields the size-1
+        // city cannot make
         for _ in 0..6 {
             let id = g.add_unit(slot, unit_ids::MILITIA, x, y);
             g.unit_mut(id).home = Some(c);
