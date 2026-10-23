@@ -398,7 +398,7 @@ once per game (`Game::hints_shown`, appended to v2 saves). Green and red notes s
 box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, text from x 64.
 
 ## Rules summary (formulas; [spec]=from EXE, [c1]=known Civ1 rule, [approx]=reconstruction kept in one tunable function)
-- Mapgen [approx, structurally Civ1-like]: 80x50 no wrap; blobs of random-walk land scaled by land mass; terrain by latitude/temperature, moisture/climate,
+- Mapgen [approx, structurally Civ1-like]: 80x50, wrapping east-west (0x1ec91; the map view does not scroll across the edge yet); blobs of random-walk land scaled by land mass; terrain by latitude/temperature, moisture/climate,
   height (hills/mountains); age = smoothing passes; rivers from hills to ocean; special resource pattern `(x%4)*4+(y%4) == ((x/4)*13+(y/4)*11+seed)%16` [c1];
   shield grassland pattern; huts on land away from starts; continents by flood fill; start sites scored by radius yield, distance >= 10, distinct continents.
   Earth: MAP.PIC terrain + fixed historical start table (snap to land).

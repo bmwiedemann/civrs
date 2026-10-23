@@ -102,7 +102,7 @@ impl Game {
         if info.food + info.shields < 2 {
             return false;
         }
-        let in_radius = self.all_cities().any(|c| rules::CITY_RADIUS.iter().any(|&(dx, dy)| (c.x + dx as i32, c.y + dy as i32) == (x, y)));
+        let in_radius = self.all_cities().any(|c| rules::CITY_RADIUS.iter().any(|&(dx, dy)| (Map::wrap_x(c.x + dx as i32), c.y + dy as i32) == (Map::wrap_x(x), y)));
         if in_radius {
             return false;
         }

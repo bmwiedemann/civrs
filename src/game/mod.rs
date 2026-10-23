@@ -395,6 +395,7 @@ impl Game {
     }
 
     pub fn units_at(&self, x: i32, y: i32) -> Vec<UnitId> {
+        let x = Map::wrap_x(x);
         self.all_units().filter(|u| u.x == x && u.y == y).map(|u| u.id).collect()
     }
 
@@ -407,6 +408,7 @@ impl Game {
         if let Some(c) = self.city_at(x, y) {
             return Some(self.city(c).owner);
         }
+        let x = Map::wrap_x(x);
         self.all_units().find(|u| u.x == x && u.y == y).map(|u| u.owner)
     }
 

@@ -268,7 +268,7 @@ fn try_river(map: &mut Map, rng: &mut Rng) {
             dir = (dir + if rng.below(2) == 0 { 1 } else { 3 }) % 4;
         }
         let (dx, dy) = [(0, -1), (1, 0), (0, 1), (-1, 0)][dir as usize];
-        let (nx, ny) = (x + dx, y + dy);
+        let (nx, ny) = (Map::wrap_x(x + dx), y + dy);
         if !Map::in_bounds(nx, ny) {
             return;
         }

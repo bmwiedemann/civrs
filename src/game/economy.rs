@@ -156,7 +156,7 @@ impl Game {
     pub fn radius_tile(&self, c: CityId, idx: u8) -> Option<(i32, i32)> {
         let city = self.city_opt(c)?;
         let (dx, dy) = rules::CITY_RADIUS[idx as usize];
-        let (x, y) = (city.x + dx as i32, city.y + dy as i32);
+        let (x, y) = (Map::wrap_x(city.x + dx as i32), city.y + dy as i32);
         if Map::in_bounds(x, y) {
             Some((x, y))
         } else {

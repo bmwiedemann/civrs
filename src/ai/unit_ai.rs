@@ -40,7 +40,7 @@ pub fn step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) -
     let from = g.unit(id).pos();
     let attacker_kind = g.unit(id).kind;
     let (dx, dy) = d.delta();
-    let to = (from.0 + dx, from.1 + dy);
+    let to = (Map::wrap_x(from.0 + dx), from.1 + dy);
     let defender_owner = g.units_at(to.0, to.1).first().map(|u| g.unit(*u).owner).unwrap_or(0);
     let r = g.try_move(id, d);
     if let Ok(out) = &r {
@@ -205,7 +205,7 @@ pub fn opportunistic_attack(g: &mut Game, id: UnitId, min_chance: i32, sink: &mu
     let mut best: Option<(Dir8, i32)> = None;
     for d in Dir8::ALL {
         let (dx, dy) = d.delta();
-        let (x, y) = (u.x + dx, u.y + dy);
+        let (x, y) = (Map::wrap_x(u.x + dx), u.y + dy);
         if !Map::in_bounds(x, y) || !g.is_enemy_at(u.owner, x, y) {
             continue;
         }
@@ -993,7 +993,7 @@ pub fn play_barbarians(g: &mut Game, sink: &mut dyn FnMut(TurnStep)) {
         for d in dirs {
             let Some(cur) = g.unit_opt(id) else { break };
             let (dx, dy) = d.delta();
-            let (x, y) = (cur.x + dx, cur.y + dy);
+            let (x, y) = (Map::wrap_x(cur.x + dx), cur.y + dy);
             if !g.map.is_land(x, y) || g.city_at(x, y).is_some() {
                 continue;
             }

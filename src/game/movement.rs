@@ -67,7 +67,7 @@ impl Game {
             return Err(RuleError::NoMoves);
         }
         let (dx, dy) = d.delta();
-        let (tx, ty) = (u.x + dx, u.y + dy);
+        let (tx, ty) = (Map::wrap_x(u.x + dx), u.y + dy);
         if !Map::in_bounds(tx, ty) {
             return Ok(MoveOutcome::Blocked);
         }

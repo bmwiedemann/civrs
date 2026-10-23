@@ -135,6 +135,8 @@ impl Dir8 {
     }
 
     pub fn from_delta(dx: i32, dy: i32) -> Option<Dir8> {
+        // a step across the wrapping east-west edge
+        let dx = Map::delta_x(0, dx);
         Dir8::ALL.iter().copied().find(|d| d.delta() == (dx.signum(), dy.signum()) && dx.abs() <= 1 && dy.abs() <= 1 && (dx, dy) != (0, 0))
     }
 
@@ -153,13 +155,33 @@ impl Map {
     }
 
     #[inline]
-    pub fn in_bounds(x: i32, y: i32) -> bool {
-        x >= 0 && y >= 0 && (x as usize) < MAP_W && (y as usize) < MAP_H
+    /// The map wraps around east-west (CIV.EXE 0x1ec91): every x is on the map, only y can
+    /// fall off it.
+    pub fn in_bounds(_x: i32, y: i32) -> bool {
+        y >= 0 && (y as usize) < MAP_H
+    }
+
+    /// The column `x` stands for on the wrapping map (0..MAP_W).
+    #[inline]
+    pub fn wrap_x(x: i32) -> i32 {
+        x.rem_euclid(MAP_W as i32)
+    }
+
+    /// Shortest signed horizontal step from column `a` to column `b`, around either way.
+    #[inline]
+    pub fn delta_x(a: i32, b: i32) -> i32 {
+        let w = MAP_W as i32;
+        let d = (b - a).rem_euclid(w);
+        if d > w / 2 {
+            d - w
+        } else {
+            d
+        }
     }
 
     #[inline]
     pub fn idx(x: i32, y: i32) -> usize {
-        y as usize * MAP_W + x as usize
+        y as usize * MAP_W + Map::wrap_x(x) as usize
     }
 
     pub fn get(&self, x: i32, y: i32) -> Option<&Tile> {
@@ -198,12 +220,12 @@ impl Map {
     pub fn neighbours8(x: i32, y: i32) -> impl Iterator<Item = (i32, i32)> {
         Dir8::ALL.iter().map(move |d| {
             let (dx, dy) = d.delta();
-            (x + dx, y + dy)
+            (Map::wrap_x(x + dx), y + dy)
         }).filter(|&(nx, ny)| Map::in_bounds(nx, ny))
     }
 
     pub fn neighbours4(x: i32, y: i32) -> impl Iterator<Item = (i32, i32)> {
-        [(0, -1), (1, 0), (0, 1), (-1, 0)].into_iter().map(move |(dx, dy)| (x + dx, y + dy)).filter(|&(nx, ny)| Map::in_bounds(nx, ny))
+        [(0, -1), (1, 0), (0, 1), (-1, 0)].into_iter().map(move |(dx, dy)| (Map::wrap_x(x + dx), y + dy)).filter(|&(nx, ny)| Map::in_bounds(nx, ny))
     }
 
     /// Bitmask of orthogonal neighbours with the same terrain: N=1, E=2, S=4, W=8.
@@ -275,14 +297,15 @@ impl Map {
         Map::neighbours8(x, y).any(|(nx, ny)| self.is_ocean(nx, ny))
     }
 
-    /// Chebyshev distance.
+    /// Chebyshev distance, around the east-west edge where that is shorter.
     pub fn dist(a: (i32, i32), b: (i32, i32)) -> i32 {
-        (a.0 - b.0).abs().max((a.1 - b.1).abs())
+        Map::delta_x(a.0, b.0).abs().max((a.1 - b.1).abs())
     }
 
-    /// CIV.EXE's travel distance (0x1d62e): the longer axis plus half the shorter one.
+    /// CIV.EXE's travel distance (0x1d6af, 0x1d62e): the longer axis plus half the shorter
+    /// one, the horizontal one taken around the edge where that is shorter.
     pub fn civ_distance(a: (i32, i32), b: (i32, i32)) -> i32 {
-        let (dx, dy) = ((a.0 - b.0).abs(), (a.1 - b.1).abs());
+        let (dx, dy) = (Map::delta_x(a.0, b.0).abs(), (a.1 - b.1).abs());
         dx.max(dy) + dx.min(dy) / 2
     }
 
