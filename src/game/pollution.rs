@@ -4,7 +4,7 @@
 //! `f` is 3 with a Recycling Center, else 2 with a Hydro or Nuclear Plant or a Hoover Dam on the
 //! continent, else 1 (0xdc68), and `techs` counts Industrialization, Automobile, Mass Production
 //! and Plastics, none with Mass Transit (0xcc43). A square is polluted when twice that beats
-//! `random(256 - advances * difficulty / 2)`.
+//! `random(256 - advances * difficulty / 2)`. Only the human player's cities pollute.
 
 use super::events::GameEvent;
 use super::map::{tile_flags, CityId};
@@ -42,8 +42,12 @@ impl Game {
         self.city_yield(c).shields / self.pollution_divisor(c) - 20 + city.size as i32 * techs / 4
     }
 
-    /// Roll for pollution in a city; pollutes a random worked land tile on success.
+    /// Roll for pollution in a city; pollutes a random worked land tile on success. Computer
+    /// players' cities never pollute: CIV.EXE 0x12ddd skips this for every civ but the human's.
     pub fn pollution_roll(&mut self, c: CityId) {
+        if !self.player(self.city(c).owner).human {
+            return;
+        }
         let points = self.pollution_points(c);
         if points <= 0 {
             return;
@@ -73,10 +77,11 @@ impl Game {
     }
 
     /// "Risk of MELTDOWN!": a city in disorder with a Nuclear Plant melts down one turn in
-    /// three until its owner knows Fusion Power (CIV.EXE 0x12f46).
+    /// three until its owner knows Fusion Power (CIV.EXE 0x12f46, human cities only like
+    /// pollution).
     pub fn meltdown_roll(&mut self, c: CityId) {
         let city = self.city(c);
-        if !city.disorder || !city.has_improvement(imp::NUCLEAR_PLANT) || self.player(city.owner).knows(adv::FUSION_POWER) {
+        if !self.player(city.owner).human || !city.disorder || !city.has_improvement(imp::NUCLEAR_PLANT) || self.player(city.owner).knows(adv::FUSION_POWER) {
             return;
         }
         if self.rng.below(3) == 0 {
@@ -214,5 +219,32 @@ mod tests {
         assert_eq!(g.city(c).size, 4);
         assert!(!g.city(c).has_improvement(imp::NUCLEAR_PLANT));
         assert!(g.take_events().iter().any(|e| *e == GameEvent::Meltdown { city: c }));
+    }
+
+    #[test]
+    fn computer_cities_never_pollute() {
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        let slot = g.human_slot;
+        let settler = g.units_of(slot).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        g.city_mut(c).size = 12;
+        g.fix_workers(c);
+        for a in [adv::INDUSTRIALIZATION, adv::AUTOMOBILE, adv::MASS_PRODUCTION, adv::PLASTICS] {
+            g.player_mut(slot).learn(a);
+        }
+        // force a huge pollution score through the city size, then hand the city to the AI
+        g.city_mut(c).size = 120;
+        assert!(g.pollution_points(c) > 0);
+        g.player_mut(slot).human = false;
+        let before = g.polluted_tiles;
+        for _ in 0..50 {
+            g.pollution_roll(c);
+        }
+        assert_eq!(g.polluted_tiles, before);
+        g.player_mut(slot).human = true;
+        for _ in 0..50 {
+            g.pollution_roll(c);
+        }
+        assert!(g.polluted_tiles > before);
     }
 }
