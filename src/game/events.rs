@@ -3,7 +3,7 @@
 
 use super::city::Production;
 use super::map::{CityId, Slot, UnitId};
-use crate::rules::{AdvanceId, Govt, UnitTypeId, WonderId};
+use crate::rules::{AdvanceId, Govt, ImprovementId, UnitTypeId, WonderId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -25,21 +25,28 @@ pub enum Disaster {
     Flood,
     Volcano,
     Famine,
-    Fire,
+    /// The improvement burnt down.
+    Fire(ImprovementId),
     Pirates,
+    /// The improvement destroyed.
+    Earthquake(ImprovementId),
+    /// "Rioting in" / "Corruption in" / "Scandal in" (`wording` 0..=2); the improvement the
+    /// citizens demand, None for lower taxes.
+    Unrest { wording: u8, demand: Option<ImprovementId> },
 }
 
 impl Disaster {
-    /// KING.TXT section name.
-    pub fn section(self) -> &'static str {
-        match self {
+    /// KING.TXT section name (the earthquake and unrest texts are in CIV.EXE).
+    pub fn section(self) -> Option<&'static str> {
+        Some(match self {
             Disaster::Plague => "D1",
             Disaster::Flood => "D2",
             Disaster::Volcano => "D3",
             Disaster::Famine => "D4",
-            Disaster::Fire => "D5",
+            Disaster::Fire(_) => "D5",
             Disaster::Pirates => "D6",
-        }
+            Disaster::Earthquake(_) | Disaster::Unrest { .. } => return None,
+        })
     }
 }
 
@@ -124,6 +131,9 @@ pub enum GameEvent {
     CantMaintain { city: CityId, improvement: u8 },
     /// A Diplomat of `by` bought a unit of `from`.
     UnitBribed { kind: UnitTypeId, from: Slot, by: Slot, at: (i32, i32) },
+    /// "Residents of CITY admire the prosperity of OTHER." — the city went over from `from`
+    /// to the owner of `admired` (CIV.EXE o 0x1beb0).
+    CityDefected { city: CityId, admired: CityId, from: Slot },
 }
 
 /// A choice the engine needs from the human player before continuing.

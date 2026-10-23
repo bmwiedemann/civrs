@@ -3,8 +3,8 @@
 //! Score = 2 * happy + content (specialists count as content) + 20 per wonder + 5 per future
 //! tech + 3 per peace turn (after 1 AD) - 10 per polluted tile within the player's city
 //! radii + spaceship bonus (100 + 50 per habitation module once arrived).
-//! "Percent" [approx] is `total * (difficulty + 1) / 20`, i.e. 1000 points at Prince = 150%;
-//! it is monotonic in the score and grows with difficulty.
+//! The civilization rating is `total * (difficulty + 1) / 50` percent (CIV.EXE o 0x2bc9, the
+//! Hall of Fame line), i.e. 1000 points at Prince = 60%.
 
 use super::map::Slot;
 use super::Game;
@@ -42,9 +42,12 @@ pub struct Demographics {
     pub entries: Vec<DemographicEntry>,
 }
 
-/// Index into `rules::RATINGS` (best first) for a score percentage.
+/// Index into `rules::RATINGS` (best first) for a rating percentage (CIV.EXE o 0x2dd2): the
+/// level is one less than the largest `i` in 1..=20 with `i * i / 3 < percent`, and the ruler
+/// shown is entry `19 - level` (the last one when no `i` qualifies).
 pub fn rating_index(percent: i32) -> usize {
-    ((100 - percent.clamp(0, 100)) * 19 / 100) as usize
+    let level = (1..=20).filter(|i| i * i / 3 < percent).max().map(|i| i - 1).unwrap_or(0).min(19);
+    (19 - level) as usize
 }
 
 /// Index into `rules::ADJECTIVES` (best first) for a score percentage.
@@ -70,7 +73,7 @@ impl Game {
             s.spaceship = 100 + 50 * hab;
         }
         s.total = s.happy * 2 + s.content + s.wonders * 20 + s.future_tech * 5 + s.peace * 3 - s.pollution * 10 + s.spaceship;
-        s.percent = s.total * (self.setup.difficulty as i32 + 1) / 20;
+        s.percent = s.total * (self.setup.difficulty as i32 + 1) / 50;
         s
     }
 
@@ -152,7 +155,9 @@ mod tests {
         assert!(s.total >= 0);
         assert!(s.percent >= 0);
         assert!(rating_index(s.percent) < rules::RATINGS.len());
-        assert_eq!(rating_index(100), 0);
+        // 17 * 17 / 3 = 96 < 100: level 16, Thomas Jefferson; 20 * 20 / 3 = 133 tops the list
+        assert_eq!(rules::RATINGS[rating_index(100)], "Thomas Jefferson");
+        assert_eq!(rating_index(134), 0);
         assert_eq!(rating_index(0), 19);
         let d = g.demographics(slot);
         assert_eq!(d.entries.len(), 5);

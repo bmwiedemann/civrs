@@ -471,7 +471,7 @@ fn copy_explored(map: &mut Map, slot: Slot, from: Slot) {
 mod tests {
     use super::*;
     use crate::game::{tile_flags, GameSetup, Relation};
-    use crate::rules::{improvement_ids as imp, unit_ids, Terrain};
+    use crate::rules::{improvement_ids as imp, unit_ids, Govt, Terrain};
 
     fn flat_game() -> Game {
         flat_game_with(7)
@@ -772,5 +772,35 @@ mod tests {
         g.city_mut(c).add_improvement(imp::TEMPLE);
         assert_eq!(g.diplomat_action(d, DiplomatAction::Sabotage, c).unwrap(), DiplomatResult::Sabotaged(Some(imp::TEMPLE)));
         assert!(!g.city(c).has_improvement(imp::TEMPLE));
+    }
+
+    /// An unhappy Republic city loses its food and shields to unrest, then defects to the civ
+    /// of the happiest city before it (CIV.EXE o 0x1bc5d, 0x1bd9d).
+    #[test]
+    fn unrest_and_defection_to_an_admired_city() {
+        use crate::game::events::Disaster;
+        use crate::rules::wonder_ids as won;
+        let mut g = flat_game();
+        let admired = g.add_city(2, "Eden".into(), 10, 10);
+        g.city_mut(admired).add_wonder(won::HANGING_GARDENS);
+        g.wonders_built[won::HANGING_GARDENS as usize] = Some(admired);
+        g.add_city(1, "Capital".into(), 25, 25);
+        let c = g.add_city(1, "Unrest".into(), 14, 10);
+        g.city_mut(c).size = 10;
+        g.auto_assign(c);
+        g.city_mut(c).food = 7;
+        g.city_mut(c).shields = 9;
+        g.player_mut(1).govt = Govt::Monarchy;
+        let h = g.city_happiness(c);
+        assert!(h.happy < h.unhappy, "{h:?}");
+        assert!(g.city_happiness(admired).happy > g.city_happiness(admired).unhappy);
+        g.city_unrest(c);
+        assert_eq!((g.city(c).food, g.city(c).shields), (0, 0));
+        assert_eq!(g.city(c).owner, 1, "no defection under Monarchy");
+        assert!(g.events.iter().any(|e| matches!(e, GameEvent::Disaster { kind: Disaster::Unrest { demand: Some(imp::TEMPLE), .. }, .. })));
+        g.player_mut(1).govt = Govt::Republic;
+        g.city_unrest(c);
+        assert_eq!(g.city(c).owner, 2);
+        assert!(g.events.iter().any(|e| matches!(e, GameEvent::CityDefected { city, admired: a, from: 1 } if *city == c && *a == admired)));
     }
 }

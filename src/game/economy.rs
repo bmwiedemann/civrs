@@ -257,10 +257,12 @@ impl Game {
                 y.trade += t;
             }
         }
-        // trade routes
+        // trade routes (CIV.EXE 0xf141): each adds (partner's trade after corruption + this
+        // city's trade so far + 4) / 8, or / 16 between cities of one civilization
         for r in &city.trade_routes {
-            if self.city_opt(*r).is_some() {
-                y.trade += self.trade_route_value(c, *r);
+            if let Some(other) = self.city_opt(*r) {
+                let div = if other.owner == slot { 16 } else { 8 };
+                y.trade += (self.visible_trade(*r) + y.trade + 4) / div;
             }
         }
         // food upkeep: 2 per citizen plus settlers (1; 2 under Republic/Democracy)
@@ -269,15 +271,16 @@ impl Game {
         y.food_upkeep = city.size as i32 * 2 + settlers * g.settler_food as i32;
         y.shield_upkeep = self.shield_costs(c).iter().filter(|(_, cost)| *cost).count() as i32;
         y.shields = self.boosted_shields(c, y.shields);
-        // corruption and the tax/lux/sci split
-        y.corruption = self.corruption(c, y.trade);
+        // corruption and the tax/lux/sci split (CIV.EXE 0xf1df): luxuries and taxes rounded to
+        // the nearest unit, science gets the rest
+        y.corruption = self.corruption(c, y.trade, false);
         let net = y.trade - y.corruption;
         if p.govt == Govt::Anarchy {
             y.lux = net;
         } else {
-            y.lux = net * p.lux as i32 / 100;
-            y.sci = net * p.sci() as i32 / 100;
-            y.tax = net - y.lux - y.sci;
+            y.lux = ((net * (p.lux / 10) as i32 + 5) / 10).clamp(0, y.trade);
+            y.tax = ((net * (p.tax / 10) as i32 + 5) / 10).clamp(0, (net - y.lux).max(0));
+            y.sci = net - y.lux - y.tax;
         }
         // specialists: 2 each
         for s in &city.specialists {
@@ -329,19 +332,6 @@ impl Game {
         }
     }
 
-    /// Trade a route between two cities yields per turn: `(ta + tb + 4) / 8`, doubled for a
-    /// foreign city.
-    pub fn trade_route_value(&self, a: CityId, b: CityId) -> i32 {
-        let (Some(ca), Some(cb)) = (self.city_opt(a), self.city_opt(b)) else { return 0 };
-        let ta = self.raw_trade(a);
-        let tb = self.raw_trade(b);
-        let mut v = (ta + tb + 4) / 8;
-        if ca.owner != cb.owner {
-            v *= 2;
-        }
-        v.max(1)
-    }
-
     /// Trade from worked tiles only (no routes), used by the route formulas.
     pub fn raw_trade(&self, c: CityId) -> i32 {
         let city = self.city(c);
@@ -356,25 +346,38 @@ impl Game {
         t
     }
 
-    /// Trade lost to corruption: `trade * distance * factor / 100` [approx], Communism uses a
-    /// flat distance, a Courthouse halves it, the Palace city has none.
-    pub fn corruption(&self, c: CityId, trade: i32) -> i32 {
+    /// Trade of the worked tiles less their corruption: what trade routes and caravans count
+    /// for a partner city (CIV.EXE city +0xa, set at 0xf13d).
+    pub fn visible_trade(&self, c: CityId) -> i32 {
+        let t = self.raw_trade(c);
+        t - self.corruption(c, t, true)
+    }
+
+    /// Distance used for corruption (CIV.EXE 0xca04): 0 in a city with a Palace, else the
+    /// travel distance to the nearest own Palace (32 without one); a flat 10 under Communism.
+    fn corruption_distance(&self, c: CityId) -> i32 {
         let city = self.city(c);
-        let p = self.player(city.owner);
-        let g = rules::GOVERNMENTS[p.govt as usize];
-        if g.corruption == 0 || city.has_improvement(imp::PALACE) {
+        if self.player(city.owner).govt == Govt::Communism {
+            return 10;
+        }
+        if city.has_improvement(imp::PALACE) {
             return 0;
         }
-        let dist = if p.govt == Govt::Communism {
-            8
-        } else {
-            match p.capital.and_then(|cap| self.city_opt(cap)) {
-                Some(cap) => Map::dist((city.x, city.y), (cap.x, cap.y)),
-                None => 16,
-            }
-        };
-        let mut corr = trade * dist * g.corruption as i32 / 100;
-        if city.has_improvement(imp::COURTHOUSE) {
+        self.all_cities().filter(|o| o.owner == city.owner && o.has_improvement(imp::PALACE)).map(|o| Map::civ_distance(o.pos(), city.pos())).fold(32, i32::min)
+    }
+
+    /// Trade lost to corruption (CIV.EXE 0xf0c4 / 0xf1df): `trade * distance * 3 / (20 *
+    /// government + 80)`, none under Democracy, halved by a Courthouse. The first pass over the
+    /// tiles' trade (`tiles_only`, for the city's visible trade) also halves it with a Palace,
+    /// which only matters under Communism.
+    pub fn corruption(&self, c: CityId, trade: i32, tiles_only: bool) -> i32 {
+        let city = self.city(c);
+        let govt = self.player(city.owner).govt;
+        if govt == Govt::Democracy {
+            return 0;
+        }
+        let mut corr = trade * self.corruption_distance(c) * 3 / (20 * govt as i32 + 80);
+        if city.has_improvement(imp::COURTHOUSE) || tiles_only && city.has_improvement(imp::PALACE) {
             corr /= 2;
         }
         corr.clamp(0, trade)

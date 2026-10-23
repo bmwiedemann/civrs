@@ -60,6 +60,36 @@ fn built_view_item(g: &Game, city: crate::game::CityId, item: crate::game::Produ
     }
 }
 
+/// Lines of a disaster message: KING.TXT *D1..*D6, or CIV.EXE's own earthquake and unrest
+/// texts (o 0x1b9b9, 0x1bc99).
+fn disaster_text(ctx: &UiContext, city: &str, kind: crate::game::events::Disaster) -> Vec<String> {
+    use crate::game::events::Disaster;
+    match kind {
+        Disaster::Earthquake(i) => vec![format!("Earthquake in {city}!"), format!("{} destroyed.", rules::IMPROVEMENTS[i as usize].name)],
+        Disaster::Unrest { wording, demand } => {
+            let what = ["Rioting in", "Corruption in", "Scandal in"][wording.min(2) as usize];
+            let demand = match demand {
+                Some(i) => format!("{}.", rules::IMPROVEMENTS[i as usize].name.to_uppercase()),
+                None => "lower taxes.".into(),
+            };
+            vec![format!("{what} {city}!"), format!("Citizens demand {demand}")]
+        }
+        _ => {
+            let lines = kind.section().and_then(|sec| ctx.texts.king.section(sec)).map(|l| l.to_vec()).unwrap_or_default();
+            let us = match kind {
+                Disaster::Fire(i) => rules::IMPROVEMENTS[i as usize].name.to_string(),
+                _ => String::new(),
+            };
+            let mut text = paragraphs(&substitute(&lines, &Vars { rplc1: city.to_string(), us, ..Default::default() }));
+            // the famine text has no demand line of its own (CIV.EXE appends it, o 0x1bb6d)
+            if kind == Disaster::Famine {
+                text.push("Citizens demand GRANARY.".into());
+            }
+            text
+        }
+    }
+}
+
 /// Produce a dialog for a game event, if it concerns the human player and is worth showing.
 pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn Screen>> {
     sound_for_event(ctx, ev);
@@ -153,10 +183,18 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             Some(Box::new(Sequence { first: Some(anim), then: text }))
         }
         GameEvent::GlobalWarming => msg(vec!["Global warming!".into(), "Polar ice caps melt, coastal areas flood.".into()]),
-        GameEvent::Disaster { city, kind } if g.city(*city).owner == me => {
-            let lines = ctx.texts.king.section(kind.section()).map(|l| l.to_vec()).unwrap_or_default();
-            let v = Vars { rplc1: city_name(*city), us: "Buildings".into(), ..Default::default() };
-            msg(paragraphs(&substitute(&lines, &v)))
+        // the owner reads it all, anyone else who sees the city only the first line (CIV.EXE
+        // o 0x1bf3b)
+        GameEvent::Disaster { city, kind } if g.city_opt(*city).is_some_and(|c| c.owner == me || g.visible_to(me, c.x, c.y)) => {
+            let lines = disaster_text(ctx, &city_name(*city), *kind);
+            if g.city(*city).owner == me {
+                msg(lines)
+            } else {
+                msg(lines.into_iter().take(1).collect())
+            }
+        }
+        GameEvent::CityDefected { city, admired, from } if *from == me || g.city_opt(*city).is_some_and(|c| g.visible_to(me, c.x, c.y)) => {
+            msg(vec![format!("Residents of {}", city_name(*city)), format!("admire the prosperity of {}.", city_name(*admired))])
         }
         GameEvent::Revolution { slot } if *slot == me => msg(vec!["Revolution!".into(), "Your government falls into anarchy.".into()]),
         GameEvent::AnarchyEnded { slot } if *slot == me => None,

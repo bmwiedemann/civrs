@@ -7,7 +7,7 @@
 use super::naval_ai;
 use super::path;
 use crate::game::turn::TurnStep;
-use crate::game::{tile_flags, CityId, Dir8, Game, GameEvent, Map, MoveOutcome, RuleError, Slot, Unit, UnitId, UnitOrder};
+use crate::game::{tile_flags, CityId, Dir8, Game, Map, MoveOutcome, RuleError, Slot, Unit, UnitId, UnitOrder};
 use crate::rules::{self, unit_ids, AiRole, Terraform, Terrain};
 
 /// Expansion budget for AI pathfinding (short hops; a fresh path is computed every turn).
@@ -867,12 +867,7 @@ fn act_caravan(g: &mut Game, id: UnitId, sink: &mut dyn FnMut(TurnStep)) {
                 g.set_goto(id, p.0, p.1);
                 let arrived = p == u.pos() || matches!(move_toward(g, id, p, sink), Progress::Arrived | Progress::Outcome(MoveOutcome::EnteredForeignCity(_)));
                 if arrived && g.unit_opt(id).is_some() {
-                    let bonus = g.trade_route_value(h, d);
-                    g.city_mut(h).trade_routes.push(d);
-                    g.player_mut(slot).gold += bonus * 2;
-                    g.push_event(GameEvent::TradeRouteMade { city: h, with: d, bonus, goods: (id & 7) as u8 });
-                    g.remove_unit(id);
-                    g.refresh_vision(slot);
+                    let _ = g.caravan_action(id, crate::game::turn::CaravanAction::TradeRoute(d));
                 }
                 return;
             }

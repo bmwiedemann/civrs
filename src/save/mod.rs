@@ -158,9 +158,11 @@ impl HallOfFame {
         }
     }
 
-    /// Insert keeping the list sorted by percent (desc), max 10 entries. Returns the rank.
+    /// Insert keeping the list sorted by `(difficulty + 2) * score` (desc, CIV.EXE o 0x2c88),
+    /// max 10 entries. Returns the rank.
     pub fn add(&mut self, e: FameEntry) -> usize {
-        let pos = self.entries.iter().position(|x| x.percent < e.percent).unwrap_or(self.entries.len());
+        let weight = |x: &FameEntry| (x.difficulty as i32 + 2) * x.score;
+        let pos = self.entries.iter().position(|x| weight(x) < weight(&e)).unwrap_or(self.entries.len());
         self.entries.insert(pos, e);
         self.entries.truncate(10);
         pos

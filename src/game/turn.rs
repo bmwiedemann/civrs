@@ -12,7 +12,7 @@ use super::events::{Decision, DecisionReply, Disaster, EndReason, GameEvent};
 use super::map::{CityId, Map, Slot, UnitId};
 use super::{Game, Production, Relation, RuleError, UnitOrder};
 use crate::ai::AiDriver;
-use crate::rules::{self, advance_ids as adv, improvement_ids as imp, unit_ids, wonder_ids as won, AdvanceId, Govt, ImprovementId, UnitTypeId};
+use crate::rules::{self, advance_ids as adv, improvement_ids as imp, unit_ids, wonder_ids as won, AdvanceId, Govt, ImprovementId, Terrain, UnitTypeId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -257,10 +257,6 @@ pub enum DiplomatResult {
     MetKing,
 }
 
-/// Chance (1 in N) of a disaster per city per turn [approx].
-pub const DISASTER_ODDS: u32 = 200;
-/// First turn on which disasters may strike.
-pub const DISASTER_START_TURN: u32 = 10;
 /// Shields a caravan adds to a wonder.
 pub const CARAVAN_WONDER_SHIELDS: i32 = 50;
 
@@ -375,6 +371,7 @@ impl Game {
     /// players and before the turn counter advances).
     pub fn process_world(&mut self) {
         self.global_warming_check();
+        self.disaster_check();
         self.spaceship_arrivals();
         let end_year = rules::DIFFICULTY[self.setup.difficulty as usize].end_year;
         if self.ended.is_none() && !self.scoring_over && rules::year_for_turn(self.turn + 1) > end_year {
@@ -457,7 +454,6 @@ impl Game {
         // hazards
         self.pollution_roll(c);
         self.meltdown_roll(c);
-        self.disaster_roll(c);
         if let Some(cm) = self.cities[c as usize].as_mut() {
             cm.bought = false;
         }
@@ -540,73 +536,144 @@ impl Game {
         self.push_event(GameEvent::ImprovementSold { city: c, improvement: id, gold });
     }
 
-    /// Natural disasters [approx]: 1 in `DISASTER_ODDS` per city of size >= 3 per turn from
-    /// turn `DISASTER_START_TURN`; plague ends with Medicine, the rest with Industrialization;
-    /// each is prevented by one improvement.
-    pub fn disaster_roll(&mut self, c: CityId) {
+    /// Once a turn after turn 50 (CIV.EXE 0x262d) a random one of the 128 city slots is tried:
+    /// a city of size 5 or more whose owner rules above Despotism meets `city_disaster`. (The
+    /// original reuses its loop counter for the slot, so slots 0 and 1 lead to another try.)
+    pub fn disaster_check(&mut self) {
+        if self.turn <= 50 {
+            return;
+        }
+        let mut i = 0u32;
+        while i < 2 {
+            i = self.rng.below(128);
+            let Some(city) = self.city_opt(i as CityId) else {
+                i += 1;
+                continue;
+            };
+            if self.player(city.owner).govt as u8 > Govt::Despotism as u8 && city.size >= 5 {
+                self.city_disaster(i as CityId);
+            }
+            i += 1;
+        }
+    }
+
+    /// A random event in a city (CIV.EXE o 0x1b8b5): `random(10)` picks an earthquake (hills
+    /// nearby), plague, flood (river nearby), volcano (mountains nearby), famine, fire, pirates
+    /// (ocean nearby) or, 3 times in 10, unrest if the city has more unhappy than happy
+    /// citizens. Each natural disaster needs the advance behind the improvement that prevents
+    /// it (plague also stops with Medicine); the surrounding terrain includes the city square.
+    fn city_disaster(&mut self, c: CityId) {
         let city = self.city(c).clone();
-        if self.turn < DISASTER_START_TURN || city.size < 3 || self.rng.below(DISASTER_ODDS) != 0 {
+        let owner = city.owner;
+        let near = |t: Terrain| std::iter::once((city.x, city.y)).chain(Map::neighbours8(city.x, city.y)).any(|(x, y)| Map::in_bounds(x, y) && self.map.tile(x, y).terrain == t);
+        let (hills, river, mountains, ocean) = (near(Terrain::Hills), near(Terrain::River), near(Terrain::Mountains), near(Terrain::Ocean));
+        let p = self.player(owner);
+        let knows_prereq = |i: ImprovementId| rules::IMPROVEMENTS[i as usize].prereq.map(|a| p.knows(a)).unwrap_or(true);
+        let lacks = |i: ImprovementId| !city.has_improvement(i) && knows_prereq(i);
+        let (no_aqueduct, no_walls, no_temple, no_granary) = (lacks(imp::AQUEDUCT), lacks(imp::CITY_WALLS), lacks(imp::TEMPLE), lacks(imp::GRANARY));
+        let medicine = p.knows(adv::MEDICINE);
+        // an improvement other than the Palace among the first 16 (the original tests one word)
+        let has_low_improvement = (2..=16).any(|i| city.has_improvement(i));
+        let lose_citizens = |g: &mut Game, div: u8| {
+            let loss = g.city(c).size / div;
+            g.shrink_city(c, loss as i32);
+        };
+        let kind = match self.rng.below(10) {
+            0 if hills && has_low_improvement => Disaster::Earthquake(self.random_improvement_lost(c)),
+            1 if !medicine && no_aqueduct => {
+                lose_citizens(self, 4);
+                Disaster::Plague
+            }
+            2 if river && no_walls => {
+                if city.size > 1 {
+                    lose_citizens(self, 4);
+                }
+                Disaster::Flood
+            }
+            3 if mountains && no_temple => {
+                if city.size > 1 {
+                    lose_citizens(self, 3);
+                }
+                Disaster::Volcano
+            }
+            4 if no_granary => {
+                self.city_mut(c).food = 0;
+                lose_citizens(self, 3);
+                Disaster::Famine
+            }
+            5 if has_low_improvement && no_aqueduct => Disaster::Fire(self.random_improvement_lost(c)),
+            6 if ocean && !city.has_improvement(imp::BARRACKS) => {
+                let cm = self.city_mut(c);
+                cm.food = 0;
+                cm.shields = 0;
+                Disaster::Pirates
+            }
+            7..=9 => return self.city_unrest(c),
+            _ => return,
+        };
+        self.push_event(GameEvent::Disaster { city: c, kind });
+    }
+
+    /// Remove a random improvement (draws of `random(24)` until one the city has, never the
+    /// Palace) and return it.
+    fn random_improvement_lost(&mut self, c: CityId) -> ImprovementId {
+        loop {
+            let bit = self.rng.below(24);
+            let i = bit as ImprovementId + 1;
+            if bit != 0 && self.city(c).has_improvement(i) {
+                self.city_mut(c).remove_improvement(i);
+                return i;
+            }
+        }
+    }
+
+    /// Unrest (CIV.EXE o 0x1bc5d): a city with fewer happy than unhappy citizens loses its
+    /// food and shields ("Rioting in / Corruption in / Scandal in CITY! Citizens demand ..."
+    /// naming the first of Temple, Courthouse, Marketplace and Cathedral it lacks, else lower
+    /// taxes). Under the Republic and Democracy such a city, unless it has the Palace, then
+    /// defects to the owner of the city with the best `32 * (happy - unhappy) / distance`
+    /// above 4 among the city slots before it.
+    pub(crate) fn city_unrest(&mut self, c: CityId) {
+        let h = self.city_happiness(c);
+        if h.happy >= h.unhappy {
             return;
         }
-        let knows_medicine = self.player(city.owner).knows(adv::MEDICINE);
-        let knows_industry = self.player(city.owner).knows(adv::INDUSTRIALIZATION);
-        let kind = match self.rng.below(6) {
-            0 => Disaster::Plague,
-            1 => Disaster::Flood,
-            2 => Disaster::Volcano,
-            3 => Disaster::Famine,
-            4 => Disaster::Fire,
-            _ => Disaster::Pirates,
-        };
-        if kind == Disaster::Plague {
-            if knows_medicine {
-                return;
-            }
-        } else if knows_industry {
+        let city = self.city(c).clone();
+        let wording = self.rng.below(3) as u8;
+        let demand = [imp::TEMPLE, imp::COURTHOUSE, imp::MARKETPLACE]
+            .into_iter()
+            .find(|i| !city.has_improvement(*i))
+            .or_else(|| (self.player(city.owner).knows(adv::RELIGION) && !city.has_improvement(imp::CATHEDRAL)).then_some(imp::CATHEDRAL));
+        self.push_event(GameEvent::Disaster { city: c, kind: Disaster::Unrest { wording, demand } });
+        let cm = self.city_mut(c);
+        cm.food = 0;
+        cm.shields = 0;
+        if city.has_improvement(imp::PALACE) || !matches!(self.player(city.owner).govt, Govt::Republic | Govt::Democracy) {
             return;
         }
-        let struck = match kind {
-            Disaster::Plague => {
-                if city.has_improvement(imp::AQUEDUCT) {
-                    false
-                } else {
-                    let loss = (city.size as i32 / 4).max(1).min(city.size as i32 - 1);
-                    self.shrink_city(c, loss);
-                    true
-                }
+        let mut best = (4, None);
+        for i in 0..128 as CityId {
+            if i == c {
+                break;
             }
-            Disaster::Flood => {
-                if city.has_improvement(imp::CITY_WALLS) {
-                    false
-                } else {
-                    self.shrink_city(c, 1);
-                    true
-                }
+            let Some(other) = self.city_opt(i) else { break };
+            let d = Map::civ_distance(other.pos(), city.pos()).max(1);
+            let oh = self.city_happiness(i);
+            let score = 32 * (oh.happy - oh.unhappy) / d;
+            if score > best.0 {
+                best = (score, Some(i));
             }
-            Disaster::Volcano => !city.has_improvement(imp::TEMPLE) && self.destroy_random_improvement(c).is_some(),
-            Disaster::Famine => {
-                if city.has_improvement(imp::GRANARY) {
-                    false
-                } else {
-                    self.city_mut(c).food = 0;
-                    true
-                }
-            }
-            Disaster::Fire => !city.has_improvement(imp::AQUEDUCT) && self.destroy_random_improvement(c).is_some(),
-            Disaster::Pirates => {
-                if !self.map.is_coastal(city.x, city.y) || city.has_improvement(imp::BARRACKS) {
-                    false
-                } else {
-                    let cm = self.city_mut(c);
-                    cm.food = 0;
-                    cm.shields = 0;
-                    true
-                }
-            }
-        };
-        if struck {
-            self.push_event(GameEvent::Disaster { city: c, kind });
         }
+        let Some(admired) = best.1 else { return };
+        let to = self.city(admired).owner;
+        if to == city.owner {
+            return;
+        }
+        self.push_event(GameEvent::CityDefected { city: c, admired, from: city.owner });
+        self.revolt_city(c, to);
+        self.refresh_vision(to);
+        self.refresh_vision(city.owner);
+        self.check_destroyed(city.owner);
     }
 
     /// Reduce a city's size by `n` (never below 1).
@@ -980,7 +1047,7 @@ impl Game {
     /// owner knows the Railroad, then Flight.
     pub fn trade_route_revenue(&self, slot: Slot, home: CityId, target: CityId) -> i32 {
         let (a, b) = (self.city(home), self.city(target));
-        let mut v = (Map::dist(a.pos(), b.pos()) + 10) * (self.raw_trade(home) + self.raw_trade(target)) / 24;
+        let mut v = (Map::dist(a.pos(), b.pos()) + 10) * (self.visible_trade(home) + self.visible_trade(target)) / 24;
         if self.map.tile(a.x, a.y).continent == self.map.tile(b.x, b.y).continent {
             v /= 2;
         }
@@ -1006,7 +1073,7 @@ impl Game {
             return;
         }
         let owner = self.city(c).owner;
-        let weight = |r: CityId| self.city_opt(r).map(|rc| self.raw_trade(r) * if rc.owner != owner { 2 } else { 1 }).unwrap_or(-1);
+        let weight = |r: CityId| self.city_opt(r).map(|rc| self.visible_trade(r) * if rc.owner != owner { 2 } else { 1 }).unwrap_or(-1);
         let routes = self.city(c).trade_routes.clone();
         let (i, w) = routes.iter().enumerate().map(|(i, r)| (i, weight(*r))).min_by_key(|(_, w)| *w).unwrap();
         if w < weight(other) {
@@ -1156,6 +1223,14 @@ impl Game {
     /// the city is plundered, an advance is taken and it loses one citizen (never the last),
     /// but its improvements survive.
     pub fn transfer_city(&mut self, c: CityId, to: Slot) {
+        let from = self.city(c).owner;
+        let (gold, adv) = self.revolt_city(c, to);
+        self.push_event(GameEvent::CityCaptured { city: c, by: to, from, gold, adv });
+    }
+
+    /// The work of `transfer_city`, without the announcement; returns the plunder and the
+    /// advance taken.
+    fn revolt_city(&mut self, c: CityId, to: Slot) -> (i32, Option<AdvanceId>) {
         let (pos, from, size) = {
             let city = self.city(c);
             (city.pos(), city.owner, city.size)
@@ -1204,7 +1279,7 @@ impl Game {
         self.players[to as usize].stats.cities_captured += 1;
         self.players[from as usize].stats.cities_lost += 1;
         self.auto_assign(c);
-        self.push_event(GameEvent::CityCaptured { city: c, by: to, from, gold, adv });
+        (gold, adv)
     }
 }
 
@@ -1405,7 +1480,7 @@ mod tests {
         // 10+ squares from home: the trade route is offered
         let c = caravan(&mut g, 19);
         assert_eq!(g.try_move(c, Dir8::E), Ok(MoveOutcome::CaravanArrived(far)));
-        let expected = (15 + 10) * (g.raw_trade(home) + g.raw_trade(far)) / 24 / 2 / 2;
+        let expected = (15 + 10) * (g.visible_trade(home) + g.visible_trade(far)) / 24 / 2 / 2;
         assert_eq!(g.trade_route_revenue(slot, home, far), expected);
         let (gold, beakers) = (g.player(slot).gold, g.player(slot).beakers);
         assert!(g.caravan_action(c, CaravanAction::TradeRoute(far)).is_ok());
@@ -1415,12 +1490,12 @@ mod tests {
         assert!(g.city(far).trade_routes.is_empty());
         // Railroad, then Flight, each take a third off
         g.player_mut(slot).learn(adv::RAILROAD);
-        let v = 25 * (g.raw_trade(home) + g.raw_trade(far)) / 24 / 4;
+        let v = 25 * (g.visible_trade(home) + g.visible_trade(far)) / 24 / 4;
         assert_eq!(g.trade_route_revenue(slot, home, far), v - v / 3);
         // a full list only takes a stronger route
         g.city_mut(home).trade_routes = vec![far, far, far];
         g.add_trade_route(home, near);
-        let weaker = g.raw_trade(near) <= g.raw_trade(far);
+        let weaker = g.visible_trade(near) <= g.visible_trade(far);
         assert_eq!(g.city(home).trade_routes.contains(&near), !weaker);
     }
 
@@ -1480,6 +1555,8 @@ mod tests {
         assert!(g.player(slot).gold > gold);
         assert_eq!(g.city(c).trade_routes, vec![c2]);
         assert!(g.city(c2).trade_routes.is_empty(), "only the home city gets the route");
-        assert!(g.city_yield(c).trade > g.raw_trade(c));
+        // CIV.EXE 0xf141: a route between own cities adds (partner + own trade + 4) / 16
+        let t = g.raw_trade(c);
+        assert_eq!(g.city_yield(c).trade, t + (g.visible_trade(c2) + t + 4) / 16);
     }
 }
