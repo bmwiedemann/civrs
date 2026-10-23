@@ -290,6 +290,7 @@ impl Game {
         self.place_unit(id, city.x, city.y, 3);
         self.unit_mut(id).order = UnitOrder::None;
         self.auto_assign(c);
+        self.rechoose_after_capture(by);
         self.players[by as usize].stats.cities_captured += 1;
         self.players[from as usize].stats.cities_lost += 1;
         self.push_event(GameEvent::CityCaptured { city: c, by, from, gold, adv });

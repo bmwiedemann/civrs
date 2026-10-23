@@ -24,11 +24,32 @@ pub struct Ai {
     pub seed: u64,
     /// Standing orders of transport ships (see `naval_ai`).
     pub missions: naval_ai::Missions,
+    /// Last continent policies per civilization (CIV.EXE ds:0xe698), to notice changes; not
+    /// saved, so the first turn after loading notices none.
+    pub policies: [Option<[u8; crate::game::production::CONTINENTS]>; 8],
 }
 
 impl Ai {
     pub fn new(seed: u64) -> Ai {
-        Ai { seed, missions: naval_ai::Missions::new() }
+        Ai { seed, missions: naval_ai::Missions::new(), policies: [None; 8] }
+    }
+
+    /// The census of CIV.EXE's AI turn (0x1579a): a computer civilization whose policy for a
+    /// continent changed re-chooses production in its cities there (0x15f26 -> 0x18bef).
+    fn update_policies(&mut self, g: &mut Game, slot: Slot) {
+        let census = g.census();
+        let mut now = [0u8; crate::game::production::CONTINENTS];
+        for (k, p) in now.iter_mut().enumerate() {
+            *p = g.continent_policy(&census, slot, k);
+        }
+        if let Some(old) = self.policies[slot as usize] {
+            for k in 0..now.len() {
+                if old[k] != now[k] {
+                    city_ai::rechoose(g, slot, Some(k));
+                }
+            }
+        }
+        self.policies[slot as usize] = Some(now);
     }
 }
 
@@ -56,6 +77,7 @@ impl AiDriver for Ai {
             }
         }
         govern(g, slot);
+        self.update_policies(g, slot);
         city_ai::set_rates(g, slot);
         let plan = naval_ai::plan(g, slot);
         for c in g.cities_of(slot) {
@@ -287,7 +309,7 @@ mod tests {
                         if g.map.is_coastal(city.x, city.y) {
                             let avail = g.available_production(c);
                             let ships: Vec<u8> = avail.iter().filter_map(|p| match p { crate::game::Production::Unit(k) if naval_ai::is_transport_kind(*k) => Some(*k), _ => None }).collect();
-                            eprintln!("turn {} slot {s} {} size {} prod {:?} shields {} -> choose {:?} ships avail {:?} defenders {}/{}", g.turn, city.name, city.size, city.production, city.shields, city_ai::choose_production(g, c, &pl), ships, unit_ai::defenders_in(g, c), unit_ai::defenders_needed(g, c));
+                            eprintln!("turn {} slot {s} {} size {} prod {:?} shields {} -> choose {:?} ships avail {:?} defenders {}/{}", g.turn, city.name, city.size, city.production, city.shields, g.clone().ai_production(c), ships, unit_ai::defenders_in(g, c), unit_ai::defenders_needed(g, c));
                         }
                     }
                 }

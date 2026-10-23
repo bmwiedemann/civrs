@@ -19,6 +19,7 @@ pub mod orders;
 pub mod palace;
 pub mod player;
 pub mod pollution;
+pub mod production;
 pub mod rng;
 pub mod science;
 pub mod score;
@@ -557,6 +558,7 @@ impl Game {
     pub fn add_city(&mut self, owner: Slot, name: String, x: i32, y: i32) -> CityId {
         let id = self.cities.iter().position(|c| c.is_none()).unwrap_or(self.cities.len()) as CityId;
         let first_city = self.cities_of(owner).is_empty();
+        let production = self.first_production(owner);
         let mut c = City {
             id,
             owner,
@@ -567,7 +569,7 @@ impl Game {
             size: 1,
             food: 0,
             shields: 0,
-            production: Production::Unit(rules::unit_ids::MILITIA),
+            production,
             improvements: 0,
             wonders: 0,
             worked: 0,

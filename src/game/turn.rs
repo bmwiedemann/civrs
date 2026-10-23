@@ -398,7 +398,7 @@ impl Game {
     /// Process one city for one turn (happiness, growth, production, upkeep, hazards).
     pub fn process_city(&mut self, c: CityId) {
         let slot = self.city(c).owner;
-        self.fix_workers(c);
+        self.assign_workers(c, true);
         // happiness state for this turn (computed with the city as it is now)
         let h = self.city_happiness(c);
         {
@@ -482,7 +482,7 @@ impl Game {
                 self.push_event(GameEvent::UnitDisbanded { unit_kind: unit_ids::SETTLERS, city: c, reason: "famine".into() });
             } else if self.city(c).size > 1 {
                 self.city_mut(c).size -= 1;
-                self.remove_worker(c);
+                self.fix_workers(c);
                 self.push_event(GameEvent::Famine(c));
             }
             return;
@@ -498,7 +498,7 @@ impl Game {
             let cm = self.city_mut(c);
             cm.size += 1;
             cm.food = if granary { full / 2 } else { 0 };
-            self.add_worker(c);
+            self.fix_workers(c);
             self.push_event(GameEvent::CityGrew(c));
         }
     }
@@ -684,7 +684,7 @@ impl Game {
                 break;
             }
             self.city_mut(c).size -= 1;
-            self.remove_worker(c);
+            self.fix_workers(c);
         }
         self.push_event(GameEvent::CityShrank(c));
     }
@@ -698,12 +698,18 @@ impl Game {
     }
 
     /// Production after an improvement or wonder is finished: a human's city stays on it, so
-    /// the city screen's CHANGE button flashes until something else is chosen; the AI and
-    /// auto-build cities move on at once.
+    /// the city screen's CHANGE button flashes until something else is chosen; the computer asks
+    /// its production advisor (CIV.EXE 0xe720), an AUTO city of the human takes the advisor's
+    /// improvement, and with none worth it AUTO goes off (0xeb15..0xec08).
     fn after_building(&mut self, c: CityId, human: bool) {
-        if !human || self.city(c).auto_build {
-            let next = self.default_production(c);
+        if !human {
+            let next = self.ai_production(c);
             self.city_mut(c).production = next;
+        } else if self.city(c).auto_build {
+            match self.auto_production(c) {
+                Some(next) => self.city_mut(c).production = next,
+                None => self.city_mut(c).auto_build = false,
+            }
         }
     }
 
@@ -743,16 +749,23 @@ impl Game {
                 }
                 if k == unit_ids::SETTLERS {
                     self.city_mut(c).size -= 1;
-                    self.remove_worker(c);
+                    self.fix_workers(c);
                 }
                 self.city_mut(c).shields -= prod.cost();
                 self.refresh_vision(owner);
                 self.push_event(GameEvent::ItemBuilt { city: c, item: prod });
+                // a computer city re-chooses after every unit (city_rechoose_production 0x18c4c,
+                // called at 0xe3b1)
+                if !human {
+                    let next = self.ai_production(c);
+                    self.city_mut(c).production = next;
+                }
             }
             Production::Improvement(i) => {
                 // still set to an improvement the city has: nothing is built, the shields
                 // wait for a new choice (CIV.EXE 0xe4f1)
                 if self.city(c).has_improvement(i) {
+                    self.after_building(c, human);
                     return;
                 }
                 self.city_mut(c).shields -= prod.cost();
@@ -786,6 +799,7 @@ impl Game {
             Production::Wonder(w) => {
                 if self.wonders_built[w as usize].is_some() {
                     self.push_event(GameEvent::ProductionBlocked { city: c, item: prod });
+                    self.after_building(c, human);
                     return;
                 }
                 self.wonders_built[w as usize] = Some(c);
@@ -1416,6 +1430,7 @@ impl Game {
         self.players[to as usize].stats.cities_captured += 1;
         self.players[from as usize].stats.cities_lost += 1;
         self.auto_assign(c);
+        self.rechoose_after_capture(to);
         (gold, adv)
     }
 }

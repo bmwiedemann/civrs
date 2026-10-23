@@ -65,7 +65,7 @@ pub struct Government {
     /// Corruption factor (0 = none, 4 = worst). Communism applies it flat,
     /// independent of the distance to the Palace.
     pub corruption: u8,
-    /// Food eaten by each Settlers unit.
+    /// Food eaten by each Settlers unit: 2 from Monarchy on (CIV.EXE 0xcc27, gov > Despotism).
     pub settler_food: u8,
     /// Maximum unhappy citizens pacified by martial law.
     pub martial_law_max: u8,
@@ -115,7 +115,7 @@ pub static GOVERNMENTS: [Government; 6] = [
         tile_penalty: false,
         trade_bonus: false,
         corruption: 2,
-        settler_food: 1,
+        settler_food: 2,
         martial_law_max: 3,
         prereq: Some(adv::MONARCHY),
     },
@@ -130,7 +130,7 @@ pub static GOVERNMENTS: [Government; 6] = [
         tile_penalty: false,
         trade_bonus: false,
         corruption: 2, // flat: same in every city regardless of distance
-        settler_food: 1,
+        settler_food: 2,
         martial_law_max: 3,
         prereq: Some(adv::COMMUNISM),
     },

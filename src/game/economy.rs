@@ -8,6 +8,15 @@ use super::map::{tile_flags, CityId, Map, Slot};
 use super::{Game, RuleError, Specialist};
 use crate::rules::{self, improvement_ids as imp, unit_ids, wonder_ids as won, Domain, Govt, ImprovementId, Terrain, WonderId};
 
+/// The city radius in CIV.EXE's order (ds:0x2498 dx / ds:0x24c2 dy), which decides ties in the
+/// worker assignment; the city square is last (index 20).
+#[rustfmt::skip]
+pub const EXE_RADIUS: [(i8, i8); 21] = [
+    (0, -1), (1, 0), (0, 1), (-1, 0), (1, -1), (1, 1), (-1, 1), (-1, -1),
+    (0, -2), (2, 0), (0, 2), (-2, 0), (-1, -2), (1, -2), (2, -1), (2, 1),
+    (1, 2), (-1, 2), (-2, 1), (-2, -1), (0, 0),
+];
+
 /// Resources produced by a city this turn (before/after modifiers).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CityYield {
@@ -164,7 +173,7 @@ impl Game {
         }
     }
 
-    /// Can the city work radius tile `idx` (not worked by another city, not enemy-occupied)?
+    /// Can the city work radius tile `idx` (not worked by another city, no foreign unit on it)?
     pub fn tile_workable(&self, c: CityId, idx: u8) -> bool {
         let Some((x, y)) = self.radius_tile(c, idx) else { return false };
         let t = self.map.tile(x, y);
@@ -179,7 +188,8 @@ impl Game {
         if idx != 0 && t.city.is_some() {
             return false;
         }
-        if self.all_units().any(|u| (u.x, u.y) == (x, y) && u.owner != owner && u.is_military()) {
+        // any foreign unit, military or not (CIV.EXE 0xd4fa)
+        if self.all_units().any(|u| (u.x, u.y) == (x, y) && u.owner != owner) {
             return false;
         }
         true
@@ -238,6 +248,13 @@ impl Game {
         };
         let power = if self.city_has_power(c) { 2.min(factory) } else { 0 };
         shields + power * shields / 4 + factory * shields / 4
+    }
+
+    /// The city's shields after Factory and power, disorder or not (CIV.EXE ds:0x70dc after
+    /// 0xddd5), as the worker assignment and the production advisor see them.
+    pub fn city_shields(&self, c: CityId) -> i32 {
+        let shields: i32 = (0..21u8).filter(|i| self.city(c).works(*i)).map(|i| self.radius_yield(c, i).1).sum();
+        self.boosted_shields(c, shields)
     }
 
     /// Full resource accounting for a city.
@@ -424,95 +441,22 @@ impl Game {
         self.cities_of(slot).iter().map(|c| self.city_yield(*c).sci).sum()
     }
 
-    /// Heuristic value of a tile for the worker auto-assignment [approx].
-    fn tile_value(&self, c: CityId, idx: u8) -> i32 {
+    /// Food, shields and trade of radius square `idx` for the city (0 off the map).
+    fn radius_yield(&self, c: CityId, idx: u8) -> (i32, i32, i32) {
         let slot = self.city(c).owner;
-        let Some((x, y)) = self.radius_tile(c, idx) else { return -1 };
-        let (f, s, t) = self.tile_yield(slot, x, y, Some(c));
-        f * 7 + s * 3 + t * 2
+        self.radius_tile(c, idx).map(|(x, y)| self.tile_yield(slot, x, y, Some(c))).unwrap_or((0, 0, 0))
     }
 
-    /// A city without any trade pays no upkeep and learns nothing: swap its least valuable
-    /// worker onto the best ocean / river / road tile, as long as the city keeps growing (or
-    /// loses no food by it).
-    fn ensure_trade(&mut self, c: CityId) {
-        let slot = self.city(c).owner;
-        let yields = |g: &Game, idx: u8| g.radius_tile(c, idx).map(|(x, y)| g.tile_yield(slot, x, y, Some(c))).unwrap_or((0, 0, 0));
-        if self.city_yield(c).trade > 0 {
-            return;
-        }
-        let city = self.city(c);
-        let worst = (1..21u8).filter(|i| city.works(*i)).min_by_key(|i| self.tile_value(c, *i));
-        let best = (1..21u8).filter(|i| !city.works(*i) && self.tile_workable(c, *i) && yields(self, *i).2 > 0).max_by_key(|i| self.tile_value(c, *i));
-        let (Some(w), Some(b)) = (worst, best) else { return };
-        let food_change = yields(self, b).0 - yields(self, w).0;
-        if food_change >= 0 || self.city_yield(c).food_surplus() + food_change > 0 {
-            self.release_tile(c, w);
-            let (x, y) = self.radius_tile(c, b).unwrap();
-            self.map.get_mut(x, y).unwrap().worked_by = Some(c);
-            self.city_mut(c).set_worked(b, true);
-        }
-    }
-
-    /// Automatically assign workers (food first, then shields, then trade).
+    /// Re-place all citizens from scratch (a new, joined or captured city; CIV.EXE reaches the
+    /// same state through a cleared worked-square mask, found_city o 0x1b375).
     pub fn auto_assign(&mut self, c: CityId) {
-        let size = self.city(c).size as usize;
-        // clear
         for idx in 1..21u8 {
-            if let Some((x, y)) = self.radius_tile(c, idx) {
-                if self.map.tile(x, y).worked_by == Some(c) {
-                    self.map.get_mut(x, y).unwrap().worked_by = None;
-                }
+            if self.city(c).works(idx) {
+                self.release_tile(c, idx);
             }
         }
-        self.city_mut(c).worked = 0;
         self.city_mut(c).specialists.clear();
-        for _ in 0..size {
-            self.add_worker(c);
-        }
-        self.ensure_trade(c);
-    }
-
-    /// Put one more citizen to work on the best free tile (or make an entertainer).
-    pub fn add_worker(&mut self, c: CityId) {
-        let mut best: Option<(u8, i32)> = None;
-        for idx in 1..21u8 {
-            if self.city(c).works(idx) || !self.tile_workable(c, idx) {
-                continue;
-            }
-            let v = self.tile_value(c, idx);
-            if best.map(|(_, bv)| v > bv).unwrap_or(true) {
-                best = Some((idx, v));
-            }
-        }
-        match best {
-            Some((idx, _)) => {
-                let (x, y) = self.radius_tile(c, idx).unwrap();
-                self.map.get_mut(x, y).unwrap().worked_by = Some(c);
-                self.city_mut(c).set_worked(idx, true);
-            }
-            None => self.city_mut(c).specialists.push(Specialist::Entertainer),
-        }
-    }
-
-    /// Remove one citizen: a specialist first, otherwise the worker on the worst tile.
-    pub fn remove_worker(&mut self, c: CityId) {
-        if self.city_mut(c).specialists.pop().is_some() {
-            return;
-        }
-        let mut worst: Option<(u8, i32)> = None;
-        for idx in 1..21u8 {
-            if !self.city(c).works(idx) {
-                continue;
-            }
-            let v = self.tile_value(c, idx);
-            if worst.map(|(_, wv)| v < wv).unwrap_or(true) {
-                worst = Some((idx, v));
-            }
-        }
-        if let Some((idx, _)) = worst {
-            self.release_tile(c, idx);
-        }
+        self.assign_workers(c, false);
     }
 
     fn release_tile(&mut self, c: CityId, idx: u8) {
@@ -526,66 +470,203 @@ impl Game {
         }
     }
 
-    /// Make the worker layout consistent with the city size and the current map state
-    /// (tiles taken by enemies or other cities are released; citizens are added/removed).
-    pub fn fix_workers(&mut self, c: CityId) {
-        for idx in 1..21u8 {
-            if self.city(c).works(idx) {
-                let ok = match self.radius_tile(c, idx) {
-                    Some((x, y)) => self.map.tile(x, y).worked_by == Some(c) || self.map.tile(x, y).worked_by.is_none(),
-                    None => false,
-                } && self.tile_workable(c, idx);
-                if ok {
-                    if let Some((x, y)) = self.radius_tile(c, idx) {
-                        self.map.get_mut(x, y).unwrap().worked_by = Some(c);
-                    }
-                } else {
-                    self.release_tile(c, idx);
-                    self.city_mut(c).specialists.push(Specialist::Entertainer);
-                }
-            }
-        }
-        let size = self.city(c).size as usize;
-        loop {
-            let have = self.city(c).workers() as usize + self.city(c).specialists.len();
-            if have == size {
-                break;
-            }
-            if have > size {
-                self.remove_worker(c);
-            } else {
-                self.add_worker(c);
-            }
-        }
-        // the human's own layout is left alone
-        if !self.player(self.city(c).owner).human {
-            self.ensure_trade(c);
+    fn take_tile(&mut self, c: CityId, idx: u8) {
+        self.city_mut(c).set_worked(idx, true);
+        if let Some((x, y)) = self.radius_tile(c, idx) {
+            self.map.get_mut(x, y).unwrap().worked_by = Some(c);
         }
     }
 
-    /// Toggle working a radius tile by the city (a worker becomes an entertainer or vice versa).
+    /// Make the worker layout consistent with the city size and the map (CIV.EXE's assignment
+    /// outside the turn: the city screen, the production advisor); see [`Game::assign_workers`].
+    pub fn fix_workers(&mut self, c: CityId) {
+        self.assign_workers(c, false);
+    }
+
+    /// CIV.EXE's worker assignment, part of the city routine (0xd454..0xdc5d). `turn` is its
+    /// mode 0, the city's turn: then a computer city forgets its specialists (they go back to
+    /// work), or in disorder gives up all its squares and keeps them (0xcd2c..0xcd61).
+    ///
+    /// Squares not explored, occupied by a foreign unit or worked by another city are dropped
+    /// (0xd454). The human's squares are kept, as are a computer city's except every fourth
+    /// turn ((city + turn) & 3 == 0) when it is not in disorder and no unit of the human stands
+    /// in its radius: then it starts over (0xd5e5). More working squares than citizens (the
+    /// city shrank) also starts over. Then, while there are more citizens than specialists:
+    /// the city square first; while food + unplaced / 2 < 2 * size + settlers' food, and always
+    /// below size 3, the square with the most food (ties: most 2 * shields + trade; the last
+    /// citizen of a city without shields skips squares without them, 0xd7cf..0xd98b); a
+    /// computer city in disorder adds an entertainer (0xd98e); the rest each take the square
+    /// maximising food * (16 / surplus) + shields * (3 * size / (shields - support)) + trade *
+    /// (2 * size / trade), each divisor a running total clamped to 1..99 (0xd9b0..0xdb95). Citizens left
+    /// over (no square worth anything) are specialists; new ones are entertainers (0xdbf2).
+    pub fn assign_workers(&mut self, c: CityId, turn: bool) {
+        let slot = self.city(c).owner;
+        let human = self.player(slot).human;
+        let size = self.city(c).size as i32;
+        let disorder = self.city(c).disorder;
+        // CIV.EXE radius order (ds:0x2498 / ds:0x24c2) mapped to ours; the centre comes last
+        let order: Vec<u8> = EXE_RADIUS.iter().map(|d| rules::CITY_RADIUS.iter().position(|r| r == d).unwrap() as u8).collect();
+        // unavailable squares (0xd454..0xd5b1); a unit of the human in the radius of a computer
+        // city freezes its layout (ds:0x70e8)
+        let mut taken = [false; 21];
+        let mut human_near = false;
+        for &idx in &order[..20] {
+            if !self.tile_workable(c, idx) {
+                taken[idx as usize] = true;
+                if self.city(c).works(idx) {
+                    self.release_tile(c, idx);
+                }
+                if let Some((x, y)) = self.radius_tile(c, idx) {
+                    if self.units_at(x, y).iter().any(|u| self.unit(*u).owner == self.human_slot && self.human_slot != slot) {
+                        human_near = true;
+                    }
+                }
+            }
+        }
+        let mut specialists = self.city(c).specialists.len() as i32;
+        if turn && !human {
+            if disorder {
+                for idx in 1..21u8 {
+                    if self.city(c).works(idx) {
+                        self.release_tile(c, idx);
+                    }
+                }
+            } else {
+                specialists = 0;
+            }
+        }
+        let (mut food, mut shields, mut trade) = (0, 0, 0);
+        macro_rules! add {
+            ($idx:expr) => {{
+                let (a, b, d) = self.radius_yield(c, $idx);
+                food += a;
+                shields += b;
+                trade += d;
+            }};
+        }
+        let mut remaining = size + 1;
+        let keep = human || (c as u32 + self.turn) & 3 != 0 || disorder || human_near;
+        let mut assign = !keep;
+        if keep {
+            let worked = 1 + self.city(c).workers() as i32;
+            if worked > remaining {
+                // "Population decrease in CITY." (0xd70d, the human in the turn) and a fresh start
+                for idx in 1..21u8 {
+                    if self.city(c).works(idx) {
+                        self.release_tile(c, idx);
+                    }
+                }
+                assign = true;
+            } else {
+                for &idx in &order {
+                    if self.city(c).works(idx) {
+                        taken[idx as usize] = true;
+                        add!(idx);
+                        remaining -= 1;
+                    }
+                }
+                assign = remaining != specialists && remaining != 0;
+            }
+        } else {
+            for idx in 1..21u8 {
+                if self.city(c).works(idx) {
+                    self.release_tile(c, idx);
+                }
+            }
+        }
+        if assign {
+            if remaining > 0 && !taken[0] {
+                taken[0] = true;
+                add!(0);
+                remaining -= 1;
+            }
+            let settlers = self.supported_units(c).iter().filter(|u| self.unit(**u).kind == unit_ids::SETTLERS).count() as i32;
+            let eaten = 2 * size + self.settler_food(slot) * settlers;
+            // food first
+            while (eaten > food + remaining / 2 || size < 3) && remaining > specialists {
+                let mut best: Option<(u8, i32, i32)> = None;
+                for &idx in &order {
+                    if taken[idx as usize] {
+                        continue;
+                    }
+                    let (f, s, t) = self.radius_yield(c, idx);
+                    if remaining == 1 && shields == 0 && s == 0 {
+                        continue;
+                    }
+                    let rest = 2 * s + t;
+                    let (bf, br) = best.map(|b| (b.1, b.2)).unwrap_or((0, 0));
+                    if f > bf || (f == bf && rest > br) {
+                        best = Some((idx, f, rest));
+                    }
+                }
+                let Some((idx, ..)) = best else { break };
+                taken[idx as usize] = true;
+                self.take_tile(c, idx);
+                add!(idx);
+                remaining -= 1;
+            }
+            // (CIV.EXE does this in any mode, but only its turn pass ever has citizens to place
+            // in a rioting computer city; civrs also places grown citizens outside it)
+            if turn && !human && disorder {
+                specialists += 1;
+            }
+            let support = self.shield_costs(c).iter().filter(|(_, cost)| *cost).count() as i32;
+            while remaining > specialists {
+                let fw = 16 / (food - eaten).clamp(1, 99);
+                let sw = 3 * size / (shields - support).clamp(1, 99);
+                let tw = 2 * size / trade.clamp(1, 99);
+                let mut best: Option<(u8, i32)> = None;
+                for &idx in &order {
+                    if taken[idx as usize] {
+                        continue;
+                    }
+                    let (f, s, t) = self.radius_yield(c, idx);
+                    let v = f * fw + s * sw + t * tw;
+                    if v > best.map(|b| b.1).unwrap_or(0) {
+                        best = Some((idx, v));
+                    }
+                }
+                let Some((idx, _)) = best else { break };
+                taken[idx as usize] = true;
+                self.take_tile(c, idx);
+                add!(idx);
+                remaining -= 1;
+            }
+        }
+        // the citizens left are specialists, keeping their kinds; new ones entertain
+        let cm = self.city_mut(c);
+        let n = remaining.max(0) as usize;
+        cm.specialists.truncate(n);
+        while cm.specialists.len() < n {
+            cm.specialists.push(Specialist::Entertainer);
+        }
+    }
+
+    /// A click on radius square `idx` in the city screen (CIV.EXE 0x123b4..0x125aa): a worked
+    /// square becomes an entertainer; an unworked one takes a specialist, or with none the whole
+    /// city is placed anew (the worker count exceeds the citizens and the screen recomputes from
+    /// 0xcd65). The city square only recomputes.
     pub fn toggle_tile(&mut self, c: CityId, idx: u8) {
         if idx == 0 || idx >= 21 {
+            self.fix_workers(c);
             return;
         }
-        let works = self.city(c).works(idx);
-        if self.radius_tile(c, idx).is_none() {
+        let Some((x, y)) = self.radius_tile(c, idx) else { return };
+        let owner = self.city(c).owner;
+        if !self.map.tile(x, y).explored_by(owner) {
             return;
         }
-        if works {
+        if self.city(c).works(idx) {
             self.release_tile(c, idx);
             self.city_mut(c).specialists.push(Specialist::Entertainer);
         } else {
             if !self.tile_workable(c, idx) {
                 return;
             }
-            if self.city(c).specialists.is_empty() {
-                return;
+            self.take_tile(c, idx);
+            if self.city_mut(c).specialists.pop().is_none() {
+                self.fix_workers(c);
             }
-            self.city_mut(c).specialists.pop();
-            self.city_mut(c).set_worked(idx, true);
-            let (x, y) = self.radius_tile(c, idx).unwrap();
-            self.map.get_mut(x, y).unwrap().worked_by = Some(c);
         }
     }
 
@@ -676,7 +757,8 @@ impl Game {
         if u.domain == Domain::Sea && !self.map.is_coastal(city.x, city.y) {
             return false;
         }
-        if k == unit_ids::NUCLEAR && !self.nukes_enabled {
+        // Nuclear: the Manhattan Project and Nuclear Fission as well (CIV.EXE 0xabb2)
+        if k == unit_ids::NUCLEAR && (!self.nukes_enabled || !p.knows(crate::rules::advance_ids::NUCLEAR_FISSION)) {
             return false;
         }
         true
@@ -761,8 +843,6 @@ impl Game {
         v
     }
 
-    /// What a city builds after finishing an improvement/wonder: the cheapest available
-    /// improvement, else the best defensive unit it can build [approx].
     /// Whether the city's production can no longer be completed: an improvement it already
     /// has or a wonder built somewhere (the original flashes the CHANGE button then).
     pub fn production_invalid(&self, c: CityId) -> bool {
@@ -772,25 +852,6 @@ impl Game {
             Production::Wonder(w) => self.wonders_built[w as usize].is_some(),
             Production::Unit(_) => false,
         }
-    }
-
-    pub fn default_production(&self, c: CityId) -> Production {
-        let mut best: Option<(i32, Production)> = None;
-        for i in 1..rules::IMPROVEMENTS.len() as u8 {
-            if i == imp::PALACE || i >= imp::SS_STRUCTURAL {
-                continue;
-            }
-            if self.can_build_improvement(c, i) {
-                let cost = rules::IMPROVEMENTS[i as usize].cost as i32;
-                if best.map(|(bc, _)| cost < bc).unwrap_or(true) {
-                    best = Some((cost, Production::Improvement(i)));
-                }
-            }
-        }
-        if let Some((_, p)) = best {
-            return p;
-        }
-        self.best_defender_type(c)
     }
 
     /// Best defensive land unit the city can build.
@@ -1051,20 +1112,96 @@ mod tests {
     }
 
     #[test]
-    fn a_city_without_trade_works_the_ocean_unless_it_stops_growing() {
+    fn below_size_three_food_comes_first_then_the_score_wants_trade() {
         let (mut g, c) = fixture();
         g.city_mut(c).size = 2;
-        // a hills centre (2 food, no trade) leaves room: one worker moves to the ocean and the
-        // city still grows
+        // grassland (2 food) beats the ocean (1 food, 2 trade) while the city is small
         island_radius(&mut g, c, Terrain::Hills);
         g.auto_assign(c);
-        assert!(g.city(c).works(4));
-        assert!(g.city_yield(c).trade > 0 && g.city_yield(c).food_surplus() > 0);
-        // a forest centre: the ocean would stop growth, so the city keeps farming
-        island_radius(&mut g, c, Terrain::Forest);
-        g.auto_assign(c);
         assert!(!g.city(c).works(4));
-        assert!(g.city_yield(c).food_surplus() > 0);
+        assert_eq!(g.city(c).workers(), 2);
+        // fed and without trade, food * 16 / surplus loses to trade * 2 * size (0xd9bb)
+        g.city_mut(c).size = 6;
+        g.auto_assign(c);
+        assert!(g.city(c).works(4));
+        assert_eq!(g.city(c).workers(), 6);
+        assert!(g.city(c).specialists.is_empty());
+    }
+
+    #[test]
+    fn citizens_without_a_square_worth_anything_entertain() {
+        let (mut g, c) = fixture();
+        for idx in 1..21u8 {
+            let (x, y) = g.radius_tile(c, idx).unwrap();
+            let t = g.map.get_mut(x, y).unwrap();
+            t.terrain = Terrain::Arctic;
+            t.flags = 0;
+            t.special = false;
+        }
+        g.city_mut(c).size = 3;
+        g.auto_assign(c);
+        assert_eq!(g.city(c).workers(), 0);
+        assert_eq!(g.city(c).specialists, vec![Specialist::Entertainer; 3]);
+    }
+
+    #[test]
+    fn the_humans_layout_is_kept_and_new_citizens_placed() {
+        let (mut g, c) = fixture();
+        g.city_mut(c).size = 3;
+        g.auto_assign(c);
+        // move one worker by hand: worked square -> entertainer -> another square
+        let worked = (1..21u8).find(|i| g.city(c).works(*i)).unwrap();
+        g.toggle_tile(c, worked);
+        assert_eq!(g.city(c).specialists.len(), 1);
+        let free = (1..21u8).find(|i| !g.city(c).works(*i) && *i != worked && g.tile_workable(c, *i)).unwrap();
+        g.toggle_tile(c, free);
+        assert!(g.city(c).specialists.is_empty() && g.city(c).works(free) && !g.city(c).works(worked));
+        let layout = g.city(c).worked;
+        g.assign_workers(c, true);
+        assert_eq!(g.city(c).worked, layout);
+        // a new citizen gets a square, the others stay
+        g.city_mut(c).size = 4;
+        g.fix_workers(c);
+        assert_eq!(g.city(c).worked & layout, layout);
+        assert_eq!(g.city(c).workers(), 4);
+        // the city square only recomputes
+        g.toggle_tile(c, 0);
+        assert_eq!(g.city(c).workers(), 4);
+        // an unworked square without a specialist to take it: everything is placed anew
+        let other = (1..21u8).find(|i| !g.city(c).works(*i) && g.tile_workable(c, *i)).unwrap();
+        g.toggle_tile(c, other);
+        assert_eq!(g.city(c).workers() as usize + g.city(c).specialists.len(), 4);
+    }
+
+    #[test]
+    fn computer_cities_start_over_every_fourth_turn_and_entertain_in_disorder() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        g.player_mut(slot).human = false;
+        g.city_mut(c).size = 4;
+        g.auto_assign(c);
+        let best = g.city(c).worked;
+        // a worse layout: an entertainer instead of a worker
+        let worked = (1..21u8).find(|i| g.city(c).works(*i)).unwrap();
+        g.toggle_tile(c, worked);
+        // not the fourth turn: the entertainer goes back to work (specialists are forgotten)
+        g.turn = (1..4).find(|t| (c as u32 + t) & 3 != 0).unwrap();
+        g.assign_workers(c, true);
+        assert!(g.city(c).specialists.is_empty());
+        assert_eq!(g.city(c).workers(), 4);
+        // the fourth turn: a fresh start gives the best layout again
+        g.turn = (4..8).find(|t| (c as u32 + t) & 3 == 0).unwrap();
+        g.assign_workers(c, true);
+        assert_eq!(g.city(c).worked, best);
+        // in disorder all squares are given up and one more entertainer is kept back each
+        // turn, unless the hunger for food already put that citizen to work (0xd98e)
+        g.city_mut(c).disorder = true;
+        g.assign_workers(c, true);
+        assert_eq!(g.city(c).specialists, vec![Specialist::Entertainer]);
+        g.assign_workers(c, true);
+        let n = g.city(c).specialists.len();
+        assert!((1..=2).contains(&n));
+        assert_eq!(g.city(c).workers() as usize + n, 4);
     }
 
     #[test]

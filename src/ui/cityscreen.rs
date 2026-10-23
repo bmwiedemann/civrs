@@ -303,8 +303,9 @@ impl CityScreen {
     fn map_click(&mut self, ctx: &mut UiContext, mx: i32, my: i32) {
         let dx = (mx - MAP_ORIGIN.0).div_euclid(16) - 2;
         let dy = (my - MAP_ORIGIN.1).div_euclid(16) - 2;
+        // the city square only recomputes the city (CIV.EXE 0x123ca)
         if dx == 0 && dy == 0 {
-            ctx.game_mut().auto_assign(self.city);
+            ctx.game_mut().fix_workers(self.city);
             return;
         }
         if let Some(idx) = rules::CITY_RADIUS.iter().position(|&(rx, ry)| (rx as i32, ry as i32) == (dx, dy)) {
@@ -839,8 +840,16 @@ impl Screen for CityScreen {
                 Key::Char('b') => self.buy(ctx),
                 Key::Char('r') => self.rename(ctx),
                 Key::Char('a') if mods.shift => {
-                    let c = ctx.game_mut().city_mut(self.city);
+                    // AUTO on asks the production advisor at once; with nothing worth it the
+                    // flag stays until the city finishes its item (CIV.EXE 0x113d7..0x11411)
+                    let g = ctx.game_mut();
+                    let c = g.city_mut(self.city);
                     c.auto_build = !c.auto_build;
+                    if c.auto_build {
+                        if let Some(p) = g.auto_production(self.city) {
+                            g.city_mut(self.city).production = p;
+                        }
+                    }
                     Transition::None
                 }
                 _ => Transition::None,

@@ -241,6 +241,11 @@ impl Game {
         let c = self.add_city(u.owner, name, u.x, u.y);
         self.remove_unit(id);
         self.refresh_vision(u.owner);
+        // the computer asks its production advisor at once (found_city o 0x1b375)
+        if !self.player(u.owner).human {
+            let p = self.ai_production(c);
+            self.city_mut(c).production = p;
+        }
         self.push_event(super::GameEvent::CityFounded { city: c });
         Ok(c)
     }
