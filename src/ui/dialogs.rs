@@ -99,9 +99,9 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
         },
         GameEvent::WonderBuilt { city, wonder, owner } => Some(crate::ui::wonderscreen::wonder_screen(ctx, *wonder, &city_name(*city), *owner)),
         GameEvent::WonderObsolete { wonder, owner } if *owner == me => msg(vec![format!("{} is now obsolete.", rules::WONDERS[*wonder as usize].name)]),
-        GameEvent::Disorder(c) if g.city(*c).owner == me => Some(eventpics::disorder_screen(ctx, &city_name(*c))),
+        GameEvent::Disorder(c) if g.city(*c).owner == me => Some(eventpics::disorder_screen(ctx, *c)),
         GameEvent::DisorderEnded(c) if g.city(*c).owner == me => msg(vec![format!("Order restored in {}.", city_name(*c))]),
-        GameEvent::Celebration(c) if g.city(*c).owner == me => Some(eventpics::celebration_screen(ctx, &city_name(*c))),
+        GameEvent::Celebration(c) if g.city(*c).owner == me => Some(eventpics::celebration_screen(ctx, *c)),
         GameEvent::AdvanceDiscovered { slot, adv } if *slot == me => with_pedia(Some(crate::ui::discovery::discovery_screen(ctx, *adv)), *adv),
         // the hut's own message (HutEntered) announces it and adds the Civilopedia page
         GameEvent::AdvanceAcquired { source, .. } if source == "hut" => None,
@@ -137,9 +137,9 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
         GameEvent::BarbariansLanded { near_city, target, .. } if *target == me => {
             let near = near_city.map(city_name).unwrap_or_default();
             let lines = if near.is_empty() { vec!["Barbarians land!".into()] } else { vec!["Barbarians land".into(), format!("near {near}!")] };
-            Some(eventpics::invaders_screen(ctx, lines))
+            Some(eventpics::invaders_screen(ctx, *near_city, lines))
         }
-        GameEvent::BarbarianUprising { target, .. } if *target == me => Some(eventpics::invaders_screen(ctx, vec!["Barbarian uprising!".into()])),
+        GameEvent::BarbarianUprising { target, .. } if *target == me => Some(eventpics::invaders_screen(ctx, None, vec!["Barbarian uprising!".into()])),
         GameEvent::BarbarianLeaderCaptured { slot, gold } if *slot == me => msg(vec!["Barbarian leader captured!".into(), format!("{gold} gold ransom paid.")]),
         GameEvent::Pollution { city, .. } if g.city(*city).owner == me => msg(vec![format!("Pollution near {}!", city_name(*city))]),
         GameEvent::GlobalWarming => msg(vec!["Global warming!".into(), "Polar ice caps melt, coastal areas flood.".into()]),

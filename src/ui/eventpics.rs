@@ -9,6 +9,7 @@ use crate::gfx::text::{draw_text, text_width, wrap};
 use crate::gfx::{Rect, Surface, TextStyle};
 use crate::platform::{Event, Key};
 use crate::rules::advance_ids as adv;
+use crate::game::CityId;
 use crate::ui::context::UiContext;
 use crate::ui::reveal::Reveal;
 use crate::ui::screen::{DialogResult, Screen, Transition};
@@ -197,8 +198,8 @@ impl Screen for PicScreen {
 
 // ---- crowd pictures (RIOT / LOVE / INVADERS) ------------------------------------------------
 
-/// Layout of a crowd sprite sheet: `cols x rows` cells of `cell_w x cell_h` starting at
-/// `origin`, separated by 1-px grid lines.
+/// Layout of a sprite sheet: `cols x rows` cells of `cell_w x cell_h` starting at `origin`,
+/// separated by 1-px grid lines.
 #[derive(Clone, Copy)]
 pub struct SheetGrid {
     pub origin: (i32, i32),
@@ -215,128 +216,177 @@ impl SheetGrid {
     }
 }
 
-/// Grid of a crowd sheet (measured from the pictures).
-pub fn crowd_grid(sheet: &str) -> SheetGrid {
+/// Frame `i` (0..9) of a crowd sheet, four to a row (CIV.EXE o 0x1a85d..o 0x1ac95).
+fn crowd_frame(sheet: &str, i: i32) -> Rect {
+    let (c, r) = (i % 4, i / 4);
     match sheet {
-        "RIOT" => SheetGrid { origin: (1, 1), cell: (78, 63), cols: 4, rows: 3 },
-        "RIOT2" => SheetGrid { origin: (1, 1), cell: (74, 65), cols: 4, rows: 3 },
-        "INVADERS" | "INVADER2" => SheetGrid { origin: (0, 2), cell: (78, 60), cols: 4, rows: 3 },
+        "RIOT" => Rect::new(79 * c + 1, 64 * r + 1, 78, 63),
+        "RIOT2" => Rect::new(75 * c + 1, 66 * r + 1, 74, 65),
+        "INVADERS" | "INVADER2" => Rect::new(79 * c, 61 * r + 2, 78, 60),
         // LOVE1, LOVE2, INVADER3
-        _ => SheetGrid { origin: (1, 1), cell: (78, 65), cols: 4, rows: 3 },
+        _ => Rect::new(79 * c + 1, 66 * r + 1, 78, 65),
     }
 }
 
-/// Frames of the sheet that actually contain a figure (non-key pixels).
-fn crowd_frames(surf: &Surface, grid: &SheetGrid, key: u8) -> Vec<Rect> {
-    let mut out = Vec::new();
-    for i in 0..grid.cols * grid.rows {
-        let r = grid.rect(i);
-        let mut used = false;
-        'scan: for y in (r.y..r.bottom()).step_by(3) {
-            for x in (r.x..r.right()).step_by(3) {
-                if surf.get(x, y) != key {
-                    used = true;
-                    break 'scan;
-                }
-            }
-        }
-        if used {
-            out.push(r);
-        }
-    }
-    out
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum March {
+    /// Four rioters walking right (o 0x1aa36).
+    Riot,
+    /// Four celebrants walking left, spread half as wide again (o 0x1ac56).
+    Love,
+    /// Eight invaders in step, 48 px apart, walking right (o 0x1a7f0).
+    Invaders,
 }
 
-/// Crowd marching across the city-view meadow (CBACK.PIC) with a caption.
+/// Offsets of the four rioters / celebrants from the group position (ds:0x4f42, ds:0x4f4a).
+const GROUP_X: [i32; 4] = [-96, -36, 0, -56];
+const GROUP_Y: [i32; 4] = [-6, -4, -2, 0];
+/// The figures' top line on screen.
+const MARCH_Y: i32 = 132;
+/// Ticks (60 Hz) per step of 3 px and one frame.
+const STEP_TICKS: u32 = 10;
+
+/// A crowd marching across the lower half of the city view, under its message box. The
+/// original first shows the city view with the message (overlay 0x13 with item -2, which
+/// returns without waiting), then animates the lower half of the screen: every 10 ticks the
+/// group moves 3 px and each figure shows its next frame. It ends when the group has crossed
+/// the screen or on a key or click, and the map comes back.
 pub struct CrowdScreen {
-    sheet: String,
+    march: March,
+    sheet: &'static str,
+    city: Option<CityId>,
     lines: Vec<String>,
-    t: u64,
+    step: i32,
+    ticks: u32,
     dismiss: Dismiss,
-    frames: Vec<Rect>,
-    key: u8,
 }
 
-pub fn crowd_screen(sheet: &str, lines: Vec<String>) -> Box<dyn Screen> {
-    Box::new(CrowdScreen { sheet: sheet.to_string(), lines, t: 0, dismiss: Dismiss::new(), frames: Vec::new(), key: 0 })
+impl CrowdScreen {
+    fn new(march: March, sheet: &'static str, city: Option<CityId>, lines: Vec<String>) -> CrowdScreen {
+        CrowdScreen { march, sheet, city, lines, step: 0, ticks: 0, dismiss: Dismiss::new() }
+    }
+
+    /// Position of the group at the current step.
+    fn pos(&self) -> i32 {
+        match self.march {
+            March::Riot => -48 + 3 * self.step,
+            March::Love => 420 - 3 * self.step,
+            March::Invaders => 3 * self.step,
+        }
+    }
+
+    fn finished(&self) -> bool {
+        match self.march {
+            March::Riot => self.pos() >= 420,
+            March::Love => self.pos() <= -48,
+            March::Invaders => self.pos() >= 660,
+        }
+    }
+
+    /// (x, y, frame) of the figures in drawing order; those off screen are left out.
+    fn figures(&self) -> Vec<(i32, i32, i32)> {
+        let t = self.pos();
+        let v: Vec<(i32, i32, i32)> = match self.march {
+            March::Riot => (0..4).map(|k| (t + GROUP_X[k], MARCH_Y + GROUP_Y[k], (3 * k as i32 + self.step) % 10)).collect(),
+            March::Love => (0..4).map(|k| (t + 3 * GROUP_X[k] / 2, MARCH_Y + GROUP_Y[k], (3 * k as i32 + self.step) % 10)).collect(),
+            March::Invaders => (0..8).rev().map(|k| (t - 48 * k, MARCH_Y, self.step % 10)).collect(),
+        };
+        v.into_iter().filter(|(x, _, _)| *x > -48 && *x < 320).collect()
+    }
 }
 
-/// Civil disorder picture: "Civil disorder in CITY! Mayor flees in panic."
-pub fn disorder_screen(ctx: &UiContext, city: &str) -> Box<dyn Screen> {
-    let sheet = if ctx.frame.is_multiple_of(2) { "RIOT" } else { "RIOT2" };
-    crowd_screen(sheet, vec![format!("Civil disorder in {city}!"), "Mayor flees in panic.".into()])
+/// The march, or a plain message box with animations off.
+fn crowd_or_message(ctx: &UiContext, march: March, sheet: &'static str, city: Option<CityId>, lines: Vec<String>) -> Box<dyn Screen> {
+    if ctx.game.as_ref().map(|g| g.options.animations).unwrap_or(true) {
+        Box::new(CrowdScreen::new(march, sheet, city, lines))
+    } else {
+        Box::new(crate::ui::widgets::MessageBox::new(lines))
+    }
 }
 
-/// "We love the King day" celebration picture.
-pub fn celebration_screen(ctx: &UiContext, city: &str) -> Box<dyn Screen> {
-    let title = ctx.game.as_ref().map(|g| g.human().title()).unwrap_or("King");
-    let sheet = if modern_era(ctx) { "LOVE2" } else { "LOVE1" };
-    crowd_screen(sheet, vec![format!("We love the {title} day"), format!("celebrated in {city}.")])
+fn human_knows(ctx: &UiContext, a: u8) -> bool {
+    ctx.game.as_ref().map(|g| g.human().knows(a)).unwrap_or(false)
 }
 
-/// Barbarian landing / uprising picture by era.
-pub fn invaders_screen(ctx: &UiContext, lines: Vec<String>) -> Box<dyn Screen> {
-    let g = ctx.game.as_ref();
-    let sheet = match g {
-        Some(g) if g.human().knows(adv::CONSCRIPTION) => "INVADERS",
-        Some(g) if g.human().knows(adv::GUNPOWDER) => "INVADER2",
-        _ => "INVADER3",
+/// Civil disorder (CIV.EXE 0x12612): "Civil Disorder in / CITY! Mayor / flees in panic."
+/// with rioters from RIOT.PIC once the human knows University, RIOT2.PIC before.
+pub fn disorder_screen(ctx: &UiContext, city: CityId) -> Box<dyn Screen> {
+    let name = ctx.game().city(city).name.clone();
+    let sheet = if human_knows(ctx, adv::UNIVERSITY) { "RIOT" } else { "RIOT2" };
+    let lines = vec!["Civil Disorder in".into(), format!("{name}! Mayor"), "flees in panic.".into()];
+    crowd_or_message(ctx, March::Riot, sheet, Some(city), lines)
+}
+
+/// "We love the King day" (CIV.EXE 0x129ee): "'We love the TITLE' / day celebrated in /
+/// CITY!" with celebrants from LOVE2.PIC once the human knows Industrialization, LOVE1.PIC
+/// before.
+pub fn celebration_screen(ctx: &UiContext, city: CityId) -> Box<dyn Screen> {
+    let g = ctx.game();
+    let name = g.city(city).name.clone();
+    let title = g.human().title();
+    let sheet = if human_knows(ctx, adv::INDUSTRIALIZATION) { "LOVE2" } else { "LOVE1" };
+    let lines = vec![format!("'We love the {title}'"), "day celebrated in".into(), format!("{name}!")];
+    crowd_or_message(ctx, March::Love, sheet, Some(city), lines)
+}
+
+/// Invaders marching past (CIV.EXE o 0x1a7f0): INVADERS.PIC once Gunpowder and Automobile are
+/// known, INVADER2.PIC with Gunpowder only, INVADER3.PIC before; over the view of `city` when
+/// given, else over the bare meadow.
+pub fn invaders_screen(ctx: &UiContext, city: Option<CityId>, lines: Vec<String>) -> Box<dyn Screen> {
+    let sheet = if !human_knows(ctx, adv::GUNPOWDER) {
+        "INVADER3"
+    } else if human_knows(ctx, adv::AUTOMOBILE) {
+        "INVADERS"
+    } else {
+        "INVADER2"
     };
-    crowd_screen(sheet, lines)
+    crowd_or_message(ctx, March::Invaders, sheet, city, lines)
 }
 
 impl Screen for CrowdScreen {
-    fn on_enter(&mut self, ctx: &mut UiContext) {
-        let pic = ctx.pic(&self.sheet);
-        let grid = crowd_grid(&self.sheet);
-        let r0 = grid.rect(0);
-        self.key = pic.surf.get(r0.x, r0.y);
-        self.frames = crowd_frames(&pic.surf, &grid, self.key);
-    }
-    fn update(&mut self, _ctx: &mut UiContext) -> Transition {
-        self.t += 1;
+    fn update(&mut self, ctx: &mut UiContext) -> Transition {
         self.dismiss.tick();
+        self.ticks += 1;
+        if self.ticks >= STEP_TICKS {
+            self.ticks = 0;
+            self.step += 1;
+            if self.finished() {
+                ctx.audio.play(crate::audio::Sound::FadeOut);
+                return Transition::Pop(DialogResult::Done);
+            }
+        }
         Transition::None
     }
-    fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
+    fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
         if self.dismiss.closes(ev) {
+            ctx.audio.play(crate::audio::Sound::FadeOut);
             Transition::Pop(DialogResult::Done)
         } else {
             Transition::None
         }
     }
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
-        let back = ctx.pic("CBACK");
-        let pic = ctx.pic(&self.sheet);
-        // palette: the sheet's own (CBACK is remapped to it)
-        let sheet_pal = ctx.pic_pal(&self.sheet);
-        let back_pal = ctx.pic_pal("CBACK");
-        let mut map = [0u8; 256];
-        for (i, m) in map.iter_mut().enumerate() {
-            *m = sheet_pal.nearest(back_pal.rgb(i as u8));
-        }
-        fb.blit_remap(&back.surf, back.surf.bounds(), 0, 0, None, &map);
-        if !self.frames.is_empty() {
-            let n = self.frames.len() as i32;
-            let step = (self.t / 6) as i32;
-            let shift = (self.t as i32 * 2) % 60;
-            // two rows of marchers, the back row smaller offset
-            for row in 0..2 {
-                let y = 108 + row * 26;
-                let mut i = 0;
-                let mut x = -shift - row * 30;
-                while x < 320 {
-                    let f = self.frames[((i + step + row * 3) % n) as usize];
-                    fb.blit_part(&pic.surf, f, x, y, Some(self.key));
-                    x += 60;
-                    i += 1;
-                }
+        let city = self.city.filter(|c| ctx.game.as_ref().map(|g| g.city_opt(*c).is_some()).unwrap_or(false));
+        match city {
+            Some(c) => crate::ui::city_view::render(fb, ctx, c, None, Some(&self.lines)),
+            None => {
+                let hill = ctx.pic("HILL");
+                fb.blit(&hill.surf, 0, 0);
+                crate::ui::city_view::message_box(fb, ctx, 80, 8, &self.lines);
             }
         }
-        draw_caption_centred(fb, ctx, &sheet_pal, 6, 240, &self.lines, 0);
+        // the sheet is loaded without its palette, so its pixels show in the city view's
+        // colours; only the lower half of the screen is animated
+        let pic = ctx.pic(self.sheet);
+        let old = fb.clip();
+        fb.set_clip(Some(Rect::new(0, 100, 320, 100)));
+        for (x, y, f) in self.figures() {
+            fb.blit_part(&pic.surf, crowd_frame(self.sheet, f), x, y, Some(0));
+        }
+        fb.set_clip(Some(old));
     }
     fn palette(&self, ctx: &UiContext) -> Palette {
-        ctx.pic_pal(&self.sheet)
+        ctx.pic_pal("HILL")
     }
     fn draws_parent(&self) -> bool {
         false

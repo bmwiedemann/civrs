@@ -449,7 +449,7 @@ pub fn render(fb: &mut Surface, ctx: &UiContext, city: CityId, skip: Option<View
 }
 
 /// The grey stone box with a black frame the original puts messages in (0x1c83:0x1e).
-fn message_box(fb: &mut Surface, ctx: &UiContext, x: i32, y: i32, lines: &[String]) {
+pub fn message_box(fb: &mut Surface, ctx: &UiContext, x: i32, y: i32, lines: &[String]) {
     let pal = ctx.pic_pal("HILL");
     let white = pal.nearest([255, 255, 255]);
     let black = pal.nearest([0, 0, 0]);

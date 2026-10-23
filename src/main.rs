@@ -275,9 +275,10 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
                 st.human_initiated = true;
                 civrs::ui::diplomacy_ui::audience_screen(st)
             }
-            "riot" => civrs::ui::eventpics::disorder_screen(&ctx, "Rome"),
-            "love" => civrs::ui::eventpics::celebration_screen(&ctx, "Rome"),
-            "invaders" => civrs::ui::eventpics::invaders_screen(&ctx, vec!["Barbarians land".into(), "near Rome!".into()]),
+            // crowd marches over the human's first city (10 frames per step of the march)
+            "riot" => civrs::ui::eventpics::disorder_screen(&ctx, ctx.game().cities_of(ctx.game().human_slot)[0]),
+            "love" => civrs::ui::eventpics::celebration_screen(&ctx, ctx.game().cities_of(ctx.game().human_slot)[0]),
+            "invaders" => civrs::ui::eventpics::invaders_screen(&ctx, ctx.game().cities_of(ctx.game().human_slot).first().copied(), vec!["Barbarians land".into(), "near Rome!".into()]),
             "endgame" => civrs::ui::endgame::end_screen(&ctx, match seed { 1 => civrs::game::EndReason::Destroyed, 2 => civrs::game::EndReason::Conquest, 3 => civrs::game::EndReason::Spaceship(1), _ => civrs::game::EndReason::Retired }),
             "arch" => civrs::ui::endgame::arch_screen(&ctx),
             // screen:palace:N[:0:STEP]: the palace after N sample additions; STEP "intro",
