@@ -3,10 +3,12 @@
 //! KINGnn.PIC (palette merged on 64..143) and the KING.TXT text with `$` substitution in the
 //! box at the bottom; `_` lines of the section become a menu.
 //!
-//! Engine-driven audiences (`Decision::Diplomacy`) pop `DialogResult::Choice(i)` (or `Done`
-//! for texts without choices); `reply_for` turns that into `DecisionReply::Choice(i)` and the
-//! engine answers with follow-up decisions. Human-initiated audiences (`human_audience`) drive
-//! `diplo_ai::respond` themselves.
+//! The screen runs a whole audience (`diplo_ai`, CIV.EXE overlay 6): it shows each screen of
+//! it, passes the answer to `diplo_ai::respond` and shows what follows, until the audience is
+//! over. The emissary question and the texts of a refused emissary appear over the map
+//! (`DiplomacyState::plain`), "Check Intelligence" opens the intelligence report. An audience
+//! from the engine (`Decision::Diplomacy`) ends with `DialogResult::Done`, which `reply_for`
+//! turns into `DecisionReply::Cancel`: the engine has nothing left to do.
 
 use crate::assets::text::{split_menu, substitute, Vars};
 use crate::assets::Palette;
@@ -20,7 +22,7 @@ use crate::ui::context::UiContext;
 use crate::ui::eventpics::Dismiss;
 use crate::ui::govtscreen::{back_sheet, draw_advisors, govt_sheet, throne_palette, THRONE_BOX};
 use crate::ui::screen::{DialogResult, Screen, Transition};
-use crate::ui::widgets::YesNo;
+use crate::ui::widgets::{MenuDialog, MessageBox};
 
 /// KINGnn.PIC index of a civilisation's leader (identified on the sheets).
 pub fn king_index(civ: u8) -> u8 {
@@ -61,52 +63,79 @@ pub fn advisor_count(g: &crate::game::Game, slot: Slot) -> usize {
     (4 - rank.min(3)).max(1)
 }
 
-/// Proposals that open with "An emissary ... wishes to speak with you" (not follow-ups).
-fn opens_with_emissary(p: Proposal) -> bool {
-    matches!(
-        p,
-        Proposal::Exchange | Proposal::Cancel | Proposal::Tribute | Proposal::TakeCiv | Proposal::Peace | Proposal::HelpMe | Proposal::Crusade | Proposal::GiveCiv | Proposal::GiveCash | Proposal::Grovel | Proposal::Provoke | Proposal::Rid
-    )
+/// How the current screen is shown.
+fn over_map(st: &DiplomacyState) -> bool {
+    st.plain || matches!(st.proposal, Proposal::Emissary | Proposal::Intelligence)
 }
 
 pub struct AudienceScreen {
     state: Option<DiplomacyState>,
     ai: Slot,
-    /// The screen itself calls `diplo_ai::respond` for follow-ups.
-    self_driven: bool,
-    /// Ask "Will you receive him?" over the map first.
-    prompt: bool,
-    prompt_shown: bool,
+    /// A Diplomat's audience to open on entering (`diplo_ai::human_audience`).
+    start: Option<(i32, i32)>,
+    /// The dialog over the map for the current screen was pushed.
+    sub_shown: bool,
+    /// The leader's anthem is playing (the throne room is up).
+    anthem: bool,
     header: String,
     body: Vec<String>,
     choices: Vec<String>,
+    disabled: Vec<bool>,
     font: usize,
     sel: usize,
     dismiss: Dismiss,
 }
 
-/// Audience for an engine decision.
-pub fn audience_screen(state: DiplomacyState) -> Box<dyn Screen> {
-    let prompt = !state.human_initiated && opens_with_emissary(state.proposal);
-    Box::new(AudienceScreen { ai: state.ai, state: Some(state), self_driven: false, prompt, prompt_shown: false, header: String::new(), body: Vec::new(), choices: Vec::new(), font: 0, sel: 0, dismiss: Dismiss::new() })
+impl AudienceScreen {
+    fn empty(ai: Slot) -> AudienceScreen {
+        AudienceScreen {
+            state: None,
+            ai,
+            start: None,
+            sub_shown: false,
+            anthem: false,
+            header: String::new(),
+            body: Vec::new(),
+            choices: Vec::new(),
+            disabled: Vec::new(),
+            font: 0,
+            sel: 0,
+            dismiss: Dismiss::new(),
+        }
+    }
 }
 
-/// Audience requested by the human (Attitude advisor, diplomats): loops `respond` itself.
-pub fn human_audience(ai_slot: u8) -> Box<dyn Screen> {
-    Box::new(AudienceScreen { ai: ai_slot, state: None, self_driven: true, prompt: false, prompt_shown: false, header: String::new(), body: Vec::new(), choices: Vec::new(), font: 0, sel: 0, dismiss: Dismiss::new() })
+/// The audience of an engine decision, from its first screen.
+pub fn audience_screen(state: DiplomacyState) -> Box<dyn Screen> {
+    let mut s = AudienceScreen::empty(state.ai);
+    s.state = Some(state);
+    Box::new(s)
+}
+
+/// The human's audience with `ai_slot` (a Diplomat's "Meet with King" next to (x, y)).
+pub fn human_audience(ai_slot: u8, at: (i32, i32)) -> Box<dyn Screen> {
+    let mut s = AudienceScreen::empty(ai_slot);
+    s.start = Some(at);
+    Box::new(s)
 }
 
 impl AudienceScreen {
+    /// The text and menu of the current screen.
     fn layout(&mut self, ctx: &UiContext) {
         let Some(st) = &self.state else { return };
         let Some(g) = ctx.game.as_ref() else { return };
-        let lines = ctx.texts.king.section(st.proposal.section()).map(|l| l.to_vec()).unwrap_or_default();
-        let v = Vars { rplc1: st.rplc1.clone(), rplc2: st.rplc2.clone(), us: st.us(g).to_string(), them: st.them(g).to_string(), bucks: st.bucks };
+        let lines = if st.proposal == Proposal::Message {
+            st.text.iter().map(|l| format!("{l}^")).collect()
+        } else {
+            ctx.texts.king.section(st.proposal.section()).map(|l| l.to_vec()).unwrap_or_default()
+        };
+        let v = Vars { rplc1: st.rplc1.clone(), rplc2: st.rplc2.clone(), us: st.us(g), them: st.them(g), bucks: st.bucks };
         let m = split_menu(&substitute(&lines, &v));
         let p = g.player(st.ai);
         self.header = format!("{} {} of the {}:", p.title(), p.leader, g.civ_name(st.ai));
-        self.choices = m.choices;
-        self.sel = 0;
+        self.choices = if st.menu.is_empty() { m.choices } else { st.menu.clone() };
+        self.disabled = (0..self.choices.len()).map(|i| st.disabled.get(i).copied().unwrap_or(false)).collect();
+        self.sel = (0..self.choices.len()).find(|i| !self.disabled[*i]).unwrap_or(0);
         // pick the font so that everything fits in the box
         let width = THRONE_BOX.w - 16;
         for font in [0usize, 1] {
@@ -128,6 +157,18 @@ impl AudienceScreen {
         }
     }
 
+    /// The text of the current screen as plain lines (for the boxes over the map).
+    fn plain_lines(&self, ctx: &UiContext) -> Vec<String> {
+        let Some(st) = &self.state else { return Vec::new() };
+        if st.proposal == Proposal::Message || st.proposal == Proposal::Emissary {
+            return st.text.clone();
+        }
+        let Some(g) = ctx.game.as_ref() else { return Vec::new() };
+        let lines = ctx.texts.king.section(st.proposal.section()).map(|l| l.to_vec()).unwrap_or_default();
+        let v = Vars { rplc1: st.rplc1.clone(), rplc2: st.rplc2.clone(), us: st.us(g), them: st.them(g), bucks: st.bucks };
+        split_menu(&substitute(&lines, &v)).body
+    }
+
     fn line_h(&self, ctx: &UiContext) -> i32 {
         ctx.fonts.get(self.font).line_height()
     }
@@ -144,28 +185,37 @@ impl AudienceScreen {
         let lh = self.line_h(ctx);
         (0..self.choices.len()).find(|&i| {
             let y = self.choice_y(ctx, i);
-            my >= y && my < y + lh
+            my >= y && my < y + lh && !self.disabled[i]
         })
     }
 
-    /// The human answered (or acknowledged) the current text.
-    fn finish(&mut self, ctx: &mut UiContext, choice: Option<usize>) -> Transition {
-        if !self.self_driven {
-            return match choice {
-                Some(i) => Transition::Pop(DialogResult::Choice(i)),
-                None => Transition::Pop(DialogResult::Done),
-            };
+    /// Show `st` (music, text).
+    fn enter_state(&mut self, ctx: &mut UiContext, st: DiplomacyState) {
+        let civ = ctx.game().player(st.ai).civ;
+        let throne = !over_map(&st);
+        if st.proposal == Proposal::Emissary {
+            // the anthem plays while the emissary waits (o 0x7afc, tune ds:0x1518)
+            ctx.audio.national_theme(civ, false);
+        } else if throne && !self.anthem {
+            self.anthem = true;
+            ctx.audio.national_theme(civ, true);
         }
+        // CIV.EXE plays the war drums (tune 33) for demands, threats and declarations of war
+        if st.drums {
+            ctx.audio.play(crate::audio::Sound::WarDrums);
+        }
+        self.state = Some(st);
+        self.sub_shown = false;
+        self.dismiss = Dismiss::new();
+        self.layout(ctx);
+    }
+
+    /// The human answered (or acknowledged) the current screen.
+    fn answer(&mut self, ctx: &mut UiContext, choice: usize) -> Transition {
         let Some(st) = self.state.clone() else { return Transition::Pop(DialogResult::Done) };
-        let next = match choice {
-            Some(i) => crate::ai::diplo_ai::respond(ctx.game_mut(), &st, i),
-            None => None,
-        };
-        match next {
+        match crate::ai::diplo_ai::respond(ctx.game_mut(), &st, choice) {
             Some(n) => {
-                self.state = Some(n);
-                self.dismiss = Dismiss::new();
-                self.layout(ctx);
+                self.enter_state(ctx, n);
                 Transition::None
             }
             None => Transition::Pop(DialogResult::Done),
@@ -181,16 +231,14 @@ impl AudienceScreen {
         let (govt, civ) = ctx.game.as_ref().map(|g| (g.player(self.ai).govt, g.player(self.ai).civ)).unwrap_or((crate::rules::Govt::Despotism, 1));
         (back_sheet(govt, modern), govt_sheet(govt, modern), format!("KING{:02}", king_index(civ)))
     }
-}
 
-impl AudienceScreen {
-    /// CIV.EXE plays the war drums (ID 33) over the anthem for demands, threats and
-    /// declarations of war.
-    fn war_drums(&self, ctx: &UiContext) {
-        use crate::game::diplomacy::Proposal::*;
-        if let Some(st) = &self.state {
-            if matches!(st.proposal, Cancel | Tribute | TakeCiv | Provoke | Reject | Rid | Mobilize) {
-                ctx.audio.play(crate::audio::Sound::WarDrums);
+    fn step_sel(&mut self, delta: isize) {
+        let n = self.choices.len();
+        for k in 1..=n {
+            let i = (self.sel as isize + delta * k as isize).rem_euclid(n as isize) as usize;
+            if !self.disabled[i] {
+                self.sel = i;
+                return;
             }
         }
     }
@@ -198,15 +246,14 @@ impl AudienceScreen {
 
 impl Screen for AudienceScreen {
     fn on_enter(&mut self, ctx: &mut UiContext) {
-        if self.state.is_none() {
-            let st = crate::ai::diplo_ai::human_audience(ctx.game_mut(), self.ai);
-            self.state = Some(st);
+        if let Some(at) = self.start.take() {
+            if let Some(st) = crate::ai::diplo_ai::human_audience(ctx.game_mut(), self.ai, at) {
+                self.enter_state(ctx, st);
+            }
+            return;
         }
-        self.layout(ctx);
-        let civ = ctx.game().player(self.ai).civ;
-        ctx.audio.national_theme(civ, !self.prompt);
-        if !self.prompt {
-            self.war_drums(ctx);
+        if let Some(st) = self.state.take() {
+            self.enter_state(ctx, st);
         }
     }
 
@@ -216,44 +263,53 @@ impl Screen for AudienceScreen {
 
     fn update(&mut self, ctx: &mut UiContext) -> Transition {
         self.dismiss.tick();
-        if self.prompt && !self.prompt_shown {
-            self.prompt_shown = true;
-            let (civ, female) = ctx.game.as_ref().map(|g| (g.civ_name(self.ai).to_string(), g.player(self.ai).civ().female)).unwrap_or_default();
-            let who = if female { "her" } else { "him" };
-            let q = vec![format!("An emissary from the {civ} wishes to speak with you. Will you receive {who}?")];
-            return Transition::Push(Box::new(YesNo::new(q, "Yes.", "No.").with_pos(210, 75)));
+        let Some(st) = self.state.clone() else { return Transition::Pop(DialogResult::Done) };
+        if !over_map(&st) || self.sub_shown {
+            return Transition::None;
         }
-        Transition::None
+        self.sub_shown = true;
+        if st.proposal == Proposal::Intelligence {
+            return Transition::Push(crate::ui::reports::advisor(ctx, 3));
+        }
+        let lines = self.plain_lines(ctx);
+        if st.proposal == Proposal::Emissary {
+            return Transition::Push(Box::new(MenuDialog::new(lines, st.menu.clone()).with_pos(100, 80)));
+        }
+        // a refused emissary: the declaration in a plain box (o 0x6f83 at (40, 100))
+        Transition::Push(Box::new(MessageBox::new(lines).with_pos(40, 100)))
     }
 
     fn resume(&mut self, result: DialogResult, ctx: &mut UiContext) -> Transition {
-        if self.prompt {
-            self.prompt = false;
-            self.dismiss = Dismiss::new();
-            if result == DialogResult::No {
-                // refusing the emissary counts as rejecting the proposal
-                return self.finish(ctx, Some(0));
-            }
-            let civ = ctx.game().player(self.ai).civ;
-            ctx.audio.national_theme(civ, true);
-            self.war_drums(ctx);
+        let Some(st) = self.state.as_ref() else { return Transition::Pop(DialogResult::Done) };
+        if !over_map(st) {
+            return Transition::None;
         }
-        Transition::None
+        let choice = match (st.proposal, result) {
+            (Proposal::Emissary, DialogResult::Choice(i)) => i,
+            // Escape: "No."
+            (Proposal::Emissary, _) => 1,
+            _ => 0,
+        };
+        self.answer(ctx, choice)
     }
 
     fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
-        if self.prompt {
+        let Some(st) = &self.state else { return Transition::None };
+        if over_map(st) {
             return Transition::None;
         }
         if self.choices.is_empty() {
-            return if self.dismiss.closes(ev) { self.finish(ctx, None) } else { Transition::None };
+            return if self.dismiss.closes(ev) { self.answer(ctx, 0) } else { Transition::None };
         }
-        let n = self.choices.len();
         match ev {
             Event::Key { key, down: true, .. } => match key {
-                Key::Up | Key::Kp(8) => self.sel = (self.sel + n - 1) % n,
-                Key::Down | Key::Kp(2) => self.sel = (self.sel + 1) % n,
-                Key::Enter | Key::Space => return self.finish(ctx, Some(self.sel)),
+                Key::Up | Key::Kp(8) => self.step_sel(-1),
+                Key::Down | Key::Kp(2) => self.step_sel(1),
+                Key::Enter | Key::Space => {
+                    let s = self.sel;
+                    return self.answer(ctx, s);
+                }
+                Key::Esc => return self.answer(ctx, usize::MAX),
                 _ => {}
             },
             Event::MouseMove { x, y } => {
@@ -263,7 +319,7 @@ impl Screen for AudienceScreen {
             }
             Event::MouseButton { button: MouseButton::Left, x, y, down: true } => {
                 if let Some(i) = self.choice_at(ctx, *x, *y) {
-                    return self.finish(ctx, Some(i));
+                    return self.answer(ctx, i);
                 }
             }
             _ => {}
@@ -272,7 +328,7 @@ impl Screen for AudienceScreen {
     }
 
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
-        if self.prompt {
+        if self.state.as_ref().map(over_map).unwrap_or(true) {
             return;
         }
         let (back, govt, king) = self.sheets(ctx);
@@ -286,6 +342,7 @@ impl Screen for AudienceScreen {
         // text
         let pal = self.palette(ctx);
         let ink = pal.nearest([0, 0, 0]);
+        let grey = pal.nearest([96, 96, 96]);
         let title = pal.nearest([130, 32, 20]);
         let hilite = pal.nearest([255, 255, 255]);
         let lh = self.line_h(ctx);
@@ -302,12 +359,13 @@ impl Screen for AudienceScreen {
             if i == self.sel {
                 fb.fill_rect(Rect::new(x - 4, cy - 1, THRONE_BOX.w - 8, lh), hilite);
             }
-            draw_text(fb, &ctx.fonts, &TextStyle::new(self.font, ink), x + 2, cy, c);
+            let colour = if self.disabled[i] { grey } else { ink };
+            draw_text(fb, &ctx.fonts, &TextStyle::new(self.font, colour), x + 2, cy, c);
         }
     }
 
     fn palette(&self, ctx: &UiContext) -> Palette {
-        if self.prompt {
+        if self.state.as_ref().map(over_map).unwrap_or(true) {
             return ctx.palette;
         }
         let (back, govt, king) = self.sheets(ctx);
@@ -315,6 +373,6 @@ impl Screen for AudienceScreen {
     }
 
     fn draws_parent(&self) -> bool {
-        self.prompt
+        self.state.as_ref().map(over_map).unwrap_or(true)
     }
 }

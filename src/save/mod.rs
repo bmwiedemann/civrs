@@ -13,7 +13,9 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// older saves take the launch-free calendar year of their turns.
 /// 7: then by the number of city slots (u32 LE) and `CITY_TRAILER` bytes per slot (the stashed
 /// garrison); older saves have none.
-pub const VERSION: u16 = 7;
+/// 8: then by each player's diplomacy flags (8 x u16 LE, `Player::diplo`) and last contact turn
+/// (i32 LE); older saves derive the flags from their relations and embassies.
+pub const VERSION: u16 = 8;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -75,6 +77,12 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
         data.extend_from_slice(&p.spaceship.launch_year.unwrap_or(i32::MIN).to_le_bytes());
     }
     data.extend_from_slice(&city_trailer(g));
+    for p in &g.players {
+        for f in p.diplo {
+            data.extend_from_slice(&f.to_le_bytes());
+        }
+        data.extend_from_slice(&p.last_contact.to_le_bytes());
+    }
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -129,7 +137,43 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     if ver >= 7 {
         read_city_trailer(&mut g, rest.get(cities..).unwrap_or_default());
     }
+    let city_slots = rest.get(cities..cities + 4).map(|n| u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize).unwrap_or(0);
+    let diplo = cities + 4 + CITY_TRAILER * city_slots;
+    for (i, p) in g.players.iter_mut().enumerate() {
+        match rest.get(diplo + DIPLO_TRAILER * i..diplo + DIPLO_TRAILER * (i + 1)) {
+            Some(b) if ver >= 8 => {
+                for (k, f) in p.diplo.iter_mut().enumerate() {
+                    *f = u16::from_le_bytes([b[2 * k], b[2 * k + 1]]);
+                }
+                p.last_contact = i32::from_le_bytes([b[16], b[17], b[18], b[19]]);
+            }
+            _ => migrate_relations(p),
+        }
+    }
     Ok(g)
+}
+
+/// Bytes per player of the version-8 diplomacy trailer: the flags towards each slot and the
+/// last contact turn.
+const DIPLO_TRAILER: usize = 8 * 2 + 4;
+
+/// Saves before version 8 kept a relation and an embassy bit per slot: a treaty becomes
+/// contact and peace, a war contact without peace.
+fn migrate_relations(p: &mut crate::game::Player) {
+    use crate::game::diplomacy::flags::*;
+    use crate::game::Relation;
+    for s in 0..8 {
+        let mut f = match p.legacy_relations[s] {
+            Relation::NoContact => 0,
+            Relation::Peace => CONTACT | PEACE,
+            Relation::War => CONTACT,
+        };
+        if p.legacy_embassies & (1 << s) != 0 {
+            f |= EMBASSY;
+        }
+        p.diplo[s] = f;
+    }
+    p.last_contact = -1;
 }
 
 /// Bytes per city slot of the version-7 city trailer: the two garrison slots and the
@@ -289,6 +333,42 @@ mod tests {
     }
 
     #[test]
+    fn diplomacy_flags_survive_a_save_and_old_saves_derive_them() {
+        use crate::game::diplomacy::flags::*;
+        use crate::game::Relation;
+        let mut g = Game::new(GameSetup { seed: 6, ..Default::default() }, None);
+        g.set_relation(1, 2, Relation::Peace);
+        g.set_relation(1, 3, Relation::War);
+        g.raise_flag(2, 1, VENDETTA | BREAK);
+        g.raise_flag(1, 2, EMBASSY);
+        g.player_mut(2).last_contact = 17;
+        let dir = std::env::temp_dir().join(format!("civrs-diplo-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        let l = super::load_game(&path).unwrap();
+        for s in 0..8 {
+            assert_eq!(l.player(s).diplo, g.player(s).diplo);
+        }
+        assert_eq!(l.player(2).last_contact, 17);
+        // a version-7 file: no diplomacy trailer; relations and embassies of the body count
+        let mut data = std::fs::read(&path).unwrap();
+        data[4..6].copy_from_slice(&7u16.to_le_bytes());
+        data.truncate(data.len() - 8 * super::DIPLO_TRAILER);
+        std::fs::write(&path, &data).unwrap();
+        let mut old = super::load_game(&path).unwrap();
+        // what a version-7 save stored
+        old.players[1].legacy_relations[2] = Relation::Peace;
+        old.players[1].legacy_relations[3] = Relation::War;
+        old.players[1].legacy_embassies = 1 << 2;
+        super::migrate_relations(&mut old.players[1]);
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(old.diplo(1, 2), CONTACT | PEACE | EMBASSY);
+        assert_eq!(old.diplo(1, 3), CONTACT);
+        assert_eq!(old.diplo(1, 4), 0);
+        assert_eq!(old.player(2).last_contact, -1);
+    }
+
+    #[test]
     fn stashed_garrison_survives_a_save_and_old_saves_have_none() {
         let mut g = Game::new(GameSetup { seed: 5, ..Default::default() }, None);
         let h = g.human_slot;
@@ -305,7 +385,7 @@ mod tests {
         // a version-5 file: same body, no city trailer
         let mut data = std::fs::read(&path).unwrap();
         data[4..6].copy_from_slice(&5u16.to_le_bytes());
-        data.truncate(data.len() - 4 - g.cities.len() * super::CITY_TRAILER);
+        data.truncate(data.len() - 8 * super::DIPLO_TRAILER - 4 - g.cities.len() * super::CITY_TRAILER);
         std::fs::write(&path, &data).unwrap();
         let old = super::load_game(&path).unwrap();
         let _ = std::fs::remove_dir_all(dir);

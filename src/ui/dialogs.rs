@@ -257,16 +257,16 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             msg(vec![format!("{} spaceship", g.player(*slot).adjective()), if *launched { "returns to Earth.".into() } else { "construction cancelled.".into() }])
         }
         GameEvent::PalaceAddition(s) if *s == me => Some(crate::ui::palace::palace_addition(ctx)),
-        GameEvent::PeaceTreaty { a, b } if *a == me || *b == me => {
-            let other = if *a == me { *b } else { *a };
-            news(vec!["Peace treaty signed".into(), format!("with the {}.", civ(other))])
-        }
-        GameEvent::PeaceTreaty { a, b } => news(vec![format!("The {} and the {}", civ(*a), civ(*b)), "sign a peace treaty.".into()]),
-        GameEvent::WarDeclared { a, b } if *a == me || *b == me => {
-            let other = if *a == me { *b } else { *a };
-            news(vec![format!("The {} declare", civ(other)), "WAR on us!".into()])
-        }
-        GameEvent::WarDeclared { a, b } => news(vec![format!("The {} declare war", civ(*a)), format!("on the {}!", civ(*b))]),
+        // the computer players' treaties and wars, for the human with an embassy (CIV.EXE
+        // 0x15247, 0x152f8, 0x14aa4, at (100, 80))
+        GameEvent::PeaceTreaty { a, b } => msg(vec![format!("{} and", civ(*a)), format!("{} sign", civ(*b)), "a peace treaty.".into()]),
+        GameEvent::WarDeclared { a, b } => msg(vec![format!("{} and", civ(*a)), format!("{} declare", civ(*b)), "war on each other.".into()]),
+        GameEvent::TreatyCancelled { a, b } => msg(vec![format!("{} and", civ(*a)), format!("{} cancel", civ(*b)), "peace treaty.".into()]),
+        GameEvent::WarEnded { a, b } => msg(vec!["The war between".into(), format!("the {} and the", civ(*a)), format!("{} has ended.", civ(*b))]),
+        // fights (CIV.EXE 0x19e98, 0x19f2c)
+        GameEvent::SneakAttack { by, .. } => msg(vec!["Sneak attack by".into(), format!("{} forces!", g.player(*by).adjective())]),
+        GameEvent::TreatyBroken { by, victim } => msg(vec![format!("{} cancel", civ(*victim)), "peace treaty".into(), format!("with {}.", civ(*by))]),
+        GameEvent::Schism(s) => note(ctx, "SCHISM", &Vars { them: civ(*s).to_string(), ..Default::default() }),
         GameEvent::EmbassyEstablished { slot, with } if *slot == me => news(vec!["Embassy established".into(), format!("with the {}.", civ(*with))]),
         GameEvent::ContactMade { .. } => None,
         // CIV.EXE 0x147f7
@@ -457,6 +457,8 @@ pub fn reply_for(d: &Decision, r: &crate::ui::screen::DialogResult) -> crate::ga
     match (d, r) {
         (Decision::KeepPlaying { .. }, DialogResult::Yes | DialogResult::Choice(0)) => DecisionReply::Yes,
         (Decision::KeepPlaying { .. }, _) => DecisionReply::No,
+        // the audience screen has run the whole audience itself
+        (Decision::Diplomacy(_), _) => DecisionReply::Cancel,
         (_, DialogResult::Choice(i)) => DecisionReply::Choice(*i),
         (_, DialogResult::Yes) => DecisionReply::Yes,
         (_, DialogResult::No) => DecisionReply::No,

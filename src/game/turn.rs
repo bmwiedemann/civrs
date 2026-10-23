@@ -10,7 +10,7 @@
 
 use super::events::{Decision, DecisionReply, Disaster, EndReason, GameEvent};
 use super::map::{CityId, Map, Slot, UnitId};
-use super::{Game, Production, Relation, RuleError, UnitOrder};
+use super::{Game, Production, RuleError, UnitOrder};
 use crate::ai::AiDriver;
 use crate::rules::{self, advance_ids as adv, improvement_ids as imp, unit_ids, wonder_ids as won, AdvanceId, Govt, ImprovementId, Terrain, UnitTypeId};
 use serde::{Deserialize, Serialize};
@@ -365,14 +365,16 @@ impl Game {
                 self.push_event(GameEvent::PalaceAddition(slot));
             }
         }
-        // peace turns count towards the score once the calendar reaches 1 AD
-        let p = self.player(slot);
-        let at_war = (1..8u8).any(|o| o != slot && self.player(o).in_game && self.player(o).alive && p.at_war(o));
-        if self.year() >= 1 && !at_war {
-            self.player_mut(slot).peace_turns += 1;
-        } else {
-            self.player_mut(slot).peace_turns = 0;
+        // the peaceful turns ds:0xd808 (one count for the world): one more at the human's turn
+        // from 1 AD on (0x259a); any fight between two civilizations resets them
+        // (`Game::fight_diplomacy`)
+        if slot == self.human_slot && self.year() >= 1 {
+            for p in self.players.iter_mut() {
+                p.peace_turns += 1;
+            }
         }
+        // treaties to break, lapsing contacts, requests for help (0x1495a)
+        self.civ_politics(slot);
     }
 
     /// Pollution, global warming, spaceship flight, end-of-game checks (once per turn, after all
@@ -380,6 +382,8 @@ impl Game {
     pub fn process_world(&mut self) {
         self.global_warming_check();
         self.disaster_check();
+        // the end of the power ranking (0x3121): the world against a leading human
+        self.gang_up_on_leader();
         self.spaceship_arrivals();
         // the coming year is the one CIV.EXE compares after its advance (0x2a28, 0x2a98):
         // a warning 20 years ahead, the end in the year 2100 - 20 * difficulty itself
@@ -953,6 +957,8 @@ impl Game {
             return;
         }
         let turns = if self.owner_has_wonder(slot, won::PYRAMIDS) { 0 } else { 1 + self.rng.below(4) as u8 };
+        // set_government(civ, 0) forgets the vendettas (0x15079)
+        self.forget_vendettas(slot);
         {
             let p = self.player_mut(slot);
             p.govt = Govt::Anarchy;
@@ -997,6 +1003,9 @@ impl Game {
     pub fn choose_government(&mut self, slot: Slot, g: Govt) {
         if g != Govt::Anarchy && !self.governments_available(slot).contains(&g) {
             return;
+        }
+        if self.player(slot).govt != g {
+            self.forget_vendettas(slot);
         }
         {
             let p = self.player_mut(slot);
@@ -1045,14 +1054,18 @@ impl Game {
                     self.player_mut(*slot).gold = 0;
                 }
             }
+            // the audience screen answers its screens itself and replies `Cancel` at the end;
+            // other callers (tests, headless runs) answer one screen at a time
             Decision::Diplomacy(state) => {
                 let choice = match reply {
                     DecisionReply::Choice(i) => i,
                     DecisionReply::Yes => 0,
-                    _ => usize::MAX,
+                    DecisionReply::No => 1,
+                    DecisionReply::Cancel => return,
                 };
-                if let Some(next) = crate::ai::diplo_ai::respond(self, state, choice) {
-                    self.push_event(GameEvent::NeedsDecision(Decision::Diplomacy(next)));
+                match crate::ai::diplo_ai::respond(self, state, choice) {
+                    Some(next) => self.push_event(GameEvent::NeedsDecision(Decision::Diplomacy(next))),
+                    None => self.audience_pending &= !(1 << state.ai),
                 }
             }
             Decision::KeepPlaying { .. } => {
@@ -1248,16 +1261,17 @@ impl Game {
                 if target.tech_stolen {
                     return Err(RuleError::Other("Technology was stolen from this city before."));
                 }
-                if self.relation(us, them) == Relation::Peace {
-                    self.declare_war(us, them);
-                }
+                // the thief has passed senate_check_attack (the caller asks); the treaty ends,
+                // with no vendetta (o 0x1d73b)
+                self.clear_diplo_flag(us, them, super::diplomacy::flags::PEACE);
                 let Some(a) = self.steal_advance(id, city) else { return Ok(DiplomatResult::NoTechnology) };
                 DiplomatResult::Stole(a)
             }
             DiplomatAction::Sabotage => DiplomatResult::Sabotaged(self.sabotage_city(city)),
             DiplomatAction::InciteRevolt { subvert } => {
                 let Some(cost) = self.incite_cost(city) else { return Err(RuleError::Other("A capital cannot be incited to revolt.")) };
-                let at_peace = self.relation(us, them) == Relation::Peace;
+                // subversion needs a treaty in the inciter's word (o 0x1d9f4)
+                let at_peace = self.treaty(us, them);
                 if subvert && !at_peace {
                     return Err(RuleError::Other("Only a city at peace can be subverted."));
                 }
@@ -1265,8 +1279,11 @@ impl Game {
                 if self.player(us).gold < cost {
                     return Err(RuleError::NotEnoughGold);
                 }
-                if at_peace && !subvert {
-                    self.declare_war(us, them);
+                // inciting a treaty partner's city ends the treaty and earns its vendetta; a
+                // subversion keeps the peace (o 0x1daf5..0x1db10)
+                if !subvert && self.treaty(them, us) {
+                    self.clear_diplo_flag(them, us, super::diplomacy::flags::PEACE);
+                    self.raise_flag(them, us, super::diplomacy::flags::VENDETTA);
                 }
                 self.player_mut(us).gold -= cost;
                 self.remove_unit(id);
@@ -1341,7 +1358,7 @@ impl Game {
         if u.kind != unit_ids::DIPLOMAT || them == us || Map::dist(u.pos(), target.pos()) > 1 {
             return None;
         }
-        if self.is_human(them) && self.relation(them, us) == Relation::Peace {
+        if self.is_human(them) && self.treaty(them, us) {
             self.remove_unit(id);
             self.refresh_vision(us);
             return None;
@@ -1410,7 +1427,7 @@ impl Game {
             }
             best = Some((u.pos(), city.id));
         }
-        let humans_at_peace = (1..8).any(|h| self.is_human(h) && self.relation(slot, h) == Relation::Peace);
+        let humans_at_peace = (1..8).any(|h| self.is_human(h) && self.treaty(slot, h));
         if best_score > 3 || humans_at_peace {
             return None;
         }
@@ -1769,7 +1786,7 @@ mod tests {
 #[cfg(test)]
 mod diplomat_tests {
     use super::*;
-    use crate::game::GameSetup;
+    use crate::game::{GameSetup, Relation};
 
     /// A flat grassland arena (x, y in 5..30) on one continent, emptied of units; the human
     /// and two computer slots `a` and `b`, all at war.

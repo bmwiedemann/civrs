@@ -29,7 +29,9 @@ impl Game {
         tt.terrain.info().move_cost * 3
     }
 
-    /// Would moving the land unit from `from` to `to` violate zones of control?
+    /// Would moving the land unit from `from` to `to` violate zones of control? Any foreign
+    /// land unit next to both squares exerts it, treaty or not (CIV.EXE 0x7e6:0x174c
+    /// `enemy_adjacent` reads no diplomacy flag).
     pub fn zoc_blocks(&self, unit: &super::Unit, from: (i32, i32), to: (i32, i32)) -> bool {
         if !unit.is_land() || matches!(unit.kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN) {
             return false;
@@ -45,7 +47,7 @@ impl Game {
         }
         let adj_enemy = |p: (i32, i32)| {
             Map::neighbours8(p.0, p.1).any(|(nx, ny)| {
-                self.all_units().any(|u| u.x == nx && u.y == ny && u.is_land() && u.owner != unit.owner && (unit.owner == 0 || u.owner == 0 || self.player(unit.owner).at_war(u.owner)))
+                self.all_units().any(|u| u.x == nx && u.y == ny && u.is_land() && u.owner != unit.owner)
             })
         };
         adj_enemy(from) && adj_enemy(to)
@@ -84,7 +86,7 @@ impl Game {
 
         // Interaction with foreign units/cities.
         if let Some(o) = foreign_owner {
-            let at_war = slot == 0 || o == 0 || self.player(slot).at_war(o);
+            let hostile = self.may_fight(slot, o);
             let city_here = self.city_at(tx, ty);
             let units_here = self.units_at(tx, ty);
             // a Diplomat meeting a lone foreign unit outside a city may bribe it, at war or not
@@ -101,12 +103,26 @@ impl Game {
                 self.bribe_unit(slot, target_id);
                 return self.step(id, d, ask_caravan);
             }
-            if !at_war {
+            if !hostile {
                 // Caravan / diplomat may enter foreign cities at peace.
                 if city_here.is_some() && matches!(u.kind, unit_ids::CARAVAN | unit_ids::DIPLOMAT) {
                     return Ok(MoveOutcome::EnteredForeignCity(city_here.unwrap()));
                 }
-                return Ok(MoveOutcome::Blocked);
+                // the human may attack a treaty partner, or take its empty city, after
+                // "Break treaty." (senate_check_attack 0x1a3b4 from combat 0x199fd and from the
+                // territory rule 0x6575); the computer keeps the peace
+                let acts = !units_here.is_empty() || (city_here.is_some() && u.is_land() && u.info().att > 0);
+                if !(acts && self.is_human(slot) && self.treaty(slot, o)) {
+                    return Ok(MoveOutcome::Blocked);
+                }
+                if self.treaty_break_ok != Some(o) {
+                    return Ok(MoveOutcome::BreakTreaty(o));
+                }
+                self.treaty_break_ok = None;
+                if units_here.is_empty() {
+                    // the territory rule ends the treaty (0x6583); a fight ends it in combat
+                    self.clear_diplo_flag(slot, o, super::diplomacy::flags::PEACE);
+                }
             }
             // At war: attack if there are units; capture empty city with a ground unit.
             if !units_here.is_empty() {
@@ -160,6 +176,22 @@ impl Game {
         if ask_caravan && u.kind == unit_ids::CARAVAN && self.is_human(slot) {
             if let Some(c) = self.city_at(tx, ty).filter(|c| self.caravan_menu_wanted(&u, *c)) {
                 return Ok(MoveOutcome::CaravanArrived(c));
+            }
+        }
+
+        // the territory rule (CIV.EXE 0x64bb..0x65b5): a military land unit stepping onto
+        // developed land of a treaty partner's city; the human is asked first ("Break
+        // treaty."), a computer's unit stops at the human's border
+        if let Some(o) = self.territory_crossed(&u, (tx, ty)) {
+            if self.is_human(slot) && self.treaty(slot, o) {
+                if self.treaty_break_ok != Some(o) {
+                    return Ok(MoveOutcome::BreakTreaty(o));
+                }
+                self.treaty_break_ok = None;
+                self.clear_diplo_flag(slot, o, super::diplomacy::flags::PEACE);
+            } else if !self.is_human(slot) && self.treaty(o, slot) {
+                self.unit_mut(id).moves_left = 0;
+                return Ok(MoveOutcome::Blocked);
             }
         }
 
@@ -258,6 +290,8 @@ impl Game {
         }
         self.reveal_garrisons_near(slot, tx, ty);
         self.refresh_vision(slot);
+        // unit_look: the civilizations whose units are next to it meet (0x8491)
+        self.look_for_contacts(id);
         if had_hut {
             self.map.get_mut(tx, ty).unwrap().set(tile_flags::HUT, false);
             self.enter_hut(id);
@@ -350,9 +384,10 @@ impl Game {
                 u.order = UnitOrder::None;
             }
         }
-        let looking: Vec<(i32, i32)> = self.all_units().filter(|u| u.owner == slot).map(|u| u.pos()).collect();
-        for (x, y) in looking {
+        let looking: Vec<(UnitId, (i32, i32))> = self.all_units().filter(|u| u.owner == slot).map(|u| (u.id, u.pos())).collect();
+        for (id, (x, y)) in looking {
             self.reveal_garrisons_near(slot, x, y);
+            self.look_for_contacts(id);
         }
         for id in fortified {
             // an earlier stash may have taken the unit off the map already
@@ -487,8 +522,7 @@ mod tests {
         let mut g = Game::new(GameSetup { seed: 1, ..Default::default() }, None);
         let slot = g.human_slot;
         let enemy = g.civ_slots().into_iter().find(|s| *s != slot).unwrap();
-        g.players[slot as usize].relations[enemy as usize] = crate::game::Relation::War;
-        g.players[enemy as usize].relations[slot as usize] = crate::game::Relation::War;
+        g.set_relation(slot, enemy, crate::game::Relation::War);
         let (x, y) = (40, 25);
         for xx in x - 1..=x {
             let t = g.map.get_mut(xx, y).unwrap();

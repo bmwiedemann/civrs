@@ -39,7 +39,8 @@ pub struct Census {
     /// ds:0x6cac: summed defence of the civ's units (Nuclear excluded) standing on land of
     /// the continent (0x158b1).
     pub defence: [[i32; CONTINENTS]; 8],
-    /// ds:0x8076: summed attack of the same units.
+    /// ds:0x807a: summed attack of the same units (the table 0x1495:0xe0b reads; the catalogue's
+    /// ds:0x8076 is four bytes off).
     pub attack: [[i32; CONTINENTS]; 8],
     /// ds:0x6b96: cities of the civ on the continent.
     pub cities: [[i32; CONTINENTS]; 8],
@@ -114,12 +115,12 @@ impl Game {
 
     /// ds:0xe498 bit 1: a peace treaty between the two.
     fn exe_peace(&self, a: Slot, b: Slot) -> bool {
-        self.player(a).relation(b) == super::player::Relation::Peace
+        self.treaty(a, b)
     }
 
     /// ds:0xe498 low bits == 1: contact without a treaty, i.e. war.
     fn exe_war(&self, a: Slot, b: Slot) -> bool {
-        self.player(a).relation(b) == super::player::Relation::War
+        self.at_war(a, b)
     }
 
     /// The continent policy of 0x15cd1..0x15f5f for `slot` on continent index `k` (1..14;
@@ -136,8 +137,8 @@ impl Game {
             let od = census.defence[o][k];
             if od != 0 {
                 let weak = census.attack[s][k] / 4 >= census.attack[o][k] && census.cities[o][k] == 0;
-                // ds:0xe498 bit 0x100 (cease-fire?) also counts; civrs has no such state
-                if !weak && self.exe_war(slot, o as Slot) {
+                // a treaty it means to break (bit 0x100) counts as war (0x15dd9)
+                if !weak && self.planning_war(slot, o as Slot) {
                     if od >= census.attack[s][k] && census.attack[o][k] >= census.defence[s][k] && census.cities[s][k] != 0 {
                         threat += 1;
                     } else {

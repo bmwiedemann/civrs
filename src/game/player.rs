@@ -2,6 +2,10 @@ use super::map::{CityId, Slot};
 use crate::rules::{AdvanceId, Govt};
 use serde::{Deserialize, Serialize};
 
+/// How one civilization stands towards another, as CIV.EXE's screens put it: a summary of
+/// the diplomacy flags `Player::diplo` (`diplomacy::flags`): `Peace` with the treaty bit,
+/// `War` with contact and no treaty, else `NoContact`. Saves before version 8 stored only
+/// this (`Player::legacy_relations`).
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum Relation {
     #[default]
@@ -105,13 +109,14 @@ pub struct Player {
     #[serde(skip)]
     pub advance_source: Vec<i8>,
     pub capital: Option<CityId>,
-    pub relations: [Relation; 8],
-    /// Bit per slot: we have an embassy with them.
-    pub embassies: u8,
-    /// Attitude memory of AI towards each slot (-100..100).
-    pub attitude: [i8; 8],
-    /// Turn of last audience with each slot.
-    pub last_audience: [u32; 8],
+    /// The relations of saves before version 8 (read only when loading those).
+    pub legacy_relations: [Relation; 8],
+    /// The embassies (bit per slot) of saves before version 8 (read only when loading those).
+    pub legacy_embassies: u8,
+    /// No longer used (saves before version 8: an attitude memory of civrs' own).
+    pub legacy_attitude: [i8; 8],
+    /// No longer used (saves before version 8: the turn of the last audience).
+    pub legacy_last_audience: [u32; 8],
     pub spaceship: Spaceship,
     /// Consecutive peace turns after 1 AD (score).
     pub peace_turns: u32,
@@ -126,6 +131,15 @@ pub struct Player {
     pub destroyed_turn: Option<u32>,
     /// The player has been told about this tech's special advisor hint already (bit per hint).
     pub hints_shown: u32,
+    /// CIV.EXE's diplomacy flags ds:0xe498[slot][other] (`diplomacy::flags`); stored after the
+    /// game body in version-8 saves, derived from `legacy_relations` for older ones.
+    #[serde(skip)]
+    pub diplo: [u16; 8],
+    /// ds:0xd2e4[slot]: the turn of the computer civilization's last talk with the human, which
+    /// keeps it from asking again for 16 turns (-1 never; -2 the human took one of its cities).
+    /// Stored after the game body in version-8 saves.
+    #[serde(skip)]
+    pub last_contact: i32,
     /// Score frozen when the game ended for this player.
     pub final_score: Option<i32>,
     /// Number of times the player's cities rioted under democracy (civil war bookkeeping).
@@ -157,10 +171,10 @@ impl Player {
             research_count: 1,
             advance_source: vec![-1; 72],
             capital: None,
-            relations: [Relation::NoContact; 8],
-            embassies: 0,
-            attitude: [0; 8],
-            last_audience: [0; 8],
+            legacy_relations: [Relation::NoContact; 8],
+            legacy_embassies: 0,
+            legacy_attitude: [0; 8],
+            legacy_last_audience: [0; 8],
             spaceship: Spaceship::default(),
             peace_turns: 0,
             palace_level: 0,
@@ -169,6 +183,8 @@ impl Player {
             stats: PlayerStats::default(),
             destroyed_turn: None,
             hints_shown: 0,
+            diplo: [0; 8],
+            last_contact: -1,
             final_score: None,
             senate_blocks: 0,
             sold_cities: Vec::new(),
@@ -215,17 +231,38 @@ impl Player {
         let g = crate::rules::GOVERNMENTS[self.govt as usize];
         if self.civ().female { g.title_f } else { g.title_m }
     }
-    pub fn relation(&self, other: Slot) -> Relation {
-        self.relations[other as usize]
+    /// The diplomacy flags towards `other` (ds:0xe498[slot][other]).
+    pub fn flags(&self, other: Slot) -> u16 {
+        self.diplo[other as usize]
     }
+    /// Summary of the flags (see `Relation`).
+    pub fn relation(&self, other: Slot) -> Relation {
+        use crate::game::diplomacy::flags::*;
+        let f = self.flags(other);
+        if f & PEACE != 0 {
+            Relation::Peace
+        } else if f & CONTACT != 0 {
+            Relation::War
+        } else {
+            Relation::NoContact
+        }
+    }
+    /// CIV.EXE's war: contact and no treaty (`flags & 3 == 1`, e.g. 0x15495, the
+    /// intelligence report 0x14279).
     pub fn at_war(&self, other: Slot) -> bool {
-        self.relations[other as usize] == Relation::War
+        use crate::game::diplomacy::flags::*;
+        self.flags(other) & (CONTACT | PEACE) == CONTACT
+    }
+    /// A peace treaty with `other`, from this side (bit 1).
+    pub fn treaty(&self, other: Slot) -> bool {
+        self.flags(other) & crate::game::diplomacy::flags::PEACE != 0
     }
     pub fn has_contact(&self, other: Slot) -> bool {
-        self.relations[other as usize] != Relation::NoContact
+        self.flags(other) & crate::game::diplomacy::flags::CONTACT != 0
     }
+    /// An embassy with `other` (bit 6).
     pub fn has_embassy(&self, other: Slot) -> bool {
-        self.embassies & (1 << other) != 0
+        self.flags(other) & crate::game::diplomacy::flags::EMBASSY != 0
     }
     pub fn is_barbarian(&self) -> bool {
         self.slot == 0

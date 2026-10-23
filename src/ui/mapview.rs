@@ -61,6 +61,9 @@ pub(crate) enum Pending {
     TreatyBreak(UnitId, crate::game::CityId),
     /// "Dissidents in ... will revolt for $N."
     Incite(UnitId, crate::game::CityId),
+    /// "We have signed a peace treaty..." before a unit attacks or enters the land of a treaty
+    /// partner: (unit, direction, partner).
+    AttackTreaty(UnitId, Dir8, crate::game::Slot),
 }
 
 pub struct MapView {
@@ -292,6 +295,7 @@ impl MapView {
                     }
                 }
                 let t = match outcome {
+                    MoveOutcome::BreakTreaty(o) => self.treaty_question(ctx, id, d, o),
                     MoveOutcome::EnteredForeignCity(c) => self.foreign_city_menu(ctx, id, c),
                     MoveOutcome::CaravanArrived(c) => self.caravan_menu(ctx, id, c, d),
                     MoveOutcome::BribeOffer(t) => self.bribe_offer(ctx, id, t, d),
@@ -312,6 +316,14 @@ impl MapView {
             }
             Err(e) => self.error(ctx, &e),
         }
+    }
+
+    /// "We have signed a\npeace treaty with\nthe <Plural>!" Cancel action. / Break treaty. (CIV.EXE
+    /// 0x1a3cf, at (80, 80)).
+    fn treaty_question(&mut self, ctx: &mut UiContext, id: UnitId, d: Dir8, o: crate::game::Slot) -> Transition {
+        let lines = vec!["We have signed a".into(), "peace treaty with".into(), format!("the {}!", ctx.game().player(o).plural())];
+        self.pending = Pending::AttackTreaty(id, d, o);
+        Transition::Push(Box::new(MenuDialog::new(lines, vec!["Cancel action.".into(), "Break treaty.".into()]).with_pos(80, 80)))
     }
 
     fn foreign_city_menu(&mut self, ctx: &mut UiContext, id: UnitId, c: crate::game::CityId) -> Transition {
@@ -1152,6 +1164,32 @@ impl Screen for MapView {
             Pending::Incite(id, c) => match result {
                 DialogResult::Choice(i) => crate::ui::unit_actions::incite_choice(self, ctx, id, c, i),
                 _ => Transition::None,
+            },
+            // senate_check_attack (CIV.EXE 0x1a3b4): "Break treaty." goes ahead unless the
+            // Senate overrules; "Cancel action." cancels the unit's goto
+            Pending::AttackTreaty(id, d, o) => match result {
+                DialogResult::Choice(1) if ctx.game().senate_overrules(ctx.game().human_slot) => {
+                    self.pending = Pending::Event;
+                    Transition::Push(Box::new(MessageBox::new(vec!["Overruled by".into(), "the Senate.".into(), "Action canceled.".into()]).with_pos(100, 80)))
+                }
+                DialogResult::Choice(1) => {
+                    ctx.game_mut().treaty_break_ok = Some(o);
+                    if ctx.game().unit_opt(id).is_some() && ctx.game().active_unit == Some(id) {
+                        return self.move_active(ctx, d, false);
+                    }
+                    ctx.game_mut().treaty_break_ok = None;
+                    Transition::None
+                }
+                _ => {
+                    if ctx.game().unit_opt(id).is_some() {
+                        let u = ctx.game_mut().unit_mut(id);
+                        u.goto = None;
+                        if u.order == UnitOrder::Goto {
+                            u.order = UnitOrder::None;
+                        }
+                    }
+                    Transition::None
+                }
             },
             Pending::None => Transition::None,
         }

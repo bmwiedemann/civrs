@@ -269,10 +269,16 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
                 g.players[2].in_game = true;
                 g.players[2].alive = true;
                 g.set_relation(2, human, civrs::game::Relation::Peace);
-                let mut st = DiplomacyState::new(2, human, Proposal::Exchange);
-                st.rplc1 = "Bronze Working".into();
-                st.advance = Some(civrs::rules::advance_ids::BRONZE_WORKING);
-                st.human_initiated = true;
+                // a Diplomat's audience (mode 1) opens with the leader's greeting; an
+                // EXCHANGE screen when the leader has nothing to say
+                let at = g.cities_of(2).first().map(|c| g.city(*c).pos()).unwrap_or((-1, -1));
+                let st = civrs::ai::diplo_ai::human_audience(g, 2, at).unwrap_or_else(|| {
+                    let mut st = DiplomacyState::new(2, human, Proposal::Exchange);
+                    st.rplc1 = "Bronze Working".into();
+                    st.advance = Some(civrs::rules::advance_ids::BRONZE_WORKING);
+                    st.human_initiated = true;
+                    st
+                });
                 civrs::ui::diplomacy_ui::audience_screen(st)
             }
             // the menu of a Diplomat at a foreign city (the human's first city handed to slot 2):

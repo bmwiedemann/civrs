@@ -5,7 +5,7 @@
 //! strictly higher (Civ1's single-round combat).
 
 use super::map::{tile_flags, CityId, Map, Slot, UnitId};
-use super::{EndReason, Game, GameEvent, MoveOutcome, Player, Relation, Unit, UnitOrder};
+use super::{EndReason, Game, GameEvent, MoveOutcome, Player, Unit, UnitOrder};
 use crate::rules::{self, improvement_ids as imp, unit_ids, Govt};
 
 impl Game {
@@ -117,6 +117,7 @@ impl Game {
             })
         };
         self.last_combat = Some(((attacker.x, attacker.y), (x, y), won));
+        self.fight_diplomacy(attacker.owner, defender.owner);
         // a computer city that is attacked, whoever wins, goes on alert (city status 0x10,
         // CIV.EXE 0x6114..0x6141): its next turn re-chooses production and buys
         if let Some(c) = self.city_at(x, y) {
@@ -139,7 +140,8 @@ impl Game {
             let victims: Vec<UnitId> = if stack_safe { vec![def_id] } else { self.units_at(x, y) };
             let mut losers: Vec<Slot> = Vec::new();
             for v in victims {
-                let vu = self.unit(v).clone();
+                // a ship's cargo goes down with it (`remove_unit`)
+                let Some(vu) = self.unit_opt(v).cloned() else { continue };
                 self.players[vu.owner as usize].stats.units_lost += 1;
                 self.push_event(GameEvent::UnitLost { slot: vu.owner, kind: vu.kind, at: (x, y), reason: "destroyed".into() });
                 self.remove_unit(v);
@@ -210,7 +212,7 @@ impl Game {
                     continue;
                 }
                 for v in self.units_at(xx, yy) {
-                    let vu = self.unit(v).clone();
+                    let Some(vu) = self.unit_opt(v).cloned() else { continue };
                     self.players[vu.owner as usize].stats.units_lost += 1;
                     self.push_event(GameEvent::UnitLost { slot: vu.owner, kind: vu.kind, at: (xx, yy), reason: "nuclear attack".into() });
                     self.remove_unit(v);
@@ -237,6 +239,10 @@ impl Game {
             }
         }
         self.last_combat = Some(((attacker.x, attacker.y), (x, y), true));
+        // the victims hold a vendetta against the attacker and remember the bomb (0x1a5ba)
+        for l in losers.iter().copied().filter(|l| *l != by) {
+            self.raise_flag(l, by, super::diplomacy::flags::VENDETTA | super::diplomacy::flags::NUCLEAR);
+        }
         self.push_event(GameEvent::NuclearStrike { at: (x, y), by, city });
         self.refresh_vision(by);
         for l in losers {
@@ -265,6 +271,15 @@ impl Game {
         let from = city.owner;
         let by = attacker.owner;
         let was_capital = self.player(from).capital == Some(c);
+        // the leaders remember (capture_city 0x13da6, 0x13e5c): a city taken by the human
+        // marks its old owner's last contact -2, one taken from the human makes the captor
+        // ready to talk (-1)
+        if by == self.human_slot && from != 0 {
+            self.player_mut(from).last_contact = -2;
+        }
+        if from == self.human_slot && by != 0 {
+            self.player_mut(by).last_contact = -1;
+        }
         if city.size <= 1 || (by == 0 && attacker.info().att <= 2) {
             // size-1 cities are destroyed, and so is any city a barbarian with attack 2 or less
             // takes (CIV.EXE 0x13e89; ds:0x28bc is only set by a Diplomat's incite)
@@ -405,32 +420,17 @@ impl Game {
         p.gold = old.gold / 2;
         p.tax = 50;
         p.lux = 0;
-        for s in 0..8u8 {
-            let r = if s == new_slot {
-                Relation::NoContact
-            } else if s == from {
-                Relation::War
-            } else if self.players[s as usize].in_game && s != 0 {
-                Relation::Peace
-            } else {
-                Relation::NoContact
-            };
-            p.relations[s as usize] = r;
-        }
         self.player_mut(from).gold -= old.gold / 2;
-        for s in 0..8u8 {
-            if s == new_slot {
-                continue;
-            }
-            let r = if s == from {
-                Relation::War
-            } else if self.players[s as usize].in_game && s != 0 {
-                Relation::Peace
-            } else {
-                Relation::NoContact
-            };
-            self.players[s as usize].relations[new_slot as usize] = r;
+        // the new civilization starts with clean diplomacy words both ways (o 0x4a7c), at war
+        // with the old one, which it holds a vendetta against, and talked to 8 turns ago
+        // (civil war o 0x14e61..0x14e86)
+        p.last_contact = self.turn as i32 - 8;
+        for s in 0..8usize {
+            p.diplo[s] = 0;
+            self.players[s].diplo[new_slot as usize] = 0;
         }
+        p.diplo[from as usize] = super::diplomacy::flags::CONTACT | super::diplomacy::flags::VENDETTA;
+        self.players[from as usize].diplo[new_slot as usize] = super::diplomacy::flags::CONTACT;
         self.players[new_slot as usize] = p;
         // transfer the rebel cities (the farthest becomes the new capital) and their units
         for (i, c) in rebels.iter().enumerate() {

@@ -166,6 +166,20 @@ pub enum GameEvent {
     /// "Science Advisor: I recommend we develop ADV." before the human's research menu on
     /// Chieftain with Instant Advice (CIV.EXE 0x0bfc1).
     ScienceAdvice { slot: Slot, adv: AdvanceId },
+    /// "The war between\nthe X and the\nY has ended.": two computer players at war lost
+    /// contact; the human has an embassy with one of them (CIV.EXE 0x14aa4).
+    WarEnded { a: Slot, b: Slot },
+    /// "X and\nY cancel\npeace treaty." (CIV.EXE 0x15340): computer players `a` and `b`
+    /// go to war; the human has an embassy with one of them.
+    TreatyCancelled { a: Slot, b: Slot },
+    /// "Sneak attack by\n<adjective> forces!" (CIV.EXE 0x19e9e): `by` attacked `on`, a human
+    /// still at peace with it, or with a treaty it had dropped (`diplomacy::flags::SNEAK`).
+    SneakAttack { by: Slot, on: Slot },
+    /// "<Victims> cancel\npeace treaty\nwith <attackers>." (CIV.EXE 0x19f2c): a fight ended the
+    /// treaty between `by` and `victim`, one of them the human.
+    TreatyBroken { by: Slot, victim: Slot },
+    /// The SCHISM note of HELP.TXT about `Slot` after an audience (CIV.EXE o 0x79c6).
+    Schism(Slot),
 }
 
 /// A choice the engine needs from the human player before continuing.

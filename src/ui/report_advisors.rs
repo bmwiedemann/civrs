@@ -133,23 +133,24 @@ pub fn paint_intelligence(fb: &mut Surface, ctx: &UiContext) {
 
 // ---- F4 Attitude Survey ----------------------------------------------------------------------
 
-/// Civ1 attitude words, from best to worst.
-pub fn attitude_word(a: i32) -> &'static str {
-    match a {
-        80..=i32::MAX => "Worshipful",
-        60..=79 => "Enthusiastic",
-        40..=59 => "Cordial",
-        20..=39 => "Receptive",
-        -19..=19 => "Neutral",
-        -39..=-20 => "Uncooperative",
-        -59..=-40 => "Icy",
-        -79..=-60 => "Belligerent",
-        _ => "Hostile",
+/// How civilization `s` stands towards the human, in the words of CIV.EXE's dossier (o 0x14256
+/// "At PEACE" / "At WAR") and civ status screen (o 0x12329 ": Vendetta", ": Contact").
+pub fn standing(g: &crate::game::Game, s: crate::game::Slot) -> String {
+    let me = g.human_slot;
+    let mut w = match g.relation(s, me) {
+        Relation::Peace => "At PEACE".to_string(),
+        Relation::War => "At WAR".to_string(),
+        Relation::NoContact => "No contact".to_string(),
+    };
+    if g.diplo(s, me) & crate::game::diplomacy::flags::VENDETTA != 0 {
+        w += ": Vendetta";
     }
+    w
 }
 
-/// Attitude Survey: the empire's mood, then the known civilisations; Enter on one asks for an
-/// audience.
+/// Attitude Survey: the empire's mood, then the known civilisations; Enter on one opens the
+/// audience a Diplomat's "Meet with King" would (CIV.EXE has no such shortcut: its F4 survey,
+/// o 0x14369, only lists the cities; civrs keeps it).
 pub struct AttitudeSurvey {
     civs: Vec<crate::game::Slot>,
     sel: usize,
@@ -167,7 +168,11 @@ impl AttitudeSurvey {
 
     fn audience(&self, _ctx: &mut UiContext) -> Transition {
         match self.civs.get(self.sel).copied() {
-            Some(slot) => Transition::Push(crate::ui::diplomacy_ui::human_audience(slot)),
+            Some(slot) => {
+                let g = _ctx.game();
+                let at = g.player(slot).capital.and_then(|c| g.city_opt(c)).map(|c| c.pos()).unwrap_or((-1, -1));
+                Transition::Push(crate::ui::diplomacy_ui::human_audience(slot, at))
+            }
             None => Transition::Pop(DialogResult::Done),
         }
     }
@@ -239,14 +244,10 @@ impl Screen for AttitudeSurvey {
             if i == self.sel {
                 fb.fill_rect(Rect::new(8, y - 2, 292, 16), col(ctx, BG_BLUE));
             }
-            let treaty = match g.relation(me, *s) {
-                Relation::War => "at WAR",
-                _ => "at peace",
-            };
-            let att = crate::ai::diplo_ai::attitude(g, *s, me);
+            let hostile = !g.treaty(*s, me);
             text(fb, ctx, 16, y, &format!("{} {} of the {}", p.title(), p.leader, p.plural()), WHITE);
-            let line = format!("{} towards us, {treaty}{}", attitude_word(att), if g.human().has_embassy(*s) { " (embassy)" } else { "" });
-            text(fb, ctx, 24, y + 8, &line, if att < -19 { [247, 85, 85] } else { CYAN });
+            let line = format!("{}{}", standing(g, *s), if g.human().has_embassy(*s) { " (embassy)" } else { "" });
+            text(fb, ctx, 24, y + 8, &line, if hostile { [247, 85, 85] } else { CYAN });
         }
         tiny(fb, ctx, 8, 192, "SELECT A CIVILIZATION AND PRESS ENTER FOR AN AUDIENCE.", WHITE);
     }

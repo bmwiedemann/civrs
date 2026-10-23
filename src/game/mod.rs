@@ -188,6 +188,23 @@ pub struct Game {
     /// Barbarian headings and the last-occupant map layer (not saved).
     #[serde(skip)]
     pub barbarian_memory: barbarians::BarbarianMemory,
+    /// Computer players (bit per slot) whose audience with the human is queued but not over:
+    /// CIV.EXE holds the audience while their units move, civrs after their turn, so until
+    /// then their units keep the peace with the human. Not saved.
+    #[serde(skip)]
+    pub audience_pending: u8,
+    /// ds:0x3934 between audiences: -1 (none, the initial value), else 0 after a
+    /// `diplomacy_close` outside an audience (see `diplo_ai::open`). Not saved.
+    #[serde(skip, default = "no_audience")]
+    pub diplo_latch: i8,
+    /// The human answered "Break treaty." for an attack on (or entering the land of) this
+    /// civilization: the next move goes ahead (CIV.EXE 0x1a3b4 returned 1). Not saved.
+    #[serde(skip)]
+    pub treaty_break_ok: Option<Slot>,
+}
+
+fn no_audience() -> i8 {
+    -1
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -210,6 +227,11 @@ pub enum MoveOutcome {
     /// A human's Diplomat met this lone foreign unit: the UI offers to bribe it
     /// (`Game::bribe_cost`, `Game::bribe_unit`) and moves on after a bribe.
     BribeOffer(UnitId),
+    /// The human's unit would attack, take a city of or enter the land of this treaty partner:
+    /// "We have signed a peace treaty with the X! Cancel action. / Break treaty." (CIV.EXE
+    /// 0x1a3b4); after "Break treaty." (and no Senate) the UI sets `Game::treaty_break_ok`
+    /// and moves again. The unit has not moved.
+    BreakTreaty(Slot),
 }
 
 impl Game {
@@ -271,6 +293,9 @@ impl Game {
             hints_shown: 0,
             year: rules::calendar_year(0),
             barbarian_memory: Default::default(),
+            audience_pending: 0,
+            diplo_latch: -1,
+            treaty_break_ok: None,
         };
         game.place_starting_units(&slots);
         game.refresh_all_vision();
@@ -467,11 +492,18 @@ impl Game {
         best.map(|(id, _)| id)
     }
 
+    /// Units or a city at (x, y) whose owner `slot` may fight (`Game::may_fight`).
     pub fn is_enemy_at(&self, slot: Slot, x: i32, y: i32) -> bool {
         match self.owner_at(x, y) {
-            Some(o) => o != slot && (slot == 0 || o == 0 || self.player(slot).at_war(o)),
+            Some(o) => self.may_fight(slot, o),
             None => false,
         }
+    }
+
+    /// `Game::hostile`, except that a computer player keeps the peace with the human while an
+    /// audience between them is queued (`audience_pending`).
+    pub fn may_fight(&self, slot: Slot, o: Slot) -> bool {
+        self.hostile(slot, o) && !(o == self.human_slot && slot != 0 && self.audience_pending & (1 << slot) != 0)
     }
 
     pub fn foreign_at(&self, slot: Slot, x: i32, y: i32) -> bool {

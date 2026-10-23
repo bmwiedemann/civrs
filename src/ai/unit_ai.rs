@@ -108,9 +108,11 @@ pub fn move_toward(g: &mut Game, id: UnitId, target: (i32, i32), sink: &mut dyn 
     }
 }
 
-/// Is `other` an enemy of `slot` (barbarians are everyone's enemy)?
+/// Is `other` an enemy of `slot`: anyone `slot`'s own diplomacy word has no treaty with
+/// (`Game::hostile`; CIV.EXE's unit AI skips treaty partners, e.g. 0x181f8, 0x17721), but not
+/// the human while an audience with him is queued (`Game::audience_pending`).
 pub fn hostile(g: &Game, slot: Slot, other: Slot) -> bool {
-    other != slot && (slot == 0 || other == 0 || g.player(slot).at_war(other))
+    g.may_fight(slot, other)
 }
 
 /// Nearest enemy target (unit stack or city) for an attacker: returns (pos, win chance %).
@@ -862,7 +864,7 @@ fn act_caravan(g: &mut Game, id: UnitId, sink: &mut dyn FnMut(TurnStep)) {
         if routes.len() < 3 {
             let dest = g
                 .all_cities()
-                .filter(|c| c.id != h && (c.owner == slot || g.relation(slot, c.owner) == crate::game::Relation::Peace) && g.map.tile(c.x, c.y).continent == cont && Map::dist(c.pos(), hp) >= 10 && !routes.contains(&c.id))
+                .filter(|c| c.id != h && (c.owner == slot || g.treaty(slot, c.owner)) && g.map.tile(c.x, c.y).continent == cont && Map::dist(c.pos(), hp) >= 10 && !routes.contains(&c.id))
                 .max_by_key(|c| Map::dist(c.pos(), hp) + if c.owner != slot { 6 } else { 0 })
                 .map(|c| c.id);
             if let Some(d) = dest {

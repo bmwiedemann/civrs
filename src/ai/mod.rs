@@ -12,7 +12,7 @@ pub mod tech_ai;
 pub mod unit_ai;
 
 use crate::game::turn::TurnStep;
-use crate::game::{Decision, Game, Slot};
+use crate::game::{Game, Slot};
 use crate::rules::Govt;
 
 pub trait AiDriver {
@@ -63,18 +63,6 @@ impl AiDriver for Ai {
         if !p.in_game || !p.alive {
             return;
         }
-        // first contacts made by anyone this turn: the AI side opens an audience with the human
-        let human = g.human_slot;
-        for (a, b) in g.update_contacts() {
-            let ai_side = if a == human { Some(b) } else if b == human { Some(a) } else { None };
-            if let Some(ai_side) = ai_side {
-                if g.player(human).alive && !g.player(ai_side).human {
-                    if let Some(st) = diplo_ai::on_contact(g, ai_side, human) {
-                        sink(TurnStep::Decision(Decision::Diplomacy(st)));
-                    }
-                }
-            }
-        }
         govern(g, slot);
         self.update_policies(g, slot);
         city_ai::set_rates(g, slot);
@@ -86,12 +74,9 @@ impl AiDriver for Ai {
         }
         // ships first: units they land may still act this turn
         naval_ai::play_transports(g, slot, &plan, &mut self.missions, sink);
+        // contacts, audiences and the computer players' wars and treaties happen as units
+        // meet (`Game::civs_meet`) and in `Game::civ_politics` at the start of the turn
         unit_ai::play_units(g, slot, sink);
-        if g.player(human).alive {
-            if let Some(st) = diplo_ai::turn(g, slot) {
-                sink(TurnStep::Decision(Decision::Diplomacy(st)));
-            }
-        }
     }
 }
 
@@ -244,7 +229,7 @@ mod tests {
                 let y = g.city_yield(c);
                 eprintln!("     {} size {} prod {:?} shields {} food {}/{} surplus {} site {:?} continent {} ({} tiles) defenders {}", city.name, city.size, city.production, city.shields, city.food, g.food_box(c), y.food_surplus(), site, cont, land, unit_ai::defenders_in(g, c));
             }
-            eprintln!("     relations {:?} embassies {:#x}", p.relations, p.embassies);
+            eprintln!("     diplomacy flags {:x?}", p.diplo);
             eprintln!("     overseas plan {:?} transport kind {:?}", naval_ai::plan(g, s), naval_ai::transport_kind(g, s));
         }
     }

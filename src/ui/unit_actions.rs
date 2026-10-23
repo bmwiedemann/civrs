@@ -1,8 +1,8 @@
 //! Diplomat actions in foreign cities (menu handling for the map view), CIV.EXE o 0x1d575.
 
 use crate::game::turn::{DiplomatAction, DiplomatResult, DIPLOMAT_MENU};
-use crate::game::{CityId, Relation, UnitId};
-use crate::rules::{self, Govt};
+use crate::game::{CityId, UnitId};
+use crate::rules;
 use crate::ui::context::UiContext;
 use crate::ui::mapview::{MapView, Pending};
 use crate::ui::screen::{Screen, Transition};
@@ -27,7 +27,7 @@ pub fn diplomat_choice(view: &mut MapView, ctx: &mut UiContext, id: UnitId, c: C
     let (us, them) = (g.unit(id).owner, g.city(c).owner);
     match DiplomatAction::from_menu(choice) {
         // stealing from a treaty partner needs the treaty broken first (CIV.EXE 0x1a3b4)
-        Some(DiplomatAction::StealTech) if g.relation(us, them) == Relation::Peace => {
+        Some(DiplomatAction::StealTech) if g.treaty(us, them) => {
             let lines = vec!["We have signed a".into(), "peace treaty with".into(), format!("the {}!", g.player(them).plural())];
             view.set_pending(Pending::TreatyBreak(id, c));
             Transition::Push(Box::new(MenuDialog::new(lines, vec!["Cancel action.".into(), "Break treaty.".into()]).with_pos(80, 80)))
@@ -44,7 +44,7 @@ pub fn treaty_broken(view: &mut MapView, ctx: &mut UiContext, id: UnitId, c: Cit
     if g.unit_opt(id).is_none() {
         return Transition::None;
     }
-    if matches!(g.player(g.unit(id).owner).govt, Govt::Republic | Govt::Democracy) {
+    if g.senate_overrules(g.unit(id).owner) {
         return Transition::Push(Box::new(MessageBox::new(vec!["Overruled by".into(), "the Senate.".into(), "Action canceled.".into()]).with_pos(80, 80)));
     }
     perform(view, ctx, id, c, DiplomatAction::StealTech)
@@ -62,7 +62,7 @@ fn incite_offer(view: &mut MapView, ctx: &mut UiContext, id: UnitId, c: CityId) 
         return Transition::Push(Box::new(MessageBox::new(lines).with_pos(100, 80)));
     }
     let mut items = vec!["Forget it.".to_string(), "Incite revolt".to_string()];
-    if cost * 2 <= gold && g.relation(us, g.city(c).owner) == Relation::Peace {
+    if cost * 2 <= gold && g.treaty(us, g.city(c).owner) {
         items.push("Subvert city ($x2)".into());
     }
     view.set_pending(Pending::Incite(id, c));
@@ -105,7 +105,7 @@ fn perform(view: &mut MapView, ctx: &mut UiContext, id: UnitId, c: CityId, actio
         }
         // the capture message follows from the game's events
         DiplomatResult::Incited { .. } => return view.show_events(ctx),
-        DiplomatResult::MetKing => crate::ui::diplomacy_ui::human_audience(owner),
+        DiplomatResult::MetKing => crate::ui::diplomacy_ui::human_audience(owner, ctx.game().city(c).pos()),
     };
     view.set_pending(Pending::Event);
     Transition::Push(screen)
