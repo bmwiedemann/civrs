@@ -621,13 +621,9 @@ impl Game {
         if !self.available_production(c).contains(&prod) {
             return Err(RuleError::Other("That cannot be built here."));
         }
-        let old_class = city.production.class();
-        let cm = self.city_mut(c);
-        if cm.shields > 0 && old_class != prod.class() && !cm.changed_class {
-            cm.shields /= 2;
-            cm.changed_class = true;
-        }
-        cm.production = prod;
+        // CIV.EXE keeps every shield on a change, whatever the new item (the CHANGE handler
+        // at 0x117e8 only stores the new choice; no code halves the shield store)
+        self.city_mut(c).production = prod;
         Ok(())
     }
 
@@ -940,13 +936,13 @@ mod tests {
     }
 
     #[test]
-    fn change_class_penalty_once() {
+    fn change_keeps_shields() {
         let (mut g, c) = fixture();
         g.city_mut(c).shields = 8;
         g.set_production(c, Production::Improvement(imp::BARRACKS)).unwrap();
-        assert_eq!(g.city(c).shields, 4);
+        assert_eq!(g.city(c).shields, 8);
         g.set_production(c, Production::Unit(unit_ids::MILITIA)).unwrap();
-        assert_eq!(g.city(c).shields, 4, "no second penalty in the same turn");
+        assert_eq!(g.city(c).shields, 8);
     }
 
     #[test]

@@ -419,7 +419,6 @@ impl Game {
         self.disaster_roll(c);
         if let Some(cm) = self.cities[c as usize].as_mut() {
             cm.bought = false;
-            cm.changed_class = false;
         }
     }
 

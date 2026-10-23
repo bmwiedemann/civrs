@@ -69,7 +69,7 @@ pub struct City {
     pub celebrating: bool,
     /// Something was bought this turn (no further changes allowed).
     pub bought: bool,
-    /// Production class changed this turn (penalty bookkeeping).
+    /// Unused: CIV.EXE has no penalty for changing production (kept for the save layout).
     pub changed_class: bool,
     pub auto_build: bool,
     pub founded_turn: u32,
