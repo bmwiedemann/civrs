@@ -646,15 +646,24 @@ impl Game {
                 return false;
             }
         }
+        // the production menu's rules (CIV.EXE 0xacd7..0xadbc): no Courthouse in the capital, no
+        // Factory beside a Mfg. Plant, a Bank needs a Marketplace, a University a Library, a Power
+        // Plant a Factory, and no plant at all where a Hoover Dam on the continent supplies power
+        let hoover = self.owner_has_wonder(city.owner, won::HOOVER_DAM) && self.same_continent_as_wonder(c, won::HOOVER_DAM);
+        let plant = city.has_improvement(imp::POWER_PLANT) || city.has_improvement(imp::HYDRO_PLANT) || city.has_improvement(imp::NUCLEAR_PLANT);
         match i {
             imp::PALACE => p.capital.and_then(|cap| self.city_opt(cap)).is_none(),
+            imp::COURTHOUSE => !city.has_improvement(imp::PALACE),
+            imp::FACTORY => !city.has_improvement(imp::MFG_PLANT),
+            imp::BANK => city.has_improvement(imp::MARKETPLACE),
+            imp::UNIVERSITY => city.has_improvement(imp::LIBRARY),
             imp::HYDRO_PLANT => {
-                !city.has_improvement(imp::POWER_PLANT)
-                    && !city.has_improvement(imp::NUCLEAR_PLANT)
+                !hoover
+                    && !plant
                     && Map::neighbours8(city.x, city.y).chain(std::iter::once((city.x, city.y))).any(|(x, y)| matches!(self.map.terrain(x, y), Terrain::River | Terrain::Mountains))
             }
-            imp::POWER_PLANT => !city.has_improvement(imp::HYDRO_PLANT) && !city.has_improvement(imp::NUCLEAR_PLANT),
-            imp::NUCLEAR_PLANT => !city.has_improvement(imp::HYDRO_PLANT) && !city.has_improvement(imp::POWER_PLANT),
+            imp::POWER_PLANT => !hoover && !plant && city.has_improvement(imp::FACTORY),
+            imp::NUCLEAR_PLANT => !hoover && !plant,
             imp::SS_STRUCTURAL | imp::SS_COMPONENT | imp::SS_MODULE => {
                 if !self.apollo_built || p.spaceship.launched() {
                     return false;
@@ -1104,5 +1113,29 @@ mod tests {
         let other = g.civ_slots().into_iter().find(|s| *s != slot).unwrap();
         g.player_mut(other).learn(crate::rules::advance_ids::GUNPOWDER);
         assert!(!g.offered_peace(slot));
+    }
+
+    #[test]
+    fn production_menu_rules_of_civ_exe() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        for a in [crate::rules::advance_ids::CODE_OF_LAWS, crate::rules::advance_ids::BANKING, crate::rules::advance_ids::UNIVERSITY, crate::rules::advance_ids::REFINING] {
+            g.player_mut(slot).learn(a);
+        }
+        // the capital needs no Courthouse
+        assert!(g.city(c).has_improvement(imp::PALACE));
+        assert!(!g.can_build_improvement(c, imp::COURTHOUSE));
+        assert!(!g.can_build_improvement(c, imp::BANK));
+        g.city_mut(c).add_improvement(imp::MARKETPLACE);
+        assert!(g.can_build_improvement(c, imp::BANK));
+        assert!(!g.can_build_improvement(c, imp::UNIVERSITY));
+        g.city_mut(c).add_improvement(imp::LIBRARY);
+        assert!(g.can_build_improvement(c, imp::UNIVERSITY));
+        assert!(!g.can_build_improvement(c, imp::POWER_PLANT));
+        g.city_mut(c).add_improvement(imp::FACTORY);
+        assert!(g.can_build_improvement(c, imp::POWER_PLANT));
+        g.city_mut(c).add_wonder(won::HOOVER_DAM);
+        g.wonders_built[won::HOOVER_DAM as usize] = Some(c);
+        assert!(!g.can_build_improvement(c, imp::POWER_PLANT));
     }
 }

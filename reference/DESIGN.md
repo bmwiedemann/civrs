@@ -410,7 +410,8 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
   cost = cost*10 shields; change-class penalty 50%; buy cost units `2r + r^2/20` (x2 if empty), improvements `2r`, wonders `4r`; trade routes `(ta+tb+4)/8`
   (x2 foreign, max 3); corruption by distance to palace * govt factor (4/3/2/2(Communism flat)/1/0), Courthouse halves; rates in 10% steps capped per govt
   (60/70/80/80/100, Anarchy all lux); Marketplace, then Bank +50% tax&lux each (compounding), Library/University +50% base sci (+1/3 each with Newton, all cities), Copernicus x2 city, SETI +50% all (0xf2f2);
-  specialists 2 each; upkeep paid, sell improvement if broke.
+  specialists 2 each; upkeep paid, sell improvement if broke. Build menu (0xacd7): no Courthouse with Palace, no Factory with Mfg. Plant,
+  Bank needs Marketplace, University needs Library, Power Plant needs Factory, no plant with a Hoover Dam on the continent.
 - Happiness: content base 4..0 by difficulty; 2 lux per step; Temple 1 with Ceremonial Burial (2 with Mysticism, Oracle x2), Colosseum 3, Cathedral 4 with Religion (6 with Michelangelo),
   martial law max 3 under Anarchy/Desp/Mon/Comm; Republic 1 / Democracy 2
   unhappy per aggressive unit abroad (Women's Suffrage -1); disorder if unhappy > happy; celebration size>=3, happy > half, no unhappy; Democracy 2 turns disorder -> anarchy;
