@@ -42,6 +42,9 @@ pub fn step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) -
     let (dx, dy) = d.delta();
     let to = (Map::wrap_x(from.0 + dx), from.1 + dy);
     let defender_owner = g.units_at(to.0, to.1).first().map(|u| g.unit(*u).owner).unwrap_or(0);
+    // what happened before this move is shown before it, what the move brings (a contact and
+    // its treaty, a hut) after it, as CIV.EXE shows its messages while the computer moves
+    flush_events(g, sink);
     let r = g.try_move(id, d);
     if let Ok(out) = &r {
         match out {
@@ -56,7 +59,15 @@ pub fn step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) -
             _ => {}
         }
     }
+    flush_events(g, sink);
     r
+}
+
+/// Hand the game's pending events to the turn runner in the order they happened.
+fn flush_events(g: &mut Game, sink: &mut dyn FnMut(TurnStep)) {
+    for e in g.take_events() {
+        sink(TurnStep::Event(e));
+    }
 }
 
 /// Walk towards `target` along an A* path for as long as the unit has moves this turn.
@@ -994,4 +1005,47 @@ pub fn play_barbarians(g: &mut Game, sink: &mut dyn FnMut(TurnStep)) {
         }
     }
     g.refresh_vision(0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::{GameEvent, GameSetup};
+    use crate::rules::{unit_ids, Terrain};
+
+    #[test]
+    fn events_come_out_around_the_move_that_made_them() {
+        let mut g = Game::new(GameSetup { seed: 21, num_civs: 4, ..Default::default() }, None);
+        for s in 1..5 {
+            g.players[s].in_game = true;
+            g.players[s].alive = true;
+        }
+        for y in 5..30 {
+            for x in 5..40 {
+                let t = g.map.get_mut(x, y).unwrap();
+                t.terrain = Terrain::Grassland;
+                t.flags = 0;
+                t.continent = 1;
+            }
+        }
+        let ids: Vec<_> = g.all_units().map(|u| u.id).collect();
+        for id in ids {
+            g.remove_unit(id);
+        }
+        // the human hears of what civs 2 and 3 agree when they meet
+        let h = g.human_slot;
+        g.raise_flag(h, 2, crate::game::diplomacy::flags::EMBASSY);
+        g.add_city(2, "A".into(), 10, 10);
+        g.add_city(3, "B".into(), 30, 10);
+        g.add_unit(2, unit_ids::MILITIA, 10, 10);
+        let k = g.add_unit(3, unit_ids::KNIGHTS, 12, 10);
+        let c = g.cities_of(2)[0];
+        g.push_event(GameEvent::CityGrew(c));
+        let mut steps = Vec::new();
+        step(&mut g, k, Dir8::W, &mut |s| steps.push(s)).unwrap();
+        assert!(matches!(steps[0], TurnStep::Event(GameEvent::CityGrew(_))), "{steps:?}");
+        assert!(matches!(steps[1], TurnStep::AiMove { .. }), "{steps:?}");
+        assert!(matches!(steps[2], TurnStep::Event(GameEvent::WarDeclared { .. } | GameEvent::PeaceTreaty { .. })), "{steps:?}");
+        assert!(g.events.is_empty());
+    }
 }
