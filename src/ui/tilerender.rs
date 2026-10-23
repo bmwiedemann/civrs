@@ -116,6 +116,10 @@ pub fn draw_terrain(fb: &mut Surface, ctx: &UiContext, game: &Game, x: i32, y: i
     let t = map.tile(x, y);
     let ter = &ctx.ter.surf;
     let sp = &ctx.sp.surf;
+    // drawing order of CIV.EXE 0x1aa40: the land base, irrigation (not under a city), the
+    // river or terrain sprite, the grassland shield, fortress, roads, mine, special
+    // resource, hut and pollution, so irrigation never covers rivers or resources
+    let irrigation = || t.has(tile_flags::IRRIGATION) && t.city.is_none();
     match t.terrain {
         Terrain::Ocean => {
             let mask = map.land_mask4(x, y);
@@ -123,27 +127,27 @@ pub fn draw_terrain(fb: &mut Surface, ctx: &UiContext, game: &Game, x: i32, y: i
         }
         Terrain::River => {
             fb.blit_part(sp, cell(sp::BASE_LAND.0, sp::BASE_LAND.1), px, py, None);
+            if irrigation() {
+                blit_sprite(fb, sp, cell(sp::IRRIGATION.0, sp::IRRIGATION.1), px, py);
+            }
             let mask = map.river_mask(x, y);
             blit_sprite(fb, sp, sp::river(mask), px, py);
         }
         land => {
             fb.blit_part(sp, cell(sp::BASE_LAND.0, sp::BASE_LAND.1), px, py, None);
+            if irrigation() {
+                blit_sprite(fb, sp, cell(sp::IRRIGATION.0, sp::IRRIGATION.1), px, py);
+            }
             let mask = map.same_terrain_mask(x, y);
             blit_sprite(fb, ter, cell(mask as i32, land as i32), px, py);
         }
-    }
-    if t.special {
-        blit_sprite(fb, sp, sp::special(t.terrain), px, py);
     }
     // the shield of a Grassland square (CIV.EXE 0x1afac): SP257 icon 15 at (+4, +4)
     if t.terrain == Terrain::Grassland && t.shield {
         fb.blit_part(sp, Rect::new(153, 41, 7, 7), px + 4, py + 4, Some(0));
     }
-    if t.has(tile_flags::IRRIGATION) {
-        blit_sprite(fb, sp, cell(sp::IRRIGATION.0, sp::IRRIGATION.1), px, py);
-    }
-    if t.has(tile_flags::MINE) {
-        blit_sprite(fb, sp, cell(sp::MINE.0, sp::MINE.1), px, py);
+    if t.has(tile_flags::FORTRESS) {
+        blit_sprite(fb, sp, cell(sp::FORTRESS.0, sp::FORTRESS.1), px, py);
     }
     // roads / railroads: one piece per neighbour that also has one (or a city)
     if t.has(tile_flags::ROAD) || t.has(tile_flags::RAILROAD) {
@@ -167,14 +171,17 @@ pub fn draw_terrain(fb: &mut Surface, ctx: &UiContext, game: &Game, x: i32, y: i
             fb.fill_rect(Rect::new(px + 7, py + 7, 2, 2), c);
         }
     }
-    if t.has(tile_flags::FORTRESS) {
-        blit_sprite(fb, sp, cell(sp::FORTRESS.0, sp::FORTRESS.1), px, py);
+    if t.has(tile_flags::MINE) {
+        blit_sprite(fb, sp, cell(sp::MINE.0, sp::MINE.1), px, py);
     }
-    if t.has(tile_flags::POLLUTION) {
-        blit_sprite(fb, sp, cell(sp::POLLUTION.0, sp::POLLUTION.1), px, py);
+    if t.special {
+        blit_sprite(fb, sp, sp::special(t.terrain), px, py);
     }
     if t.has(tile_flags::HUT) {
         blit_sprite(fb, sp, cell(sp::HUT.0, sp::HUT.1), px, py);
+    }
+    if t.has(tile_flags::POLLUTION) {
+        blit_sprite(fb, sp, cell(sp::POLLUTION.0, sp::POLLUTION.1), px, py);
     }
 }
 
