@@ -310,6 +310,8 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
             "invaders" => civrs::ui::eventpics::invaders_screen(&ctx, ctx.game().cities_of(ctx.game().human_slot).first().copied(), vec!["Barbarians land".into(), "near Rome!".into()]),
             "endgame" => civrs::ui::endgame::end_screen(&ctx, match seed { 1 => civrs::game::EndReason::Destroyed, 2 => civrs::game::EndReason::Conquest, 3 => civrs::game::EndReason::Spaceship(1), _ => civrs::game::EndReason::Retired }),
             "arch" => civrs::ui::endgame::arch_screen(&ctx),
+            // screen:story:0:0 with CIVRS_FRAMES=N: the evolution story N ticks in
+            "story" => civrs::ui::story::story_screen(),
             // screen:title:0:0 with CIVRS_FRAMES=N: the opening sequence N ticks in
             "title" => Box::new(civrs::ui::title::TitleScreen::new()),
             // screen:palace:N[:0:STEP]: the palace after N sample additions; STEP "intro",

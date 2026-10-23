@@ -176,29 +176,11 @@ pub fn split_menu(lines: &[String]) -> MenuText {
     MenuText { body: paragraphs(&body_lines), choices }
 }
 
-/// STORY.TXT: screens separated by lines consisting of `_`.
-pub fn parse_story(bytes: &[u8]) -> Vec<Vec<String>> {
-    let mut screens = Vec::new();
-    let mut cur = Vec::new();
-    for l in lines_of(bytes) {
-        let t = l.trim_end();
-        if t.starts_with('_') {
-            if !cur.is_empty() {
-                screens.push(std::mem::take(&mut cur));
-            }
-        } else if !t.is_empty() || !cur.is_empty() {
-            cur.push(t.to_string());
-        }
-    }
-    if cur.iter().any(|s| !s.trim().is_empty()) {
-        screens.push(cur);
-    }
-    for s in screens.iter_mut() {
-        while s.last().map(|x| x.trim().is_empty()).unwrap_or(false) {
-            s.pop();
-        }
-    }
-    screens
+/// STORY.TXT as `world_progress` (ovl 7 o 0xa509) reads it with `fscanf("%[^\n]\n")`: one entry
+/// per non-blank line, leading blanks skipped (the `\n` directive eats all whitespace), trailing
+/// blanks kept. Lines of at most 3 characters (`_`) switch to the next BIRTHn picture.
+pub fn parse_story(bytes: &[u8]) -> Vec<String> {
+    lines_of(bytes).into_iter().map(|l| l.trim_start().to_string()).filter(|l| !l.is_empty()).collect()
 }
 
 /// CREDITS.TXT: one line per credit, read in file order by the intro (`fscanf("%[^\n]\n")`,

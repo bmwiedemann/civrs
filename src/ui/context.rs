@@ -21,7 +21,7 @@ pub struct Texts {
     pub produce: TextFile,
     pub help: TextFile,
     pub error: TextFile,
-    pub story: Vec<Vec<String>>,
+    pub story: Vec<String>,
     pub credits: Vec<String>,
 }
 

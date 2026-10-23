@@ -1,5 +1,6 @@
-//! New-game setup flow: difficulty, number of civilisations, tribe, leader name, custom world,
-//! then world generation and the evolution story.
+//! New-game setup flow as CIV.EXE runs it: the custom-world questions, then the world generator
+//! with the evolution story (main_menu 0x1f91 calls overlay 7 before `start_game`), then
+//! difficulty, number of civilisations, tribe and leader name.
 
 use crate::game::{GameSetup, WorldParams, WorldSource};
 use crate::gfx::text::draw_text;
@@ -18,6 +19,7 @@ enum Step {
     Tribe,
     Name,
     Custom(usize),
+    Story,
     Generate,
     Done,
 }
@@ -67,15 +69,16 @@ impl SetupFlow {
                     self.step = Step::Custom(0);
                     return self.custom_menu(0);
                 }
-                self.difficulty_menu()
+                self.story()
             }
             Step::Custom(i) => {
                 if i + 1 < 4 {
                     self.step = Step::Custom(i + 1);
                     return self.custom_menu(i + 1);
                 }
-                self.difficulty_menu()
+                self.story()
             }
+            Step::Story => self.difficulty_menu(),
             Step::Difficulty => {
                 self.step = Step::NumCivs;
                 let items: Vec<String> = (3..=7).rev().map(|n| format!("{n} Civilizations")).collect();
@@ -100,6 +103,11 @@ impl SetupFlow {
         }
     }
 
+    fn story(&mut self) -> Transition {
+        self.step = Step::Story;
+        Transition::Push(crate::ui::story::story_screen())
+    }
+
     fn difficulty_menu(&mut self) -> Transition {
         self.step = Step::Difficulty;
         let mut items: Vec<String> = rules::DIFFICULTY.iter().map(|d| d.name.to_string()).collect();
@@ -121,7 +129,7 @@ impl SetupFlow {
         let game = crate::game::Game::new(self.setup.clone(), earth.as_ref());
         ctx.game = Some(game);
         self.step = Step::Done;
-        Transition::Replace(crate::ui::story::story_screen())
+        Transition::Replace(crate::ui::intro_message::leader_intro())
     }
 
     fn picture(&self) -> &'static str {
@@ -192,6 +200,7 @@ impl Screen for SetupFlow {
     fn resume(&mut self, result: DialogResult, ctx: &mut UiContext) -> Transition {
         match (&self.step, result) {
             (_, DialogResult::Cancelled) => Transition::Pop(DialogResult::Done),
+            (Step::Story, _) => self.next(ctx),
             (Step::Difficulty, DialogResult::Choice(i)) => {
                 self.setup.difficulty = Difficulty::from_u8(i as u8).unwrap_or(Difficulty::Chieftain);
                 self.next(ctx)
