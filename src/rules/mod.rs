@@ -29,7 +29,8 @@ pub use misc::{
     year_for_turn, year_text, ADJECTIVES, CITY_RADIUS, COMMODITIES, CUSTOM_WORLD_OPTIONS,
     DEMOGRAPHIC_CATEGORIES, HISTORIANS, MAIN_MENU, MAP_H, MAP_W, NEWSPAPERS, RATINGS,
 };
-pub use terrain::{Special, Terraform, Terrain, TerrainInfo, CLEAN_POLLUTION_TURNS, FORTRESS_TURNS, RAILROAD_TURNS, ROAD_TURNS, TERRAIN};
+pub use terrain::{Special, Terraform, Terrain, TerrainInfo, CLEAN_POLLUTION_TURNS, FORTRESS_TURNS, TERRAIN};
+pub use terrain::{railroad_turns, road_turns};
 pub use units::{unit_by_name, unit_ids, AiRole, Domain, UnitType, UNITS};
 pub use wonders::{wonder_by_name, wonder_ids, Wonder, WONDERS};
 
@@ -46,6 +47,13 @@ pub type WonderId = u8;
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn road_and_railroad_times_follow_the_move_cost() {
+        assert_eq!((road_turns(Terrain::Grassland), railroad_turns(Terrain::Grassland)), (2, 4));
+        assert_eq!((road_turns(Terrain::Hills), railroad_turns(Terrain::Hills)), (4, 8));
+        assert_eq!((road_turns(Terrain::Mountains), railroad_turns(Terrain::Mountains)), (6, 12));
+    }
 
     #[test]
     fn unit_table() {

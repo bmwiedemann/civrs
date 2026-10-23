@@ -169,10 +169,16 @@ pub static TERRAIN: [TerrainInfo; 12] = [
     terrain("River", 1, 3, 2, 1, 1, 9, None, Bonus(1), 5, No, 0),
 ];
 
-/// Turns for a Settlers unit to build a road (manual).
-pub const ROAD_TURNS: u8 = 2;
-/// Turns for a Settlers unit to build a railroad (manual).
-pub const RAILROAD_TURNS: u8 = 6;
+/// Turns for a Settlers unit to build a road: twice the terrain's move cost (CIV.EXE 0x5346).
+pub fn road_turns(t: Terrain) -> u8 {
+    2 * t.info().move_cost
+}
+
+/// Turns for a Settlers unit to lay a railroad on a road: four times the terrain's move cost
+/// (CIV.EXE 0x5346).
+pub fn railroad_turns(t: Terrain) -> u8 {
+    4 * t.info().move_cost
+}
 /// Turns for a Settlers unit to build a fortress.
 pub const FORTRESS_TURNS: u8 = 3;
 /// Turns for a Settlers unit to clean pollution: "four turns of work" (Civilopedia), the

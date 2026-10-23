@@ -32,12 +32,12 @@ impl Game {
                     if !self.player(u.owner).knows(rules::advance_ids::RAILROAD) || t.has(tile_flags::RAILROAD) {
                         return Err(RuleError::Other("A road is already here."));
                     }
-                    self.start_work(id, UnitOrder::Road, rules::RAILROAD_TURNS);
+                    self.start_work(id, UnitOrder::Road, rules::railroad_turns(t.terrain));
                 } else {
                     if t.terrain == Terrain::River && !self.player(u.owner).knows(rules::advance_ids::BRIDGE_BUILDING) {
                         return Err(RuleError::Other("Bridge Building is required to build roads across rivers."));
                     }
-                    self.start_work(id, UnitOrder::Road, rules::ROAD_TURNS);
+                    self.start_work(id, UnitOrder::Road, rules::road_turns(t.terrain));
                 }
             }
             UnitOrder::Irrigate => {

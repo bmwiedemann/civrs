@@ -194,7 +194,7 @@ Jungle 2,3,1,0,0,11 | Gems 1,0,4; Ocean 1,2,1,0,2,1 | Fish 3,0,2; River 1,3,2,1,
 Improvement table (irrigate result/turns, mine result/turns; -2=+1 bonus, -4=+3, -1 n/a, >=0 = becomes terrain code):
 Desert -2/5 -2/5; Plains -2/5 Forest/15; Grassland -2/5 Forest/10; Forest Plains/5 n/a; Hills -2/10 -4/10;
 Mountains n/a -2/10; Tundra n/a n/a; Arctic n/a n/a; Swamp Grassland/15 Forest/15; Jungle Grassland/15 Forest/15;
-Ocean n/a; River -2/5 n/a. Road turns 2 (manual), railroad 6 (manual); pollution clean 4 (0x50db).
+Ocean n/a; River -2/5 n/a. Road turns 2x move cost, railroad 4x move cost (0x5346); pollution clean 4 (0x50db).
 City radius offsets (21 squares, "fat cross"): dx = 0,0,1,1,1,0,-1,-1,-1, 0,1,2,2,2,1,0,-1,-2,-2,-2,-1
 dy = 0,-1,-1,0,1,1,1,0,-1, -2,-2,-1,0,1,2,2,2,1,0,-1,-2.
 Difficulty names: Chieftain, Warlord, Prince, King, Emperor (short: Chief, Lord, Prince, King, Emperor).
