@@ -584,12 +584,10 @@ impl MapView {
             }
             Key::Char('h') => {
                 let Some(id) = active else { return Transition::None };
+                // the unit stays active with its moves (CIV.EXE 0x4f28 ends without a move)
                 let r = ctx.game_mut().set_home(id);
                 match r {
-                    Ok(()) => {
-                        self.activate_next(ctx);
-                        Transition::None
-                    }
+                    Ok(()) => Transition::None,
                     Err(e) => self.error(ctx, &e),
                 }
             }
