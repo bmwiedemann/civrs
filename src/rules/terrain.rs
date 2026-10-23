@@ -175,5 +175,6 @@ pub const ROAD_TURNS: u8 = 2;
 pub const RAILROAD_TURNS: u8 = 6;
 /// Turns for a Settlers unit to build a fortress.
 pub const FORTRESS_TURNS: u8 = 3;
-/// Turns for a Settlers unit to clean pollution (manual).
-pub const CLEAN_POLLUTION_TURNS: u8 = 3;
+/// Turns for a Settlers unit to clean pollution: "four turns of work" (Civilopedia), the
+/// counter reaching 4 in CIV.EXE 0x50db.
+pub const CLEAN_POLLUTION_TURNS: u8 = 4;
