@@ -574,8 +574,9 @@ impl CityScreen {
             let u = g.unit(*id);
             let x = 100 + 18 * (i as i32 % 6);
             let y = 116 + 16 * (i as i32 / 6);
-            let kind = if u.leader { rules::unit_ids::DIPLOMAT } else { u.kind };
-            unit_box(fb, ctx, kind, u.owner, x, y);
+            // the map's unit routine (0x1b639), so a fortified unit gets its fortification
+            // and the order letters show as on the map
+            crate::ui::tilerender::draw_unit(fb, ctx, g, *id, x - 1, y - 1, false);
             let home = u.home.and_then(|h| g.city_opt(h)).map(|c| c.name.to_ascii_uppercase()).unwrap_or_else(|| "NONE".into());
             let abbrev: String = home.chars().take(3).chain(std::iter::once('.')).collect();
             small_text(fb, ctx, x, y + 15, BLACK, &abbrev);
