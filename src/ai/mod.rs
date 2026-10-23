@@ -315,10 +315,7 @@ mod tests {
         eprintln!("STATS total: overseas {o} seeds without {none} cities {c} barbarian {b}");
     }
 
-    /// Ignored while the port of CIV.EXE's unit AI is unfinished: seed 2 has no overseas city
-    /// after 250 turns (see the report of the port; not a weakened assertion).
     #[test]
-    #[ignore]
     fn archipelago_ai_settles_other_continents() {
         let mut total = 0;
         for seed in [11u64, 2, 41] {

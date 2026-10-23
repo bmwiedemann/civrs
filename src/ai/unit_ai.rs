@@ -306,6 +306,7 @@ fn task_units(g: &mut Game, slot: Slot, reserve: i32) {
             let militia = (p.govt as u8 > Govt::Despotism as u8 || pol == POLICY_OFFENSIVE) && u.kind == unit_ids::MILITIA;
             let alone_in_city = g.city_at(u.x, u.y).is_some() && g.units_at(u.x, u.y).len() == 1;
             if (obsolete || militia) && !g.enemy_adjacent(slot, u.x, u.y) && !alone_in_city && !g.map.is_ocean(u.x, u.y) && pol != POLICY_THREATENED {
+                if trace() { eprintln!("TRACE t{} s{} #{} {} DISBAND obsolete={} militia={}", g.turn, slot, id, u.info().name, obsolete, militia); }
                 g.remove_unit(id);
                 continue;
             }
@@ -350,6 +351,10 @@ fn task_units(g: &mut Game, slot: Slot, reserve: i32) {
         }
         if let Some(i) = pick {
             let to = g.ai_memory.goals[slot as usize][i].pos();
+            if trace() {
+                let gl = g.ai_memory.goals[slot as usize][i];
+                eprintln!("TRACE t{} s{} #{} {} at {:?} TASK goal {:?} score {}", g.turn, slot, id, u.info().name, u.pos(), gl, best);
+            }
             g.ai_set_goto(id, to);
             assigned[i] += 1;
         }
@@ -1549,19 +1554,39 @@ fn execute(g: &mut Game, id: UnitId, cmd: Command, sink: &mut dyn FnMut(TurnStep
             }
         }
         Command::Irrigate => {
-            let _ = g.give_order(id, UnitOrder::Irrigate);
+            if let Err(e) = g.give_order(id, UnitOrder::Irrigate) {
+                if trace() {
+                    eprintln!("TRACE ORDERFAIL Irrigate {e:?} at {:?} {:?}", u.pos(), g.map.tile(u.x, u.y));
+                }
+            }
         }
         Command::Mine => {
-            let _ = g.give_order(id, UnitOrder::Mine);
+            if let Err(e) = g.give_order(id, UnitOrder::Mine) {
+                if trace() {
+                    eprintln!("TRACE ORDERFAIL Mine {e:?} at {:?} {:?}", u.pos(), g.map.tile(u.x, u.y));
+                }
+            }
         }
         Command::Road => {
-            let _ = g.give_order(id, UnitOrder::Road);
+            if let Err(e) = g.give_order(id, UnitOrder::Road) {
+                if trace() {
+                    eprintln!("TRACE ORDERFAIL Road {e:?} at {:?} {:?}", u.pos(), g.map.tile(u.x, u.y));
+                }
+            }
         }
         Command::Pollution => {
-            let _ = g.give_order(id, UnitOrder::CleanPollution);
+            if let Err(e) = g.give_order(id, UnitOrder::CleanPollution) {
+                if trace() {
+                    eprintln!("TRACE ORDERFAIL CleanPollution {e:?} at {:?} {:?}", u.pos(), g.map.tile(u.x, u.y));
+                }
+            }
         }
         Command::Pillage => {
-            let _ = g.give_order(id, UnitOrder::Pillage);
+            if let Err(e) = g.give_order(id, UnitOrder::Pillage) {
+                if trace() {
+                    eprintln!("TRACE ORDERFAIL Pillage {e:?} at {:?} {:?}", u.pos(), g.map.tile(u.x, u.y));
+                }
+            }
         }
         Command::Unload => {
             // 0x4dfc: a ship with room for units wakes its stack and its passengers move next
@@ -1719,11 +1744,146 @@ pub fn play_barbarians(g: &mut Game, sink: &mut dyn FnMut(TurnStep)) {
     }
     g.refresh_vision(0);
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::game::{GameEvent, GameSetup};
     use crate::rules::{unit_ids, Terrain};
+
+    /// Grassland from (5,5) to (39,29) in an ocean, no units, civs 1..4 in the game.
+    fn arena() -> Game {
+        let mut g = Game::new(GameSetup { seed: 21, num_civs: 4, ..Default::default() }, None);
+        for s in 1..5 {
+            g.players[s].in_game = true;
+            g.players[s].alive = true;
+        }
+        for t in g.map.tiles.iter_mut() {
+            t.terrain = Terrain::Ocean;
+            t.flags = 0;
+            t.city = None;
+            t.continent = 0;
+            t.special = false;
+        }
+        for y in 5..30 {
+            for x in 5..40 {
+                let t = g.map.get_mut(x, y).unwrap();
+                t.terrain = Terrain::Grassland;
+                t.continent = 1;
+            }
+        }
+        let ids: Vec<_> = g.all_units().map(|u| u.id).collect();
+        for id in ids {
+            g.remove_unit(id);
+        }
+        g.cities.clear();
+        g.barbarian_memory = Default::default();
+        g.ai_memory = Default::default();
+        g
+    }
+
+    fn ai(g: &Game) -> Slot {
+        (2..5).find(|s| *s != g.human_slot).unwrap()
+    }
+
+    #[test]
+    fn settlers_found_a_city_away_from_others_and_step_to_a_better_square() {
+        let mut g = arena();
+        let s = ai(&g);
+        let id = g.add_unit(s, unit_ids::SETTLERS, 20, 20);
+        assert_eq!(unit_command(&mut g, s, id), Command::Build);
+        // three squares from a city the square is claimed (value 8) and the unclaimed one to
+        // the east (four away) is better
+        g.add_city(s, "Old".into(), 17, 20);
+        let v = g.site_layer(20, 20);
+        assert_eq!(v, 8);
+        let best = (1..=8).map(|k| (g.site_layer(20 + DX[k], 20 + DY[k]), k)).fold((v, 0), |b, n| if n.0 > b.0 { n } else { b });
+        assert!(best.0 > 8 && best.1 != 0);
+        assert_eq!(unit_command(&mut g, s, id), dir(best.1));
+        // next to the city the square belongs to it: no city site at all
+        g.unit_mut(id).x = 18;
+        assert_eq!(g.site_layer(18, 20), s as i32);
+        assert_ne!(unit_command(&mut g, s, id), Command::Build);
+    }
+
+    #[test]
+    fn defenders_fortify_until_the_city_has_size_over_n_plus_one() {
+        let mut g = arena();
+        let s = ai(&g);
+        let c = g.add_city(s, "Fort".into(), 20, 20);
+        g.city_mut(c).size = 8;
+        let a = g.add_unit(s, unit_ids::PHALANX, 20, 20);
+        // alone: fortify
+        assert_eq!(unit_command(&mut g, s, a), Command::Fortify);
+        // two of three wanted (8 / 3 + 1 in the capital): fortify and call for a third
+        let b = g.add_unit(s, unit_ids::PHALANX, 20, 20);
+        g.reset_goals(s);
+        assert_eq!(unit_command(&mut g, s, b), Command::Fortify);
+        assert!(g.ai_memory.goals[s as usize].iter().any(|o| o.kind == goal::DEFEND && o.pos() == (20, 20) && o.priority == 2));
+        // a better defender than the best other one fortifies at once
+        let m = g.add_unit(s, unit_ids::MUSKETEERS, 20, 20);
+        assert_eq!(unit_command(&mut g, s, m), Command::Fortify);
+    }
+
+    #[test]
+    fn attackers_take_an_empty_enemy_city_and_avoid_bad_odds() {
+        let mut g = arena();
+        let s = ai(&g);
+        let e = (2..5).find(|o| *o != s && *o != g.human_slot).unwrap();
+        g.set_relation(s, e, crate::game::Relation::War);
+        g.add_city(e, "Prize".into(), 21, 20);
+        let id = g.add_unit(s, unit_ids::LEGION, 20, 20);
+        assert_eq!(unit_command(&mut g, s, id), Command::Step(Dir8::E));
+        // a fortified Musketeers on hills outside a city: odds 3*8*8 / (3*4*12/2 + 1) = 2, x
+        // (cost 3 + 1) / cost 2 = 4, below 6
+        let w = g.add_unit(s, unit_ids::LEGION, 30, 20);
+        g.map.get_mut(31, 20).unwrap().terrain = Terrain::Hills;
+        let m = g.add_unit(e, unit_ids::MUSKETEERS, 31, 20);
+        g.unit_mut(m).order = UnitOrder::Fortified;
+        assert_eq!(g.combat_odds(w, m), 2);
+        assert_ne!(unit_command(&mut g, s, w), Command::Step(Dir8::E));
+        // in a city the odds count three times: 12 > 6, it attacks
+        g.add_city(e, "Hill".into(), 31, 20);
+        assert_eq!(unit_command(&mut g, s, w), Command::Step(Dir8::E));
+    }
+
+    #[test]
+    fn the_tasking_sends_a_free_defender_to_an_empty_city() {
+        let mut g = arena();
+        let s = ai(&g);
+        g.add_city(s, "Home".into(), 10, 10);
+        let empty = g.add_city(s, "Empty".into(), 20, 10);
+        g.add_unit(s, unit_ids::PHALANX, 10, 10);
+        let free = g.add_unit(s, unit_ids::PHALANX, 12, 12);
+        // a Legion has no goal of its role here
+        let legion = g.add_unit(s, unit_ids::LEGION, 12, 13);
+        g.reset_goals(s);
+        civ_turn(&mut g, s);
+        assert_eq!(g.unit(free).goto, Some(g.city(empty).pos()));
+        assert_eq!(g.unit(legion).goto, None);
+    }
+
+    #[test]
+    fn a_transport_lands_where_most_empty_land_is() {
+        let mut g = arena();
+        for y in 0..40 {
+            for x in 0..50 {
+                let t = g.map.get_mut(x, y).unwrap();
+                t.terrain = Terrain::Ocean;
+                t.continent = 0;
+            }
+        }
+        for y in 8..13 {
+            g.map.get_mut(14, y).unwrap().terrain = Terrain::Grassland;
+        }
+        g.map.get_mut(13, 10).unwrap().terrain = Terrain::Grassland;
+        let s = ai(&g);
+        // the ship's square sees one land square, the one to the north-east four
+        assert_eq!(find_landing(&g, s, 12, 10), 2);
+        // a unit there takes it out of the choice; south-east has as many
+        g.add_unit(s, unit_ids::TRIREME, 13, 9);
+        assert_eq!(find_landing(&g, s, 12, 10), 4);
+    }
 
     #[test]
     fn events_come_out_around_the_move_that_made_them() {
