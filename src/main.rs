@@ -312,6 +312,7 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
             "arch" => civrs::ui::endgame::arch_screen(&ctx),
             // screen:story:0:0 with CIVRS_FRAMES=N: the evolution story N ticks in
             "story" => civrs::ui::story::story_screen(),
+            "leader" => civrs::ui::intro_message::leader_intro(),
             // screen:title:0:0 with CIVRS_FRAMES=N: the opening sequence N ticks in
             "title" => Box::new(civrs::ui::title::TitleScreen::new()),
             // screen:palace:N[:0:STEP]: the palace after N sample additions; STEP "intro",

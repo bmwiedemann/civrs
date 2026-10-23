@@ -1,35 +1,52 @@
-//! Leader introduction (KING.TXT INIT) on a white meander-bordered screen, then the map view.
+//! Leader introduction as the end of overlay 5's `new_game_setup` (o 0x47cc..0x4937) shows it:
+//! a white page (colour 15) with the random SP299 page border (0x7e6:0x260a), the difficulty
+//! portrait from DIFFS.PIC at (134, 20), and KING.TXT `*INIT` left-aligned at (88, 81) in font 1
+//! (civrs 0), colour 0. The known advances follow in advance order, with a line break after the
+//! second, then "and Roads.".
 
 use crate::assets::text::{paragraphs, substitute, Vars};
-use crate::gfx::text::{draw_text, text_width};
+use crate::gfx::text::draw_text;
 use crate::gfx::{Rect, Surface, TextStyle};
 use crate::platform::Event;
 use crate::ui::context::UiContext;
 use crate::ui::screen::{DialogResult, Screen, Transition};
-use crate::ui::tilerender::cell;
+
+const TEXT_X: i32 = 88;
+const TEXT_Y: i32 = 81;
+const LINE_H: i32 = 8;
+const PAGE: u8 = 15;
 
 struct LeaderIntro {
     lines: Vec<String>,
+    border: u8,
     guard: u32,
 }
 
 pub fn leader_intro() -> Box<dyn Screen> {
-    Box::new(LeaderIntro { lines: Vec::new(), guard: 10 })
+    Box::new(LeaderIntro { lines: Vec::new(), border: 0, guard: 10 })
 }
 
-/// Draw the Greek-key border used by the leader intro and other "white" screens.
-pub fn draw_meander_border(fb: &mut Surface, ctx: &UiContext) {
-    let sp = &ctx.sp.surf;
-    let h = cell(9, 8);
-    let v = cell(10, 8);
-    for x in (0..320).step_by(16) {
-        fb.blit_part(sp, Rect::new(h.x, h.y, 16, 8), x, 0, None);
-        fb.blit_part(sp, Rect::new(h.x, h.y + 8, 16, 8), x, 192, None);
+/// The text appended to `*INIT` (o 0x4826): every known advance in id order followed by ", ",
+/// a line break after the second, then "and Roads.".
+fn advance_lines(names: &[&str]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut line = String::new();
+    for (i, n) in names.iter().enumerate() {
+        line.push_str(n);
+        line.push_str(", ");
+        if i == 1 {
+            out.push(std::mem::take(&mut line));
+        }
     }
-    for y in (0..200).step_by(16) {
-        fb.blit_part(sp, Rect::new(v.x, v.y, 8, 16), 0, y, None);
-        fb.blit_part(sp, Rect::new(v.x + 8, v.y, 8, 16), 312, y, None);
-    }
+    out.push(format!("{line}and Roads."));
+    out
+}
+
+/// Difficulty portrait in DIFFS.PIC as the intro copies it: x 21 (even levels) or 80 (odd),
+/// y 6 + 35 * level, 53x47.
+fn portrait(difficulty: usize) -> Rect {
+    let d = difficulty as i32;
+    Rect::new(if d & 1 == 1 { 80 } else { 21 }, 6 + 35 * d, 53, 47)
 }
 
 impl Screen for LeaderIntro {
@@ -38,18 +55,18 @@ impl Screen for LeaderIntro {
     }
     fn on_enter(&mut self, ctx: &mut UiContext) {
         ctx.audio.national_theme(ctx.game().human().civ, true);
+        // random(2) in the original; the frame counter keeps headless renders repeatable
+        self.border = (ctx.frame.wrapping_mul(0x9e37_79b9) >> 13) as u8 & 1;
         let g = ctx.game();
         let p = g.human();
-        let mut known: Vec<&str> = p.known_advances().iter().map(|a| crate::rules::ADVANCES[*a as usize].name).collect();
-        known.sort();
         let v = Vars { rplc1: p.leader.clone(), us: p.plural().to_string(), ..Default::default() };
         let lines = ctx.texts.king.section("INIT").map(|l| l.to_vec()).unwrap_or_default();
         let mut body = paragraphs(&substitute(&lines, &v));
-        let mut tail = known.join(", ");
-        if !tail.is_empty() {
-            tail.push_str(", ");
+        while body.last().is_some_and(|l| l.is_empty()) {
+            body.pop();
         }
-        body.push(format!("{tail}and Roads."));
+        let names: Vec<&str> = p.known_advances().iter().map(|a| crate::rules::ADVANCES[*a as usize].name).collect();
+        body.extend(advance_lines(&names));
         self.lines = body;
     }
 
@@ -77,39 +94,41 @@ impl Screen for LeaderIntro {
     }
 
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
-        fb.fill(16);
-        draw_meander_border(fb, ctx);
+        fb.fill(PAGE);
+        crate::ui::pedia_entry::draw_border(fb, ctx, self.border);
         let diffs = ctx.pic("DIFFS");
-        let r = crate::ui::setup::PORTRAITS[ctx.game().setup.difficulty as usize];
-        fb.blit_part(&diffs.surf, r, 134, 20, None);
+        fb.blit_part(&diffs.surf, portrait(ctx.game().setup.difficulty as usize), 134, 20, None);
         let st = TextStyle::new(0, 0);
-        let maxw = self.lines.iter().map(|l| text_width(&ctx.fonts, 0, l)).max().unwrap_or(0);
-        let x = (320 - maxw) / 2;
-        let mut y = 82;
-        for l in &self.lines {
-            draw_text(fb, &ctx.fonts, &st, x, y, l);
-            y += 8;
+        for (i, l) in self.lines.iter().enumerate() {
+            draw_text(fb, &ctx.fonts, &st, TEXT_X, TEXT_Y + LINE_H * i as i32, l);
         }
     }
 
+    /// The palette DIFFS.PIC set for the difficulty screen.
     fn palette(&self, ctx: &UiContext) -> crate::assets::Palette {
-        let mut p = ctx.pic_pal("DIFFS");
-        p.0[16] = [255, 255, 255];
-        p.0[0] = [0, 0, 0];
-        // meander border colours come from the sprite sheet palette
-        let sp = &ctx.sp.surf;
-        for c in [cell(9, 8), cell(10, 8)] {
-            for y in c.y..c.bottom() {
-                for x in c.x..c.right() {
-                    let v = sp.get(x, y) as usize;
-                    p.0[v] = ctx.sp.pal.0[v];
-                }
-            }
-        }
-        p
+        ctx.pic_pal("DIFFS")
     }
 
     fn draws_parent(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn advance_list_breaks_after_the_second() {
+        assert_eq!(advance_lines(&[]), vec!["and Roads."]);
+        assert_eq!(advance_lines(&["Alphabet"]), vec!["Alphabet, and Roads."]);
+        assert_eq!(advance_lines(&["Bronze Working", "Ceremonial Burial"]), vec!["Bronze Working, Ceremonial Burial, ", "and Roads."]);
+        assert_eq!(advance_lines(&["Alphabet", "Bronze Working", "Pottery"]), vec!["Alphabet, Bronze Working, ", "Pottery, and Roads."]);
+    }
+
+    #[test]
+    fn portraits_follow_the_difficulty() {
+        assert_eq!(portrait(0), Rect::new(21, 6, 53, 47));
+        assert_eq!(portrait(3), Rect::new(80, 111, 53, 47));
     }
 }
