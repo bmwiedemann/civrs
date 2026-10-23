@@ -102,8 +102,9 @@ impl Game {
             }
         };
         self.last_combat = Some(((attacker.x, attacker.y), (x, y), won));
-        // an attack costs one full move; a victorious unit keeps whatever is left (READ.ME §2)
-        self.unit_mut(id).moves_left = attacker.moves_left.saturating_sub(3);
+        // an attack costs one full move, so Armor and Mech. Inf. may attack three times; a
+        // Bomber's attack ends its turn (READ.ME §2, CIV.EXE 0x60e4)
+        self.unit_mut(id).moves_left = if attacker.kind == unit_ids::BOMBER { 0 } else { attacker.moves_left.saturating_sub(3) };
         if won {
             let t = self.map.tile(x, y);
             let stack_safe = t.city.is_some() || t.has(tile_flags::FORTRESS);
@@ -645,5 +646,22 @@ mod tests {
         assert!(rebels.iter().all(|c| g.city(*c).x >= 18));
         assert!(g.player(new_slot).capital.is_some());
         assert_eq!(g.cities_of(2).len(), 3);
+    }
+
+    #[test]
+    fn a_bombers_attack_ends_its_turn_armor_attacks_again() {
+        let mut g = flat_game();
+        for (k, left) in [(unit_ids::BOMBER, 0), (unit_ids::ARMOR, 6)] {
+            let d = g.add_unit(2, unit_ids::SETTLERS, 20, 20);
+            let a = g.add_unit(1, k, 21, 20);
+            g.unit_mut(a).moves_left = g.unit(a).full_moves();
+            g.attack(a, 20, 20);
+            if let Some(u) = g.unit_opt(a) {
+                assert_eq!(u.moves_left, left, "{k}");
+            }
+            if g.unit_opt(d).is_some() {
+                g.remove_unit(d);
+            }
+        }
     }
 }
