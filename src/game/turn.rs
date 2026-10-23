@@ -12,7 +12,7 @@ use super::events::{Decision, DecisionReply, Disaster, EndReason, GameEvent};
 use super::map::{CityId, Map, Slot, UnitId};
 use super::{Game, Production, RuleError};
 use crate::ai::AiDriver;
-use crate::rules::{self, advance_ids as adv, improvement_ids as imp, unit_ids, wonder_ids as won, AdvanceId, Domain, Govt, ImprovementId, UnitTypeId};
+use crate::rules::{self, advance_ids as adv, improvement_ids as imp, unit_ids, wonder_ids as won, AdvanceId, Govt, ImprovementId, UnitTypeId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -609,9 +609,9 @@ impl Game {
                 }
                 let id = self.add_unit(owner, k, x, y);
                 self.unit_mut(id).home = Some(c);
-                let domain = rules::UNITS[k as usize].domain;
-                let veteran = domain == Domain::Land && self.city(c).has_improvement(imp::BARRACKS);
-                if veteran {
+                // "New units are Veterans when produced at a city containing a BARRACKS": every
+                // kind of unit (CIV.EXE 0xdf72)
+                if self.city(c).has_improvement(imp::BARRACKS) {
                     self.unit_mut(id).veteran = true;
                 }
                 if k == unit_ids::SETTLERS {
