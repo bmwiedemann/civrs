@@ -106,9 +106,6 @@ impl Game {
         {
             tr += 1;
         }
-        if t.has(tile_flags::RAILROAD) && s > 0 {
-            s += s / 2;
-        }
         if is_centre && s < 1 {
             s = 1;
         }
@@ -120,6 +117,13 @@ impl Game {
                     tr += 1;
                 }
             }
+        }
+        // railroads: +50% (rounded down) of food, shields and trade, after the Colossus and before
+        // the government rules (CIV.EXE 0x134fc)
+        if t.has(tile_flags::RAILROAD) {
+            f += f / 2;
+            s += s / 2;
+            tr += tr / 2;
         }
         // government
         let g = rules::GOVERNMENTS[govt as usize];
@@ -1213,5 +1217,21 @@ mod tests {
         g.player_mut(slot).govt = Govt::Monarchy;
         assert_eq!(paid(&g), 3);
         assert!(g.next_unit_costs_shield(c));
+    }
+
+    #[test]
+    fn railroads_add_half_of_food_shields_and_trade() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        let (x, y) = g.city(c).pos();
+        g.player_mut(slot).govt = Govt::Monarchy;
+        let t = g.map.get_mut(x + 1, y).unwrap();
+        t.terrain = Terrain::Grassland;
+        t.special = false;
+        t.shield = true;
+        t.flags = tile_flags::ROAD | tile_flags::IRRIGATION;
+        assert_eq!(g.tile_yield(slot, x + 1, y, Some(c)), (3, 1, 1));
+        g.map.get_mut(x + 1, y).unwrap().flags |= tile_flags::RAILROAD;
+        assert_eq!(g.tile_yield(slot, x + 1, y, Some(c)), (4, 1, 1));
     }
 }
