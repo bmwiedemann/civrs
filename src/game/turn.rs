@@ -301,6 +301,12 @@ impl Game {
                 self.push_event(GameEvent::AnarchyEnded { slot });
                 self.offer_government(slot);
             }
+        } else if self.player(slot).govt == Govt::Anarchy {
+            // anarchy without a countdown (the Pyramids' revolution) ends at the civ's next turn
+            // processing, as CIV.EXE does for an owner of the Pyramids (0x149a2); this also
+            // frees games saved while the government choice was being lost
+            self.push_event(GameEvent::AnarchyEnded { slot });
+            self.offer_government(slot);
         }
         // palace additions: a growing, orderly empire gets to extend the palace now and then
         if slot == self.human_slot && self.turn >= 40 && self.turn % 40 == 0 && self.options.palace {
@@ -1142,6 +1148,17 @@ mod tests {
         g.apply_decision(&Decision::SellForUpkeep { slot, city: c, candidates: vec![imp::CATHEDRAL] }, DecisionReply::Choice(0));
         assert!(!g.city(c).has_improvement(imp::CATHEDRAL));
         assert!(g.player(slot).gold >= 0);
+    }
+
+    #[test]
+    fn anarchy_without_countdown_ends_at_the_next_turn() {
+        let (mut g, _c) = fixture();
+        let slot = g.human_slot;
+        g.player_mut(slot).govt = Govt::Anarchy;
+        g.player_mut(slot).anarchy_turns = 0;
+        g.take_events();
+        g.process_player_turn_start(slot);
+        assert!(g.take_events().iter().any(|e| matches!(e, GameEvent::NeedsDecision(Decision::ChooseGovernment { .. }))));
     }
 
     #[test]
