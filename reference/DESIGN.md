@@ -435,7 +435,7 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
   (peace / military proposal / demand tribute); embassies reveal intel; Great Wall/UN owner always offered peace (o 0x66d1, 0x151b2); AI-AI relations rolled every 10 turns.
 - Barbarians: huts + sea landings from turn 50 (Chieftain 150), `2+difficulty` era-appropriate units + leader (ransom 100 gold), attack nearest city, INVADER screens.
 - Wonders: effects as Civ1 (Pyramids no anarchy, Hanging Gardens +1 content, Colossus, Lighthouse +1 sea move (not with Magellan), Great Library, Oracle, Great Wall, Magellan +1 sea move,
-  Michelangelo, Copernicus, Shakespeare, Newton, Bach, Darwin, Hoover, Women's Suffrage, Manhattan, UN, Apollo (reveal map, SS parts for all), SETI, Cure for Cancer);
+  Michelangelo, Copernicus, Shakespeare, Newton, Bach, Darwin, Hoover, Women's Suffrage, Manhattan, UN, Apollo (owner sees all city squares, SS parts for all), SETI, Cure for Cancer);
   obsolete when any civ learns the advance (0xc91:0x6c8d); caravan help = 50 shields.
 - Spaceship: after Apollo; structural <=39, component <=16, module <=12; launch when >=1/2/3 and structurals cover; flight turns `max(6, 100/(2+components/2))`;
   success from life support/habitation; capital capture loses it; arrival wins.

@@ -295,6 +295,7 @@ impl Game {
         if !self.player(slot).alive {
             return;
         }
+        self.apollo_reveal(slot);
         if self.player(slot).anarchy_turns > 0 {
             self.player_mut(slot).anarchy_turns -= 1;
             if self.player(slot).anarchy_turns == 0 {
@@ -669,15 +670,25 @@ impl Game {
         }
     }
 
+    /// "Makes all cities on the map visible": the owner of the Apollo Program sees every city
+    /// square (CIV.EXE o 0x1b828, as the cities are updated each turn).
+    pub fn apollo_reveal(&mut self, slot: Slot) {
+        if !self.owner_has_wonder(slot, won::APOLLO_PROGRAM) {
+            return;
+        }
+        let sites: Vec<(i32, i32)> = self.all_cities().map(|c| c.pos()).collect();
+        for (x, y) in sites {
+            self.map.explore(slot, x, y, 0);
+        }
+    }
+
     /// Immediate effects of completing a wonder.
     fn on_wonder_built(&mut self, owner: Slot, w: u8) {
         match w {
             won::MANHATTAN_PROJECT => self.nukes_enabled = true,
             won::APOLLO_PROGRAM => {
                 self.apollo_built = true;
-                for s in self.civ_slots() {
-                    self.map.explore_all(s);
-                }
+                self.apollo_reveal(owner);
             }
             won::DARWINS_VOYAGE => self.darwins_voyage(owner),
             won::GREAT_LIBRARY => self.great_library_check(owner),

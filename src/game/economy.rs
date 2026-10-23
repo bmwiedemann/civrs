@@ -1138,4 +1138,21 @@ mod tests {
         g.wonders_built[won::HOOVER_DAM as usize] = Some(c);
         assert!(!g.can_build_improvement(c, imp::POWER_PLANT));
     }
+
+    #[test]
+    fn apollo_shows_its_owner_every_city() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        let other = g.civ_slots().into_iter().find(|s| *s != slot).unwrap();
+        let (x, y) = g.city(c).pos();
+        let (fx, fy) = (x + 12, y);
+        g.add_city(other, "Far".into(), fx, fy);
+        g.map.get_mut(fx, fy).unwrap().explored &= !(1 << slot);
+        g.map.get_mut(fx + 1, fy).unwrap().explored &= !(1 << slot);
+        g.city_mut(c).add_wonder(won::APOLLO_PROGRAM);
+        g.wonders_built[won::APOLLO_PROGRAM as usize] = Some(c);
+        g.apollo_reveal(slot);
+        assert!(g.map.tile(fx, fy).explored_by(slot));
+        assert!(!g.map.tile(fx + 1, fy).explored_by(slot));
+    }
 }

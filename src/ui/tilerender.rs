@@ -278,8 +278,7 @@ pub fn draw_tile(fb: &mut Surface, ctx: &UiContext, game: &Game, slot: Slot, x: 
     if let Some(c) = game.city_at(x, y) {
         draw_city(fb, ctx, game, c, px, py);
     }
-    let visible = game.visible_to(slot, x, y) || slot == game.human_slot && game.apollo_built;
-    if visible {
+    if game.visible_to(slot, x, y) {
         let units: Vec<_> = game.units_at(x, y).into_iter().filter(|u| Some(*u) != hide_unit && game.unit(*u).carried_by.is_none() || game.unit(*u).carried_by.map(|c| game.unit_opt(c).is_none()).unwrap_or(false)).collect();
         if let Some(&top) = units.first() {
             // In a city only show units when there are no city sprites? Civ1 shows the city only.
