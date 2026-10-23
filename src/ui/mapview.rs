@@ -1266,7 +1266,12 @@ impl MapView {
     }
 
     fn event_screen(&mut self, ctx: &mut UiContext, e: &crate::game::GameEvent) -> Option<Box<dyn Screen>> {
-        if let crate::game::GameEvent::NuclearStrike { at, .. } = e {
+        let blast = match e {
+            crate::game::GameEvent::NuclearStrike { at, .. } => Some(*at),
+            crate::game::GameEvent::Meltdown { city } => ctx.game().city_opt(*city).filter(|c| c.owner == ctx.game().human_slot).map(|c| c.pos()),
+            _ => None,
+        };
+        if let Some(at) = blast {
             self.vx = (at.0 - VIEW_W / 2).clamp(0, MAP_W as i32 - VIEW_W);
             self.vy = (at.1 - VIEW_H / 2).clamp(0, MAP_H as i32 - VIEW_H);
         }

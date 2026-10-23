@@ -72,6 +72,38 @@ impl Game {
         }
     }
 
+    /// "Risk of MELTDOWN!": a city in disorder with a Nuclear Plant melts down one turn in
+    /// three until its owner knows Fusion Power (CIV.EXE 0x12f46).
+    pub fn meltdown_roll(&mut self, c: CityId) {
+        let city = self.city(c);
+        if !city.disorder || !city.has_improvement(imp::NUCLEAR_PLANT) || self.player(city.owner).knows(adv::FUSION_POWER) {
+            return;
+        }
+        if self.rng.below(3) == 0 {
+            self.meltdown(c);
+        }
+    }
+
+    /// The Nuclear Plant is lost; every city on the 3x3 squares around loses half its size and
+    /// the other land squares are polluted two times in three (0x1a5d9).
+    pub fn meltdown(&mut self, c: CityId) {
+        self.city_mut(c).remove_improvement(imp::NUCLEAR_PLANT);
+        let (cx, cy) = self.city(c).pos();
+        for (x, y) in std::iter::once((cx, cy)).chain(super::Map::neighbours8(cx, cy)) {
+            let Some(t) = self.map.get(x, y) else { continue };
+            if let Some(hit) = t.city {
+                let loss = self.city(hit).size as i32 / 2;
+                if loss > 0 {
+                    self.shrink_city(hit, loss);
+                }
+            } else if self.rng.below(3) != 0 && t.is_land() && !t.has(tile_flags::POLLUTION) {
+                self.map.get_mut(x, y).unwrap().set(tile_flags::POLLUTION, true);
+                self.polluted_tiles += 1;
+            }
+        }
+        self.push_event(GameEvent::Meltdown { city: c });
+    }
+
     /// Polluted tiles needed before global warming can strike (rises after each episode).
     pub fn warming_threshold(&self) -> u16 {
         8 + 4 * self.global_warming_count as u16
@@ -165,5 +197,22 @@ mod tests {
         let before = g.global_warming_count;
         g.global_warming();
         assert_eq!(g.global_warming_count, before + 1);
+    }
+
+    #[test]
+    fn meltdown_halves_the_city_and_loses_the_plant() {
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        let slot = g.human_slot;
+        let settler = g.units_of(slot).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        g.city_mut(c).size = 8;
+        g.fix_workers(c);
+        g.city_mut(c).add_improvement(imp::NUCLEAR_PLANT);
+        g.meltdown_roll(c);
+        assert!(g.city(c).has_improvement(imp::NUCLEAR_PLANT), "only in disorder");
+        g.meltdown(c);
+        assert_eq!(g.city(c).size, 4);
+        assert!(!g.city(c).has_improvement(imp::NUCLEAR_PLANT));
+        assert!(g.take_events().iter().any(|e| *e == GameEvent::Meltdown { city: c }));
     }
 }

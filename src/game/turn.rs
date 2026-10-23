@@ -416,6 +416,7 @@ impl Game {
         }
         // hazards
         self.pollution_roll(c);
+        self.meltdown_roll(c);
         self.disaster_roll(c);
         if let Some(cm) = self.cities[c as usize].as_mut() {
             cm.bought = false;

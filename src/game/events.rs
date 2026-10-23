@@ -115,6 +115,8 @@ pub enum GameEvent {
     NeedsDecision(Decision),
     /// Advisor hint about a tile worked by `city` (HELP.TXT `$US` = the city's name).
     HintAt { section: String, city: CityId },
+    /// The Nuclear Plant of a city in disorder melted down.
+    Meltdown { city: CityId },
 }
 
 /// A choice the engine needs from the human player before continuing.
