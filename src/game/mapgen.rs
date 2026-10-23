@@ -10,10 +10,16 @@
 //! generating, so the order of the passes, their scratch areas and their random numbers
 //! (`MsRand`, CIV.EXE's `random(n)`) are the original's, and then converts it into a `Map`.
 //!
-//! Unverified: CIV.EXE seeds `rand()` from the clock and draws random numbers in the intro
-//! before the world is made; civrs starts the generator from the game seed (`MsRand::new`).
-//! The pages are assumed linear (320 bytes per row, the 256-colour driver), which only matters
-//! for the erosion pass stepping off the map (it reads 0 there and changes nothing).
+//! CIV.EXE seeds `rand()` once from the clock (`seed_random` 0x1d43:0x38: ds:0x6e80 = time &
+//! 0x7fff, also the seed of the special and hut patterns) and draws no random number before
+//! the world is made, so the generator's first state is that seed: civrs starts it from the
+//! game seed, and a seed below 0x8000 gives CIV.EXE's world for that clock seed. Checked in
+//! DOSBox (dosbox-staging, VGA) for a normal world, a customized one and the EARTH map: every
+//! square, the continent and site layers and the start squares agree (tests below).
+//!
+//! Unverified: the pages are assumed linear (320 bytes per row, the 256-colour driver), which
+//! only matters for the erosion pass stepping off the map (it reads 0 there and changes
+//! nothing on the map); in 16-colour (EGA) mode a square covered by 16 blobs would wrap to sea.
 
 use super::map::{tile_flags, Map, Slot, Tile, WorldParams};
 use super::rng::MsRand;
@@ -470,9 +476,11 @@ pub fn earth(em: &EarthMap, seed: u32) -> World {
     finish(page, MsRand::new(seed), map)
 }
 
-/// `place_specials_and_huts` (o 0x097a8; the catalogue name is a guess: it numbers the
-/// continents and oceans, runs the sea grid and the site values, draws the polar rows) and the
-/// conversion of the finished page into `map`.
+/// The end of the generator, o 0x097a8 (the catalogue's `place_specials_and_huts`; it places
+/// neither, both are patterns: `Map::special_at`, `Map::hut_at`): it numbers the continents
+/// and oceans, runs the sea grid and the site values and draws the polar rows; then the
+/// finished page becomes `map`. Checked against three worlds CIV.EXE made in DOSBox (terrain,
+/// continent plane, site layer and its backup band, ds:0xdcfe, ds:0xb1ee all equal).
 fn finish(mut page: Page, mut rng: MsRand, mut map: Map) -> World {
     let (land_sizes, ocean_sizes) = number_bodies(&mut page);
     // 0x9b70: the land grid (o 0x09edd) reads the map page (page 2) through the game's
