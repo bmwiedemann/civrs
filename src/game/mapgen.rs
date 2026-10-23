@@ -1084,4 +1084,44 @@ mod tests {
         assert_eq!(bonus.iter().map(|b| b.advances).collect::<Vec<_>>(), vec![1, 0, 1, 1, 1, 2, 3]);
         assert!(bonus.iter().all(|b| !b.settlers));
     }
+
+    #[test]
+    fn matches_a_customized_world_made_by_civ_exe() {
+        // DOSBox, Customize World: Large, Cool, Wet, 3 billion years; clock seed 0x67ce;
+        // 5 civilizations at Prince, Zulus (slot 2); FNV-1a of the saved terrain codes
+        let p = WorldParams { land_mass: 2, temperature: 0, climate: 2, age: 0 };
+        let w = generate(p, 0x67ce);
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for y in 0..H {
+            for x in 0..W {
+                h ^= w.map.terrain(x, y).info().earth_code as u64;
+                h = h.wrapping_mul(0x100_0000_01b3);
+            }
+        }
+        assert_eq!(h, 0x360c_6706_9d40_3124);
+        assert_eq!(w.land_sizes, [0, 475, 152, 91, 58, 48, 48, 45, 41, 36, 11, 0, 0, 0, 0, 1]);
+        assert_eq!(w.sites, [0, 240, 84, 44, 24, 34, 20, 31, 7, 24, 9, 0, 0, 0, 0, 0]);
+        // the cities and Settlers of the save after one turn: the computer civs of slots 1 and 4
+        // had moved a square; tribes Russians, Germans, Egyptians, Chinese
+        let mut r = w.rng;
+        r.random(50);
+        let mut unit0 = [(0, 0); 8];
+        let mut got = Vec::new();
+        for s in 1..6u8 {
+            let tribe = if s == 2 {
+                10
+            } else {
+                loop {
+                    let t = r.random(16) as u8;
+                    if t & 7 == s {
+                        break t;
+                    }
+                }
+            };
+            let q = start_square(&w.map, &w.sites, &mut r, &unit0[1..s as usize], s == 2, tribe).unwrap();
+            unit0[s as usize] = q;
+            got.push((tribe, q));
+        }
+        assert_eq!(got, vec![(9, (42, 25)), (10, (70, 15)), (3, (18, 12)), (4, (65, 25)), (13, (23, 21))]);
+    }
 }

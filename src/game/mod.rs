@@ -875,6 +875,32 @@ mod new_game_tests {
     }
 
     #[test]
+    fn the_earth_starts_where_civ_exe_does() {
+        // a DOSBox EARTH game: clock seed 0x68e4, 7 civilizations at Chieftain, English
+        let Ok(assets) = crate::assets::AssetDir::locate(None) else { return };
+        let Ok(em) = assets.load_earth() else { return };
+        let g = Game::new(GameSetup { seed: 0x68e4, human_civ: 14, world: WorldSource::Earth, ..Default::default() }, Some(&em));
+        // the polar rows with the Tundra squares the generator drew (o 0x09bca)
+        let rows = [
+            "f7ffff7f7f7ff7ffffffffff77fffffffffffff7ffffffffff7fff7fffffffff7ffff7ff77fff7ff",
+            "11711111711171711117111711111111711111171111711111111717117711111117711111117117",
+            "71711111111117711771111711171711111111771111177111111177111111711111111111111171",
+            "fffffffffffffff777f7fff7f7f7ffffffffffffff7ffff7fffffff777fff7f7fffffffff7777fff",
+        ];
+        for (row, y) in rows.iter().zip([0, 1, 48, 49]) {
+            let ours: String = (0..80).map(|x| format!("{:x}", g.map.terrain(x, y).info().earth_code)).collect();
+            assert_eq!(&ours, row, "row {y}");
+        }
+        // every computer civilization drew its second tribe; all start on CIV.EXE's squares
+        for s in 1..8 {
+            let civ = g.player(s).civ;
+            assert_eq!(civ, s + 8);
+            let u = g.all_units().find(|u| u.owner == s).unwrap();
+            assert_eq!(u.pos(), mapgen::EARTH_STARTS[civ as usize]);
+        }
+    }
+
+    #[test]
     fn fewer_civilizations_play_the_first_slots() {
         let g = Game::new(GameSetup { seed: 77, num_civs: 3, human_civ: 2, ..Default::default() }, None);
         assert_eq!(g.alive_slots(), vec![1, 2, 3]);
