@@ -220,7 +220,8 @@ impl CityScreen {
         let gold = g.player(c.owner).gold;
         let lines = vec!["Cost to complete".to_string(), format!("{}: {}$", c.production.name(), cost), format!("Treasury: {}$", gold)];
         self.pending = Pending::Buy;
-        Transition::Push(Box::new(YesNo::new(lines, "Yes", "No").with_pos(100, 80)))
+        // the question is printed in white (15_city_buy.png)
+        Transition::Push(Box::new(YesNo::new(lines, "Yes", "No").with_pos(100, 80).with_title_colour(crate::ui::theme::WHITE)))
     }
 
     fn sell(&mut self, id: u8) -> Transition {

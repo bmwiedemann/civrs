@@ -542,6 +542,10 @@ impl YesNo {
         self.menu.pos = Some((x, y));
         self
     }
+    pub fn with_title_colour(mut self, c: u8) -> Self {
+        self.menu.title_colour = Some(c);
+        self
+    }
 }
 
 impl Screen for YesNo {
