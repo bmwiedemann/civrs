@@ -214,7 +214,7 @@ pub fn choose_production(g: &Game, c: CityId, plan: &Plan) -> Production {
 
     // 8. spaceship parts in the biggest cities once Apollo is built
     if g.apollo_built && !p.spaceship.launched() && size >= 8 {
-        for part in [imp::SS_STRUCTURAL, imp::SS_COMPONENT, imp::SS_MODULE] {
+        for part in g.ai_spaceship_preference(slot) {
             if has_imp(&avail, part) {
                 return Production::Improvement(part);
             }

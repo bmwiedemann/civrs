@@ -10,14 +10,29 @@ pub enum Relation {
     War,
 }
 
+/// A civilisation's spaceship (CIV.EXE overlay 18, see `game::spaceship`).
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct Spaceship {
+    /// Parts of each kind placed on `grid` (kept in step with it by `Spaceship::recount`).
     pub structurals: u8,
     pub components: u8,
     pub modules: u8,
     pub launched_turn: Option<u32>,
+    /// Turn of the first year >= `arrival_year` (the ship lands at the end of the turn before).
     pub arrival_turn: Option<u32>,
+    /// The ship was cancelled when the capital fell (cleared by the next part).
     pub lost: bool,
+    /// Ship grid es:0x16e0[civ] (`spaceship::GRID_W` x `spaceship::GRID_H`, 0 = empty, else
+    /// part type + 1). Stored after the game body in version-5 saves.
+    #[serde(skip)]
+    pub grid: crate::game::spaceship::ShipGrid,
+    /// Arrival year ds:0xdc10[civ]: projected each time the ship is redrawn until launch, fixed
+    /// after it (None = -1). Stored after the game body in version-5 saves.
+    #[serde(skip)]
+    pub arrival_year: Option<i32>,
+    /// The ship reached Alpha Centauri. Stored after the game body in version-5 saves.
+    #[serde(skip)]
+    pub landed: bool,
 }
 
 impl Spaceship {
@@ -26,6 +41,21 @@ impl Spaceship {
     }
     pub fn launched(&self) -> bool {
         self.launched_turn.is_some()
+    }
+    /// Part type at grid cell (x, y), None when empty or outside the grid.
+    pub fn part_at(&self, x: i32, y: i32) -> Option<u8> {
+        if !(0..crate::game::spaceship::GRID_W as i32).contains(&x) || !(0..crate::game::spaceship::GRID_H as i32).contains(&y) {
+            return None;
+        }
+        self.grid[x as usize][y as usize].checked_sub(1)
+    }
+    /// Recompute the part counters from the grid.
+    pub fn recount(&mut self) {
+        let mut n = [0u8; 3];
+        for t in self.grid.iter().flatten().filter_map(|c| c.checked_sub(1)) {
+            n[crate::game::spaceship::kind_of(t) as usize] += 1;
+        }
+        [self.structurals, self.components, self.modules] = n;
     }
 }
 

@@ -38,9 +38,10 @@ pub fn arrival_screen(ctx: &UiContext, slot: Slot) -> Box<dyn Screen> {
         let me = g.human_slot;
         title = vec![format!("The {} spaceship reaches Alpha Centauri!", g.civ_name(slot))];
         let s = g.player(slot).spaceship;
+        // launch year ds:0xe8a8, arrival year ds:0xdc10, colonists ds:0xdeec (overlay 2 0x174c)
         let launch = s.launched_turn.map(crate::rules::year_for_turn).unwrap_or_else(|| g.year());
-        let arrive = s.arrival_turn.map(crate::rules::year_for_turn).unwrap_or_else(|| g.year());
-        let (habitation, _, _) = crate::game::spaceship::module_split(s.modules);
+        let arrive = s.arrival_year.unwrap_or_else(|| g.year());
+        let habitation = g.spaceship_stats(slot).habitation();
         let v = Vars {
             rplc1: crate::rules::year_text(launch),
             rplc2: crate::rules::year_text(arrive),

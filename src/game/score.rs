@@ -2,7 +2,8 @@
 //!
 //! Score = 2 * happy + content (specialists count as content) + 20 per wonder + 5 per future
 //! tech + 3 per peace turn (after 1 AD) - 10 per polluted tile within the player's city
-//! radii + spaceship bonus (100 + 50 per habitation module once arrived).
+//! radii + spaceship bonus (success % * habitation modules / 2 once the human's ship landed,
+//! CIV.EXE o 0x1c3cc).
 //! The civilization rating is `total * (difficulty + 1) / 50` percent (CIV.EXE o 0x2bc9, the
 //! Hall of Fame line), i.e. 1000 points at Prince = 60%.
 
@@ -68,10 +69,7 @@ impl Game {
         s.future_tech = p.future_techs as i32;
         s.peace = p.peace_turns as i32;
         s.pollution = self.polluted_tiles_near(slot);
-        if p.spaceship.launched() && p.spaceship.arrival_turn.is_none() && !p.spaceship.lost {
-            let (hab, _, _) = super::spaceship::module_split(p.spaceship.modules);
-            s.spaceship = 100 + 50 * hab;
-        }
+        s.spaceship = self.spaceship_score(slot);
         s.total = s.happy * 2 + s.content + s.wonders * 20 + s.future_tech * 5 + s.peace * 3 - s.pollution * 10 + s.spaceship;
         s.percent = s.total * (self.setup.difficulty as i32 + 1) / 50;
         s

@@ -199,6 +199,7 @@ fn decision_slot(g: &Game, d: &Decision) -> Slot {
         Decision::ProductionChoice { city, .. } => g.city_opt(*city).map(|c| c.owner).unwrap_or(g.human_slot),
         Decision::Diplomacy(s) => s.human,
         Decision::KeepPlaying { .. } => g.human_slot,
+        Decision::SpaceshipPart { slot, .. } | Decision::SpaceshipLaunch { slot } => *slot,
     }
 }
 
@@ -742,7 +743,15 @@ impl Game {
                 }
                 self.city_mut(c).shields -= prod.cost();
                 if matches!(i, imp::SS_STRUCTURAL | imp::SS_COMPONENT | imp::SS_MODULE) {
-                    self.add_spaceship_part(owner, i);
+                    // the part goes on the ship after an AI city re-chose its production
+                    // (CIV.EXE 0xe719 before 0xe766)
+                    self.push_event(GameEvent::ItemBuilt { city: c, item: prod });
+                    self.after_building(c, human);
+                    self.spaceship_part_built(c, i - imp::SS_STRUCTURAL);
+                    if human {
+                        self.push_event(GameEvent::NeedsDecision(Decision::ProductionChoice { city: c, reason: "built".into() }));
+                    }
+                    return;
                 } else {
                     self.city_mut(c).add_improvement(i);
                     if i == imp::PALACE {
@@ -981,6 +990,18 @@ impl Game {
             Decision::KeepPlaying { .. } => {
                 if reply == DecisionReply::Yes {
                     self.ended = None;
+                }
+            }
+            Decision::SpaceshipPart { slot, kind } => {
+                let choice = match reply {
+                    DecisionReply::Choice(i) => i,
+                    _ => 0,
+                };
+                self.place_spaceship_part(*slot, *kind, choice);
+            }
+            Decision::SpaceshipLaunch { slot } => {
+                if matches!(reply, DecisionReply::Choice(1) | DecisionReply::Yes) && self.spaceship_can_launch(*slot) {
+                    let _ = self.launch_spaceship(*slot);
                 }
             }
         }

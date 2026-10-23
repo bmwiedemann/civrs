@@ -713,17 +713,8 @@ impl Game {
             }
             imp::POWER_PLANT => !hoover && !plant && city.has_improvement(imp::FACTORY),
             imp::NUCLEAR_PLANT => !hoover && !plant,
-            imp::SS_STRUCTURAL | imp::SS_COMPONENT | imp::SS_MODULE => {
-                if !self.apollo_built || p.spaceship.launched() {
-                    return false;
-                }
-                let s = p.spaceship;
-                match i {
-                    imp::SS_STRUCTURAL => s.structurals < super::spaceship::MAX_STRUCTURALS,
-                    imp::SS_COMPONENT => s.components < super::spaceship::MAX_COMPONENTS,
-                    _ => s.modules < super::spaceship::MAX_MODULES,
-                }
-            }
+            // Apollo built and the ship not launched, however full it is (CIV.EXE 0xac63)
+            imp::SS_STRUCTURAL | imp::SS_COMPONENT | imp::SS_MODULE => self.apollo_built && !p.spaceship.launched(),
             _ => true,
         }
     }

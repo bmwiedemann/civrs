@@ -276,10 +276,12 @@ pub fn paint_spaceships(fb: &mut Surface, ctx: &UiContext) {
     for s in slots.iter().take(4) {
         let p = g.player(*s);
         let ss = p.spaceship;
-        let (hab, life, solar) = crate::game::spaceship::module_split(ss.modules);
+        let st = g.spaceship_stats(*s);
         text_sh(fb, ctx, 16, y, &format!("{} spaceship", p.adjective()), WHITE, BLACK);
         let status = if ss.lost {
-            "lost".to_string()
+            "cancelled".to_string()
+        } else if ss.landed {
+            "landed".to_string()
         } else if let (Some(l), Some(a)) = (ss.launched_turn, g.spaceship_arrival_year(*s)) {
             format!("launched {}, arrives {}", rules::year_text(rules::year_for_turn(l)), rules::year_text(a))
         } else if ss.parts() == 0 {
@@ -296,9 +298,12 @@ pub fn paint_spaceships(fb: &mut Surface, ctx: &UiContext) {
         part_row(fb, ctx, 100, y + 16, ss.components as i32, crate::game::spaceship::MAX_COMPONENTS as i32, PALE_YELLOW);
         tiny(fb, ctx, 16, y + 23, &format!("MODULES     {}/{}", ss.modules, crate::game::spaceship::MAX_MODULES), WHITE);
         part_row(fb, ctx, 100, y + 23, ss.modules as i32, crate::game::spaceship::MAX_MODULES as i32, LIGHT_GREEN);
-        let flight = crate::game::spaceship::flight_turns(ss.components);
-        let line = format!("Habitation {hab}, Life support {life}, Solar {solar}.  Success: {}%.  Flight: {flight} turns.", g.success_chance(*s));
-        tiny(fb, ctx, 16, y + 31, &line.to_ascii_uppercase(), CYAN);
+        // the stats column of the ship screen (CIV.EXE o 0x17b07..0x17f9d); percentages bare
+        tiny(fb, ctx, 204, y + 16, &format!("MASS {},{}00 TONS", st.mass / 10, st.mass % 10), CYAN);
+        tiny(fb, ctx, 204, y + 23, &format!("FLIGHT {}.{} YEARS", st.flight / 10, st.flight % 10), CYAN);
+        let pop = if st.habitation() > 0 { format!("{},000", st.habitation() * 10) } else { "0".into() };
+        let line = format!("POP {pop}  SUPPORT {}  ENERGY {}  FUEL {}  SUCCESS {}", st.support, st.energy, st.fuel, st.success);
+        tiny(fb, ctx, 16, y + 31, &line, CYAN);
         y += 42;
     }
 }

@@ -303,14 +303,11 @@ impl Game {
         MoveOutcome::CapturedCity(c)
     }
 
-    /// Bookkeeping when a civilisation loses its capital: no palace, spaceship lost.
+    /// Bookkeeping when a civilisation loses its capital: no palace, spaceship cancelled
+    /// (CIV.EXE 0x13e43: the captured city had the Palace).
     fn lose_capital(&mut self, slot: Slot) {
         self.player_mut(slot).capital = None;
-        let ship = self.player(slot).spaceship;
-        if ship.launched() && !ship.lost && ship.arrival_turn.map(|t| t > self.turn).unwrap_or(true) {
-            self.player_mut(slot).spaceship.lost = true;
-            self.push_event(GameEvent::SpaceshipLost(slot));
-        }
+        self.cancel_spaceship(slot);
     }
 
     /// Civil war when a capital falls: if the loser still has at least 6 cities, the half of

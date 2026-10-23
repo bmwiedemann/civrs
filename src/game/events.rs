@@ -100,6 +100,7 @@ pub enum GameEvent {
     ImprovementSold { city: CityId, improvement: u8, gold: i32 },
     SpaceshipLaunched(Slot),
     SpaceshipArrived(Slot),
+    /// No longer produced (see `SpaceshipCancelled`); kept so that older saves load.
     SpaceshipLost(Slot),
     PalaceAddition(Slot),
     PeaceTreaty { a: Slot, b: Slot },
@@ -134,6 +135,11 @@ pub enum GameEvent {
     /// "Residents of CITY admire the prosperity of OTHER." — the city went over from `from`
     /// to the owner of `admired` (CIV.EXE o 0x1beb0).
     CityDefected { city: CityId, admired: CityId, from: Slot },
+    /// An AI civ put a part on its ship: "<Plural> build space ship." (CIV.EXE o 0x1842b).
+    SpaceshipPartBuilt(Slot),
+    /// The capital fell: "<Adj> spaceship returns to Earth." (launched) / "construction
+    /// cancelled." (CIV.EXE 0x14364). Replaces `SpaceshipLost`.
+    SpaceshipCancelled { slot: Slot, launched: bool },
 }
 
 /// A choice the engine needs from the human player before continuing.
@@ -151,6 +157,12 @@ pub enum Decision {
     Diplomacy(super::diplomacy::DiplomacyState),
     /// Game over for scoring purposes: keep playing?
     KeepPlaying { reason: EndReason },
+    /// "Type?" for a finished SS Component (`kind` 1: Propulsion / Fuel) or SS Module (`kind`
+    /// 2: Habitation / Life Support / Solar Panel) (CIV.EXE o 0x1853f).
+    SpaceshipPart { slot: Slot, kind: u8 },
+    /// The ship screen's LAUNCH button: "Confirm spaceship launch." No Launch / Launch
+    /// CONFIRMED! (CIV.EXE o 0x180fe).
+    SpaceshipLaunch { slot: Slot },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
