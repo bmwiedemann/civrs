@@ -581,6 +581,16 @@ impl CityScreen {
             let abbrev: String = home.chars().take(3).chain(std::iter::once('.')).collect();
             small_text(fb, ctx, x, y + 15, BLACK, &abbrev);
         }
+        // the pollution risk: one smokestack (the map's pollution sprite) per pollution point,
+        // from x 98 at y 161/162 alternately, at most 8 px apart (CIV.EXE 0x110ad)
+        let points = g.pollution_points(self.city);
+        if points > 0 {
+            use crate::ui::tilerender::{blit_sprite, cell, sp};
+            let step = (100 / points.clamp(1, 99)).clamp(1, 8);
+            for i in 0..points {
+                blit_sprite(fb, &ctx.sp.surf, cell(sp::POLLUTION.0, sp::POLLUTION.1), 98 + i * step, 161 + (i & 1));
+            }
+        }
     }
 
     fn draw_happy(&self, fb: &mut Surface, ctx: &UiContext) {
