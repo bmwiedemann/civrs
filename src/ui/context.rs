@@ -22,7 +22,7 @@ pub struct Texts {
     pub help: TextFile,
     pub error: TextFile,
     pub story: Vec<Vec<String>>,
-    pub credits: Vec<(String, String)>,
+    pub credits: Vec<String>,
 }
 
 impl Texts {

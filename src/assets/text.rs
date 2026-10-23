@@ -201,23 +201,10 @@ pub fn parse_story(bytes: &[u8]) -> Vec<Vec<String>> {
     screens
 }
 
-/// CREDITS.TXT: alternating role / name lines; `%` stands for `.`.
-pub fn parse_credits(bytes: &[u8]) -> Vec<(String, String)> {
-    let lines: Vec<String> = lines_of(bytes)
-        .into_iter()
-        .map(|l| l.replace('%', ".").trim().to_string())
-        .filter(|l| !l.is_empty())
-        .collect();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i + 1 < lines.len() {
-        out.push((lines[i].clone(), lines[i + 1].clone()));
-        i += 2;
-    }
-    if i < lines.len() {
-        out.push((lines[i].clone(), String::new()));
-    }
-    out
+/// CREDITS.TXT: one line per credit, read in file order by the intro (`fscanf("%[^\n]\n")`,
+/// which also skips blank lines); `%` stands for `.`.
+pub fn parse_credits(bytes: &[u8]) -> Vec<String> {
+    lines_of(bytes).into_iter().map(|l| l.replace('%', ".").trim().to_string()).filter(|l| !l.is_empty()).collect()
 }
 
 #[cfg(test)]
