@@ -5,7 +5,7 @@ use crate::game::{tile_flags, Decision, Dir8, Map, MoveOutcome, UnitId, UnitOrde
 use crate::gfx::text::{draw_text, draw_text_centered};
 use crate::gfx::{Rect, Surface, TextStyle};
 use crate::platform::{Event, Key, MouseButton};
-use crate::rules::{self, UnitTypeId, MAP_H, MAP_W, SLOT_COLOURS};
+use crate::rules::{self, UnitTypeId, MAP_H, SLOT_COLOURS};
 use crate::ui::context::UiContext;
 use crate::ui::dialogs;
 use crate::ui::screen::{DialogResult, Screen, Transition};
@@ -769,14 +769,13 @@ impl MapView {
 
     // ---- drawing ------------------------------------------------------------------------
 
+    /// `draw_menu_bar` (0x336a): the titles "G\x87AME" ... at y 1 in colour 15, the rest of
+    /// each after its first letter in 7 (the 0x87 code); an open menu does not change them.
     fn draw_menubar(&self, fb: &mut Surface, ctx: &UiContext) {
         fb.fill_rect(Rect::new(0, 0, 320, MENU_H), theme::BLACK);
-        for (i, (label, x)) in MENU_LABELS.iter().enumerate() {
-            let open = self.bar_menu_open == Some(i);
-            let first = TextStyle::new(0, if open { theme::CYAN } else { theme::WHITE });
-            let rest = TextStyle::new(0, if open { theme::CYAN } else { theme::GREY });
-            let end = draw_text(fb, &ctx.fonts, &first, *x, 0, &label[..1]);
-            draw_text(fb, &ctx.fonts, &rest, end, 0, &label[1..]);
+        for (label, x) in MENU_LABELS.iter() {
+            let end = draw_text(fb, &ctx.fonts, &TextStyle::new(0, 15), *x, 1, &label[..1]);
+            draw_text(fb, &ctx.fonts, &TextStyle::new(0, 7), end, 1, &label[1..]);
         }
     }
 
@@ -827,44 +826,52 @@ impl MapView {
         fb.set_clip(None);
     }
 
+    /// Map square at the minimap's top left: column `vx - 32`, row `vy - 19` (0 with Navigation).
+    fn minimap_origin(&self, ctx: &UiContext) -> (i32, i32) {
+        let navigation = ctx.game().human().knows(rules::advance_ids::NAVIGATION);
+        (self.vx - 32, if navigation { 0 } else { self.vy - 19 })
+    }
+
+    /// The sidebar minimap as `draw_map_view` (0x1a68e, o 0x1a826..0x1aa28) draws it: 80x50 of
+    /// the minimap band, scrolled so that map column `vx - 32` is its left edge and row
+    /// `vy - 19` its top (row 0 once the civ knows Navigation); explored water in colour 1,
+    /// land in 2 (`unit_look` 0x81b4), the cities the human has seen or owns as a dot in the
+    /// owner's light colour, then the 17x10 view outline in 15.
     fn draw_minimap(&self, fb: &mut Surface, ctx: &UiContext) {
         let g = ctx.game();
         let me = g.human_slot;
-        fb.fill_rect(MINIMAP, theme::BLACK);
-        for y in 0..MAP_H as i32 {
-            for x in 0..MAP_W as i32 {
-                if !g.explored(me, x, y) {
-                    continue;
+        let (mx0, my0) = self.minimap_origin(ctx);
+        fb.fill_rect(Rect::new(0, 8, 80, 50), 0);
+        for my in 0..50 {
+            let y = my0 + my;
+            if !(0..MAP_H as i32).contains(&y) {
+                continue;
+            }
+            for mx in 0..80 {
+                let x = Map::wrap_x(mx0 + mx);
+                if g.explored(me, x, y) {
+                    let water = g.map.tile(x, y).terrain == rules::Terrain::Ocean;
+                    fb.put(mx, 8 + my, if water { 1 } else { 2 });
                 }
-                let t = g.map.tile(x, y);
-                let c = match t.terrain {
-                    rules::Terrain::Ocean => 1,
-                    rules::Terrain::River => 9,
-                    rules::Terrain::Arctic | rules::Terrain::Tundra => 7,
-                    rules::Terrain::Mountains | rules::Terrain::Hills => 6,
-                    rules::Terrain::Desert | rules::Terrain::Plains => 14,
-                    rules::Terrain::Forest | rules::Terrain::Jungle | rules::Terrain::Swamp => 2,
-                    _ => 10,
-                };
-                fb.put(MINIMAP.x + x, MINIMAP.y + y, c);
             }
         }
         for c in g.all_cities() {
-            if g.explored(me, c.x, c.y) {
-                fb.put(MINIMAP.x + c.x, MINIMAP.y + c.y, SLOT_COLOURS[(c.owner & 7) as usize].light);
+            let my = c.y - my0;
+            if (0..50).contains(&my) && (c.owner == me || g.explored(me, c.x, c.y)) {
+                fb.put(Map::wrap_x(c.x - mx0), 8 + my, SLOT_COLOURS[(c.owner & 7) as usize].light);
             }
         }
-        // the view box, split in two where it runs over the east-west edge
-        let (top, bottom) = (MINIMAP.y + self.vy, MINIMAP.y + self.vy + VIEW_H - 1);
-        for i in 0..VIEW_W {
-            let x = MINIMAP.x + Map::wrap_x(self.vx + i);
-            fb.put(x, top, theme::WHITE);
-            fb.put(x, bottom, theme::WHITE);
+        // the active unit blinks on the minimap too: white while it is hidden on the map
+        if !self.blink {
+            if let Some(u) = g.active_unit.and_then(|a| g.unit_opt(a)) {
+                let my = u.y - my0;
+                if (0..50).contains(&my) {
+                    fb.put(Map::wrap_x(u.x - mx0), 8 + my, 15);
+                }
+            }
         }
-        for y in top..=bottom {
-            fb.put(MINIMAP.x + self.vx, y, theme::WHITE);
-            fb.put(MINIMAP.x + Map::wrap_x(self.vx + VIEW_W - 1), y, theme::WHITE);
-        }
+        crate::ui::widgets::bevel(fb, 0, 8, 79, 49, 15, 8);
+        fb.rect_outline(Rect::new(self.vx - mx0 - 1, self.vy - my0 + 7, 18, 11), 15);
     }
 
     fn draw_sidebar(&self, fb: &mut Surface, ctx: &UiContext) {
@@ -872,10 +879,6 @@ impl MapView {
         let p = g.human();
         // the status box and the unit panel are draw_panel_frame(0, 58, 80, 39) (0x33fe) and
         // (0, 97, 80, 103) (0x3ec4): stone texture from each panel's corner, 15/8 bevel
-        fb.hline(0, 79, 8, theme::DARK_GREY);
-        fb.vline(79, 8, 57, theme::DARK_GREY);
-        fb.vline(0, 9, 57, theme::WHITE);
-        fb.hline(0, 78, 57, theme::WHITE);
         crate::ui::widgets::panel_frame(fb, ctx, Rect::new(0, 58, 80, 39));
         crate::ui::widgets::panel_frame(fb, ctx, Rect::new(0, 97, 80, 103));
         // palace strip (CIV.EXE 0x340f): cyan, with a white bar of two pixels per turn of
@@ -936,7 +939,8 @@ impl MapView {
                         draw_text(fb, &ctx.fonts, &st, 4, y, &format!("Moves: {moves}"));
                         y += 8;
                         let home = u.home.and_then(|h| g.city_opt(h)).map(|c| c.name.clone()).unwrap_or_else(|| "NONE".into());
-                        draw_text(fb, &ctx.fonts, &TextStyle::new(if u.home.is_none() { 6 } else { 0 }, theme::TEXT), 4, y, &home);
+                        // strcat_city_name ("NONE" for no home) in the panel's font (o 0x7ad9)
+                        draw_text(fb, &ctx.fonts, &st, 4, y, &home);
                         y += 8;
                         draw_text(fb, &ctx.fonts, &st, 4, y, &format!("({})", g.terrain_name(u.x, u.y)));
                         y += 8;
@@ -1318,7 +1322,9 @@ impl Screen for MapView {
                     return Transition::None;
                 }
                 if MINIMAP.contains(mx, my) {
-                    self.center_on(mx - MINIMAP.x, my - MINIMAP.y);
+                    // o 0x46b2: the clicked minimap square, in the minimap's scrolled frame
+                    let (mx0, my0) = self.minimap_origin(ctx);
+                    self.center_on(Map::wrap_x(mx + mx0), (my - 8 + my0).clamp(0, 49));
                     return Transition::None;
                 }
                 if mx < VIEW_X {

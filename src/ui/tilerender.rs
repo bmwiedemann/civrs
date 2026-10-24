@@ -2,7 +2,8 @@
 //!
 //! Land = flat base tile (SP257 cell 0,4) + terrain overlay from TER257 (row = terrain,
 //! column = mask of orthogonal neighbours with the same terrain, N=1 E=2 S=4 W=8).
-//! Ocean = TER257 row 10, column = mask of orthogonal land neighbours.
+//! Ocean = four 8x8 coast corners from TER257 row y 176 by the land around each corner, as
+//! CIV.EXE draws it in 256 colours (see `draw_ocean`).
 //! River = base + SP257 row 4 variant by mask of river/ocean neighbours.
 
 use crate::game::{tile_flags, Game, Map, Slot, UnitOrder};
@@ -11,6 +12,31 @@ use crate::rules::{self, Terrain, SLOT_COLOURS};
 use crate::ui::context::UiContext;
 
 pub const TILE: i32 = 16;
+
+/// An Ocean square as `draw_tile` (0x1aa40, 256-colour path o 0x1abcf..0x1ae0f) draws it. The
+/// land mask of the 8 neighbours (bit d-1 for direction d = N, NE, E, SE, S, SW, W, NW; rows
+/// off the map count as water) is rotated left by two, so that each corner reads three bits:
+/// top left W/NW/N, top right N/NE/E, bottom right E/SE/S, bottom left S/SW/W. Corner k with
+/// index i is the matching 8x8 quarter of the 16x16 TER257 cell (16i, 176) (cut at o5 0x56f5).
+/// Six exact masks replace the tile with a whole SP299 sprite from (224 + 16n, 100), and
+/// every orthogonal River neighbour adds its river mouth, TER257 (128 + 16k, 176).
+fn draw_ocean(fb: &mut Surface, ctx: &UiContext, map: &Map, x: i32, y: i32, px: i32, py: i32) {
+    let ter = &ctx.ter.surf;
+    let mask = map.land_mask8(x, y) as u32;
+    let r = ((mask >> 6) & 3) | (mask << 2);
+    for (k, (qx, qy)) in [(0, 0), (8, 0), (8, 8), (0, 8)].into_iter().enumerate() {
+        let i = ((r >> (2 * k)) & 7) as i32;
+        fb.blit_part(ter, Rect::new(16 * i + qx, 176 + qy, 8, 8), px + qx, py + qy, Some(0));
+    }
+    if let Some(n) = [0x1c, 0xc1, 0x07, 0x70, 0x8f, 0xf8].iter().position(|m| *m == mask) {
+        fb.blit_part(&ctx.pic("SP299").surf, Rect::new(224 + 16 * n as i32, 100, 16, 16), px, py, None);
+    }
+    for (k, (dx, dy)) in [(0, -1), (1, 0), (0, 1), (-1, 0)].into_iter().enumerate() {
+        if map.get(x + dx, y + dy).is_some_and(|t| t.terrain == Terrain::River) {
+            fb.blit_part(ter, Rect::new(128 + 16 * k as i32, 176, 16, 16), px, py, Some(0));
+        }
+    }
+}
 
 #[inline]
 pub fn cell(cx: i32, cy: i32) -> Rect {
@@ -49,7 +75,12 @@ pub mod sp {
         cell(mask as i32, if alt { 5 } else { 4 })
     }
     pub fn special(t: crate::rules::Terrain) -> Rect {
-        cell(t as i32, 7)
+        icon7(t as i32)
+    }
+    /// Map icons 0x10..0x1f (resources, fortified, fortress, hut): 15x15 cut from inside the
+    /// cell grid of row 7, (16i + 1, 113), and drawn at the square's corner (o5 0x5a8a).
+    pub fn icon7(i: i32) -> Rect {
+        Rect::new(16 * i + 1, 113, 15, 15)
     }
     pub fn unit(kind: u8) -> Rect {
         cell((kind % 20) as i32, 10 + (kind / 20) as i32)
@@ -126,10 +157,7 @@ pub fn draw_terrain(fb: &mut Surface, ctx: &UiContext, game: &Game, x: i32, y: i
     // resource, hut and pollution, so irrigation never covers rivers or resources
     let irrigation = || t.has(tile_flags::IRRIGATION) && t.city.is_none();
     match t.terrain {
-        Terrain::Ocean => {
-            let mask = map.land_mask4(x, y);
-            fb.blit_part(ter, cell(mask as i32, 10), px, py, None);
-        }
+        Terrain::Ocean => draw_ocean(fb, ctx, map, x, y, px, py),
         Terrain::River => {
             fb.blit_part(sp, cell(sp::BASE_LAND.0, sp::BASE_LAND.1), px, py, None);
             if irrigation() {
@@ -152,7 +180,7 @@ pub fn draw_terrain(fb: &mut Surface, ctx: &UiContext, game: &Game, x: i32, y: i
         fb.blit_part(sp, Rect::new(153, 41, 7, 7), px + 4, py + 4, Some(0));
     }
     if t.has(tile_flags::FORTRESS) {
-        blit_sprite(fb, sp, cell(sp::FORTRESS.0, sp::FORTRESS.1), px, py);
+        fb.blit_part(sp, sp::icon7(sp::FORTRESS.0), px, py, Some(0));
     }
     // roads / railroads: one piece per neighbour that also has one (or a city)
     if t.has(tile_flags::ROAD) || t.has(tile_flags::RAILROAD) {
@@ -180,10 +208,10 @@ pub fn draw_terrain(fb: &mut Surface, ctx: &UiContext, game: &Game, x: i32, y: i
         blit_sprite(fb, sp, cell(sp::MINE.0, sp::MINE.1), px, py);
     }
     if t.special {
-        blit_sprite(fb, sp, sp::special(t.terrain), px, py);
+        fb.blit_part(sp, sp::special(t.terrain), px, py, Some(0));
     }
     if t.has(tile_flags::HUT) {
-        blit_sprite(fb, sp, cell(sp::HUT.0, sp::HUT.1), px, py);
+        fb.blit_part(sp, sp::icon7(sp::HUT.0), px, py, Some(0));
     }
     if t.has(tile_flags::POLLUTION) {
         blit_sprite(fb, sp, cell(sp::POLLUTION.0, sp::POLLUTION.1), px, py);
@@ -242,7 +270,7 @@ pub fn draw_unit(fb: &mut Surface, ctx: &UiContext, game: &Game, id: crate::game
         crate::gfx::text::draw_text(fb, &ctx.fonts, &crate::gfx::TextStyle::new(0, letter_colour), px + 4, py + 7, s);
     };
     match u.order {
-        UnitOrder::Fortified => blit_sprite(fb, &ctx.sp.surf, cell(sp::FORTIFIED.0, sp::FORTIFIED.1), px, py),
+        UnitOrder::Fortified => fb.blit_part(&ctx.sp.surf, sp::icon7(sp::FORTIFIED.0), px, py, Some(0)),
         UnitOrder::Fortify => letter(fb, "F"),
         _ => {}
     }
