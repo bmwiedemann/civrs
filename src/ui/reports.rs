@@ -10,7 +10,7 @@ use crate::assets::Palette;
 use crate::assets::fonts::GLYPH_SPACING;
 use crate::gfx::text::{draw_text, ink_width};
 use crate::gfx::{Rect, Surface, TextStyle};
-use crate::platform::{Event, Key, MouseButton};
+use crate::platform::{Event, Key};
 use crate::ui::context::UiContext;
 use crate::ui::screen::{DialogResult, Screen, Transition};
 use crate::ui::widgets::{MenuDialog, MessageBox};
@@ -491,14 +491,13 @@ impl Screen for OptionsDialog {
 
 // ---- FindCity ----------------------------------------------------------------------------------
 
-const FIND_RECT: Rect = Rect::new(80, 79, 208, 23);
-const FIND_FIELD: Rect = Rect::new(80, 88, 123, 14);
-
-/// "Where in the heck is ... (city name)": a light box with an input field; a match centres the
-/// map on the city through `UiContext::center_request`.
+/// `find_city_dialog` (overlay 23 +0x25b) with `prompt_city_name` (+0x319): a colour-15 box
+/// (64, 78) 224x24 with a black outline, "Where in the heck is ... (city name)" at (66, 80),
+/// then `edit_line(66, 89, 16)`. A city the human has seen centres the map on it; otherwise
+/// the top of the box shows "Unknown city." at (82, 80) until a key.
 pub struct FindCity {
-    value: String,
-    guard: u32,
+    edit: crate::ui::widgets::LineEdit,
+    unknown: bool,
 }
 
 impl Default for FindCity {
@@ -509,12 +508,13 @@ impl Default for FindCity {
 
 impl FindCity {
     pub fn new() -> FindCity {
-        FindCity { value: String::new(), guard: 1 }
+        FindCity { edit: crate::ui::widgets::LineEdit::new(66, 89, 16, FONT, ""), unknown: false }
     }
 
+    /// The typed name against the city names, case-insensitively up to its length (strnicmp).
     fn lookup(&self, ctx: &UiContext) -> Option<(i32, i32)> {
         let g = ctx.game();
-        let q = self.value.trim().to_ascii_lowercase();
+        let q = self.edit.text().trim().to_ascii_lowercase();
         if q.is_empty() {
             return None;
         }
@@ -528,46 +528,42 @@ impl FindCity {
 
 impl Screen for FindCity {
     fn update(&mut self, _ctx: &mut UiContext) -> Transition {
-        self.guard = self.guard.saturating_sub(1);
+        self.edit.tick();
         Transition::None
     }
     fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
-        if self.guard > 0 {
-            return Transition::None;
+        if self.unknown {
+            return match ev {
+                Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } => Transition::Pop(DialogResult::Done),
+                _ => Transition::None,
+            };
         }
-        match ev {
-            Event::Key { key: Key::Enter, down: true, .. } => match self.lookup(ctx) {
+        match self.edit.handle(ev) {
+            Some(_) => match self.lookup(ctx) {
                 Some(pos) => {
                     ctx.center_request = Some(pos);
                     Transition::Pop(DialogResult::Done)
                 }
-                None => Transition::Replace(Box::new(MessageBox::text(&format!("{} not found.", self.value.trim())))),
-            },
-            Event::Key { key: Key::Esc, down: true, .. } => Transition::Pop(DialogResult::Cancelled),
-            Event::Key { key: Key::Backspace, down: true, .. } => {
-                self.value.pop();
-                Transition::None
-            }
-            Event::MouseButton { button: MouseButton::Right, down: true, .. } => Transition::Pop(DialogResult::Cancelled),
-            Event::Text(c) => {
-                if self.value.chars().count() < 13 && (' '..='~').contains(c) {
-                    self.value.push(*c);
+                None => {
+                    self.unknown = true;
+                    Transition::None
                 }
-                Transition::None
-            }
-            _ => Transition::None,
+            },
+            None => Transition::None,
         }
     }
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
-        let light = col(ctx, WHITE);
-        let black = col(ctx, BLACK);
-        fb.fill_rect(FIND_RECT, light);
-        fb.rect_outline(FIND_RECT, black);
-        draw_text(fb, &ctx.fonts, &TextStyle::new(FONT, black), FIND_RECT.x + 2, FIND_RECT.y + 1, "Where in the heck is ... (city name)");
-        fb.rect_outline(FIND_FIELD, black);
-        let end = draw_text(fb, &ctx.fonts, &TextStyle::new(FONT, black), FIND_FIELD.x + 4, FIND_FIELD.y + 3, &self.value);
-        if (ctx.frame / 20) % 2 == 0 {
-            fb.fill_rect(Rect::new(end + 1, FIND_FIELD.y + 3, 4, 7), black);
+        let st = TextStyle::new(FONT, 0);
+        fb.fill_rect(Rect::new(64, 78, 224, 24), 15);
+        fb.rect_outline(Rect::new(64, 78, 225, 25), 0);
+        draw_text(fb, &ctx.fonts, &st, 66, 80, "Where in the heck is ... (city name)");
+        self.edit.draw(fb, ctx);
+        if self.unknown {
+            fb.fill_rect(Rect::new(64, 78, 224, 10), 15);
+            draw_text(fb, &ctx.fonts, &st, 82, 80, "Unknown city.");
         }
+    }
+    fn wants_cursor(&self) -> bool {
+        false
     }
 }

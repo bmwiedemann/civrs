@@ -156,6 +156,118 @@ pub fn panel_frame(fb: &mut Surface, ctx: &UiContext, r: Rect) {
     bevel(fb, r.x, r.y, r.w - 1, r.h - 1, 15, 8);
 }
 
+/// `edit_line(x, y, maxlen)` (overlay 23 +0x414): the line editor of the name prompts. The text
+/// is padded to `max` with blanks and edited in place: the first typed character clears it,
+/// typing overwrites and moves right, Left/Right move, Ins/Del/Backspace shift, Enter or Esc
+/// (or a click) end it, trailing blanks are dropped. Drawn as a colour-15 field (x, y)
+/// 7 * max x 11 inside a black outline (x, y - 1)..(x + 8 * max + 8, y + 12), the characters
+/// from (x + 2, y + 2), the cursor cell recoloured 15 -> 11 for 10 ticks of every 20.
+pub struct LineEdit {
+    x: i32,
+    y: i32,
+    max: usize,
+    font: usize,
+    buf: Vec<char>,
+    cursor: usize,
+    first_key: bool,
+    tick: u64,
+}
+
+/// How a `LineEdit` key ended.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LineEnd {
+    Enter,
+    Esc,
+}
+
+impl LineEdit {
+    pub fn new(x: i32, y: i32, max: usize, font: usize, initial: &str) -> LineEdit {
+        let mut buf: Vec<char> = initial.chars().take(max).collect();
+        buf.resize(max, ' ');
+        LineEdit { x, y, max, font, buf, cursor: 0, first_key: true, tick: 0 }
+    }
+
+    /// The text without its trailing blanks (the first character always stays).
+    pub fn text(&self) -> String {
+        let mut end = self.buf.len();
+        while end > 1 && self.buf[end - 1] == ' ' {
+            end -= 1;
+        }
+        self.buf[..end].iter().collect()
+    }
+
+    pub fn tick(&mut self) {
+        self.tick += 1;
+    }
+
+    /// Feed a key (`key`) or a typed character (`ch`); Some when the edit ends.
+    pub fn key(&mut self, key: Option<Key>, ch: Option<char>) -> Option<LineEnd> {
+        match key {
+            Some(Key::Enter) => return Some(LineEnd::Enter),
+            Some(Key::Esc) => return Some(LineEnd::Esc),
+            Some(Key::Left) => self.cursor = self.cursor.saturating_sub(1),
+            Some(Key::Right) => self.cursor = (self.cursor + 1).min(self.max - 1),
+            Some(Key::Insert) => {
+                self.buf.insert(self.cursor, ' ');
+                self.buf.truncate(self.max);
+            }
+            Some(Key::Delete) => {
+                self.buf.remove(self.cursor);
+                self.buf.push(' ');
+            }
+            Some(Key::Backspace) if self.cursor > 0 => {
+                self.buf.remove(self.cursor - 1);
+                self.buf.push(' ');
+                self.cursor -= 1;
+            }
+            _ => {}
+        }
+        if let Some(c) = ch.filter(|c| (' '..='~').contains(c)) {
+            if self.first_key {
+                self.buf.iter_mut().for_each(|b| *b = ' ');
+            }
+            self.buf[self.cursor] = c;
+            self.cursor = (self.cursor + 1).min(self.max - 1);
+        }
+        self.first_key = false;
+        None
+    }
+
+    /// Route an event: Some when the edit ends (a click counts as Enter).
+    pub fn handle(&mut self, ev: &Event) -> Option<LineEnd> {
+        match ev {
+            Event::Key { key: Key::Char(_) | Key::Space, down: true, .. } => None,
+            Event::Key { key, down: true, .. } => self.key(Some(*key), None),
+            Event::Text(c) => self.key(None, Some(*c)),
+            Event::MouseButton { down: true, .. } => self.key(Some(Key::Enter), None),
+            _ => None,
+        }
+    }
+
+    pub fn draw(&self, fb: &mut Surface, ctx: &UiContext) {
+        let (x, y) = (self.x, self.y);
+        fb.fill_rect(Rect::new(x, y, 7 * self.max as i32, 11), 15);
+        fb.rect_outline(Rect::new(x, y - 1, 8 * self.max as i32 + 9, 14), 0);
+        let mut cx = x + 2;
+        for (i, c) in self.buf.iter().enumerate() {
+            let s = c.to_string();
+            let w = text_width(&ctx.fonts, self.font, &s);
+            fb.fill_rect(Rect::new(cx, y + 2, 8, 8), 15);
+            draw_text(fb, &ctx.fonts, &TextStyle::new(self.font, 0), cx, y + 2, &s);
+            if i == self.cursor && (self.tick / 10).is_multiple_of(2) {
+                for py in y + 1..y + 11 {
+                    for px in cx..cx + w {
+                        if fb.get(px, py) == 15 {
+                            fb.put(px, py, 11);
+                        }
+                    }
+                }
+            }
+            cx += w;
+        }
+    }
+}
+
 /// CIV.EXE menu texts switch the text colour inline: a byte 0x80 + n draws what follows in
 /// colour n (" No Orders \x8fspace" shows the hotkey in 15). The code itself takes no room.
 fn is_colour_code(c: char) -> bool {

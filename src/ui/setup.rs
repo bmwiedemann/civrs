@@ -10,7 +10,7 @@
 
 use crate::game::{GameSetup, WorldParams, WorldSource};
 use crate::assets::text::paragraphs;
-use crate::gfx::text::{draw_text, draw_text_centered, text_width, wrap};
+use crate::gfx::text::{draw_text, draw_text_centered, wrap};
 use crate::gfx::{Rect, Surface, TextStyle};
 use crate::platform::{Event, Key, MouseButton};
 use crate::rules::{self, Difficulty, CUSTOM_WORLD_OPTIONS};
@@ -178,86 +178,32 @@ impl SetupFlow {
     }
 }
 
-/// `ask_leader_name` (overlay 23 +0xd6) with its line editor `edit_line(166, 104, 13)`
-/// (ovl 23 +0x414): white box (158, 88) 161x33 with a colour-11 outline, "Your Name..." at
-/// (166, 90), the field outline (166, 103) 113x14, characters from (168, 106). The editor
-/// overwrites: the first typed character clears the field, Left/Right move, Ins/Del/Backspace
-/// shift, and Enter, Esc or a click ends it (Esc keeps the text). The cursor cell blinks cyan.
+/// `ask_leader_name` (overlay 23 +0xd6): white box (158, 88) 161x33 with a colour-11 outline,
+/// "Your Name..." at (166, 90), then `edit_line(166, 104, 13)` in the setup font. The mouse is
+/// hidden; Enter, Esc or a click keep the text.
 struct NameEntry {
-    buf: Vec<char>,
-    cursor: usize,
-    first_key: bool,
-    tick: u64,
+    edit: crate::ui::widgets::LineEdit,
 }
 
-const NAME_MAX: usize = 13;
 const NAME_BOX: Rect = Rect::new(158, 88, 161, 33);
-const NAME_FIELD: Rect = Rect::new(166, 103, 113, 14);
-const NAME_TEXT: (i32, i32) = (168, 106);
 
 impl NameEntry {
     fn new(default: &str) -> NameEntry {
-        let mut buf: Vec<char> = default.chars().take(NAME_MAX).collect();
-        buf.resize(NAME_MAX, ' ');
-        NameEntry { buf, cursor: 0, first_key: true, tick: 0 }
-    }
-
-    /// The text with trailing blanks removed (the first character always stays).
-    fn text(&self) -> String {
-        let mut end = self.buf.len();
-        while end > 1 && self.buf[end - 1] == ' ' {
-            end -= 1;
-        }
-        self.buf[..end].iter().collect()
-    }
-
-    fn key(&mut self, key: Option<Key>, ch: Option<char>) -> Option<Transition> {
-        match key {
-            Some(Key::Enter) | Some(Key::Esc) => return Some(Transition::Pop(DialogResult::Text(self.text()))),
-            Some(Key::Left) => self.cursor = self.cursor.saturating_sub(1),
-            Some(Key::Right) => self.cursor = (self.cursor + 1).min(NAME_MAX - 1),
-            Some(Key::Insert) => {
-                self.buf.insert(self.cursor, ' ');
-                self.buf.truncate(NAME_MAX);
-            }
-            Some(Key::Delete) => {
-                self.buf.remove(self.cursor);
-                self.buf.push(' ');
-            }
-            Some(Key::Backspace) if self.cursor > 0 => {
-                self.buf.remove(self.cursor - 1);
-                self.buf.push(' ');
-                self.cursor -= 1;
-            }
-            _ => {}
-        }
-        if let Some(c) = ch.filter(|c| (' '..='~').contains(c)) {
-            if self.first_key {
-                self.buf.iter_mut().for_each(|b| *b = ' ');
-            }
-            self.buf[self.cursor] = c;
-            self.cursor = (self.cursor + 1).min(NAME_MAX - 1);
-        }
-        self.first_key = false;
-        None
+        NameEntry { edit: crate::ui::widgets::LineEdit::new(166, 104, 13, SETUP_FONT, default) }
     }
 }
 
 impl Screen for NameEntry {
     fn update(&mut self, _ctx: &mut UiContext) -> Transition {
-        self.tick += 1;
+        self.edit.tick();
         Transition::None
     }
 
     fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
-        let t = match ev {
-            Event::Key { key: Key::Char(_) | Key::Space, down: true, .. } => None,
-            Event::Key { key, down: true, .. } => self.key(Some(*key), None),
-            Event::Text(c) => self.key(None, Some(*c)),
-            Event::MouseButton { down: true, .. } => self.key(Some(Key::Enter), None),
-            _ => None,
-        };
-        t.unwrap_or(Transition::None)
+        match self.edit.handle(ev) {
+            Some(_) => Transition::Pop(DialogResult::Text(self.edit.text())),
+            None => Transition::None,
+        }
     }
 
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
@@ -266,18 +212,7 @@ impl Screen for NameEntry {
         fb.fill_rect(NAME_BOX, white);
         fb.rect_outline(NAME_BOX, cyan);
         draw_text(fb, &ctx.fonts, &TextStyle::new(SETUP_FONT, black), 166, 90, "Your Name...");
-        fb.rect_outline(NAME_FIELD, black);
-        let mut x = NAME_TEXT.0;
-        for (i, c) in self.buf.iter().enumerate() {
-            let s = c.to_string();
-            let w = text_width(&ctx.fonts, SETUP_FONT, &s);
-            // the cursor cell is recoloured 15 -> 11 for 10 ticks, then back for 10
-            if i == self.cursor && (self.tick / 10).is_multiple_of(2) {
-                fb.fill_rect(Rect::new(x, NAME_TEXT.1 - 1, w, 10), cyan);
-            }
-            draw_text(fb, &ctx.fonts, &TextStyle::new(SETUP_FONT, black), x, NAME_TEXT.1, &s);
-            x += w;
-        }
+        self.edit.draw(fb, ctx);
     }
 
     fn draws_parent(&self) -> bool {
@@ -519,7 +454,7 @@ mod tests {
 
     #[test]
     fn name_editor_overwrites() {
-        let mut e = NameEntry::new("Caesar");
+        let mut e = crate::ui::widgets::LineEdit::new(166, 104, 13, SETUP_FONT, "Caesar");
         e.key(None, Some('B'));
         assert_eq!(e.text(), "B");
         e.key(None, Some('o'));
@@ -529,7 +464,7 @@ mod tests {
         e.key(Some(Key::Delete), None);
         e.key(Some(Key::Backspace), None);
         assert_eq!(e.text(), "o");
-        let mut e = NameEntry::new("Caesar");
+        let mut e = crate::ui::widgets::LineEdit::new(166, 104, 13, SETUP_FONT, "Caesar");
         e.key(Some(Key::Right), None);
         e.key(None, Some('x'));
         assert_eq!(e.text(), "Cxesar");

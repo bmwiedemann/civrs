@@ -82,7 +82,7 @@ impl UiContext {
         let sp = Self::load_into(&assets, &mut cache, "SP257")?;
         let ter = Self::load_into(&assets, &mut cache, "TER257")?;
         let palette = sp.pal;
-        let hof = crate::save::HallOfFame::load(&save_dir);
+        let hof = crate::save::HallOfFame::load(&save_dir, assets.read("FAME.DTA").ok().as_deref());
         let audio = Audio::load(&assets);
         Ok(UiContext {
             assets,

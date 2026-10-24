@@ -389,29 +389,91 @@ pub struct HallOfFame {
     pub entries: Vec<FameEntry>,
 }
 
+/// Bytes per Hall-of-Fame record of FAME.DTA (ovl 3: 6 records in far memory at 0x37d2):
+/// +0 score, +2 difficulty, +4 ds:0xdc6a, +6 year, +8/+0xa achievement/citizen points,
+/// +0xc population in 10,000s (i16 LE), +0xe leader name (16 B), +0x1e civilization (16 B).
+pub const FAME_RECORD: usize = 0x2e;
+/// Records in FAME.DTA (the screen lists five; a sixth shows only when it is the new one).
+pub const FAME_RECORDS: usize = 6;
+
 impl HallOfFame {
     pub fn path(dir: &Path) -> PathBuf {
-        dir.join("fame.dat")
+        dir.join("FAME.DTA")
     }
 
-    pub fn load(dir: &Path) -> HallOfFame {
-        std::fs::read(Self::path(dir)).ok().and_then(|d| bincode::deserialize(&d).ok()).unwrap_or_default()
+    /// The Hall of Fame of `dir`, else the game's own FAME.DTA (`original`), else an older
+    /// civrs `fame.dat`.
+    pub fn load(dir: &Path, original: Option<&[u8]>) -> HallOfFame {
+        if let Ok(d) = std::fs::read(Self::path(dir)) {
+            return Self::from_dta(&d);
+        }
+        if let Some(d) = original {
+            return Self::from_dta(d);
+        }
+        std::fs::read(dir.join("fame.dat")).ok().and_then(|d| bincode::deserialize(&d).ok()).unwrap_or_default()
+    }
+
+    /// Parse FAME.DTA; records with a score of 0 or less are empty.
+    pub fn from_dta(d: &[u8]) -> HallOfFame {
+        let word = |r: &[u8], o: usize| i16::from_le_bytes([r[o], r[o + 1]]) as i32;
+        let name = |b: &[u8]| String::from_utf8_lossy(b.split(|c| *c == 0).next().unwrap_or_default()).trim_end().to_string();
+        let entries = d
+            .chunks_exact(FAME_RECORD)
+            .take(FAME_RECORDS)
+            .filter(|r| word(r, 0) > 0)
+            .map(|r| {
+                let (score, difficulty) = (word(r, 0), word(r, 2).clamp(0, 4) as u8);
+                FameEntry {
+                    leader: name(&r[0xe..0x1e]),
+                    civ_plural: name(&r[0x1e..0x2e]),
+                    score,
+                    percent: (difficulty as i32 + 1) * score / 50,
+                    year: word(r, 6),
+                    difficulty,
+                    title: String::new(),
+                    population: word(r, 0xc) as i64 * 10_000,
+                }
+            })
+            .collect();
+        HallOfFame { entries }
+    }
+
+    /// FAME.DTA bytes: the entries, then empty records (score -1) up to six.
+    pub fn to_dta(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(FAME_RECORD * FAME_RECORDS);
+        for i in 0..FAME_RECORDS {
+            let mut r = [0u8; FAME_RECORD];
+            match self.entries.get(i) {
+                Some(e) => {
+                    r[0..2].copy_from_slice(&(e.score as i16).to_le_bytes());
+                    r[2..4].copy_from_slice(&(e.difficulty as i16).to_le_bytes());
+                    r[6..8].copy_from_slice(&(e.year as i16).to_le_bytes());
+                    r[0xc..0xe].copy_from_slice(&((e.population / 10_000).min(i16::MAX as i64) as i16).to_le_bytes());
+                    for (dst, src) in [(0xe, &e.leader), (0x1e, &e.civ_plural)] {
+                        let b = src.as_bytes();
+                        let n = b.len().min(15);
+                        r[dst..dst + n].copy_from_slice(&b[..n]);
+                    }
+                }
+                None => r[0..2].copy_from_slice(&(-1i16).to_le_bytes()),
+            }
+            out.extend_from_slice(&r);
+        }
+        out
     }
 
     pub fn save(&self, dir: &Path) {
         let _ = std::fs::create_dir_all(dir);
-        if let Ok(d) = bincode::serialize(self) {
-            let _ = std::fs::write(Self::path(dir), d);
-        }
+        let _ = std::fs::write(Self::path(dir), self.to_dta());
     }
 
     /// Insert keeping the list sorted by `(difficulty + 2) * score` (desc, CIV.EXE o 0x2c88),
-    /// max 10 entries. Returns the rank.
+    /// at most six entries. Returns the rank.
     pub fn add(&mut self, e: FameEntry) -> usize {
         let weight = |x: &FameEntry| (x.difficulty as i32 + 2) * x.score;
         let pos = self.entries.iter().position(|x| weight(x) < weight(&e)).unwrap_or(self.entries.len());
         self.entries.insert(pos, e);
-        self.entries.truncate(10);
+        self.entries.truncate(FAME_RECORDS);
         pos
     }
 }
@@ -557,6 +619,25 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
         assert!(old.ai_memory.persistent.iter().flatten().all(|p| p.is_free()));
         assert_eq!(old.player(2).diplo, g.player(2).diplo);
+    }
+
+    #[test]
+    fn fame_dta_round_trips_and_reads_the_original_layout() {
+        let mut rec = vec![0u8; super::FAME_RECORD];
+        rec[0..2].copy_from_slice(&12i16.to_le_bytes());
+        rec[2..4].copy_from_slice(&4i16.to_le_bytes());
+        rec[6..8].copy_from_slice(&(-1700i16).to_le_bytes());
+        rec[0xc..0xe].copy_from_slice(&26i16.to_le_bytes());
+        rec[0xe..0xe + 11].copy_from_slice(b"Ray Maloney");
+        rec[0x1e..0x1e + 9].copy_from_slice(b"Egyptians");
+        let mut empty = vec![0u8; super::FAME_RECORD];
+        empty[0..2].copy_from_slice(&(-1i16).to_le_bytes());
+        let data: Vec<u8> = [rec, empty.clone(), empty.clone(), empty.clone(), empty.clone(), empty].concat();
+        let h = super::HallOfFame::from_dta(&data);
+        assert_eq!(h.entries.len(), 1);
+        let e = &h.entries[0];
+        assert_eq!((e.leader.as_str(), e.civ_plural.as_str(), e.score, e.difficulty, e.year, e.population, e.percent), ("Ray Maloney", "Egyptians", 12, 4, -1700, 260_000, 1));
+        assert_eq!(super::HallOfFame::from_dta(&h.to_dta()), h);
     }
 
     #[test]
