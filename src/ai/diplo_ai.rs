@@ -103,7 +103,7 @@ fn emissary(g: &Game, m: &Meeting) -> DiplomacyState {
 fn greeting(g: &mut Game, m: &Meeting) -> DiplomacyState {
     let h = human(g);
     let p = g.player(m.ai);
-    let (title, leader, plural) = (p.title(), p.leader.clone(), p.plural());
+    let (title, leader, plural) = (p.title(), p.leader.clone(), p.plural().to_string());
     let mut s = String::from(if g.diplo(m.ai, h) & VENDETTA != 0 { "O most untrustworthy leader of the\ninfidels, hear now " } else { "Greetings from " });
     match g.rng.below(4) {
         0 => s += &format!("the most exalted\n{title}: {leader} "),

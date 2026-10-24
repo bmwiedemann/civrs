@@ -107,6 +107,10 @@ pub struct GameSetup {
     pub leader_name: String,
     pub world: WorldSource,
     pub seed: u64,
+    /// The plural typed for the human's tribe after Esc at "Pick your tribe..." (only used when
+    /// the game is created).
+    #[serde(skip)]
+    pub tribe_name: Option<String>,
 }
 
 impl Default for GameSetup {
@@ -118,6 +122,7 @@ impl Default for GameSetup {
             leader_name: String::new(),
             world: WorldSource::Random(WorldParams::normal()),
             seed: 1,
+            tribe_name: None,
         }
     }
 }
@@ -319,6 +324,9 @@ impl Game {
             p.in_game = true;
             if human && !setup.leader_name.is_empty() {
                 p.leader = setup.leader_name.clone();
+            }
+            if let Some(t) = setup.tribe_name.as_ref().filter(|t| human && !t.is_empty()) {
+                p.tribe_names = Some(player::tribe_names(t));
             }
             players[*s as usize] = p;
         }
@@ -811,7 +819,7 @@ impl Game {
     }
 
     /// Civilisation display name for a slot ("Romans").
-    pub fn civ_name(&self, slot: Slot) -> &'static str {
+    pub fn civ_name(&self, slot: Slot) -> &str {
         self.player(slot).plural()
     }
 }

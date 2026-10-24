@@ -26,7 +26,9 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// empty slot); older saves take the owner and the civilizations that see the square now.
 /// 13: then by each player's 28 unit counters (`Player::unit_counter`, i16 LE) and 28 losses
 /// (`Player::units_lost_by_type`); older saves count the units they have and no losses.
-pub const VERSION: u16 = 13;
+/// 14: then by each player's tribe names (`Player::tribe_names`): plural and adjective, each a
+/// u8 length and the bytes, 0/0 for none.
+pub const VERSION: u16 = 14;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -103,6 +105,14 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     for p in &g.players {
         for c in p.unit_counter.iter().chain(p.units_lost_by_type.iter()) {
             data.extend_from_slice(&c.to_le_bytes());
+        }
+    }
+    for p in &g.players {
+        let (plural, adj) = p.tribe_names.clone().unwrap_or_default();
+        for name in [plural, adj] {
+            let b = &name.as_bytes()[..name.len().min(255)];
+            data.push(b.len() as u8);
+            data.extend_from_slice(b);
         }
     }
     std::fs::write(path, data)?;
@@ -206,6 +216,20 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
                     }
                 }
             }
+        }
+    }
+    // version 14: the tribe names, after the counters
+    if ver >= 14 {
+        let mut at = counters + 112 * g.players.len();
+        let mut take = |rest: &[u8]| -> Option<String> {
+            let n = *rest.get(at)? as usize;
+            let b = rest.get(at + 1..at + 1 + n)?;
+            at += 1 + n;
+            Some(String::from_utf8_lossy(b).into_owned())
+        };
+        for p in g.players.iter_mut() {
+            let (Some(plural), Some(adj)) = (take(rest), take(rest)) else { break };
+            p.tribe_names = (!plural.is_empty()).then_some((plural, adj));
         }
     }
     match slots.and_then(|n| rest.get(seen + 4..seen + 4 + n)) {
@@ -667,6 +691,20 @@ mod tests {
         assert_eq!(old.player(h).unit_counter[crate::rules::unit_ids::MILITIA as usize], militia);
         assert_eq!(old.player(h).units_lost_by_type, [0; 28]);
         let _ = u;
+    }
+
+    #[test]
+    fn tribe_names_survive_a_save() {
+        let g = Game::new(GameSetup { seed: 6, tribe_name: Some("Vandals".into()), ..Default::default() }, None);
+        let h = g.human_slot;
+        assert_eq!((g.player(h).plural(), g.player(h).adjective()), ("Vandals", "Vandal"));
+        let dir = std::env::temp_dir().join(format!("civrs-tribe-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        let l = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(l.player(h).tribe_names, g.player(h).tribe_names);
+        assert!((1..8).filter(|s| *s != h).all(|s| l.player(s).tribe_names.is_none()));
     }
 
     #[test]

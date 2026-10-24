@@ -159,6 +159,11 @@ pub struct Player {
     /// Cities that already sold an improvement this turn (one sale per city per turn).
     #[serde(default)]
     pub sold_cities: Vec<CityId>,
+    /// The tribe's own plural and adjective, when the human named it (`ask_tribe_name`,
+    /// overlay 23 +0x173, writes ds:0x1992 / ds:0x1982). Stored after the game body in
+    /// version-14 saves.
+    #[serde(skip)]
+    pub tribe_names: Option<(String, String)>,
 }
 
 impl Player {
@@ -202,6 +207,7 @@ impl Player {
             final_score: None,
             senate_blocks: 0,
             sold_cities: Vec::new(),
+            tribe_names: None,
         }
     }
 
@@ -235,11 +241,11 @@ impl Player {
     pub fn civ(&self) -> &'static crate::rules::Civ {
         &crate::rules::CIVS[self.civ as usize]
     }
-    pub fn adjective(&self) -> &'static str {
-        self.civ().adjective
+    pub fn adjective(&self) -> &str {
+        self.tribe_names.as_ref().map_or(self.civ().adjective, |t| t.1.as_str())
     }
-    pub fn plural(&self) -> &'static str {
-        self.civ().plural
+    pub fn plural(&self) -> &str {
+        self.tribe_names.as_ref().map_or(self.civ().plural, |t| t.0.as_str())
     }
     pub fn title(&self) -> &'static str {
         let g = crate::rules::GOVERNMENTS[self.govt as usize];
@@ -280,5 +286,22 @@ impl Player {
     }
     pub fn is_barbarian(&self) -> bool {
         self.slot == 0
+    }
+}
+
+/// `ask_tribe_name`'s names for a typed plural: the plural itself, and the adjective made by
+/// dropping a final 's' and cutting it to 10 characters.
+pub fn tribe_names(plural: &str) -> (String, String) {
+    let adj = plural.strip_suffix('s').unwrap_or(plural);
+    (plural.to_string(), adj.chars().take(10).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn typed_tribe_names_drop_the_plural_s_for_the_adjective() {
+        assert_eq!(super::tribe_names("Vandals"), ("Vandals".into(), "Vandal".into()));
+        assert_eq!(super::tribe_names("Ostrogothics"), ("Ostrogothics".into(), "Ostrogothi".into()));
+        assert_eq!(super::tribe_names("Inuit"), ("Inuit".into(), "Inuit".into()));
     }
 }

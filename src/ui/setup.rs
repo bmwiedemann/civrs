@@ -24,6 +24,8 @@ enum Step {
     Difficulty,
     NumCivs,
     Tribe,
+    /// Esc at the tribe menu: the tribe gets the typed name (ask_tribe_name).
+    TribeName,
     Name,
     Custom(usize),
     Story,
@@ -121,13 +123,13 @@ impl SetupFlow {
             Step::Tribe => {
                 self.step = Step::Name;
                 let default = rules::CIVS[self.setup.human_civ as usize].leader;
-                Transition::Push(Box::new(NameEntry::new(default)))
+                Transition::Push(Box::new(NameEntry::new("Your Name...", 13, default)))
             }
             Step::Name => {
                 self.step = Step::Generate;
                 self.generate(ctx)
             }
-            Step::Generate | Step::Done => Transition::None,
+            Step::TribeName | Step::Generate | Step::Done => Transition::None,
         }
     }
 
@@ -178,18 +180,20 @@ impl SetupFlow {
     }
 }
 
-/// `ask_leader_name` (overlay 23 +0xd6): white box (158, 88) 161x33 with a colour-11 outline,
-/// "Your Name..." at (166, 90), then `edit_line(166, 104, 13)` in the setup font. The mouse is
-/// hidden; Enter, Esc or a click keep the text.
+/// `ask_leader_name` (overlay 23 +0xd6) and `ask_tribe_name` (+0x173): white box (158, 88)
+/// 161x33 with a colour-11 outline, "Your Name..." / "Name of your Tribe..." at (166, 90), then
+/// `edit_line(166, 104, 13 / 11)` in the setup font. The mouse is hidden; Enter, Esc or a
+/// click keep the text.
 struct NameEntry {
     edit: crate::ui::widgets::LineEdit,
+    label: &'static str,
 }
 
 const NAME_BOX: Rect = Rect::new(158, 88, 161, 33);
 
 impl NameEntry {
-    fn new(default: &str) -> NameEntry {
-        NameEntry { edit: crate::ui::widgets::LineEdit::new(166, 104, 13, SETUP_FONT, default) }
+    fn new(label: &'static str, max: usize, default: &str) -> NameEntry {
+        NameEntry { edit: crate::ui::widgets::LineEdit::new(166, 104, max, SETUP_FONT, default), label }
     }
 }
 
@@ -211,7 +215,7 @@ impl Screen for NameEntry {
         let (white, black, cyan) = (pal.nearest([255, 255, 255]), pal.nearest([0, 0, 0]), pal.nearest([85, 255, 255]));
         fb.fill_rect(NAME_BOX, white);
         fb.rect_outline(NAME_BOX, cyan);
-        draw_text(fb, &ctx.fonts, &TextStyle::new(SETUP_FONT, black), 166, 90, "Your Name...");
+        draw_text(fb, &ctx.fonts, &TextStyle::new(SETUP_FONT, black), 166, 90, self.label);
         self.edit.draw(fb, ctx);
     }
 
@@ -348,8 +352,8 @@ impl Screen for SetupFlow {
     fn resume(&mut self, result: DialogResult, ctx: &mut UiContext) -> Transition {
         match (&self.step, result) {
             // Esc: Chieftain (o 0x4210), the competition question again (o 0x430b), a random
-            // tribe (o 0x45eb; the original then asks for the tribe's name, which civrs has no
-            // place for); in the custom-world questions it leaves the setup
+            // tribe named by the player (o 0x45eb, ask_tribe_name); in the custom-world
+            // questions it leaves the setup
             (Step::Difficulty, DialogResult::Cancelled) => self.resume(DialogResult::Choice(0), ctx),
             (Step::NumCivs, DialogResult::Cancelled) => {
                 self.step = Step::Difficulty;
@@ -358,7 +362,15 @@ impl Screen for SetupFlow {
             (Step::Tribe, DialogResult::Cancelled) => {
                 let n = self.setup.num_civs.max(2) as u64 - 1;
                 let pick = (ctx.frame.wrapping_mul(0x9e37_79b9) >> 13) % n;
-                self.resume(DialogResult::Choice(pick as usize), ctx)
+                self.setup.human_civ = self.tribes.get(pick as usize).copied().unwrap_or(1);
+                self.step = Step::TribeName;
+                let plural = rules::CIVS[self.setup.human_civ as usize].plural;
+                Transition::Push(Box::new(NameEntry::new("Name of your Tribe...", 11, plural)))
+            }
+            (Step::TribeName, DialogResult::Text(t)) => {
+                self.setup.tribe_name = Some(t);
+                self.step = Step::Tribe;
+                self.next(ctx)
             }
             (_, DialogResult::Cancelled) => Transition::Pop(DialogResult::Done),
             (Step::Story, _) => self.next(ctx),
@@ -421,7 +433,8 @@ impl Screen for SetupFlow {
                     fb.blit_part(&p.surf, Rect::new(LEFT_W, 0, 320 - LEFT_W, 200), LEFT_W, 0, None);
                 } else {
                     let white = pal.nearest([255, 255, 255]);
-                    draw_text_centered(fb, &ctx.fonts, &TextStyle::new(SETUP_FONT, white), 46, 92, rules::CIVS[self.setup.human_civ as usize].plural);
+                    let plural = self.setup.tribe_name.as_deref().unwrap_or(rules::CIVS[self.setup.human_civ as usize].plural);
+                    draw_text_centered(fb, &ctx.fonts, &TextStyle::new(SETUP_FONT, white), 46, 92, plural);
                 }
             }
         }
