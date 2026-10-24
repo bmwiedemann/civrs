@@ -21,8 +21,22 @@ pub const MINIMAP: Rect = Rect::new(0, 9, 80, 48);
 pub const MENU_H: i32 = 8;
 
 const MENU_LABELS: [(&str, i32); 5] = [("GAME", 8), ("ORDERS", 64), ("ADVISORS", 128), ("WORLD", 192), ("CIVILOPEDIA", 240)];
-/// Dropdown rectangles (x, y, w, h) from the original.
-const MENU_RECTS: [Rect; 5] = [Rect::new(17, 9, 91, 79), Rect::new(80, 9, 114, 95), Rect::new(113, 9, 151, 55), Rect::new(145, 9, 160, 55), Rect::new(183, 9, 128, 55)];
+
+/// A line of a pull-down menu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BarAction {
+    Rate(bool),
+    FindCity,
+    Options,
+    Save,
+    Revolution,
+    Quit,
+    /// An order: the key (with Shift) it posts, as the original stores it in ds:0xd4ca.
+    Key(Key, bool),
+    Advisor(u8),
+    Civilopedia(usize),
+    Nothing,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
@@ -83,6 +97,8 @@ pub struct MapView {
     blink: bool,
     last_centered: Option<UnitId>,
     bar_menu_open: Option<usize>,
+    /// What each line of the open pull-down menu does.
+    bar_actions: Vec<BarAction>,
     pub status_line: String,
     /// Show the FIRSTMOVE hint when the view first appears.
     pub first_turn_hint: bool,
@@ -113,6 +129,7 @@ impl MapView {
             blink: true,
             last_centered: None,
             bar_menu_open: None,
+            bar_actions: Vec::new(),
             status_line: String::new(),
             first_turn_hint: false,
             auto_end: 0,
@@ -398,134 +415,137 @@ impl MapView {
         Transition::Push(crate::ui::cityscreen::city_screen(c))
     }
 
+    /// The five pull-down menus as CIV.EXE's segment 0x1c02 builds them: `menu(text, x, 8)` at
+    /// x = 16, 72, 112, 144, 182 (framed, on the stone). GAME greys Save Game on turn 0
+    /// (ds:0xb276 = 0x10) and has a selectable blank line before Retire. ORDERS (0x1c1fe) lists
+    /// only the orders the active unit has, each posting its hotkey (shown in colour 15 behind a
+    /// 0x8f code); Build Irrigation is greyed without water nearby, Build Fortress without
+    /// Construction. WORLD greys SpaceShips until a ship exists (ds:0xb276 = 0x20).
     fn bar_menu(&mut self, ctx: &mut UiContext, i: usize) -> Transition {
         let g = ctx.game();
-        let r = MENU_RECTS[i];
-        let mut gaps: Vec<usize> = Vec::new();
+        let mut items: Vec<String> = Vec::new();
+        let mut actions: Vec<BarAction> = Vec::new();
         let mut disabled: Vec<bool> = Vec::new();
-        let items: Vec<String> = match i {
+        let mut add = |items: &mut Vec<String>, text: &str, action: BarAction, grey: bool| {
+            items.push(text.to_string());
+            actions.push(action);
+            disabled.push(grey);
+        };
+        let x = [16, 72, 112, 144, 182][i];
+        match i {
             0 => {
-                gaps.push(6);
-                vec!["Tax Rate".into(), "Luxuries Rate".into(), "FindCity".into(), "Options".into(), "Save Game".into(), "REVOLUTION!".into(), "Retire".into(), "QUIT to DOS".into()]
+                let first_turn = g.turn == 0;
+                add(&mut items, "Tax Rate", BarAction::Rate(false), false);
+                add(&mut items, "Luxuries Rate", BarAction::Rate(true), false);
+                add(&mut items, "FindCity", BarAction::FindCity, false);
+                add(&mut items, "Options", BarAction::Options, false);
+                add(&mut items, "Save Game", BarAction::Save, first_turn);
+                add(&mut items, "REVOLUTION!", BarAction::Revolution, false);
+                add(&mut items, " ", BarAction::Nothing, false);
+                add(&mut items, "Retire", BarAction::Quit, false);
+                add(&mut items, "QUIT to DOS", BarAction::Quit, false);
             }
             1 => {
-                // the terraforming lines name the result as CIV.EXE 0x1c1fe does: a square
-                // whose irrigation or mine changes its terrain reads "Change to <terrain>"
-                let tile = g.active_unit.and_then(|a| g.unit_opt(a)).map(|u| g.map.tile(u.x, u.y).terrain.info());
-                let terraform = |f: Option<rules::Terraform>, build: &str, key: char| match f {
-                    Some(rules::Terraform::Becomes(t)) => format!("Change to {}  {key}", t.name()),
-                    _ => format!("{build}  {key}"),
-                };
-                let v: Vec<String> = vec![
-                    "No Orders  space".into(),
-                    "Found New City  b".into(),
-                    "Build Road  r".into(),
-                    terraform(tile.map(|i| i.irrigate), "Build Irrigation", 'i'),
-                    terraform(tile.map(|i| i.mine), "Build Mines", 'm'),
-                    "Build Fortress  F".into(),
-                    "Fortify  f".into(),
-                    "Wait  w".into(),
-                    "Sentry  s".into(),
-                    "GoTo  g".into(),
-                    "Pillage  P".into(),
-                    "Clean Pollution  p".into(),
-                    "Home City  h".into(),
-                    "Unload  u".into(),
-                    "Disband Unit  D".into(),
-                ];
-                gaps.push(14);
-                // "Pillage" (0x1c1fe): improvements & 0x1e, type < 0x1a and not the Fighter
-                let (settlers, pillager, ship) = match g.active_unit.and_then(|a| g.unit_opt(a)) {
-                    Some(u) => {
-                        let built = g.map.tile(u.x, u.y).flags & (tile_flags::ROAD | tile_flags::RAILROAD | tile_flags::IRRIGATION | tile_flags::MINE) != 0;
-                        let pillager = built && u.kind < rules::unit_ids::DIPLOMAT && u.kind != rules::unit_ids::FIGHTER;
-                        (u.kind == rules::unit_ids::SETTLERS, pillager, u.is_sea())
+                let key = |c: char| BarAction::Key(Key::Char(c), false);
+                let unit = g.active_unit.and_then(|a| g.unit_opt(a));
+                // without an active unit the menu does not open (o 0x1c206)
+                if unit.is_none() {
+                    return Transition::None;
+                }
+                add(&mut items, "No Orders \u{8f}space", BarAction::Key(Key::Space, false), false);
+                if let Some(u) = unit {
+                    let (x, y) = u.pos();
+                    let flags = g.map.tile(x, y).flags;
+                    let info = g.map.tile(x, y).terrain.info();
+                    let in_city = g.city_at(x, y).is_some();
+                    let kind = rules::UNITS[u.kind as usize];
+                    if u.kind == rules::unit_ids::SETTLERS {
+                        add(&mut items, if in_city { "Add to City \u{8f}b" } else { "Found New City \u{8f}b" }, key('b'), false);
+                        if flags & tile_flags::ROAD == 0 {
+                            add(&mut items, "Build Road \u{8f}r", key('r'), false);
+                        } else if flags & tile_flags::RAILROAD == 0 && g.player(u.owner).knows(rules::advance_ids::RAILROAD) {
+                            add(&mut items, "Build RailRoad \u{8f}r", key('r'), false);
+                        }
+                        if flags & tile_flags::IRRIGATION == 0 {
+                            match info.irrigate {
+                                rules::Terraform::Bonus(_) => add(&mut items, "Build Irrigation \u{8f}i", key('i'), !g.irrigation_water(x, y)),
+                                rules::Terraform::Becomes(t) => add(&mut items, &format!("Change to {} \u{8f}i", t.name()), key('i'), false),
+                                rules::Terraform::No => {}
+                            }
+                        }
+                        if flags & tile_flags::MINE == 0 {
+                            match info.mine {
+                                rules::Terraform::Bonus(_) => add(&mut items, "Build Mines \u{8f}m", key('m'), false),
+                                rules::Terraform::Becomes(t) => add(&mut items, &format!("Change to {} \u{8f}m", t.name()), key('m'), false),
+                                rules::Terraform::No => {}
+                            }
+                        }
+                        if flags & tile_flags::POLLUTION != 0 {
+                            add(&mut items, "Clean up Pollution \u{8f}p", key('p'), false);
+                        }
+                        let construction = g.player(u.owner).knows(rules::advance_ids::CONSTRUCTION);
+                        add(&mut items, "Build Fortress \u{8f}f", BarAction::Key(Key::Char('f'), true), !construction);
+                    } else if kind.domain == rules::Domain::Land {
+                        add(&mut items, "Fortify \u{8f}f", key('f'), false);
                     }
-                    None => (false, false, false),
-                };
-                let has_unit = g.active_unit.is_some();
-                let knows_construction = g.human().knows(rules::advance_ids::CONSTRUCTION);
-                disabled = vec![
-                    !has_unit,
-                    !settlers,
-                    !settlers,
-                    !settlers || tile.map_or(true, |i| i.irrigate == rules::Terraform::No),
-                    !settlers || tile.map_or(true, |i| i.mine == rules::Terraform::No),
-                    !settlers || !knows_construction,
-                    !has_unit || settlers,
-                    !has_unit,
-                    !has_unit,
-                    !has_unit,
-                    !pillager,
-                    !settlers,
-                    !has_unit,
-                    !ship,
-                    !has_unit,
-                ];
-                v
+                    add(&mut items, "Wait \u{8f}w", key('w'), false);
+                    add(&mut items, "Sentry \u{8f}s", key('s'), false);
+                    add(&mut items, "GoTo", key('g'), false);
+                    let improved = flags & (tile_flags::ROAD | tile_flags::RAILROAD | tile_flags::IRRIGATION | tile_flags::MINE) != 0;
+                    if improved && u.kind < 26 && u.kind != rules::unit_ids::FIGHTER {
+                        add(&mut items, "Pillage \u{8f}P", BarAction::Key(Key::Char('p'), true), false);
+                    }
+                    if in_city {
+                        add(&mut items, "Home City \u{8f}h", key('h'), false);
+                    }
+                    if (kind.role == rules::AiRole::Transport || u.kind == rules::unit_ids::CARRIER) && u.seen_by != 0xff {
+                        add(&mut items, "Unload \u{8f}u", key('u'), false);
+                    }
+                    add(&mut items, " ", BarAction::Nothing, false);
+                    add(&mut items, "Disband Unit \u{8f}D", BarAction::Key(Key::Char('d'), true), false);
+                }
             }
-            2 => vec!["City Status      F1".into(), "Military Advisor F2".into(), "Intelligence     F3".into(), "Attitude Advisor F4".into(), "Trade Advisor    F5".into(), "Science Advisor  F6".into()],
+            2 => {
+                for (n, t) in ["City Status (F1)", "Military Advisor (F2)", "Intelligence Advisor (F3)", "Attitude Advisor (F4)", "Trade Advisor (F5)", "Science Advisor (F6)"].iter().enumerate() {
+                    add(&mut items, t, BarAction::Advisor(n as u8 + 1), false);
+                }
+            }
             3 => {
-                // SpaceShips is greyed until some civ has started a ship (0x1c710)
-                disabled = vec![false, false, false, false, false, !crate::ui::spaceship_ui::any_ship_started(g)];
-                vec!["Wonders of World F7".into(), "Top 5 Cities     F8".into(), "Civ. Score       F9".into(), "World Map       F10".into(), "Demographics    F11".into(), "SpaceShips      F12".into()]
+                let no_ship = !crate::ui::spaceship_ui::any_ship_started(g);
+                for (n, t) in ["Wonders of the World (F7)", "Top 5 Cities (F8)", "Civilization Score (F9)", "World Map (F10)", "Demographics", "SpaceShips"].iter().enumerate() {
+                    add(&mut items, t, BarAction::Advisor(n as u8 + 7), n == 5 && no_ship);
+                }
             }
-            _ => vec!["Complete".into(), "Civilization Advances".into(), "City Improvements".into(), "Military Units".into(), "Terrain Types".into(), "Miscellaneous".into()],
-        };
+            _ => {
+                for (n, t) in ["Complete", "Civilization Advances", "City Improvements", "Military Units", "Terrain Types", "Miscellaneous"].iter().enumerate() {
+                    add(&mut items, t, BarAction::Civilopedia(n), false);
+                }
+            }
+        }
+        self.bar_actions = actions;
         self.pending = Pending::BarMenu(i);
         self.bar_menu_open = Some(i);
-        let mut m = MenuDialog::new(vec![], items).with_pos(r.x, r.y).with_size(r.w, r.h).with_gaps(gaps);
-        if !disabled.is_empty() {
-            m = m.with_disabled(disabled);
-        }
-        Transition::Push(Box::new(m))
+        Transition::Push(Box::new(MenuDialog::new(vec![], items).with_pos(x, 8).with_disabled(disabled)))
     }
 
-    fn bar_menu_choice(&mut self, ctx: &mut UiContext, menu: usize, choice: usize) -> Transition {
-        match (menu, choice) {
-            (0, 0) => Transition::Push(crate::ui::reports::rate_dialog(ctx, false)),
-            (0, 1) => Transition::Push(crate::ui::reports::rate_dialog(ctx, true)),
-            (0, 2) => Transition::Push(crate::ui::reports::find_city_dialog(ctx)),
-            (0, 3) => Transition::Push(crate::ui::reports::options_dialog(ctx)),
-            (0, 4) => Transition::Push(crate::ui::reports::save_dialog(ctx)),
-            (0, 5) => {
+    fn bar_menu_choice(&mut self, ctx: &mut UiContext, _menu: usize, choice: usize) -> Transition {
+        match self.bar_actions.get(choice).copied().unwrap_or(BarAction::Nothing) {
+            BarAction::Rate(lux) => Transition::Push(crate::ui::reports::rate_dialog(ctx, lux)),
+            BarAction::FindCity => Transition::Push(crate::ui::reports::find_city_dialog(ctx)),
+            BarAction::Options => Transition::Push(crate::ui::reports::options_dialog(ctx)),
+            BarAction::Save => Transition::Push(crate::ui::reports::save_dialog(ctx)),
+            BarAction::Revolution => {
                 self.pending = Pending::RevolutionConfirm;
-                Transition::Push(Box::new(YesNo::new(vec!["Are you sure you want a REVOLUTION?".into()], "No thanks.", "Yes, we need a new government.").with_pos(80, 81)))
+                Transition::Push(Box::new(YesNo::new(vec!["Are you sure you want a REVOLUTION?".into()], "_No thanks.", "_Yes, we need a new government.").with_pos(64, 80)))
             }
-            (0, 6) => {
+            BarAction::Quit => {
                 self.pending = Pending::QuitConfirm;
-                Transition::Push(Box::new(YesNo::new(vec!["Are you sure you".into(), "want to Quit?".into()], "Keep Playing", "Yes, Quit").with_pos(101, 81)))
+                Transition::Push(Box::new(YesNo::new(vec!["Are you sure you".into(), "want to Quit?".into()], "Keep Playing", "Yes, Quit").with_pos(100, 80)))
             }
-            (0, 7) => {
-                self.pending = Pending::QuitConfirm;
-                Transition::Push(Box::new(YesNo::new(vec!["Are you sure you".into(), "want to Quit?".into()], "Keep Playing", "Yes, Quit").with_pos(101, 81)))
-            }
-            (1, c) => {
-                let key = match c {
-                    0 => Key::Space,
-                    1 => Key::Char('b'),
-                    2 => Key::Char('r'),
-                    3 => Key::Char('i'),
-                    4 => Key::Char('m'),
-                    5 => Key::Char('f'),
-                    6 => Key::Char('f'),
-                    7 => Key::Char('w'),
-                    8 => Key::Char('s'),
-                    9 => Key::Char('g'),
-                    10 => Key::Char('p'),
-                    11 => Key::Char('p'),
-                    12 => Key::Char('h'),
-                    13 => Key::Char('u'),
-                    14 => Key::Char('d'),
-                    _ => Key::Unknown,
-                };
-                let shift = matches!(c, 5 | 10 | 14);
-                self.key_order(ctx, key, crate::platform::Mods { shift, ctrl: false, alt: false })
-            }
-            (2, c) => Transition::Push(crate::ui::reports::advisor(ctx, c as u8 + 1)),
-            (3, c) => Transition::Push(crate::ui::reports::advisor(ctx, c as u8 + 7)),
-            (4, c) => Transition::Push(crate::ui::civilopedia::category(ctx, c)),
-            _ => Transition::None,
+            BarAction::Key(key, shift) => self.key_order(ctx, key, crate::platform::Mods { shift, ctrl: false, alt: false }),
+            BarAction::Advisor(n) => Transition::Push(crate::ui::reports::advisor(ctx, n)),
+            BarAction::Civilopedia(c) => Transition::Push(crate::ui::civilopedia::category(ctx, c)),
+            BarAction::Nothing => Transition::None,
         }
     }
 
@@ -848,21 +868,14 @@ impl MapView {
     fn draw_sidebar(&self, fb: &mut Surface, ctx: &UiContext) {
         let g = ctx.game();
         let p = g.human();
-        let sp = &ctx.sp.surf;
-        // status panel (checker pattern) and unit panel (stone pattern)
-        let status = Rect::new(0, 59, 80, 37);
-        let unit_panel = Rect::new(0, 98, 80, 102);
-        fb.fill_pattern(status, sp, tilerender::cell(tilerender::sp::PATTERN_STONE.0, tilerender::sp::PATTERN_STONE.1));
-        fb.fill_pattern(unit_panel, sp, tilerender::cell(tilerender::sp::PATTERN_STONE.0, tilerender::sp::PATTERN_STONE.1));
-        // frame lines: dark top (y=8) and right column, light left column and bottom
+        // the status box and the unit panel are draw_panel_frame(0, 58, 80, 39) (0x33fe) and
+        // (0, 97, 80, 103) (0x3ec4): stone texture from each panel's corner, 15/8 bevel
         fb.hline(0, 79, 8, theme::DARK_GREY);
-        fb.vline(79, 8, 199, theme::DARK_GREY);
-        fb.vline(0, 9, 199, theme::WHITE);
-        fb.hline(0, 78, 199, theme::WHITE);
+        fb.vline(79, 8, 57, theme::DARK_GREY);
+        fb.vline(0, 9, 57, theme::WHITE);
         fb.hline(0, 78, 57, theme::WHITE);
-        fb.hline(0, 79, 58, theme::DARK_GREY);
-        fb.hline(0, 78, 96, theme::WHITE);
-        fb.hline(0, 79, 97, theme::DARK_GREY);
+        crate::ui::widgets::panel_frame(fb, ctx, Rect::new(0, 58, 80, 39));
+        crate::ui::widgets::panel_frame(fb, ctx, Rect::new(0, 97, 80, 103));
         // palace strip (CIV.EXE 0x340f): cyan, with a white bar of two pixels per turn of
         // peace after 1 AD along its top, and the palace on a green ground line (0x3823)
         let strip = Rect::new(3, 60, 74, 11);
@@ -1011,7 +1024,7 @@ impl Screen for MapView {
         if ctx.quit_requested {
             ctx.quit_requested = false;
             self.pending = Pending::QuitConfirm;
-            return Transition::Push(Box::new(YesNo::new(vec!["Are you sure you".into(), "want to Quit?".into()], "Keep Playing", "Yes, Quit").with_pos(101, 81)));
+            return Transition::Push(Box::new(YesNo::new(vec!["Are you sure you".into(), "want to Quit?".into()], "Keep Playing", "Yes, Quit").with_pos(100, 80)));
         }
         // automatic end of turn when nothing is left to do and the option is off
         if self.mode == Mode::EndOfTurn && !ctx.game().options.end_turn_confirm {
@@ -1283,7 +1296,7 @@ impl Screen for MapView {
                     }
                     Key::Char('q') if mods.ctrl => {
                         self.pending = Pending::QuitConfirm;
-                        Transition::Push(Box::new(YesNo::new(vec!["Are you sure you".into(), "want to Quit?".into()], "Keep Playing", "Yes, Quit").with_pos(101, 81)))
+                        Transition::Push(Box::new(YesNo::new(vec!["Are you sure you".into(), "want to Quit?".into()], "Keep Playing", "Yes, Quit").with_pos(100, 80)))
                     }
                     Key::Esc => {
                         self.bar_menu(ctx, 0)

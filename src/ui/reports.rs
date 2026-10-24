@@ -349,22 +349,21 @@ impl RateDialog {
     pub fn new(ctx: &UiContext, lux: bool) -> RateDialog {
         let g = ctx.game();
         let p = g.human();
-        let max = g.max_rate(g.human_slot);
         let (fixed, cur, word) = if lux { (p.tax, p.lux, "Luxuries") } else { (p.lux, p.tax, "Tax") };
+        // o 0x6fd9 / 0x70bf: every split of the non-fixed share, none greyed, the current one
+        // preselected, popup_menu(text, 100, 80)
         let mut items = Vec::new();
-        let mut disabled = Vec::new();
         let mut rates = Vec::new();
         let mut r = 0u8;
         while r + fixed <= 100 {
             let sci = 100 - r - fixed;
             items.push(format!("{r}% {word}, ({sci}% Science)"));
-            disabled.push(r > max || sci > max);
             rates.push(r);
             r += 10;
         }
         let sel = rates.iter().position(|x| *x == cur).unwrap_or(0);
         let title = format!("Select new {word} rate:");
-        let menu = MenuDialog::new(vec![title], items).with_pos(101, 81).with_disabled(disabled).with_selection(sel);
+        let menu = MenuDialog::new(vec![title], items).with_pos(100, 80).with_selection(sel);
         RateDialog { menu, lux, rates }
     }
 }
@@ -413,7 +412,7 @@ pub struct OptionsDialog {
 
 impl OptionsDialog {
     pub fn new(ctx: &UiContext) -> OptionsDialog {
-        OptionsDialog { menu: MenuDialog::new(vec!["Options:".into()], option_items(ctx)).with_pos(24, 17) }
+        OptionsDialog { menu: MenuDialog::new(vec!["Options:".into()], option_items(ctx)).with_pos(24, 16) }
     }
 }
 

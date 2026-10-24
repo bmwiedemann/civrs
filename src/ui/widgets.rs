@@ -127,6 +127,64 @@ pub fn centred(w: i32, h: i32) -> Rect {
     Rect::new((320 - w) / 2, (200 - h) / 2, w, h)
 }
 
+/// `fill_texture(x, y, w, h)` (0x1d7f4): the stone texture, 32x16 tiles of SP299 from
+/// (288, 120), each restarting at the area's corner.
+pub fn fill_texture(fb: &mut Surface, ctx: &UiContext, r: Rect) {
+    let sheet = &ctx.pic("SP299").surf;
+    let mut ty = 0;
+    while ty < r.h {
+        let mut tx = 0;
+        while tx < r.w {
+            fb.blit_part(sheet, Rect::new(288, 120, (r.w - tx).min(32), (r.h - ty).min(16)), r.x + tx, r.y + ty, None);
+            tx += 32;
+        }
+        ty += 16;
+    }
+}
+
+/// `draw_bevel(x, y, w, h, a, b)` (0x1d29c): top and right lines in `b`, bottom and left in `a`.
+pub fn bevel(fb: &mut Surface, x: i32, y: i32, w: i32, h: i32, a: u8, b: u8) {
+    fb.hline(x, x + w, y, b);
+    fb.hline(x, x + w, y + h, a);
+    fb.vline(x + w, y, y + h, b);
+    fb.vline(x, y + 1, y + h, a);
+}
+
+/// `draw_panel_frame(x, y, w, h)` (0x3f32): stone texture with the 15/8 bevel.
+pub fn panel_frame(fb: &mut Surface, ctx: &UiContext, r: Rect) {
+    fill_texture(fb, ctx, r);
+    bevel(fb, r.x, r.y, r.w - 1, r.h - 1, 15, 8);
+}
+
+/// CIV.EXE menu texts switch the text colour inline: a byte 0x80 + n draws what follows in
+/// colour n (" No Orders \x8fspace" shows the hotkey in 15). The code itself takes no room.
+fn is_colour_code(c: char) -> bool {
+    ('\u{80}'..='\u{8f}').contains(&c)
+}
+
+/// Width of a menu line without its colour codes.
+fn coded_width(ctx: &UiContext, font: usize, s: &str) -> i32 {
+    let plain: String = s.chars().filter(|c| !is_colour_code(*c)).collect();
+    text_width(&ctx.fonts, font, &plain)
+}
+
+/// Draw a menu line, switching colour at each code.
+fn draw_coded(fb: &mut Surface, ctx: &UiContext, font: usize, x: i32, y: i32, s: &str, colour: u8) {
+    let mut colour = colour;
+    let mut x = x;
+    let mut run = String::new();
+    for c in s.chars() {
+        if is_colour_code(c) {
+            x = draw_text(fb, &ctx.fonts, &TextStyle::new(font, colour), x, y, &run);
+            run.clear();
+            colour = c as u32 as u8 - 0x80;
+        } else {
+            run.push(c);
+        }
+    }
+    draw_text(fb, &ctx.fonts, &TextStyle::new(font, colour), x, y, &run);
+}
+
 /// A pop-up menu: optional title lines, selectable items, keyboard and mouse driven.
 pub struct MenuDialog {
     pub title: Vec<String>,
@@ -237,19 +295,25 @@ impl MenuDialog {
     }
 
     fn layout(&mut self, ctx: &UiContext) {
-        if matches!(self.style, PanelStyle::Bare | PanelStyle::Framed) {
+        if self.is_popup() {
+            self.top_pad = 5;
             // menu_select o 0x1c8c3: the font's row count (0:0x7c3), 8 instead of 9
             let rows = ctx.fonts.get(self.font).line_height();
             self.line_h = if rows == 9 { 8 } else { rows };
         } else if self.font != FONT {
             self.line_h = ctx.fonts.get(self.font).line_height();
         }
-        let mut w = self.min_width;
-        for t in self.title.iter().chain(self.items.iter()) {
-            w = w.max(text_width(&ctx.fonts, self.font, t) + 20);
-        }
-        let rows = self.items.len() as i32 + self.gaps.len() as i32 + self.title.len() as i32;
-        let h = (self.top_pad + 4 + rows * self.line_h).max(self.min_height);
+        let (w, h) = if self.is_popup() {
+            let (_, w, h) = self.popup_size(ctx);
+            (w + 3, h + 3)
+        } else {
+            let mut w = self.min_width;
+            for t in self.title.iter().chain(self.items.iter()) {
+                w = w.max(text_width(&ctx.fonts, self.font, t) + 20);
+            }
+            let rows = self.items.len() as i32 + self.gaps.len() as i32 + self.title.len() as i32;
+            (w, (self.top_pad + 4 + rows * self.line_h).max(self.min_height))
+        };
         let (x, y) = match self.pos {
             Some(p) => p,
             None => (80 + (240 - w) / 2, 8 + (192 - h) / 2),
@@ -270,24 +334,52 @@ impl MenuDialog {
         })
     }
 
-    /// `PanelStyle::Bare` layout (see there).
-    fn draw_bare(&self, fb: &mut Surface, ctx: &UiContext, cols: &StyleColours) {
-        let (x, y) = (self.rect.x, self.rect.y);
+    /// Whether this menu is drawn as CIV.EXE's `popup_menu3` (menu_draw 0x1ccab).
+    fn is_popup(&self) -> bool {
+        matches!(self.style, PanelStyle::Grey | PanelStyle::Framed | PanelStyle::Bare)
+    }
+
+    /// A menu line as the menu text holds it: items keep their marker (' ', '_' drawn as a
+    /// diamond, '^' as a check mark), anything else gets the selectable blank in front.
+    fn item_line(it: &str) -> String {
+        if it.starts_with([' ', '_', '^']) {
+            it.to_string()
+        } else {
+            format!(" {it}")
+        }
+    }
+
+    /// Widest line (ds:0xd4c8) and the frame size (draw_frame's w, h).
+    fn popup_size(&self, ctx: &UiContext) -> (i32, i32, i32) {
         let font = self.font;
-        let mut bar_w = 0;
+        let mut widest = 0;
         for t in &self.title {
-            bar_w = bar_w.max(text_width(&ctx.fonts, font, t));
+            widest = widest.max(coded_width(ctx, font, t));
         }
         for it in &self.items {
-            bar_w = bar_w.max(text_width(&ctx.fonts, font, &format!(" {it}")));
+            widest = widest.max(coded_width(ctx, font, &Self::item_line(it)));
         }
-        let bg = if self.style == PanelStyle::Framed {
-            let (w, h) = (bar_w + 8, (self.title.len() + self.items.len()) as i32 * self.line_h + 6);
-            fb.fill_rect(Rect::new(x + 1, y + 1, w, h), 7);
-            fb.hline(x + 1, x + 1 + w, y + 1, 8);
-            fb.hline(x + 1, x + 1 + w, y + 1 + h, 15);
-            fb.vline(x + 1 + w, y + 1, y + 1 + h, 8);
-            fb.vline(x + 1, y + 2, y + 1 + h, 15);
+        let rows = (self.title.len() + self.items.len() + self.gaps.len()) as i32;
+        (widest, widest + 8, rows * self.line_h + 6)
+    }
+
+    /// `popup_menu3` as menu_draw/menu_select draw it (see `PanelStyle::Bare` and `Framed`): a
+    /// menu at an even y gets the frame, filled with colour 7 or, once a game runs
+    /// (ds:0x2f98), with the stone texture of SP299 (`fill_texture` 0x1d7f4: 32x16 tiles from
+    /// (288, 120), each restarting at the box corner).
+    fn draw_popup(&self, fb: &mut Surface, ctx: &UiContext, cols: &StyleColours) {
+        let (x, y) = (self.rect.x, self.rect.y);
+        let font = self.font;
+        let (widest, w, h) = self.popup_size(ctx);
+        let stone = ctx.game.is_some();
+        let framed = self.style != PanelStyle::Bare && y % 2 == 0;
+        let bg = if framed {
+            if stone {
+                fill_texture(fb, ctx, Rect::new(x + 1, y + 1, w, h));
+            } else {
+                fb.fill_rect(Rect::new(x + 1, y + 1, w, h), 7);
+            }
+            bevel(fb, x + 1, y + 1, w, h, 15, 8);
             fb.rect_outline(Rect::new(x, y, w + 3, h + 3), 0);
             7
         } else {
@@ -300,22 +392,26 @@ impl MenuDialog {
         for (i, t) in self.title.iter().enumerate() {
             let ty = y + 5 + i as i32 * self.line_h;
             if self.line_h > 9 {
-                draw_text(fb, &ctx.fonts, &TextStyle::new(font, 0), x + 5, ty + 1, &format!("{t} "));
+                draw_coded(fb, ctx, font, x + 5, ty + 1, &format!("{t} "), 0);
             }
-            draw_text(fb, &ctx.fonts, &TextStyle::new(font, title_colour), x + 5, ty, &format!("{t} "));
+            draw_coded(fb, ctx, font, x + 5, ty, &format!("{t} "), title_colour);
         }
         for (i, it) in self.items.iter().enumerate() {
             let colour = if self.disabled[i] { cols.disabled } else { cols.text };
-            draw_text(fb, &ctx.fonts, &TextStyle::new(font, colour), x + 5, self.row_y(i), &format!(" {it} "));
+            draw_coded(fb, ctx, font, x + 5, self.row_y(i), &format!("{} ", Self::item_line(it)), colour);
         }
         // the highlight recolours the row's background (o 0x1cab2), so text and the title's
-        // descenders keep their colours
+        // descenders keep their colours; on the stone also its second colour 0x16 -> 3
         if let Some(i) = Some(self.sel).filter(|&i| i < self.items.len() && !self.disabled[i]) {
-            let r = Rect::new(x + 3, self.row_y(i) - 1, bar_w + BARE_BAR_EXTRA, self.line_h);
+            let r = Rect::new(x + 3, self.row_y(i) - 1, widest + BARE_BAR_EXTRA, self.line_h);
+            let second = if framed && stone { Some(0x16) } else { None };
             for py in r.y..r.bottom() {
                 for px in r.x..r.right() {
-                    if fb.get(px, py) == bg {
+                    let v = fb.get(px, py);
+                    if v == bg {
                         fb.put(px, py, cols.hilite_bar);
+                    } else if Some(v) == second {
+                        fb.put(px, py, 3);
                     }
                 }
             }
@@ -325,6 +421,12 @@ impl MenuDialog {
     fn move_sel(&mut self, delta: i32) {
         let n = self.items.len() as i32;
         if n == 0 {
+            return;
+        }
+        // menu_select (o 0x1cb9e, 0x1ca41): Up/Down stop at the ends and may rest on a greyed
+        // item, which Enter then ignores
+        if self.is_popup() {
+            self.sel = (self.sel as i32 + delta).clamp(0, n - 1) as usize;
             return;
         }
         let mut s = self.sel as i32;
@@ -341,7 +443,7 @@ impl MenuDialog {
 impl Screen for MenuDialog {
     fn on_enter(&mut self, ctx: &mut UiContext) {
         self.layout(ctx);
-        if self.disabled.get(self.sel).copied().unwrap_or(false) {
+        if !self.is_popup() && self.disabled.get(self.sel).copied().unwrap_or(false) {
             self.move_sel(1);
         }
     }
@@ -403,11 +505,13 @@ impl Screen for MenuDialog {
     }
 
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
-        let cols = draw_styled_panel(fb, ctx, self.rect, self.style);
-        if matches!(self.style, PanelStyle::Bare | PanelStyle::Framed) {
-            self.draw_bare(fb, ctx, &cols);
+        if self.is_popup() {
+            // the menu's own EGA colours; the title colour depends on the background
+            let cols = StyleColours { text: 0, title: 15, hilite_bar: 11, hilite_text: 0, disabled: 3 };
+            self.draw_popup(fb, ctx, &cols);
             return;
         }
+        let cols = draw_styled_panel(fb, ctx, self.rect, self.style);
         let mut y = self.rect.y + self.top_pad;
         let title_colour = self.title_colour.unwrap_or(cols.title);
         for t in &self.title {
