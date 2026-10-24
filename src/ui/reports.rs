@@ -443,9 +443,10 @@ fn option_flags(ctx: &UiContext) -> [bool; 8] {
     [o.instant_advice, o.autosave, o.end_turn_confirm, o.animations, o.sound, o.enemy_moves, o.civilopedia_text, o.palace]
 }
 
-fn option_items(ctx: &UiContext) -> Vec<String> {
+/// The option lines (" Instant Advice", ...) and which are checked (ds:0xd7f2 = ds:0x19c0).
+fn option_items(ctx: &UiContext) -> (Vec<String>, Vec<bool>) {
     let f = option_flags(ctx);
-    OPTION_NAMES.iter().enumerate().map(|(i, n)| format!("{}{n}", if f[i] { GLYPH_CHECK } else { ' ' })).collect()
+    (OPTION_NAMES.iter().map(|n| format!(" {n}")).collect(), f.to_vec())
 }
 
 /// "Options:" check list over the GAME menu; a choice toggles the option and keeps the box open.
@@ -455,7 +456,10 @@ pub struct OptionsDialog {
 
 impl OptionsDialog {
     pub fn new(ctx: &UiContext) -> OptionsDialog {
-        OptionsDialog { menu: MenuDialog::new(vec!["Options:".into()], option_items(ctx)).with_pos(24, 16) }
+        let (items, checked) = option_items(ctx);
+        let mut menu = MenuDialog::new(vec!["Options:".into()], items).with_pos(24, 16);
+        menu.checked = checked;
+        OptionsDialog { menu }
     }
 }
 
@@ -477,7 +481,7 @@ impl Screen for OptionsDialog {
                     6 => o.civilopedia_text = !o.civilopedia_text,
                     _ => o.palace = !o.palace,
                 }
-                self.menu.items = option_items(ctx);
+                self.menu.checked = option_items(ctx).1;
                 Transition::None
             }
             Transition::Pop(_) => Transition::Pop(DialogResult::Done),

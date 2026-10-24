@@ -308,6 +308,7 @@ fn draw_coded(fb: &mut Surface, ctx: &UiContext, font: usize, x: i32, y: i32, s:
 }
 
 /// A pop-up menu: optional title lines, selectable items, keyboard and mouse driven.
+#[derive(Clone)]
 pub struct MenuDialog {
     pub title: Vec<String>,
     pub items: Vec<String>,
@@ -331,6 +332,9 @@ pub struct MenuDialog {
     hover: Option<usize>,
     /// ds:0x2fa0: "(HELP AVAILABLE)" under the lines (Civilopedia help on the items).
     help: bool,
+    /// ds:0xd7f2: items whose leading blank menu_draw turns into a check mark as it draws
+    /// them, after measuring (o 0x1d16f), so the box is as wide as without the marks.
+    pub checked: Vec<bool>,
 }
 
 impl MenuDialog {
@@ -355,6 +359,7 @@ impl MenuDialog {
             line_h: LINE_H,
             hover: None,
             help: false,
+            checked: Vec::new(),
         }
     }
 
@@ -369,8 +374,13 @@ impl MenuDialog {
     /// (the advisors' notes under the production menu).
     /// menu_draw alone highlights nothing (the bar is menu_select's).
     pub fn paint(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
+        self.paint_with(fb, ctx, None);
+    }
+
+    /// The menu as it was left on the screen, with row `sel` highlighted.
+    pub fn paint_with(&mut self, fb: &mut Surface, ctx: &mut UiContext, sel: Option<usize>) {
         self.layout(ctx);
-        self.sel = usize::MAX;
+        self.sel = sel.unwrap_or(usize::MAX);
         self.draw(fb, ctx);
     }
 
@@ -539,7 +549,11 @@ impl MenuDialog {
         }
         for (i, it) in self.items.iter().enumerate() {
             let colour = if self.disabled[i] { cols.disabled } else { cols.text };
-            draw_coded(fb, ctx, font, x + 5, self.row_y(i), &format!("{} ", Self::item_line(it)), colour);
+            let mut line = Self::item_line(it);
+            if self.checked.get(i) == Some(&true) {
+                line.replace_range(..1, "^");
+            }
+            draw_coded(fb, ctx, font, x + 5, self.row_y(i), &format!("{line} "), colour);
         }
         if self.help {
             draw_text(fb, &ctx.fonts, &TextStyle::new(1, 10), x + w - 74, y + h - 4, "(HELP AVAILABLE)");

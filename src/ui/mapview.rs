@@ -102,6 +102,10 @@ pub struct MapView {
     blink: bool,
     last_centered: Option<UnitId>,
     bar_menu_open: Option<usize>,
+    /// The last pull-down menu, and the one left on the screen behind the Options list
+    /// (game_menu_game 0x1c161 runs it without restoring the screen), with its chosen row.
+    last_pulldown: Option<MenuDialog>,
+    menu_behind: Option<(MenuDialog, usize)>,
     /// What each line of the open pull-down menu does.
     bar_actions: Vec<BarAction>,
     pub status_line: String,
@@ -136,6 +140,8 @@ impl MapView {
             blink: true,
             last_centered: None,
             bar_menu_open: None,
+            last_pulldown: None,
+            menu_behind: None,
             bar_actions: Vec::new(),
             status_line: String::new(),
             first_turn_hint: false,
@@ -535,14 +541,19 @@ impl MapView {
         self.bar_actions = actions;
         self.pending = Pending::BarMenu(i);
         self.bar_menu_open = Some(i);
-        Transition::Push(Box::new(MenuDialog::new(vec![], items).with_pos(x, 8).with_disabled(disabled)))
+        let menu = MenuDialog::new(vec![], items).with_pos(x, 8).with_disabled(disabled);
+        self.last_pulldown = Some(menu.clone());
+        Transition::Push(Box::new(menu))
     }
 
     fn bar_menu_choice(&mut self, ctx: &mut UiContext, _menu: usize, choice: usize) -> Transition {
         match self.bar_actions.get(choice).copied().unwrap_or(BarAction::Nothing) {
             BarAction::Rate(lux) => Transition::Push(crate::ui::reports::rate_dialog(ctx, lux)),
             BarAction::FindCity => Transition::Push(crate::ui::reports::find_city_dialog(ctx)),
-            BarAction::Options => Transition::Push(crate::ui::reports::options_dialog(ctx)),
+            BarAction::Options => {
+                self.menu_behind = self.last_pulldown.take().map(|m| (m, choice));
+                Transition::Push(crate::ui::reports::options_dialog(ctx))
+            }
             BarAction::Save => Transition::Push(crate::ui::reports::save_dialog(ctx)),
             BarAction::Revolution => {
                 self.pending = Pending::RevolutionConfirm;
@@ -1088,6 +1099,7 @@ impl Screen for MapView {
     fn resume(&mut self, result: DialogResult, ctx: &mut UiContext) -> Transition {
         let pending = std::mem::replace(&mut self.pending, Pending::None);
         self.bar_menu_open = None;
+        self.menu_behind = None;
         match pending {
             Pending::Decision => {
                 if let (Some(d), Some(runner)) = (self.current_decision.take(), self.runner.as_mut()) {
@@ -1453,6 +1465,9 @@ impl Screen for MapView {
         self.draw_minimap(fb, ctx);
         self.draw_sidebar(fb, ctx);
         self.draw_menubar(fb, ctx);
+        if let Some((m, sel)) = self.menu_behind.as_mut() {
+            m.paint_with(fb, ctx, Some(*sel));
+        }
     }
 
     fn palette(&self, ctx: &UiContext) -> crate::assets::Palette {
