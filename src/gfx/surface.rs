@@ -128,25 +128,34 @@ impl Surface {
         self.fill_rect(Rect::new(x, a, 1, b - a + 1), c);
     }
 
+    /// A line as the graphics driver draws it (entry 42): the major axis steps every pixel,
+    /// the minor one when an error that starts at half the major length drops below zero, so a
+    /// half-way point rounds toward the start (checked against the Chieftain screen-layout
+    /// tutorial capture).
     pub fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, c: u8) {
-        let dx = (x1 - x0).abs();
-        let dy = -(y1 - y0).abs();
-        let sx = if x0 < x1 { 1 } else { -1 };
-        let sy = if y0 < y1 { 1 } else { -1 };
-        let mut err = dx + dy;
+        let (dx, dy) = ((x1 - x0).abs(), (y1 - y0).abs());
+        let (sx, sy) = ((x1 - x0).signum(), (y1 - y0).signum());
         let (mut x, mut y) = (x0, y0);
-        loop {
-            self.put(x, y, c);
-            if x == x1 && y == y1 {
-                break;
-            }
-            let e2 = 2 * err;
-            if e2 >= dy {
-                err += dy;
+        if dx >= dy {
+            let mut err = dx / 2;
+            for _ in 0..=dx {
+                self.put(x, y, c);
+                err -= dy;
+                if err < 0 {
+                    err += dx;
+                    y += sy;
+                }
                 x += sx;
             }
-            if e2 <= dx {
-                err += dx;
+        } else {
+            let mut err = dy / 2;
+            for _ in 0..=dy {
+                self.put(x, y, c);
+                err -= dx;
+                if err < 0 {
+                    err += dy;
+                    x += sx;
+                }
                 y += sy;
             }
         }

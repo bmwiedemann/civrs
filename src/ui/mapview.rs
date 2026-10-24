@@ -102,6 +102,8 @@ pub struct MapView {
     pub status_line: String,
     /// Show the FIRSTMOVE hint when the view first appears.
     pub first_turn_hint: bool,
+    /// The Chieftain screen-layout tutorial has been shown (once, before FIRSTMOVE).
+    tutorial_shown: bool,
     auto_end: u32,
     /// Events taken from the game but not yet shown (one dialog at a time).
     queued: std::collections::VecDeque<crate::game::GameEvent>,
@@ -132,6 +134,7 @@ impl MapView {
             bar_actions: Vec::new(),
             status_line: String::new(),
             first_turn_hint: false,
+            tutorial_shown: false,
             auto_end: 0,
             queued: Default::default(),
             hint_checked: None,
@@ -1011,6 +1014,15 @@ impl Screen for MapView {
         if let Some((x, y)) = ctx.center_request.take() {
             self.center_on(x, y);
         }
+        // turn 0 on Chieftain: the screen-layout tutorial first (game_turn 0x2470 -> overlay 2
+        // +0x17d9), then the FIRSTMOVE note
+        if self.first_turn_hint && !self.tutorial_shown {
+            self.tutorial_shown = true;
+            let g = ctx.game();
+            if g.turn == 0 && g.setup.difficulty == crate::rules::Difficulty::Chieftain {
+                return Transition::Push(Box::new(LayoutTutorial::new(ctx, (Map::wrap_x(self.vx + 7), self.vy + 6))));
+            }
+        }
         if self.first_turn_hint {
             self.first_turn_hint = false;
             // the start tile gets no BUILDCITY note on top of this one
@@ -1528,5 +1540,59 @@ fn draw_mini_palace(fb: &mut Surface, ctx: &UiContext, palace: &crate::game::pal
         let idx = (level as i32 - 1).clamp(0, 3) * 5 + piece;
         let src = Rect::new(160 + 7 * idx, 16 * palace.style[s] as i32, 7, 15);
         fb.blit_part(&ctx.sp.surf, src, x + 7 * s as i32, y - 1, Some(0));
+    }
+}
+
+/// `screen_layout_tutorial` (overlay 2 +0x17d9, 0x234e): over the first map of a Chieftain game,
+/// each of the eight squares around the view centre gets a label with its terrain, resource or
+/// "Village": a line in 15 from (200 + 16 dx, 112 + 16 dy) to a framed popup at (170 + 64 dx,
+/// 100 + 48 dy) (`tutorial_label` 0x24cf, line to the label's y + 6); then "Menu Bar",
+/// "Map Window" and "Active Unit" the same way. Any key or click ends it.
+struct LayoutTutorial {
+    labels: Vec<((i32, i32, i32, i32), String)>,
+}
+
+impl LayoutTutorial {
+    fn new(ctx: &UiContext, centre: (i32, i32)) -> LayoutTutorial {
+        let g = ctx.game();
+        let mut labels = Vec::new();
+        for d in crate::game::Dir8::ALL {
+            let (dx, dy) = d.delta();
+            let (x, y) = (Map::wrap_x(centre.0 + dx), centre.1 + dy);
+            let Some(t) = g.map.get(x, y) else { continue };
+            let info = t.terrain.info();
+            let text = if t.has(tile_flags::HUT) {
+                "Village".to_string()
+            } else if t.special {
+                info.special.map(|s| s.name).unwrap_or(info.name).to_string()
+            } else {
+                info.name.to_string()
+            };
+            labels.push(((200 + 16 * dx, 112 + 16 * dy, 170 + 64 * dx, 100 + 48 * dy), text));
+        }
+        labels.push(((160, 6, 200, 16), "Menu Bar".into()));
+        labels.push(((48, 32, 88, 24), "Map Window".into()));
+        labels.push(((40, 128, 88, 170), "Active Unit".into()));
+        LayoutTutorial { labels }
+    }
+}
+
+impl Screen for LayoutTutorial {
+    fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
+        match ev {
+            Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } => Transition::Pop(DialogResult::Done),
+            _ => Transition::None,
+        }
+    }
+    fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
+        for ((x1, y1, x2, y2), text) in &self.labels {
+            fb.line(*x1, *y1, *x2, *y2 + 6, 15);
+            let mut m = MenuDialog::new(vec![text.clone()], vec![]).with_pos(*x2, *y2);
+            m.on_enter(ctx);
+            m.draw(fb, ctx);
+        }
+    }
+    fn wants_cursor(&self) -> bool {
+        false
     }
 }
