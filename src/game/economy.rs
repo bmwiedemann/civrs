@@ -949,13 +949,14 @@ impl Game {
         rules::GOVERNMENTS[self.player(slot).govt as usize].max_rate
     }
 
-    /// Set tax and luxury rates (science is the remainder); all three must be multiples of 10
-    /// within the government's maximum. Anarchy forces 0/100/0.
+    /// Set tax and luxury rates (science is the remainder), multiples of 10. The human's rate
+    /// dialogs (o 0x6fd9 / 0x70bf) list every split and store the choice: CIV.EXE applies the
+    /// government's maximum only to the computer's own rates (0xa5e2), and the city split
+    /// (0xf237) clamps nothing but the trade. Anarchy forces 0/100/0.
     pub fn set_rates(&mut self, slot: Slot, tax: u8, lux: u8) -> Result<(), RuleError> {
         if tax % 10 != 0 || lux % 10 != 0 || tax as u32 + lux as u32 > 100 {
             return Err(RuleError::Other("Rates must be multiples of 10% adding up to 100%."));
         }
-        let sci = 100 - tax - lux;
         if self.player(slot).govt == Govt::Anarchy {
             return if tax == 0 && lux == 100 {
                 let p = self.player_mut(slot);
@@ -965,10 +966,6 @@ impl Game {
             } else {
                 Err(RuleError::Other("Under Anarchy all trade goes to luxuries."))
             };
-        }
-        let max = self.max_rate(slot);
-        if tax > max || lux > max || sci > max {
-            return Err(RuleError::Other("Rate exceeds the maximum for this government."));
         }
         let p = self.player_mut(slot);
         p.tax = tax;
@@ -1122,8 +1119,9 @@ mod tests {
         let (mut g, _c) = fixture();
         let slot = g.human_slot;
         assert!(g.set_rates(slot, 60, 0).is_ok());
-        assert!(g.set_rates(slot, 70, 0).is_err(), "despotism max 60");
-        assert!(g.set_rates(slot, 0, 0).is_err(), "science would be 100");
+        // no government maximum for the human's choice (o 0x6fd9)
+        assert!(g.set_rates(slot, 100, 0).is_ok());
+        assert!(g.set_rates(slot, 0, 0).is_ok());
         assert!(g.set_rates(slot, 55, 0).is_err());
         g.player_mut(slot).govt = Govt::Anarchy;
         assert!(g.set_rates(slot, 50, 0).is_err());
