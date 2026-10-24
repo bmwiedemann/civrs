@@ -63,6 +63,8 @@ enum Step {
     Drive,
     Slots,
     NoDisk,
+    /// write_save (o 0xf264) shows its box, then writes slot n.
+    Writing(usize),
     Result,
 }
 
@@ -103,12 +105,7 @@ impl SlotPage {
         let path = crate::save::slot_path(&ctx.save_dir, i as u8);
         if self.saving() {
             ctx.last_slot = Some(i);
-            let (lines, failed) = match crate::save::save_game(&path, ctx.game()) {
-                Ok(()) => (vec![" Game has been saved.".to_string(), " Press key to continue.".to_string()], false),
-                Err(e) => (vec![" Game NOT saved.".to_string(), format!(" {e}"), " Press key to continue.".to_string()], true),
-            };
-            self.result = Some((lines, failed));
-            self.step = Step::Result;
+            self.step = Step::Writing(i);
             return Transition::None;
         }
         // an empty slot ends the load like Esc (o 0xee1b)
@@ -130,6 +127,24 @@ impl SlotPage {
     }
 }
 
+impl SlotPage {
+    /// write_save's box (o 0xf264), drawn without input (ds:0xdb38) at (64, 86) and left on
+    /// the page: " <drive>:CIVILn.SVE" (the drive letter in lower case, o 0xf541), then
+    /// " <difficulty title> <leader>", " <tribe>/<year>" and " ... save in progress.".
+    fn draw_writing(&self, fb: &mut Surface, ctx: &mut UiContext) {
+        let Some(n) = ctx.last_slot else { return };
+        let Some(g) = ctx.game.as_ref() else { return };
+        let h = g.human();
+        let title = format!(" {}:CIVIL{n}.SVE", self.drive.to_ascii_lowercase());
+        let items = vec![
+            format!(" {} {}", crate::rules::DIFFICULTY[g.setup.difficulty as usize].short, h.leader),
+            format!(" {}/{}", h.plural(), crate::rules::year_text(g.year())),
+            " ... save in progress.".to_string(),
+        ];
+        MenuDialog::new(vec![title], items).with_pos(64, 86).with_font(FONT).paint(fb, ctx);
+    }
+}
+
 impl Screen for SlotPage {
     fn on_enter(&mut self, ctx: &mut UiContext) {
         self.slots = crate::save::list_slots(&ctx.save_dir);
@@ -140,8 +155,18 @@ impl Screen for SlotPage {
         self.border = (ctx.frame.wrapping_mul(0x9e37_79b9) >> 13) as u8 & 1;
     }
 
-    fn update(&mut self, _ctx: &mut UiContext) -> Transition {
+    fn update(&mut self, ctx: &mut UiContext) -> Transition {
         self.started = true;
+        // the box has been on the screen for a frame: write the file
+        if let Step::Writing(i) = self.step {
+            let path = crate::save::slot_path(&ctx.save_dir, i as u8);
+            let (lines, failed) = match crate::save::save_game(&path, ctx.game()) {
+                Ok(()) => (vec![" Game has been saved.".to_string(), " Press key to continue.".to_string()], false),
+                Err(e) => (vec![" Game NOT saved.".to_string(), format!(" {e}"), " Press key to continue.".to_string()], true),
+            };
+            self.result = Some((lines, failed));
+            self.step = Step::Result;
+        }
         Transition::None
     }
 
@@ -171,7 +196,7 @@ impl Screen for SlotPage {
                 _ => {}
             },
             Step::Result => return Transition::Pop(DialogResult::Done),
-            Step::Slots | Step::NoDisk => {}
+            Step::Slots | Step::NoDisk | Step::Writing(_) => {}
         }
         Transition::None
     }
@@ -195,7 +220,8 @@ impl Screen for SlotPage {
                     draw_text(fb, &ctx.fonts, &TextStyle::new(FONT, INK), 80, 72 + i as i32 * pitch, l);
                 }
             }
-            Step::Result => {
+            Step::Writing(_) | Step::Result => {
+                self.draw_writing(fb, ctx);
                 if let Some((lines, failed)) = &self.result {
                     if *failed {
                         fb.fill_rect(ERROR_BOX, 12);

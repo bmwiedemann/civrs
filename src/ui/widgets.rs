@@ -367,8 +367,10 @@ impl MenuDialog {
 
     /// Draw the menu once without taking input, as `popup_menu3` does with ds:0xdb38 set
     /// (the advisors' notes under the production menu).
+    /// menu_draw alone highlights nothing (the bar is menu_select's).
     pub fn paint(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
         self.layout(ctx);
+        self.sel = usize::MAX;
         self.draw(fb, ctx);
     }
 
