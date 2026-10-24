@@ -56,6 +56,8 @@ pub struct UiContext {
     pub mouse_down: bool,
     /// Pointer position a screen asks for (applied by the app once per frame).
     pub warp_mouse: Option<(i32, i32)>,
+    /// Save slot last loaded or saved (ds:0xe168), preselected by the save menu.
+    pub last_slot: Option<usize>,
     pic_cache: RefCell<HashMap<String, Rc<Picture>>>,
     /// Game state, once a game is running.
     pub game: Option<crate::game::Game>,
@@ -92,6 +94,7 @@ impl UiContext {
             mouse: (160, 100),
             mouse_down: false,
             warp_mouse: None,
+            last_slot: None,
             pic_cache: RefCell::new(cache),
             game: None,
             ai: crate::ai::Ai::new(1),

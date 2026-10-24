@@ -323,17 +323,17 @@ pub fn options_dialog(ctx: &UiContext) -> Box<dyn Screen> {
     Box::new(OptionsDialog::new(ctx))
 }
 
-pub fn save_dialog(ctx: &UiContext) -> Box<dyn Screen> {
-    Box::new(crate::ui::loadgame::SlotPage::new(ctx, crate::ui::loadgame::SlotMode::Save))
+pub fn save_dialog(_ctx: &UiContext) -> Box<dyn Screen> {
+    Box::new(crate::ui::loadgame::SlotPage::new(crate::ui::loadgame::SlotMode::Save))
 }
 
-pub fn load_dialog(ctx: &UiContext) -> Box<dyn Screen> {
-    Box::new(crate::ui::loadgame::SlotPage::new(ctx, crate::ui::loadgame::SlotMode::LoadInGame))
+pub fn load_dialog(_ctx: &UiContext) -> Box<dyn Screen> {
+    Box::new(crate::ui::loadgame::SlotPage::new(crate::ui::loadgame::SlotMode::LoadInGame))
 }
 
-/// Load-game chooser used from the title screen (cream page without the border).
+/// Load-game screens of the title menu.
 pub fn load_game_screen() -> Box<dyn Screen> {
-    Box::new(crate::ui::loadgame::LoadGame::new())
+    Box::new(crate::ui::loadgame::SlotPage::new(crate::ui::loadgame::SlotMode::LoadTitle))
 }
 
 // ---- tax / luxuries rate ----------------------------------------------------------------------

@@ -269,7 +269,8 @@ impl MenuDialog {
         let (x, y) = (self.rect.x, self.rect.y);
         let font = self.font;
         let bg = fb.get(x, y);
-        let title_colour = if bg == 15 { 3 } else { cols.title };
+        // a colour code in front of the title ("\x8cSelect Load File...") overrides it
+        let title_colour = self.title_colour.unwrap_or(if bg == 15 { 3 } else { cols.title });
         let mut bar_w = 0;
         for t in &self.title {
             bar_w = bar_w.max(text_width(&ctx.fonts, font, t));
