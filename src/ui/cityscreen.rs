@@ -4,7 +4,6 @@
 //! the production box with CHANGE / BUY and the RENAME / EXIT buttons.
 
 use crate::game::{CityId, Production, RuleError, Specialist};
-use crate::gfx::text::wrap;
 use crate::gfx::{Rect, Surface};
 use crate::platform::{Event, Key, MouseButton};
 use crate::rules::{self, improvement_ids};
@@ -12,7 +11,7 @@ use crate::ui::city_draw::*;
 use crate::ui::context::UiContext;
 use crate::ui::screen::{DialogResult, Screen, Transition};
 use crate::ui::tilerender::{draw_city, draw_fog_edges, draw_terrain};
-use crate::ui::widgets::{draw_styled_panel, MenuDialog, MessageBox, PanelStyle, TextInput, YesNo};
+use crate::ui::widgets::{CityNamePrompt, MenuDialog, MessageBox, YesNo};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -46,7 +45,7 @@ pub struct CityScreen {
     tab: Tab,
     pending: Pending,
     /// Advisor speech texts shown under the "What shall we build" menu.
-    advisors: Option<(String, String)>,
+    advisors: Option<(AdvisorNote, AdvisorNote)>,
     /// Action performed on the first frame (headless renders of the sub-views / dialogs).
     start: Option<String>,
     /// First improvement slot of the listed page (MORE flips between 0 and the overflow).
@@ -82,11 +81,12 @@ const P_FOOD: Rect = Rect::new(2, 106, 91, 92);
 /// (size+1) icons wide and ten rows high (a size-1 city: (3,115)-(19,196)).
 const FOOD_AREA: Rect = Rect::new(3, 114, 90, 84);
 const FOOD_ROWS: i32 = 10;
-const P_TABS: Rect = Rect::new(95, 105, 133, 93);
-const TAB_RECTS: [Rect; 4] = [Rect::new(95, 106, 33, 8), Rect::new(129, 106, 31, 8), Rect::new(161, 106, 32, 8), Rect::new(194, 106, 32, 8)];
+const P_TABS: Rect = Rect::new(95, 106, 133, 92);
+/// Buttons as draw_button's inclusive (x1, y1)..(x2, y2) (CIV.EXE 0x10737 ff.).
+const TAB_RECTS: [Rect; 4] = [Rect::new(95, 106, 34, 9), Rect::new(129, 106, 32, 9), Rect::new(161, 106, 33, 9), Rect::new(194, 106, 33, 9)];
 const TAB_LABELS: [&str; 4] = ["INFO", "HAPPY", "MAP", "VIEW"];
-const B_CHANGE: Rect = Rect::new(231, 106, 32, 8);
-const B_BUY: Rect = Rect::new(294, 106, 18, 8);
+const B_CHANGE: Rect = Rect::new(231, 106, 33, 9);
+const B_BUY: Rect = Rect::new(294, 106, 18, 9);
 const ITEM_FRAME: (i32, i32) = (264, 100);
 const B_RENAME: Rect = Rect::new(231, 190, 42, 9);
 const B_EXIT: Rect = Rect::new(284, 190, 33, 9);
@@ -94,33 +94,35 @@ const MAP_ORIGIN: (i32, i32) = (128, 24);
 const CITIZEN_X: i32 = 10;
 const CITIZEN_Y: i32 = 8;
 const MINIMAP: Rect = Rect::new(101, 116, 120, 76);
-const B_MORE: Rect = Rect::new(287, 88, 28, 8);
+const B_MORE: Rect = Rect::new(287, 88, 29, 9);
 /// Rows of the improvement list (from y 2, 6 px apart; CIV.EXE 0x103ad).
 const IMP_ROWS: usize = 14;
 
-/// Shield-stock rows (one per 10 shields of cost), their pitch and the production panel.
-fn stock_layout(cost: i32) -> (i32, i32, Rect) {
-    let rows = (cost / 10).max(1);
-    let pitch = (72 / rows).clamp(1, 8);
-    let bottom = 115 + rows * pitch + 1;
-    (rows, pitch, Rect::new(230, 98, 88, bottom - 98 + 1))
+/// Production box (CIV.EXE 0x10660..0x10866) for a table cost `cost` (in tens) and `store`
+/// shields: squeeze k = clamp((cost - 1) / 10 + 1, (store - 1) / 100 + 1, 99), rows of
+/// factor * k shields at 8 / k px (80 / factor for computer owners) from (232, 117), 8 px
+/// apart; inner size w = 80 + (8k - 8) / k, h = (cost - 1) / k * 8 + 8. Returns (k, step, box)
+/// with the colour 1 box at (230, 99, w + 3, h + 19).
+fn stock_layout(cost: i32, store: i32, factor: i32) -> (i32, i32, Rect) {
+    let k = ((cost - 1) / 10 + 1).max((store - 1) / 100 + 1).min(99);
+    let step = 80 / factor;
+    let w = factor * step + (8 * k - 8) / k;
+    let h = (cost - 1) / k * 8 + 8;
+    (k, step, Rect::new(230, 99, w + 3, h + 19))
 }
 
-/// Advisor text for an item from PRODUCE.TXT (shared sections fall through to the next
-/// non-empty one), with `$RPLC1` replaced and the `^` line breaks removed.
-fn produce_text(ctx: &UiContext, name: &str) -> Option<String> {
-    let names: Vec<String> = ctx.texts.produce.names().map(|s| s.to_string()).collect();
-    let start = names.iter().position(|n| n.eq_ignore_ascii_case(name))?;
-    for n in &names[start..] {
-        if let Some(lines) = ctx.texts.produce.section(n) {
-            if !lines.is_empty() {
-                let text = lines.join(" ").replace("$RPLC1", name).to_ascii_uppercase();
-                let text = text.split('^').map(|l| l.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n");
-                return Some(text);
-            }
-        }
+/// Lines of an advisor's note (none without a recommendation).
+type AdvisorNote = Option<Vec<String>>;
+
+/// An advisor's note under the production menu (0xb8b4): the heading, the item's PRODUCE.TXT
+/// entry with `$RPLC1` = its name, wrapped at 50 characters (wrap_text 0x1ecb6).
+fn advisor_lines(ctx: &UiContext, head: &str, name: &str) -> Vec<String> {
+    let mut text = format!("{head}\n");
+    if let Some(t) = ctx.texts.produce.entry_text(name) {
+        text += &t.replace("$RPLC1", name);
     }
-    None
+    let text = crate::assets::text::wrap_text(&text, 50);
+    text.strip_suffix('\n').unwrap_or(&text).split('\n').map(str::to_string).collect()
 }
 
 fn error_box(ctx: &UiContext, e: &RuleError) -> Option<Box<dyn Screen>> {
@@ -245,7 +247,7 @@ impl CityScreen {
         let g = ctx.game();
         let c = g.city(self.city);
         let y = g.city_yield(self.city);
-        let surplus = y.shield_surplus().max(1);
+        let surplus = y.shield_surplus().clamp(1, 99);
         let all = g.available_production(self.city);
         let page = match page {
             ChangePage::All if 1 + all.len() > 30 => ChangePage::Units,
@@ -277,33 +279,32 @@ impl CityScreen {
                 if *p == c.production {
                     sel = i;
                 }
-                let remaining = (g.production_cost(self.city, *p) - if *p == c.production { c.shields } else { 0 }).max(0);
-                let turns = ((remaining + surplus - 1) / surplus).max(1);
+                // append_turns_to_build (0xbab3): the store counts against every item
+                let turns = ((p.cost() - c.shields - 1) / surplus + 1).clamp(1, 999);
+                let turns = format!("{turns} turn{}", if turns == 1 { "" } else { "s" });
                 match p {
                     Production::Unit(k) => {
                         let u = &rules::UNITS[*k as usize];
-                        format!("{} ({} turns, ADM:{}/{}/{})", p.name(), turns, u.att, u.def, u.moves)
+                        format!("{} ({}, ADM:{}/{}/{})", p.name(), turns, u.att, u.def, u.moves)
                     }
-                    _ => format!("{} ({} turns)", p.name(), turns),
+                    _ => format!("{} ({})", p.name(), turns),
                 }
             })
             .collect();
-        // advisors: the best defender and the first useful improvement
-        let defender = g.best_defender_type(self.city);
-        let military = produce_text(ctx, defender.name()).unwrap_or_else(|| format!("WE SHOULD BUILD {}.", defender.name().to_ascii_uppercase()));
-        let domestic = all
-            .iter()
-            .find_map(|p| match p {
-                Production::Improvement(i) if *i != improvement_ids::PALACE => produce_text(ctx, p.name()),
-                _ => None,
-            })
-            .unwrap_or_else(|| "OUR CITIES ARE WELL PROVIDED FOR.".to_string());
+        // with Instant Advice the advisors name the best unit ([bp-0xc]) and the best
+        // improvement ([bp-0x48]) of the valuation (0xb8b4..0xb9ed)
+        let advice = if ctx.game().options.instant_advice { ctx.game_mut().build_advice(self.city).ok() } else { None };
+        let g = ctx.game();
+        let c = g.city(self.city);
+        let military = advice.as_ref().and_then(|a| a.unit).map(|(p, _)| advisor_lines(ctx, "Military Advisor:", p.name()));
+        let domestic = advice.as_ref().and_then(|a| a.improvement).map(|(p, _)| advisor_lines(ctx, "Domestic Advisor:", p.name()));
         self.advisors = Some((military, domestic));
         let title = format!("What shall we build in {}?", c.name);
         // the small font (CIV.EXE's font 2) from 21 lines on and on either page (0xb9fe)
         let small = 1 + all.len() > 20 || page != ChangePage::All;
         self.pending = Pending::Change(list, next);
-        let menu = MenuDialog::new(vec![title], items).with_pos(81, 9).with_selection(sel).with_title_colour(crate::ui::theme::WHITE);
+        // popup_menu3 at (80, 8) with Civilopedia help (ds:0x2fa0, 0xba14)
+        let menu = MenuDialog::new(vec![title], items).with_pos(80, 8).with_selection(sel).with_help();
         Transition::Push(Box::new(if small { menu.with_font(1) } else { menu }))
     }
 
@@ -315,23 +316,33 @@ impl CityScreen {
             return self.error(ctx, &RuleError::Other("Production is already complete."));
         }
         let gold = g.player(c.owner).gold;
-        let lines = vec!["Cost to complete".to_string(), format!("{}: {}$", c.production.name(), cost), format!("Treasury: {}$", gold)];
-        self.pending = Pending::Buy;
-        // the question is printed in white (15_city_buy.png)
-        Transition::Push(Box::new(YesNo::new(lines, "Yes", "No").with_pos(100, 80).with_title_colour(crate::ui::theme::WHITE)))
+        // 0x115e5: "Yes/No" only when the treasury covers it; a unit in disorder cannot be
+        // bought ("CIVIL DISORDER"); popup at (100, 80)
+        let mut lines = vec!["Cost to complete".to_string(), format!("{}: ${}", c.production.name(), cost), format!("Treasury: ${}", gold)];
+        let unit = matches!(c.production, Production::Unit(_));
+        if unit && c.disorder {
+            lines.push("CIVIL DISORDER".into());
+        } else if gold >= cost {
+            self.pending = Pending::Buy;
+            return Transition::Push(Box::new(YesNo::new(lines, "Yes", "No").with_pos(100, 80)));
+        }
+        self.pending = Pending::Ignore;
+        Transition::Push(Box::new(MenuDialog::new(lines, Vec::new()).with_pos(100, 80)))
     }
 
     fn sell(&mut self, id: u8) -> Transition {
         let name = rules::IMPROVEMENTS[id as usize].name;
-        let price = rules::IMPROVEMENTS[id as usize].cost as i32 * 10;
+        let price = crate::game::economy::sell_price(id);
         self.pending = Pending::Sell(id);
-        Transition::Push(Box::new(YesNo::new(vec![format!("Sell {} for {}$?", name, price)], "Yes", "No").with_pos(100, 80)))
+        // 0x120ab: "No." first, "Yes." sells; popup at (128, 80)
+        let q = vec!["Do you want to sell".to_string(), format!("your {name} for {price}$?")];
+        Transition::Push(Box::new(YesNo::no_first(q, "No.", "Yes.").with_pos(128, 80)))
     }
 
     fn rename(&mut self, ctx: &mut UiContext) -> Transition {
         let name = ctx.game().city(self.city).name.clone();
         self.pending = Pending::Rename;
-        Transition::Push(Box::new(TextInput::new(vec!["City Name...".into()], &name, 12).with_pos(80, 80).with_style(PanelStyle::Cyan)))
+        Transition::Push(Box::new(CityNamePrompt::new(&name)))
     }
 
     fn view(&mut self) -> Transition {
@@ -425,11 +436,11 @@ impl CityScreen {
         // sell dots (0x1201f)
         if x >= 300 && y < 94 && y >= 2 {
             let row = ((y - 2) / 6) as usize;
+            // the Palace too; nothing once the city has sold this turn (city flag 0x80)
             if let Some(Production::Improvement(id)) = list.get(row).copied() {
-                if id != improvement_ids::PALACE {
+                if !ctx.game().player(ctx.game().city(self.city).owner).sold_cities.contains(&self.city) {
                     return self.sell(id);
                 }
-                return self.error(ctx, &RuleError::Other("The Palace cannot be sold."));
             }
             return Transition::None;
         }
@@ -442,11 +453,13 @@ impl CityScreen {
     // ---- drawing ---------------------------------------------------------------------------
 
     fn draw_title(&self, fb: &mut Surface, ctx: &UiContext) {
-        panel(fb, P_TITLE);
+        panel(fb, ctx, P_TITLE);
         let g = ctx.game();
         let c = g.city(self.city);
         let title = format!("{} (POP:{})", c.name.to_ascii_uppercase(), crate::ui::mapview::format_pop(c.population()));
-        small_text_centered(fb, ctx, P_TITLE.x + P_TITLE.w / 2, 2, WHITE, &title);
+        small_text_centered(fb, ctx, 104, 2, WHITE, &title);
+        // the citizens row is refilled before the figures (0x10ea6)
+        fill_stipple(fb, ctx, Rect::new(8, 8, 200, 13));
         let h = g.city_happiness(self.city);
         let n = c.size as usize;
         let pitch = Self::citizen_pitch(n);
@@ -474,7 +487,7 @@ impl CityScreen {
     }
 
     fn draw_resources(&self, fb: &mut Surface, ctx: &UiContext) {
-        panel(fb, P_RES);
+        panel(fb, ctx, P_RES);
         header(fb, ctx, Rect::new(P_RES.x, P_RES.y, P_RES.w, 9), "CITY RESOURCES");
         let g = ctx.game();
         let y = g.city_yield(self.city);
@@ -498,7 +511,7 @@ impl CityScreen {
     }
 
     fn draw_support(&self, fb: &mut Surface, ctx: &UiContext) {
-        panel(fb, P_SUPPORT);
+        panel(fb, ctx, P_SUPPORT);
         // the units the city supports (CIV.EXE 0xff78): seven to a row from (8, 69), 16 px
         // apart, the third row overlapping at y 77; under each its upkeep: a shield once the
         // free units are used up, food for Settlers, unhappy faces for units abroad
@@ -553,7 +566,7 @@ impl CityScreen {
     }
 
     fn draw_map(&self, fb: &mut Surface, ctx: &UiContext) {
-        panel(fb, P_MAP);
+        panel(fb, ctx, P_MAP);
         let g = ctx.game();
         let c = g.city(self.city);
         let slot = c.owner;
@@ -592,7 +605,7 @@ impl CityScreen {
     }
 
     fn draw_improvements(&self, fb: &mut Surface, ctx: &UiContext) {
-        panel(fb, P_IMP);
+        panel(fb, ctx, P_IMP);
         // CIV.EXE 0x103ad: names 6 px apart, the pictograms alternating between x 233 and
         // 213 two pixels higher; names cut to 63 (wonders) or 56 px
         let (list, more) = self.listed(ctx);
@@ -601,7 +614,7 @@ impl CityScreen {
             let ix = if i % 2 == 0 { 233 } else { 213 };
             let max = match p {
                 Production::Improvement(id) => {
-                    sell_dot(fb, 308, y + 1);
+                    sell_dot(fb, 309, y + 1);
                     if let Some(cell) = improvement_cell(*id) {
                         imp_icon(fb, ctx, cell, ix, y - 2);
                     }
@@ -624,7 +637,7 @@ impl CityScreen {
     }
 
     fn draw_food(&self, fb: &mut Surface, ctx: &UiContext) {
-        panel(fb, P_FOOD);
+        panel(fb, ctx, P_FOOD);
         header(fb, ctx, Rect::new(P_FOOD.x, P_FOOD.y, P_FOOD.w, 8), "FOOD STORAGE");
         fb.fill_rect(FOOD_AREA, BORDER);
         let c = ctx.game().city(self.city);
@@ -634,7 +647,7 @@ impl CityScreen {
         let pitch_x = 8.min((max_w - 9) / (cols - 1).max(1)).max(1);
         let w = if cols > 1 { (cols - 1) * pitch_x + 9 } else { 9 };
         let store = Rect::new(FOOD_AREA.x, FOOD_AREA.y + 1, w.min(max_w), FOOD_AREA.h - 2);
-        fill_stipple(fb, store);
+        fill_stipple(fb, ctx, store);
         // a granary marks the food kept after growth with a line across the middle (0x1090a)
         if c.has_improvement(improvement_ids::GRANARY) {
             fb.hline(5, (cols - 1) * pitch_x + 9, 155, 1);
@@ -650,7 +663,7 @@ impl CityScreen {
     }
 
     fn draw_tabs(&self, fb: &mut Surface, ctx: &UiContext) {
-        panel(fb, P_TABS);
+        panel(fb, ctx, P_TABS);
         let sel = match self.tab {
             Tab::Info => 0,
             Tab::Happy => 1,
@@ -796,10 +809,10 @@ impl CityScreen {
     fn draw_production(&self, fb: &mut Surface, ctx: &UiContext) {
         let g = ctx.game();
         let c = g.city(self.city);
-        let cost = g.production_cost(self.city, c.production);
-        let (_, pitch, r) = stock_layout(cost);
-        panel(fb, r);
-        fb.fill_rect(Rect::new(r.x + 1, r.y + 1, r.w - 2, 115 - r.y - 1), BORDER);
+        let factor = g.cost_factor(c.owner);
+        let (k, step, r) = stock_layout(c.production.cost() / 10, c.shields, factor);
+        fb.fill_rect(r, BORDER);
+        fill_stipple(fb, ctx, Rect::new(231, 116, r.w - 2, r.h - 18));
         button(fb, ctx, B_CHANGE, if c.auto_build { "AUTO." } else { "CHANGE" }, ButtonStyle::Plain);
         // production that cannot be completed: the button face flashes yellow, colours 9 and
         // 14 swapping every 10 ticks (CIV.EXE 0x112e1)
@@ -814,31 +827,25 @@ impl CityScreen {
         }
         button(fb, ctx, B_BUY, "BUY", ButtonStyle::Plain);
         match c.production {
-            Production::Unit(k) => unit_box(fb, ctx, k, c.owner, ITEM_FRAME.0, ITEM_FRAME.1),
+            Production::Unit(u) => unit_box(fb, ctx, u, c.owner, ITEM_FRAME.0, ITEM_FRAME.1),
             // improvements and wonders by name, centred over the buttons (0x1079f)
             other => {
                 small_text_centered(fb, ctx, 274, 100, WHITE, &fit_small_text(ctx, other.name(), 86));
             }
         }
-        let n = c.shields.clamp(0, cost);
-        for k in 0..n {
-            icon(fb, ctx, ICON_SHIELD, r.x + 1 + (k % 10) * 8, 115 + (k / 10) * pitch, None);
+        let per_row = factor * k;
+        for i in 0..c.shields.max(0) {
+            icon(fb, ctx, ICON_SHIELD, 232 + (i % per_row) * step / k, 117 + (i / per_row) * 8, None);
         }
     }
 
-    fn draw_advisors(&self, fb: &mut Surface, ctx: &UiContext) {
+    /// The advisors' notes, drawn once without input (ds:0xdb38) at (8, 160) and (164, 160) in
+    /// the city screen's small font.
+    fn draw_advisors(&self, fb: &mut Surface, ctx: &mut UiContext) {
         let Some((mil, dom)) = &self.advisors else { return };
-        for (r, head, text) in [(Rect::new(7, 161, 125, 26), "MILITARY ADVISOR:", mil), (Rect::new(166, 162, 133, 25), "DOMESTIC ADVISOR:", dom)] {
-            draw_styled_panel(fb, ctx, r, PanelStyle::Grey);
-            let mut y = r.y + 4;
-            small_text(fb, ctx, r.x + 5, y, BLACK, head);
-            for para in text.split('\n') {
-                for line in wrap(&ctx.fonts, SMALL, r.w - 24, para) {
-                    y += 6;
-                    if y + 5 < r.bottom() {
-                        small_text(fb, ctx, r.x + 5, y, BLACK, &line);
-                    }
-                }
+        for (x, lines) in [(8, mil), (164, dom)] {
+            if let Some(lines) = lines {
+                MenuDialog::new(lines.clone(), Vec::new()).with_pos(x, 160).with_font(SMALL).paint(fb, ctx);
             }
         }
     }
@@ -942,7 +949,7 @@ impl Screen for CityScreen {
         self.draw_food(fb, ctx);
         self.draw_tabs(fb, ctx);
         self.draw_production(fb, ctx);
-        button(fb, ctx, B_RENAME, "RENAME", ButtonStyle::Raised);
+        button(fb, ctx, B_RENAME, "RENAME", ButtonStyle::Plain);
         button(fb, ctx, B_EXIT, "EXIT", ButtonStyle::Exit);
         self.draw_advisors(fb, ctx);
     }

@@ -419,7 +419,7 @@ pub fn screen_for_decision(ctx: &mut UiContext, d: &Decision) -> Box<dyn Screen>
                 .collect();
             let who = if p.knows(rules::advance_ids::INVENTION) { "scientists" } else { "wise men" };
             let head = vec!["Which discovery should our".into(), format!("{who} be pursuing, sire?"), "Pick one...".into()];
-            Box::new(MenuDialog::new(head, items).with_pos(80, 64).no_cancel())
+            Box::new(MenuDialog::new(head, items).with_pos(80, 64).with_help().no_cancel())
         }
         Decision::ChooseGovernment { options, .. } => {
             let items: Vec<String> = options.iter().map(|gv| rules::GOVERNMENTS[*gv as usize].name.to_string()).collect();

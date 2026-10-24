@@ -909,16 +909,15 @@ impl Game {
         self.city(c).improvement_list().into_iter().filter(|i| *i != imp::PALACE).collect()
     }
 
-    /// Sell an improvement for gold (one sale per city per turn). Returns the gold received.
+    /// Sell an improvement for its cost in gold (one sale per city per turn, city flag 0x80).
+    /// Returns the gold received.
     pub fn sell_improvement(&mut self, c: CityId, id: ImprovementId) -> Result<i32, RuleError> {
         let city = self.city(c);
         let slot = city.owner;
         if !city.has_improvement(id) {
             return Err(RuleError::Other("The city does not have that improvement."));
         }
-        if id == imp::PALACE {
-            return Err(RuleError::Other("The Palace cannot be sold."));
-        }
+        // the Palace too: the city screen's sell dots run from improvement bit 0 (0x12051)
         if self.player(slot).sold_cities.contains(&c) {
             return Err(RuleError::Other("Only one improvement may be sold per turn."));
         }

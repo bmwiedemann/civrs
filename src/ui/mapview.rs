@@ -618,7 +618,7 @@ impl MapView {
                 let mut g2 = g.clone();
                 let name = g2.next_city_name(u.owner);
                 self.pending = Pending::FoundCityConfirm(id);
-                Transition::Push(Box::new(crate::ui::widgets::TextInput::new(vec!["City Name...".into()], &name, 12).with_pos(80, 100).with_style(crate::ui::widgets::PanelStyle::Cyan)))
+                Transition::Push(Box::new(crate::ui::widgets::CityNamePrompt::new(&name)))
             }
             Key::Char('h') => {
                 let Some(id) = active else { return Transition::None };

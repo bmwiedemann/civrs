@@ -74,6 +74,15 @@ impl TextFile {
             .map(|&i| self.sections[i].1.as_slice())
     }
 
+    /// `load_text_entry` (0x1ee63) as the menus get it: the section's lines (from the next
+    /// section that has any when `*NAME` shares its text with the following headers), each
+    /// followed by a blank; empty lines are skipped (fscanf "%[^\n]\n").
+    pub fn entry_text(&self, name: &str) -> Option<String> {
+        let start = *self.by_name.get(&name.to_ascii_uppercase())?;
+        let lines = self.sections[start..].iter().map(|(_, l)| l).find(|l| l.iter().any(|x| !x.trim().is_empty()))?;
+        Some(lines.iter().map(|l| l.trim_start().trim_end_matches('\r')).filter(|l| !l.is_empty()).map(|l| format!("{l} ")).collect())
+    }
+
     pub fn has(&self, name: &str) -> bool {
         self.by_name.contains_key(&name.to_ascii_uppercase())
     }
@@ -188,6 +197,37 @@ pub fn parse_story(bytes: &[u8]) -> Vec<String> {
 /// its full stop at `%` and a different glyph at `.`, so "JEFFERY L% BRIGGS" is drawn as is.
 pub fn parse_credits(bytes: &[u8]) -> Vec<String> {
     lines_of(bytes).into_iter().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect()
+}
+
+/// `wrap_text(width)` (0x1ecb6): a `^` becomes a blank and the character after it a line break;
+/// past `width` characters a line breaks at the next blank that is not followed by another;
+/// a final line break is added when the text does not end with one.
+pub fn wrap_text(s: &str, width: i32) -> String {
+    let mut b: Vec<u8> = s.bytes().collect();
+    let mut col = 0;
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'^' {
+            b[i] = b' ';
+            if i + 1 < b.len() {
+                b[i + 1] = b'\n';
+            }
+            col = -1;
+        }
+        if b[i] == b'\n' {
+            col = -1;
+        }
+        col += 1;
+        if col > width && b[i] == b' ' && b.get(i + 1) != Some(&b' ') {
+            b[i] = b'\n';
+            col = 0;
+        }
+        i += 1;
+    }
+    if col > 0 {
+        b.push(b'\n');
+    }
+    String::from_utf8_lossy(&b).into_owned()
 }
 
 #[cfg(test)]

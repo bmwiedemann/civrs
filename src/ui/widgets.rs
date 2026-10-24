@@ -35,8 +35,8 @@ pub enum PanelStyle {
     Bare,
     /// `menu_draw`'s frame for a menu at an even y (`draw_frame` 0x1d1a2 with colour 7): fill
     /// (x+1, y+1)..(x+w, y+h) in 7, bevel from (x+1, y+1) with the top and right edges in 8 and
-    /// the bottom and left in 15, black outline (x, y)..(x+w+2, y+h+2), where w = widest line
-    /// + 8 and h = lines * pitch + 6. Inside, the layout and colours are `Bare`'s with
+    /// the bottom and left in 15, black outline (x, y)..(x+w+2, y+h+2), where w is the widest
+    /// line plus 8 and h = lines * pitch + 6. Inside, the layout and colours are `Bare`'s with
     /// background 7. (Before a game, ds:0x2f98 = 0: a plain fill, not the stone texture.)
     Framed,
 }
@@ -130,15 +130,20 @@ pub fn centred(w: i32, h: i32) -> Rect {
 /// `fill_texture(x, y, w, h)` (0x1d7f4): the stone texture, 32x16 tiles of SP299 from
 /// (288, 120), each restarting at the area's corner.
 pub fn fill_texture(fb: &mut Surface, ctx: &UiContext, r: Rect) {
+    tile_fill(fb, ctx, r, Rect::new(288, 120, 32, 16));
+}
+
+/// Tiles the SP299 cell `src` over `r`, anchored at r's corner.
+pub fn tile_fill(fb: &mut Surface, ctx: &UiContext, r: Rect, src: Rect) {
     let sheet = &ctx.pic("SP299").surf;
     let mut ty = 0;
     while ty < r.h {
         let mut tx = 0;
         while tx < r.w {
-            fb.blit_part(sheet, Rect::new(288, 120, (r.w - tx).min(32), (r.h - ty).min(16)), r.x + tx, r.y + ty, None);
-            tx += 32;
+            fb.blit_part(sheet, Rect::new(src.x, src.y, (r.w - tx).min(src.w), (r.h - ty).min(src.h)), r.x + tx, r.y + ty, None);
+            tx += src.w;
         }
-        ty += 16;
+        ty += src.h;
     }
 }
 
@@ -324,6 +329,8 @@ pub struct MenuDialog {
     pub font: usize,
     line_h: i32,
     hover: Option<usize>,
+    /// ds:0x2fa0: "(HELP AVAILABLE)" under the lines (Civilopedia help on the items).
+    help: bool,
 }
 
 impl MenuDialog {
@@ -347,7 +354,22 @@ impl MenuDialog {
             font: FONT,
             line_h: LINE_H,
             hover: None,
+            help: false,
         }
+    }
+
+    /// menu_draw with ds:0x2fa0 set: the box grows by 2 and "(HELP AVAILABLE)" is written in
+    /// the small font, colour 10, at (right - 74, bottom - 4) (o 0x1cf91).
+    pub fn with_help(mut self) -> Self {
+        self.help = true;
+        self
+    }
+
+    /// Draw the menu once without taking input, as `popup_menu3` does with ds:0xdb38 set
+    /// (the advisors' notes under the production menu).
+    pub fn paint(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
+        self.layout(ctx);
+        self.draw(fb, ctx);
     }
 
     pub fn with_title_colour(mut self, c: u8) -> Self {
@@ -477,7 +499,7 @@ impl MenuDialog {
             widest = widest.max(coded_width(ctx, font, &Self::item_line(it)));
         }
         let rows = (self.title.len() + self.items.len() + self.gaps.len()) as i32;
-        (widest, widest + 8, rows * self.line_h + 6)
+        (widest, widest + 8, rows * self.line_h + 6 + if self.help { 2 } else { 0 })
     }
 
     /// `popup_menu3` as menu_draw/menu_select draw it (see `PanelStyle::Bare` and `Framed`): a
@@ -516,6 +538,9 @@ impl MenuDialog {
         for (i, it) in self.items.iter().enumerate() {
             let colour = if self.disabled[i] { cols.disabled } else { cols.text };
             draw_coded(fb, ctx, font, x + 5, self.row_y(i), &format!("{} ", Self::item_line(it)), colour);
+        }
+        if self.help {
+            draw_text(fb, &ctx.fonts, &TextStyle::new(1, 10), x + w - 74, y + h - 4, "(HELP AVAILABLE)");
         }
         // the highlight recolours the row's background (o 0x1cab2), so text and the title's
         // descenders keep their colours; on the stone also its second colour 0x16 -> 3
@@ -573,7 +598,10 @@ impl Screen for MenuDialog {
                 Key::Home => self.sel = 0,
                 Key::End => self.sel = self.items.len().saturating_sub(1),
                 Key::Enter | Key::Space => {
-                    if !self.items.is_empty() && !self.disabled[self.sel] {
+                    if self.items.is_empty() {
+                        return Transition::Pop(DialogResult::Cancelled);
+                    }
+                    if !self.disabled[self.sel] {
                         return Transition::Pop(DialogResult::Choice(self.sel));
                     }
                 }
@@ -847,11 +875,17 @@ impl Screen for TextInput {
 /// Yes/No question (a two-item menu).
 pub struct YesNo {
     menu: MenuDialog,
+    /// Item index of the "yes" answer.
+    yes: usize,
 }
 
 impl YesNo {
     pub fn new(question: Vec<String>, yes: &str, no: &str) -> YesNo {
-        YesNo { menu: MenuDialog::new(question, vec![yes.to_string(), no.to_string()]) }
+        YesNo { menu: MenuDialog::new(question, vec![yes.to_string(), no.to_string()]), yes: 0 }
+    }
+    /// The "no" answer listed (and preselected) first.
+    pub fn no_first(question: Vec<String>, no: &str, yes: &str) -> YesNo {
+        YesNo { menu: MenuDialog::new(question, vec![no.to_string(), yes.to_string()]), yes: 1 }
     }
     pub fn with_pos(mut self, x: i32, y: i32) -> Self {
         self.menu.pos = Some((x, y));
@@ -869,13 +903,57 @@ impl Screen for YesNo {
     }
     fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
         match self.menu.handle(ev, ctx) {
-            Transition::Pop(DialogResult::Choice(0)) => Transition::Pop(DialogResult::Yes),
+            Transition::Pop(DialogResult::Choice(i)) if i == self.yes => Transition::Pop(DialogResult::Yes),
             Transition::Pop(DialogResult::Choice(_)) => Transition::Pop(DialogResult::No),
             t => t,
         }
     }
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
         self.menu.draw(fb, ctx);
+    }
+}
+
+/// `ask_city_name` (overlay 23 +0x0, 0x1e975), for founding and renaming: a colour 15 box at
+/// (80, 80) 160x32 outlined in 11, "City Name..." at (88, 82) and edit_line(88, 96, 12) on the
+/// current name; Enter with an empty name edits again. Pops `Text` on Enter, `Cancelled` on Esc.
+pub struct CityNamePrompt {
+    edit: LineEdit,
+    /// Frames to ignore input for (the key that opened the prompt also arrives as text).
+    guard: u32,
+}
+
+impl CityNamePrompt {
+    pub fn new(name: &str) -> CityNamePrompt {
+        CityNamePrompt { edit: LineEdit::new(88, 96, 12, FONT, name), guard: 2 }
+    }
+}
+
+impl Screen for CityNamePrompt {
+    fn update(&mut self, _ctx: &mut UiContext) -> Transition {
+        self.guard = self.guard.saturating_sub(1);
+        self.edit.tick();
+        Transition::None
+    }
+    fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
+        if self.guard > 0 {
+            return Transition::None;
+        }
+        let text = self.edit.text().trim().to_string();
+        match self.edit.handle(ev) {
+            Some(_) if text.is_empty() => Transition::None,
+            Some(LineEnd::Enter) => Transition::Pop(DialogResult::Text(text)),
+            Some(LineEnd::Esc) => Transition::Pop(DialogResult::Cancelled),
+            None => Transition::None,
+        }
+    }
+    fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
+        fb.fill_rect(Rect::new(80, 80, 160, 32), 15);
+        fb.rect_outline(Rect::new(80, 80, 161, 33), 11);
+        draw_text(fb, &ctx.fonts, &TextStyle::new(FONT, 0), 88, 82, "City Name...");
+        self.edit.draw(fb, ctx);
+    }
+    fn wants_cursor(&self) -> bool {
+        false
     }
 }
 

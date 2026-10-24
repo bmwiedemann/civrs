@@ -415,10 +415,12 @@ impl HallOfFame {
 
     /// Parse FAME.DTA; records with a score of 0 or less are empty.
     pub fn from_dta(d: &[u8]) -> HallOfFame {
-        let word = |r: &[u8], o: usize| i16::from_le_bytes([r[o], r[o + 1]]) as i32;
+        let word = |r: &[u8; FAME_RECORD], o: usize| i16::from_le_bytes([r[o], r[o + 1]]) as i32;
         let name = |b: &[u8]| String::from_utf8_lossy(b.split(|c| *c == 0).next().unwrap_or_default()).trim_end().to_string();
         let entries = d
-            .chunks_exact(FAME_RECORD)
+            .as_chunks::<FAME_RECORD>()
+            .0
+            .iter()
             .take(FAME_RECORDS)
             .filter(|r| word(r, 0) > 0)
             .map(|r| {

@@ -25,24 +25,16 @@ pub const BLACK: u8 = 0;
 /// The small-caps font used for every label on the screen.
 pub const SMALL: usize = 1;
 
-/// 16x16 panel stipple of the original (bit set = light), tiled from the screen origin.
-const STIPPLE: [u16; 16] = [
-    0x8b3a, 0x595d, 0xe342, 0xbc5b, 0xe984, 0x93da, 0xcb63, 0x88ef, 0xb648, 0xb258, 0x8995, 0xd11a, 0xac26, 0xe84a, 0xa52d, 0x75df,
-];
-
-pub fn fill_stipple(fb: &mut Surface, r: Rect) {
-    for y in r.y..r.bottom() {
-        let row = STIPPLE[(y & 15) as usize];
-        for x in r.x..r.right() {
-            let light = row & (0x8000 >> (x & 15)) != 0;
-            fb.put(x, y, if light { LIGHT } else { DARK });
-        }
-    }
+/// `fill_background` (0x13a13): tiles the 16x16 texture at SP299 (208, 100) over `r`, anchored
+/// at r's corner.
+pub fn fill_stipple(fb: &mut Surface, ctx: &UiContext, r: Rect) {
+    crate::ui::widgets::tile_fill(fb, ctx, r, Rect::new(208, 100, 16, 16));
 }
 
-/// A bordered stipple panel.
-pub fn panel(fb: &mut Surface, r: Rect) {
-    fill_stipple(fb, r.inset(1));
+/// `draw_panel(x1, y1, x2, y2)` (0x139d1): the texture over the rectangle, then a colour 1
+/// outline.
+pub fn panel(fb: &mut Surface, ctx: &UiContext, r: Rect) {
+    fill_stipple(fb, ctx, r);
     fb.rect_outline(r, BORDER);
 }
 
@@ -55,8 +47,9 @@ pub fn small_text_width(ctx: &UiContext, s: &str) -> i32 {
     ink_width(&ctx.fonts, SMALL, s)
 }
 
+/// `draw_text_centred` (0x18d3) in the small font: centred on the full advance width.
 pub fn small_text_centered(fb: &mut Surface, ctx: &UiContext, cx: i32, y: i32, colour: u8, s: &str) -> i32 {
-    let w = small_text_width(ctx, s);
+    let w = crate::gfx::text::text_width(&ctx.fonts, SMALL, s);
     small_text(fb, ctx, cx - w / 2, y, colour, s)
 }
 
@@ -68,37 +61,35 @@ pub fn header(fb: &mut Surface, ctx: &UiContext, r: Rect, text: &str) {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ButtonStyle {
-    /// Grey top/left line, light face (CHANGE, BUY, unselected tabs).
+    /// Colour 9: light face, grey top/left and dark right/bottom edges (CHANGE, BUY, RENAME,
+    /// unselected tabs).
     Plain,
     /// White face (the selected tab).
     Selected,
-    /// Light face with a dark right/bottom edge (RENAME).
-    Raised,
     /// Red face with dark red edges (EXIT).
     Exit,
 }
 
 pub fn button(fb: &mut Surface, ctx: &UiContext, r: Rect, label: &str, style: ButtonStyle) {
-    let (face, text) = match style {
-        ButtonStyle::Plain | ButtonStyle::Raised => (LIGHT, BORDER),
-        ButtonStyle::Selected => (WHITE, BORDER),
-        ButtonStyle::Exit => (RED, DARK_RED),
-    };
-    fb.fill_rect(r, face);
-    fb.hline(r.x, r.right() - 1, r.y, GREY);
-    fb.vline(r.x, r.y, r.bottom() - 1, GREY);
-    match style {
-        ButtonStyle::Raised => {
-            fb.vline(r.right() - 1, r.y + 1, r.bottom() - 1, BORDER);
-            fb.hline(r.x + 1, r.right() - 1, r.bottom() - 1, BORDER);
-        }
-        ButtonStyle::Exit => {
-            fb.vline(r.right() - 1, r.y + 1, r.bottom() - 1, DARK_RED);
-            fb.hline(r.x + 1, r.right() - 1, r.bottom() - 1, DARK_RED);
-        }
-        _ => {}
+    if style == ButtonStyle::Selected {
+        fb.fill_rect(r, WHITE);
+        fb.hline(r.x, r.right() - 1, r.y, GREY);
+        fb.vline(r.x, r.y, r.bottom() - 1, GREY);
+        small_text_centered(fb, ctx, (2 * r.x + r.w - 1) / 2 + 1, r.y + 2, BORDER, label);
+        return;
     }
-    small_text_centered(fb, ctx, r.x + r.w / 2 + 1, r.y + 2, text, label);
+    // draw_button(x1, y1, x2, y2, col) (0x13ac5), r covering x1..=x2, y1..=y2: fill up to
+    // x2-1/y2-1, top and left lines in col+8 (7 from col 8 up), bottom and right in 8
+    // (col-8), the label in col^8 centred on (x1 + x2) / 2 + 1
+    let col = if style == ButtonStyle::Exit { RED } else { LIGHT };
+    let (light, dark) = if col < 8 { (col + 8, 8) } else { (GREY, col - 8) };
+    let (x2, y2) = (r.right() - 1, r.bottom() - 1);
+    fb.fill_rect(Rect::new(r.x, r.y, r.w - 1, r.h - 1), col);
+    fb.hline(r.x, x2, r.y, light);
+    fb.vline(r.x, r.y, y2, light);
+    fb.hline(r.x + 1, x2, y2, dark);
+    fb.vline(x2, r.y, y2, dark);
+    small_text_centered(fb, ctx, (r.x + x2) / 2 + 1, (r.y + y2) / 2 - 2, col ^ 8, label);
 }
 
 /// 8x8 resource icons in SP257 (top-left of the cell; colours 0 and 3 are transparent).
