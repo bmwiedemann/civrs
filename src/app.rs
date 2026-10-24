@@ -46,6 +46,10 @@ impl App {
             self.screens.handle(&ev, &mut self.ctx);
         }
         self.screens.update(&mut self.ctx);
+        if let Some((x, y)) = self.ctx.warp_mouse.take() {
+            backend.warp_mouse(x, y);
+            self.ctx.mouse = (x, y);
+        }
         if let Some(g) = &self.ctx.game {
             // the in-game Sound option gates every driver call, as in CIV.EXE
             if self.ctx.audio.available() && self.ctx.audio.enabled() != g.options.sound {

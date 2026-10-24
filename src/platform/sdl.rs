@@ -117,6 +117,12 @@ impl SdlBackend {
         (sx, sy)
     }
 
+    /// Window position of the centre of screen pixel (x, y); the inverse of `to_screen`.
+    fn to_window(&self, x: i32, y: i32) -> (f32, f32) {
+        let s = self.scale as i32;
+        ((self.offset.0 + x * s + s / 2) as f32, (self.offset.1 + y * s + s / 2) as f32)
+    }
+
     fn mods(m: Mod) -> Mods {
         Mods {
             shift: m.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD),
@@ -199,6 +205,11 @@ impl SdlBackend {
 }
 
 impl Backend for SdlBackend {
+    fn warp_mouse(&mut self, x: i32, y: i32) {
+        let (wx, wy) = self.to_window(x, y);
+        self._sdl.mouse().warp_mouse_in_window(self.canvas.window(), wx, wy);
+    }
+
     fn poll(&mut self) -> Vec<Event> {
         let mut out = Vec::new();
         let events: Vec<SdlEvent> = self.pump.poll_iter().collect();

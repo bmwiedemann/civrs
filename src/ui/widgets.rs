@@ -26,10 +26,12 @@ pub enum PanelStyle {
     Green,
     /// White box with a cyan border (name entry).
     Cyan,
-    /// No panel: the menu is drawn over a box that is part of the picture (the DIFFS.PIC
-    /// setup menus), laid out as CIV.EXE's `menu_draw` does from the menu origin: title at
-    /// (+5, +5) in colour 3, rows from +13 on the font's pitch with the text after a leading blank,
-    /// the selected row on a cyan bar from +3 as wide as the widest line.
+    /// No panel, as CIV.EXE's `menu_draw` does for a menu at an odd y (o 0x1ce1a): the menu sits
+    /// on the picture (DIFFS.PIC's white box, CUSTOM.PIC's teal side). Laid out from the menu
+    /// origin: title at (+5, +5), rows from +13 with the text after a leading blank, items in
+    /// colour 0. `menu_select` reads the background colour at the origin (o 0x1c917): the title
+    /// is drawn in 3 on white (15), else in 15, and the highlight recolours that background to
+    /// 11 from +3, as wide as the widest line + 5.
     Bare,
 }
 
@@ -87,9 +89,8 @@ pub fn draw_styled_panel(fb: &mut Surface, ctx: &UiContext, r: Rect, style: Pane
             StyleColours { text: tan, title: tan, hilite_bar: cream, hilite_text: black, disabled: bg }
         }
         PanelStyle::Bare => {
-            let pal = &ctx.palette;
-            let black = pal.nearest([0, 0, 0]);
-            StyleColours { text: black, title: pal.nearest([0, 170, 170]), hilite_bar: pal.nearest([85, 255, 255]), hilite_text: black, disabled: pal.nearest([0, 170, 170]) }
+            // the menu's own EGA colours; the title colour depends on the background (draw_bare)
+            StyleColours { text: 0, title: 15, hilite_bar: 11, hilite_text: 0, disabled: 3 }
         }
         PanelStyle::Green => {
             fb.fill_rect(r, theme::GREEN);
@@ -231,8 +232,9 @@ impl MenuDialog {
 
     fn layout(&mut self, ctx: &UiContext) {
         if self.style == PanelStyle::Bare {
-            // menu_draw's pitch is the font height itself (0:0x7c3)
-            self.line_h = ctx.fonts.get(self.font).line_height() - 1;
+            // menu_select o 0x1c8c3: the font's row count (0:0x7c3), 8 instead of 9
+            let rows = ctx.fonts.get(self.font).line_height();
+            self.line_h = if rows == 9 { 8 } else { rows };
         } else if self.font != FONT {
             self.line_h = ctx.fonts.get(self.font).line_height();
         }
@@ -252,7 +254,7 @@ impl MenuDialog {
         self.rect = Rect::new(x, y, w, h);
     }
 
-    fn item_at(&self, mx: i32, my: i32) -> Option<usize> {
+    pub(crate) fn item_at(&self, mx: i32, my: i32) -> Option<usize> {
         if mx < self.rect.x || mx >= self.rect.right() {
             return None;
         }
@@ -266,6 +268,8 @@ impl MenuDialog {
     fn draw_bare(&self, fb: &mut Surface, ctx: &UiContext, cols: &StyleColours) {
         let (x, y) = (self.rect.x, self.rect.y);
         let font = self.font;
+        let bg = fb.get(x, y);
+        let title_colour = if bg == 15 { 3 } else { cols.title };
         let mut bar_w = 0;
         for t in &self.title {
             bar_w = bar_w.max(text_width(&ctx.fonts, font, t));
@@ -276,20 +280,23 @@ impl MenuDialog {
         // the lines are drawn as the menu text holds them, each ended by a line break, so no
         // glyph is the last of its string and all are cut to their advance (see draw_glyph_run)
         for (i, t) in self.title.iter().enumerate() {
-            draw_text(fb, &ctx.fonts, &TextStyle::new(font, cols.title), x + 5, y + 5 + i as i32 * self.line_h, &format!("{t} "));
+            let ty = y + 5 + i as i32 * self.line_h;
+            if self.line_h > 9 {
+                draw_text(fb, &ctx.fonts, &TextStyle::new(font, 0), x + 5, ty + 1, &format!("{t} "));
+            }
+            draw_text(fb, &ctx.fonts, &TextStyle::new(font, title_colour), x + 5, ty, &format!("{t} "));
         }
         for (i, it) in self.items.iter().enumerate() {
             let colour = if self.disabled[i] { cols.disabled } else { cols.text };
             draw_text(fb, &ctx.fonts, &TextStyle::new(font, colour), x + 5, self.row_y(i), &format!(" {it} "));
         }
-        // the highlight recolours the row's background 15 -> 11 (o 0x1cab2), so text and the
-        // title's descenders keep their colours
+        // the highlight recolours the row's background (o 0x1cab2), so text and the title's
+        // descenders keep their colours
         if let Some(i) = Some(self.sel).filter(|&i| i < self.items.len() && !self.disabled[i]) {
-            let page = ctx.palette.nearest([255, 255, 255]);
             let r = Rect::new(x + 3, self.row_y(i) - 1, bar_w + BARE_BAR_EXTRA, self.line_h);
             for py in r.y..r.bottom() {
                 for px in r.x..r.right() {
-                    if fb.get(px, py) == page {
+                    if fb.get(px, py) == bg {
                         fb.put(px, py, cols.hilite_bar);
                     }
                 }

@@ -1,4 +1,6 @@
-//! New-game setup flow as CIV.EXE runs it: the custom-world questions, then the world generator
+//! New-game setup flow as CIV.EXE runs it: the custom-world questions (main_menu o 0x2011: four
+//! frameless menus at (200, 1/51/101/151) over CUSTOM.PIC, each left on screen once answered,
+//! Alt-H or a right click shows the option's HELP.TXT page), then the world generator
 //! with the evolution story (main_menu 0x1f91 calls overlay 7 before `start_game`), then
 //! overlay 5's `new_game_setup` (o 0x4175): difficulty, number of civilisations, tribe and leader
 //! name. Those menus are drawn without a panel over the white box of DIFFS.PIC at (160, 35) in
@@ -7,9 +9,10 @@
 //! centred on (46, 92) once it is picked.
 
 use crate::game::{GameSetup, WorldParams, WorldSource};
-use crate::gfx::text::{draw_text, draw_text_centered, text_width};
+use crate::assets::text::paragraphs;
+use crate::gfx::text::{draw_text, draw_text_centered, text_width, wrap};
 use crate::gfx::{Rect, Surface, TextStyle};
-use crate::platform::{Event, Key};
+use crate::platform::{Event, Key, MouseButton};
 use crate::rules::{self, Difficulty, CUSTOM_WORLD_OPTIONS};
 use crate::ui::context::UiContext;
 use crate::ui::screen::{DialogResult, Screen, Transition};
@@ -142,10 +145,7 @@ impl SetupFlow {
     }
 
     fn custom_menu(&self, i: usize) -> Transition {
-        let (_, opts) = CUSTOM_WORLD_OPTIONS[i];
-        let items: Vec<String> = opts.iter().map(|s| s.to_string()).collect();
-        let y = 14 + i as i32 * 49;
-        Transition::Push(Box::new(CustomMenu { inner: MenuDialog::new(vec![], items).with_pos(190, y).with_selection(1).no_cancel() }))
+        Transition::Push(Box::new(CustomMenu { inner: custom_dialog(i, 1), topic: CUSTOM_TOPICS[i] }))
     }
 
     fn generate(&mut self, ctx: &mut UiContext) -> Transition {
@@ -287,30 +287,111 @@ impl Screen for NameEntry {
     }
 }
 
-/// Custom-world option menu drawn in the cyan area without a panel.
+/// Custom-world questions: titles, menu y and HELP.TXT topics (main_menu o 0x20a3..0x21f4).
+const CUSTOM_TITLES: [&str; 4] = ["LAND MASS:", "TEMPERATURE:", "CLIMATE:", "AGE:"];
+const CUSTOM_Y: [i32; 4] = [1, 51, 101, 151];
+const CUSTOM_TOPICS: [&str; 4] = ["Land", "Temperature", "Climate", "Age"];
+
+/// `popup_menu3(text, 200, y)` for custom-world question `i` with item `sel` preselected
+/// (ds:0x2f9a): frameless (odd y) in the main menu's window font 1 (civrs 0).
+fn custom_dialog(i: usize, sel: usize) -> MenuDialog {
+    let items: Vec<String> = CUSTOM_WORLD_OPTIONS[i].1.iter().map(|s| s.to_string()).collect();
+    MenuDialog::new(vec![CUSTOM_TITLES[i].to_string()], items).with_pos(200, CUSTOM_Y[i]).with_style(PanelStyle::Bare).with_font(0).with_top_pad(5).with_selection(sel).no_cancel()
+}
+
+/// A custom-world question. Esc or a click outside asks again (the -1 loop); Alt-H or a right
+/// click on an item (menu_select sets ds:0x2f9c) shows the option's help page and asks again
+/// with that item selected.
 struct CustomMenu {
     inner: MenuDialog,
+    topic: &'static str,
+}
+
+impl CustomMenu {
+    fn restart(&mut self, ctx: &mut UiContext) -> Transition {
+        self.inner.sel = 1;
+        ctx.warp_mouse = Some((210, self.inner.rect.y + 10));
+        Transition::None
+    }
 }
 
 impl Screen for CustomMenu {
     fn on_enter(&mut self, ctx: &mut UiContext) {
         self.inner.on_enter(ctx);
+        // the pointer is parked on the menu (mouse_set_pos(210, y + 10), o 0x20a3)
+        ctx.warp_mouse = Some((210, self.inner.rect.y + 10));
     }
     fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
-        self.inner.handle(ev, ctx)
+        match ev {
+            Event::Key { key: Key::Char('h'), mods, down: true, .. } if mods.alt => {}
+            Event::MouseButton { button: MouseButton::Right, x, y, down: true } => match self.inner.item_at(*x, *y) {
+                Some(i) => self.inner.sel = i,
+                None => return Transition::None,
+            },
+            // Esc or a click outside: -1, so the question starts over with item 1 (o 0x20dd)
+            Event::Key { key: Key::Esc, down: true, .. } => return self.restart(ctx),
+            Event::MouseButton { button: MouseButton::Left, x, y, down: true } if !self.inner.rect.contains(*x, *y) => return self.restart(ctx),
+            _ => return self.inner.handle(ev, ctx),
+        }
+        match help_topic(ctx, self.topic) {
+            Some(s) => Transition::Push(s),
+            None => Transition::None,
+        }
+    }
+    fn resume(&mut self, _r: DialogResult, ctx: &mut UiContext) -> Transition {
+        // back from the help page: the question is asked again, pointer parked as before
+        ctx.warp_mouse = Some((210, self.inner.rect.y + 10));
+        Transition::None
     }
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
-        let pal = ctx.pic_pal("CUSTOM");
-        let bar = pal.nearest([12, 227, 235]);
-        let black = pal.nearest([0, 0, 0]);
-        let r = self.inner.rect;
-        for (i, it) in self.inner.items.iter().enumerate() {
-            let y = r.y + 4 + i as i32 * 8;
-            if i == self.inner.sel {
-                fb.fill_rect(Rect::new(r.x - 2, y - 1, 60, 8), bar);
-            }
-            draw_text(fb, &ctx.fonts, &TextStyle::new(0, black), r.x, y, it);
+        self.inner.draw(fb, ctx);
+    }
+}
+
+/// `show_help_topic(key)` (overlay 4 +0x0): the HELP.TXT section `*KEY` on a screen filled
+/// with colour 2, the key ("*LAND") centred at (160, 192) in colour 0, the text in colour 15
+/// wrapped to 256 px from (32, 32) at the font's row pitch; any key or click returns.
+struct HelpTopic {
+    key: String,
+    lines: Vec<String>,
+}
+
+fn help_topic(ctx: &UiContext, topic: &str) -> Option<Box<dyn Screen>> {
+    let key = topic.to_ascii_uppercase();
+    let text = ctx.texts.help.section(&key)?.to_vec();
+    let mut lines = Vec::new();
+    for p in paragraphs(&text) {
+        if p.is_empty() {
+            lines.push(String::new());
+        } else {
+            lines.extend(wrap(&ctx.fonts, HELP_FONT, 256, &p));
         }
+    }
+    Some(Box::new(HelpTopic { key: format!("*{key}"), lines }))
+}
+
+const HELP_FONT: usize = 0;
+
+impl Screen for HelpTopic {
+    fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
+        match ev {
+            Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } => Transition::Pop(DialogResult::Done),
+            _ => Transition::None,
+        }
+    }
+    fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
+        fb.fill(2);
+        draw_text_centered(fb, &ctx.fonts, &TextStyle::new(HELP_FONT, 0), 160, 192, &self.key);
+        let pitch = ctx.fonts.get(HELP_FONT).line_height();
+        for (i, l) in self.lines.iter().enumerate() {
+            draw_text(fb, &ctx.fonts, &TextStyle::new(HELP_FONT, 15), 32, 32 + i as i32 * pitch, l);
+        }
+    }
+    fn draws_parent(&self) -> bool {
+        false
+    }
+    fn wants_cursor(&self) -> bool {
+        false
     }
 }
 
@@ -380,24 +461,11 @@ impl Screen for SetupFlow {
         match self.step {
             Step::Custom(cur) => {
                 fb.blit(&p.surf, 0, 0);
-                let white = pal.nearest([255, 255, 255]);
-                let black = pal.nearest([0, 0, 0]);
-                let bar = pal.nearest([12, 227, 235]);
-                for (i, (title, opts)) in CUSTOM_WORLD_OPTIONS.iter().enumerate() {
-                    if i > cur {
-                        break;
-                    }
-                    let y = 6 + i as i32 * 49;
-                    draw_text(fb, &ctx.fonts, &TextStyle::new(0, white), 180, y, &format!("{}:", title.to_ascii_uppercase()));
-                    if i < cur {
-                        for (k, o) in opts.iter().enumerate() {
-                            let yy = y + 8 + k as i32 * 8;
-                            if self.custom_choices[i] == Some(k) {
-                                fb.fill_rect(Rect::new(188, yy - 1, 60, 8), bar);
-                            }
-                            draw_text(fb, &ctx.fonts, &TextStyle::new(0, black), 190, yy, o);
-                        }
-                    }
+                // answered questions stay on the screen with their choice highlighted
+                for i in 0..cur {
+                    let mut m = custom_dialog(i, self.custom_choices[i].unwrap_or(1));
+                    m.on_enter(ctx);
+                    m.draw(fb, ctx);
                 }
             }
             Step::Difficulty | Step::Start | Step::Story => {

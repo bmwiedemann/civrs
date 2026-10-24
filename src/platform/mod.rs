@@ -98,6 +98,8 @@ pub trait Backend {
         1
     }
     fn set_fullscreen(&mut self, _on: bool) {}
+    /// Move the mouse pointer to screen position (x, y) (CIV.EXE's mouse_set_pos 0:0x16ae).
+    fn warp_mouse(&mut self, _x: i32, _y: i32) {}
     fn is_fullscreen(&self) -> bool {
         false
     }

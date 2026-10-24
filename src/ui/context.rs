@@ -54,6 +54,8 @@ pub struct UiContext {
     pub frame: u64,
     pub mouse: (i32, i32),
     pub mouse_down: bool,
+    /// Pointer position a screen asks for (applied by the app once per frame).
+    pub warp_mouse: Option<(i32, i32)>,
     pic_cache: RefCell<HashMap<String, Rc<Picture>>>,
     /// Game state, once a game is running.
     pub game: Option<crate::game::Game>,
@@ -89,6 +91,7 @@ impl UiContext {
             frame: 0,
             mouse: (160, 100),
             mouse_down: false,
+            warp_mouse: None,
             pic_cache: RefCell::new(cache),
             game: None,
             ai: crate::ai::Ai::new(1),
