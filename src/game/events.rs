@@ -95,7 +95,8 @@ pub enum GameEvent {
     CityCaptured { city: CityId, by: Slot, from: Slot, gold: i32, adv: Option<AdvanceId> },
     CityDestroyed { name: String, at: (i32, i32), by: Slot, from: Slot },
     CivilWar { slot: Slot, new_slot: Slot },
-    CivDestroyed { slot: Slot, by: Slot },
+    /// `adjective` and `civ` name the destroyed tribe: the slot may already hold its successor.
+    CivDestroyed { slot: Slot, by: Slot, adjective: String, civ: u8 },
     BarbariansLanded { at: (i32, i32), near_city: Option<CityId>, target: Slot },
     BarbarianUprising { at: (i32, i32), target: Slot },
     BarbarianLeaderCaptured { slot: Slot, gold: i32 },

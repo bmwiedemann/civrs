@@ -348,7 +348,7 @@ impl Game {
             }
             self.refresh_vision(by);
             self.refresh_vision(from);
-            self.check_destroyed(from);
+            self.city_lost_check(from, by);
             return MoveOutcome::DestroyedCity;
         }
         // the captor's city-site goals around it are dropped (0x13faf)
@@ -415,7 +415,7 @@ impl Game {
         }
         self.refresh_vision(by);
         self.refresh_vision(from);
-        self.check_destroyed(from);
+        self.city_lost_check(from, by);
         MoveOutcome::CapturedCity(c)
     }
 
@@ -526,7 +526,8 @@ impl Game {
         self.push_event(GameEvent::CivilWar { slot: from, new_slot });
     }
 
-    /// Mark a civilisation destroyed when it has no cities and no settlers left.
+    /// Mark a civilisation destroyed when it has no cities and no settlers left (the computer's
+    /// turn, 0x15f98, and the loss of units).
     pub fn check_destroyed(&mut self, slot: Slot) {
         if slot == 0 || !self.player(slot).in_game || !self.player(slot).alive {
             return;
@@ -536,15 +537,41 @@ impl Game {
         if has_city || has_settlers {
             return;
         }
+        // whoever has just fought them is the destroyer when known
+        let by = self.last_combat.and_then(|(a, _, _)| self.owner_at(a.0, a.1)).filter(|b| *b != slot).unwrap_or(0);
+        self.destroy_civ(slot, by);
+    }
+
+    /// A city of `slot` was lost to `by` (captured, destroyed, defected, incited): a computer
+    /// civilization without cities is destroyed even if it still has units (`civ_destroyed`
+    /// o5 0x4fe1, called by 0x61b5, 0xd159, 0xe041 and 0x14356); the human keeps the
+    /// cities-and-settlers rule.
+    pub fn city_lost_check(&mut self, slot: Slot, by: Slot) {
+        if slot == 0 || !self.player(slot).in_game || !self.player(slot).alive {
+            return;
+        }
+        if slot == self.human_slot {
+            self.check_destroyed(slot);
+            return;
+        }
+        if self.all_cities().any(|c| c.owner == slot) {
+            return;
+        }
+        self.destroy_civ(slot, by);
+    }
+
+    /// `civ_destroyed` (o5 0x4fe1): the message, all units deleted, then `civ_init` brings in
+    /// the slot's other tribe when it can (`respawn_civ`); otherwise the slot leaves the game
+    /// and the human alone left has conquered the world.
+    fn destroy_civ(&mut self, slot: Slot, by: Slot) {
         self.player_mut(slot).alive = false;
         self.player_mut(slot).destroyed_turn = Some(self.turn);
         let ids = self.units_of(slot);
         for id in ids {
             self.remove_unit(id);
         }
-        // whoever has just fought them is the destroyer when known
-        let by = self.last_combat.and_then(|(a, _, _)| self.owner_at(a.0, a.1)).filter(|b| *b != slot).unwrap_or(0);
-        self.push_event(GameEvent::CivDestroyed { slot, by });
+        let (adjective, civ) = (self.player(slot).adjective().to_string(), self.player(slot).civ);
+        self.push_event(GameEvent::CivDestroyed { slot, by, adjective, civ });
         if self.active_unit.map(|a| self.unit_opt(a).is_none()).unwrap_or(false) {
             self.active_unit = None;
         }
@@ -553,9 +580,111 @@ impl Game {
                 self.ended = Some(EndReason::Destroyed);
                 self.push_event(GameEvent::GameEnded(EndReason::Destroyed));
             }
-        } else if self.alive_slots().len() == 1 && self.player(self.human_slot).alive && self.ended.is_none() {
+            return;
+        }
+        if self.respawn_civ(slot) {
+            return;
+        }
+        if self.alive_slots().len() == 1 && self.player(self.human_slot).alive && self.ended.is_none() {
             self.ended = Some(EndReason::Conquest);
             self.push_event(GameEvent::GameEnded(EndReason::Conquest));
+        }
+    }
+
+    /// `civ_init` (o5 0x493c) after turn 0 for a destroyed computer civilization: the slot's
+    /// other tribe (civ ^ 8) starts afresh, once per slot (ds:0xdf1e) and only up to turn
+    /// 350 - 50 * difficulty. It gets a new start square (random squares (8 + random(64),
+    /// 8 + random(34)) until the k-th is land, has a site value of at least 12 - k/32, lies
+    /// 10 - k/64 from the nearest city, on a continent with at least 32 - turn/16 - k/64 site
+    /// squares and, after 1 AD, no city, and has no hut; 2000 tries), one Settlers there, each
+    /// advance the human knows and a computer civilization found with probability 1/2
+    /// (civrs keeps no first-discoverer table: some computer civilization knows it), Despotism,
+    /// no gold, science (civilized trait + 3) tenths, tax the rest but one tenth, and clean
+    /// diplomacy both ways. Barbarian units within 8 squares are deleted.
+    pub fn respawn_civ(&mut self, slot: Slot) -> bool {
+        let old = self.player(slot).clone();
+        let civ = old.civ ^ 8;
+        if civ == old.start_civ || old.human || self.turn as i32 > 350 - 50 * self.setup.difficulty as i32 {
+            return false;
+        }
+        let Some((x, y)) = self.respawn_square() else { return false };
+        let mut p = Player::new(slot, civ, false);
+        p.in_game = true;
+        p.alive = true;
+        p.govt = Govt::Despotism;
+        p.start_civ = old.start_civ;
+        p.last_contact = -1;
+        let sci = (p.civ().civilized as i32 + 3).clamp(0, 9);
+        p.tax = (10 * (9 - sci)) as u8;
+        p.lux = 10;
+        for s in 0..8usize {
+            self.players[s].diplo[slot as usize] = 0;
+        }
+        self.players[slot as usize] = p;
+        // ai_clear_persistent_goals (0x189b9) and the continent strategy table (o5 0x49bb)
+        self.ai_memory.persistent[slot as usize] = [super::goals::Goal::FREE; super::goals::PERSISTENT_GOALS];
+        self.ai_memory.policies[slot as usize] = None;
+        let human = self.human_slot;
+        for a in 0..rules::advances::REAL_ADVANCE_COUNT as u8 {
+            let found_by_ai = (1..8u8).any(|s| s != human && s != slot && self.player(s).knows(a));
+            if self.player(human).knows(a) && found_by_ai && self.rng.below(2) == 0 {
+                self.grant_advance(slot, a, super::science::AdvanceSource::Discovered);
+            }
+        }
+        self.map.explore(slot, x, y, 1);
+        self.add_unit(slot, unit_ids::SETTLERS, x, y);
+        let barbarians: Vec<UnitId> = self.all_units().filter(|u| u.owner == 0 && Map::civ_distance((u.x, u.y), (x, y)) <= 8).map(|u| u.id).collect();
+        for id in barbarians {
+            self.remove_unit(id);
+        }
+        // civ_init ends by zeroing the unit counters (o5 0x4fc2)
+        self.players[slot as usize].unit_counter = [0; 28];
+        self.players[slot as usize].units_lost_by_type = [0; 28];
+        self.refresh_vision(slot);
+        true
+    }
+
+    /// The start-square search of `civ_init` after turn 0 (o5 0x4bd3..0x4d8b); `None` after
+    /// 2000 tries.
+    fn respawn_square(&mut self) -> Option<(i32, i32)> {
+        use crate::rules::Terrain;
+        let mut sites = [0i32; 16];
+        let mut cities = [0i32; 16];
+        for y in 2..48 {
+            for x in 2..78 {
+                let t = self.map.tile(x, y);
+                if t.is_land() && matches!(t.terrain, Terrain::Plains | Terrain::Grassland | Terrain::River) {
+                    sites[t.continent as usize & 15] += 1;
+                }
+            }
+        }
+        for c in self.all_cities().filter(|c| c.owner != 0) {
+            cities[self.map.tile(c.x, c.y).continent as usize & 15] += 1;
+        }
+        let turn = self.turn as i32;
+        let mut k = 0;
+        loop {
+            let x = 8 + self.rng.below(64) as i32;
+            let y = 8 + self.rng.below(34) as i32;
+            let near = self.nearest_city_exe(x, y);
+            let near = if near.0.is_none() { 30 } else { near.1 };
+            let site = self.map.site_at(x, y) as i32;
+            k += 1;
+            if k > 2000 {
+                return None;
+            }
+            let t = self.map.tile(x, y);
+            let cont = t.continent as usize & 15;
+            if !t.is_land() || 12 - k / 32 > site || near < 10 - k / 64 || sites[cont] < 32 - (turn / 16 + k / 64) {
+                continue;
+            }
+            if self.year() > 0 && cities[cont] != 0 {
+                continue;
+            }
+            if t.has(tile_flags::HUT) {
+                continue;
+            }
+            return Some((x, y));
         }
     }
 }
@@ -574,6 +703,40 @@ mod tests {
     use super::*;
     use crate::game::{tile_flags, GameSetup, Relation};
     use crate::rules::{improvement_ids as imp, unit_ids, Terrain};
+
+    #[test]
+    fn a_destroyed_computer_civ_returns_once_as_its_other_tribe() {
+        let mut g = Game::new(GameSetup { seed: 3, ..Default::default() }, None);
+        g.turn = 10;
+        let s = (1..8u8).find(|s| *s != g.human_slot && g.player(*s).alive).unwrap();
+        let first = g.player(s).civ;
+        for id in g.units_of(s) {
+            g.remove_unit(id);
+        }
+        g.check_destroyed(s);
+        assert!(g.player(s).alive, "civ_init brings in the slot's other tribe");
+        assert_eq!(g.player(s).civ, first ^ 8);
+        assert_eq!(g.units_of(s).len(), 1);
+        assert_eq!(g.unit(g.units_of(s)[0]).kind, unit_ids::SETTLERS);
+        // the second time the slot is gone for good
+        for id in g.units_of(s) {
+            g.remove_unit(id);
+        }
+        g.check_destroyed(s);
+        assert!(!g.player(s).alive);
+    }
+
+    #[test]
+    fn no_new_civ_after_turn_350_less_50_per_level() {
+        let mut g = Game::new(GameSetup { seed: 3, ..Default::default() }, None);
+        g.turn = 351;
+        let s = (1..8u8).find(|s| *s != g.human_slot && g.player(*s).alive).unwrap();
+        for id in g.units_of(s) {
+            g.remove_unit(id);
+        }
+        g.check_destroyed(s);
+        assert!(!g.player(s).alive);
+    }
 
     fn flat_game() -> Game {
         flat_game_with(7)
@@ -655,6 +818,8 @@ mod tests {
     fn capturing_a_size_3_city_transfers_ownership_and_plunders() {
         let mut g = flat_game();
         let c = g.add_city(2, "Loot".into(), 20, 20);
+        // a second city keeps civ 2 in the game (losing its last one would destroy it)
+        g.add_city(2, "Home".into(), 40, 30);
         g.city_mut(c).size = 3;
         g.city_mut(c).add_improvement(imp::TEMPLE);
         g.auto_assign(c);
@@ -669,11 +834,11 @@ mod tests {
         assert_eq!(city.owner, 1);
         assert_eq!(city.size, 2);
         assert!(!city.has_improvement(imp::PALACE));
-        // CIV.EXE 0x143fd: gold * size / (citizens + 1) = 300 * 3 / 4
-        assert_eq!(g.player(1).gold - before, 225);
-        assert_eq!(g.player(2).gold, 75);
+        // CIV.EXE 0x143fd: gold * size / (citizens + 1) = 300 * 3 / (3 + 1 + 1)
+        assert_eq!(g.player(1).gold - before, 180);
+        assert_eq!(g.player(2).gold, 120);
         assert_eq!(g.unit(a).pos(), (20, 20));
-        assert!(g.events.iter().any(|e| matches!(e, GameEvent::CityCaptured { city, by: 1, from: 2, gold: 225, .. } if *city == c)));
+        assert!(g.events.iter().any(|e| matches!(e, GameEvent::CityCaptured { city, by: 1, from: 2, gold: 180, .. } if *city == c)));
     }
 
     #[test]

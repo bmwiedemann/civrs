@@ -164,6 +164,11 @@ pub struct Player {
     /// version-14 saves.
     #[serde(skip)]
     pub tribe_names: Option<(String, String)>,
+    /// The tribe the slot began the game with (ds:0xdf1e marks the slots that began on their
+    /// alternate, civ + 8): a destroyed civilization is replaced only by the other tribe of its
+    /// slot, once (`civ_init` o 0x4dbe). Stored after the tribe names in version-14 saves.
+    #[serde(skip)]
+    pub start_civ: u8,
 }
 
 impl Player {
@@ -208,6 +213,7 @@ impl Player {
             senate_blocks: 0,
             sold_cities: Vec::new(),
             tribe_names: None,
+            start_civ: civ,
         }
     }
 

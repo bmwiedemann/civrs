@@ -715,7 +715,7 @@ impl Game {
         self.revolt_city(c, to);
         self.refresh_vision(to);
         self.refresh_vision(city.owner);
-        self.check_destroyed(city.owner);
+        self.city_lost_check(city.owner, to);
     }
 
     /// Reduce a city's size by `n` (never below 1).
@@ -1268,7 +1268,7 @@ impl Game {
                 self.transfer_city(city, us);
                 self.refresh_vision(us);
                 self.refresh_vision(them);
-                self.check_destroyed(them);
+                self.city_lost_check(them, us);
                 return Ok(DiplomatResult::Incited { cost });
             }
             DiplomatAction::MeetKing => {

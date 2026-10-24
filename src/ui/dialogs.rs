@@ -34,7 +34,7 @@ pub fn sound_for_event(ctx: &UiContext, ev: &GameEvent) {
         GameEvent::BarbariansLanded { target, .. } | GameEvent::BarbarianUprising { target, .. } if *target == me => a.play(Sound::Disorder),
         GameEvent::WarDeclared { a: x, b: y } if *x == me || *y == me => a.play(Sound::WarDrums),
         GameEvent::NuclearStrike { .. } => a.play(Sound::Nuke),
-        GameEvent::CivDestroyed { slot, by } if *by == me => a.national_theme(g.player(*slot).civ, true),
+        GameEvent::CivDestroyed { by, civ, .. } if *by == me => a.national_theme(*civ, true),
         GameEvent::GameEnded(reason) => match reason {
             crate::game::EndReason::Destroyed => a.play(Sound::Lose),
             crate::game::EndReason::Spaceship(_) => a.play(Sound::MainTheme),
@@ -175,7 +175,8 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             }
         }
         GameEvent::CivilWar { slot, new_slot } if *slot == me || *new_slot == me => msg(vec!["Civil war!".into()]),
-        GameEvent::CivDestroyed { slot, by } => news(vec![format!("{} civilization", g.civ_name(*slot)), "destroyed".into(), format!("by {}!", civ(*by))]),
+        // civ_destroyed (o5 0x4fe1): "<adjective> civilization / destroyed by <plural>!"
+        GameEvent::CivDestroyed { adjective, by, .. } => news(vec![format!("{adjective} civilization"), "destroyed".into(), format!("by {}!", civ(*by))]),
         // CIV.EXE 0x18fb1 (ds:0x2a70), drawn as the Defense Minister's box at (100,32); the
         // minister's portrait is not drawn here
         GameEvent::BarbariansLanded { near_city, target, .. } if *target == me => Some(Box::new(

@@ -27,7 +27,8 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// 13: then by each player's 28 unit counters (`Player::unit_counter`, i16 LE) and 28 losses
 /// (`Player::units_lost_by_type`); older saves count the units they have and no losses.
 /// 14: then by each player's tribe names (`Player::tribe_names`): plural and adjective, each a
-/// u8 length and the bytes, 0/0 for none.
+/// u8 length and the bytes, 0/0 for none; then each player's starting tribe (`start_civ`, one
+/// byte; older files take the current tribe).
 pub const VERSION: u16 = 14;
 pub const SLOTS: u8 = 10;
 
@@ -115,6 +116,7 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
             data.extend_from_slice(b);
         }
     }
+    data.extend(g.players.iter().map(|p| p.start_civ));
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -227,9 +229,21 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
             at += 1 + n;
             Some(String::from_utf8_lossy(b).into_owned())
         };
+        let mut names_ok = true;
         for p in g.players.iter_mut() {
-            let (Some(plural), Some(adj)) = (take(rest), take(rest)) else { break };
+            let (Some(plural), Some(adj)) = (take(rest), take(rest)) else {
+                names_ok = false;
+                break;
+            };
             p.tribe_names = (!plural.is_empty()).then_some((plural, adj));
+        }
+        let starts = names_ok.then(|| rest.get(at..at + g.players.len())).flatten();
+        for (i, p) in g.players.iter_mut().enumerate() {
+            p.start_civ = starts.map_or(p.civ, |b| b[i]);
+        }
+    } else {
+        for p in g.players.iter_mut() {
+            p.start_civ = p.civ;
         }
     }
     match slots.and_then(|n| rest.get(seen + 4..seen + 4 + n)) {
