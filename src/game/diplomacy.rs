@@ -530,7 +530,7 @@ impl Game {
     /// ds:0xb3f0[0x38 * civ] (0x15789): the civ's Nuclear units (the per-type counter of
     /// type 25; the catalogue's "first word of the table" is ds:0xb3be).
     pub fn nuclear_units(&self, slot: Slot) -> i32 {
-        self.all_units().filter(|u| u.owner == slot && u.kind == unit_ids::NUCLEAR).count() as i32
+        self.player(slot).unit_counter[unit_ids::NUCLEAR as usize] as i32
     }
 
     /// 0xa5e:0x229b `knows_advance`: never Future Tech or the unused slots, never barbarians.

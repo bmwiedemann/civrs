@@ -213,6 +213,10 @@ pub struct Game {
     /// the game body in version-9 saves.
     #[serde(skip)]
     pub warming_counter: u16,
+    /// ds:0x70d8: set while an attack is resolved, so `remove_unit` counts the dead in
+    /// `Player::units_lost_by_type` (delete_unit 0x8d71). Not saved.
+    #[serde(skip)]
+    pub counting_losses: bool,
     /// The research catch-up bonus ds:0xd2de of this turn (`update_research_catch_up`); not
     /// saved, recomputed on loading.
     #[serde(skip)]
@@ -348,6 +352,7 @@ impl Game {
             diplo_latch: -1,
             treaty_break_ok: None,
             warming_counter: 0,
+            counting_losses: false,
             catch_up: 0,
             free_research: 0,
         };
@@ -368,6 +373,9 @@ impl Game {
             self.add_unit(slot, rules::unit_ids::SETTLERS, x, y);
             self.players[slot as usize].gold = 0;
             self.map.explore(slot, x, y, 1);
+            // civ_init ends by zeroing the unit counters and losses (o5 0x4fc2..0x4fcb)
+            self.players[slot as usize].unit_counter = [0; 28];
+            self.players[slot as usize].units_lost_by_type = [0; 28];
         }
         let starts: Vec<(Slot, (i32, i32))> = slots.iter().map(|&(s, _, p)| (s, p)).collect();
         let bonus = mapgen::start_bonuses(&self.map, &world.land_sizes, &starts);
@@ -604,6 +612,7 @@ impl Game {
             self.units[id as usize] = Some(u);
         }
         self.players[owner as usize].stats.units_built += 1;
+        self.players[owner as usize].unit_counter[kind as usize % 28] += 1;
         self.note_occupant(owner, x, y);
         // create_unit 0x8b51 starts the unit without a heading
         self.ai_memory.heading.remove(&id);
@@ -614,13 +623,18 @@ impl Game {
     pub fn remove_unit(&mut self, id: UnitId) {
         // units carried by this one are lost too
         let carried: Vec<UnitId> = self.all_units().filter(|u| u.carried_by == Some(id)).map(|u| u.id).collect();
-        for c in carried {
-            self.units[c as usize] = None;
+        for c in carried.into_iter().chain([id]) {
+            if let Some(u) = self.units[c as usize].take() {
+                let p = &mut self.players[u.owner as usize];
+                p.unit_counter[u.kind as usize % 28] -= 1;
+                if self.counting_losses {
+                    p.units_lost_by_type[u.kind as usize % 28] += 1;
+                }
+            }
         }
         if self.active_unit == Some(id) {
             self.active_unit = None;
         }
-        self.units[id as usize] = None;
     }
 
     pub fn push_event(&mut self, e: GameEvent) {

@@ -140,6 +140,18 @@ pub struct Player {
     /// Stored after the game body in version-8 saves.
     #[serde(skip)]
     pub last_contact: i32,
+    /// ds:0xb3be[0x38 * civ]: units of each type, as CIV.EXE counts them: up in create_unit
+    /// (0x8c5d), down in delete_unit (0x8e63), and zeroed by `civ_init` (o5 0x4fc7) after the
+    /// start units are placed, so those are not counted (and their loss takes it below zero).
+    /// Read by the F2 report, the production advice and the Settlers hints. Stored after the
+    /// game body in version-13 saves.
+    #[serde(skip)]
+    pub unit_counter: [i16; 28],
+    /// es:0x253c[0x38 * civ] (far segment ds:0x643c): units of each type lost in fights,
+    /// counted by delete_unit while an attack is resolved; the F2 "MILITARY LOSSES" page.
+    /// Stored after the game body in version-13 saves.
+    #[serde(skip)]
+    pub units_lost_by_type: [i16; 28],
     /// Score frozen when the game ended for this player.
     pub final_score: Option<i32>,
     /// Number of times the player's cities rioted under democracy (civil war bookkeeping).
@@ -185,6 +197,8 @@ impl Player {
             hints_shown: 0,
             diplo: [0; 8],
             last_contact: -1,
+            unit_counter: [0; 28],
+            units_lost_by_type: [0; 28],
             final_score: None,
             senate_blocks: 0,
             sold_cities: Vec::new(),

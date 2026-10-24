@@ -1431,6 +1431,9 @@ impl Game {
         let mut gone = Vec::new();
         for u in self.units.iter_mut().flatten().filter(|u| u.owner == from) {
             if Map::dist((u.x, u.y), pos) <= 1 && !self.map.is_ocean(u.x, u.y) {
+                // deleted and re-created for the new owner (o 0x1de40 / 0x1de6e)
+                self.players[from as usize].unit_counter[u.kind as usize % 28] -= 1;
+                self.players[to as usize].unit_counter[u.kind as usize % 28] += 1;
                 u.owner = to;
                 u.order = UnitOrder::None;
                 // re-created for the new owner, seen by the old one (o 0x1e3af)

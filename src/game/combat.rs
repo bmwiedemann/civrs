@@ -506,6 +506,10 @@ impl Game {
             }
             let moving: Vec<UnitId> = self.all_units().filter(|u| u.owner == from && (u.home == Some(*c) || (u.x, u.y) == (x, y))).map(|u| u.id).collect();
             for id in moving {
+                // re-created for the new civilization: the counters move along
+                let kind = self.unit(id).kind as usize % 28;
+                self.players[from as usize].unit_counter[kind] -= 1;
+                self.players[new_slot as usize].unit_counter[kind] += 1;
                 self.unit_mut(id).owner = new_slot;
             }
             // trade routes of the loser pointing at rebel cities are cut

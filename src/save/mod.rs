@@ -24,7 +24,9 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// it at 0.
 /// 12: then by the number of unit slots (u32 LE) and each slot's `Unit::seen_by` byte (0 for an
 /// empty slot); older saves take the owner and the civilizations that see the square now.
-pub const VERSION: u16 = 12;
+/// 13: then by each player's 28 unit counters (`Player::unit_counter`, i16 LE) and 28 losses
+/// (`Player::units_lost_by_type`); older saves count the units they have and no losses.
+pub const VERSION: u16 = 13;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -98,6 +100,11 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     data.extend_from_slice(&g.warming_counter.to_le_bytes());
     data.extend_from_slice(&(g.units.len() as u32).to_le_bytes());
     data.extend(g.units.iter().map(|u| u.as_ref().map(|u| u.seen_by).unwrap_or(0)));
+    for p in &g.players {
+        for c in p.unit_counter.iter().chain(p.units_lost_by_type.iter()) {
+            data.extend_from_slice(&c.to_le_bytes());
+        }
+    }
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -182,6 +189,25 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     }
     let seen = warming + 2;
     let slots = rest.get(seen..seen + 4).filter(|_| ver >= 12).map(|n| u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize);
+    let counters = seen + 4 + slots.unwrap_or(0);
+    let unit_kinds: Vec<(u8, usize)> = g.all_units().map(|u| (u.owner, u.kind as usize % 28)).collect();
+    for (i, p) in g.players.iter_mut().enumerate() {
+        match rest.get(counters + 112 * i..counters + 112 * (i + 1)).filter(|_| ver >= 13) {
+            Some(b) => {
+                for (k, c) in p.unit_counter.iter_mut().chain(p.units_lost_by_type.iter_mut()).enumerate() {
+                    *c = i16::from_le_bytes([b[2 * k], b[2 * k + 1]]);
+                }
+            }
+            None => {
+                p.unit_counter = [0; 28];
+                for (owner, kind) in &unit_kinds {
+                    if *owner as usize == i {
+                        p.unit_counter[*kind] += 1;
+                    }
+                }
+            }
+        }
+    }
     match slots.and_then(|n| rest.get(seen + 4..seen + 4 + n)) {
         Some(b) => {
             for (u, v) in g.units.iter_mut().zip(b) {
@@ -531,6 +557,33 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
         assert!(old.ai_memory.persistent.iter().flatten().all(|p| p.is_free()));
         assert_eq!(old.player(2).diplo, g.player(2).diplo);
+    }
+
+    #[test]
+    fn unit_counters_survive_a_save_and_old_saves_count_their_units() {
+        let mut g = Game::new(GameSetup { seed: 6, ..Default::default() }, None);
+        let h = g.human_slot;
+        // civ_init leaves the start units uncounted
+        assert_eq!(g.player(h).unit_counter[crate::rules::unit_ids::MILITIA as usize], 0);
+        let u = g.add_unit(h, crate::rules::unit_ids::MILITIA, 10, 10);
+        g.player_mut(h).units_lost_by_type[crate::rules::unit_ids::PHALANX as usize] = 3;
+        let dir = std::env::temp_dir().join(format!("civrs-counters-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        let l = super::load_game(&path).unwrap();
+        assert_eq!(l.player(h).unit_counter, g.player(h).unit_counter);
+        assert_eq!(l.player(h).units_lost_by_type, g.player(h).units_lost_by_type);
+        // a version-12 file: the units it has are counted, no losses
+        let mut data = std::fs::read(&path).unwrap();
+        data[4..6].copy_from_slice(&12u16.to_le_bytes());
+        data.truncate(data.len() - 112 * g.players.len());
+        std::fs::write(&path, &data).unwrap();
+        let old = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        let militia = old.units_of(h).into_iter().filter(|id| old.unit(*id).kind == crate::rules::unit_ids::MILITIA).count() as i16;
+        assert_eq!(old.player(h).unit_counter[crate::rules::unit_ids::MILITIA as usize], militia);
+        assert_eq!(old.player(h).units_lost_by_type, [0; 28]);
+        let _ = u;
     }
 
     #[test]

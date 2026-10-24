@@ -79,7 +79,7 @@ impl Game {
         let (city, d) = self.nearest_city_exe(x, y);
         let city = city.filter(|c| self.city(*c).owner == self.human_slot && d == 1)?;
         let bare = !t.has(tile_flags::MINE) && !t.has(tile_flags::IRRIGATION);
-        let settlers = self.all_units().filter(|o| o.owner == self.human_slot && o.kind == unit_ids::SETTLERS).count();
+        let settlers = self.player(self.human_slot).unit_counter[unit_ids::SETTLERS as usize];
         let section = if t.terrain == Terrain::Hills && bare {
             "MINING"
         } else if t.terrain == Terrain::Plains && bare && self.irrigation_water(x, y) {
@@ -198,6 +198,8 @@ mod tests {
     fn settler_advice_names_the_city() {
         let mut g = arena();
         let me = g.human_slot;
+        // the advice counts Settlers by ds:0xb3be, which starts at 0 here as after civ_init
+        g.player_mut(me).unit_counter = [0; 28];
         let s = g.add_unit(me, unit_ids::SETTLERS, 20, 20);
         let c = g.found_city(s).unwrap();
         g.map.get_mut(21, 20).unwrap().terrain = Terrain::Hills;

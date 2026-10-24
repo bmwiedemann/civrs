@@ -138,15 +138,22 @@ impl Game {
                 if u.carried_by.is_some() && u.is_land() {
                     return Err(RuleError::Amphib);
                 }
-                if u.kind == unit_ids::NUCLEAR {
+                // move_units counts the units lost in the fight (ds:0x70d8, o 0x6075..0x60ae)
+                self.counting_losses = true;
+                let out = if u.kind == unit_ids::NUCLEAR {
                     self.nuke(id, tx, ty);
-                    return Ok(MoveOutcome::Attacked { won: true, at: (tx, ty), defender: unit_ids::NUCLEAR });
-                }
-                return Ok(self.attack(id, tx, ty));
+                    MoveOutcome::Attacked { won: true, at: (tx, ty), defender: unit_ids::NUCLEAR }
+                } else {
+                    self.attack(id, tx, ty)
+                };
+                self.counting_losses = false;
+                return Ok(out);
             }
             if let Some(c) = city_here {
                 if u.kind == unit_ids::NUCLEAR {
+                    self.counting_losses = true;
                     self.nuke(id, tx, ty);
+                    self.counting_losses = false;
                     return Ok(MoveOutcome::Attacked { won: true, at: (tx, ty), defender: unit_ids::NUCLEAR });
                 }
                 if !u.is_land() || u.info().att == 0 && !matches!(u.kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN) {

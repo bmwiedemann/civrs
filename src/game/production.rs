@@ -278,9 +278,11 @@ impl Game {
         let mut here = [0i32; 28];
         let mut building_here = [1i32; 28];
         let mut units = 0;
+        for (k, c) in self.player(slot).unit_counter.iter().enumerate() {
+            owned[k] = *c as i32;
+        }
         for u in self.all_units().filter(|u| u.owner == slot) {
             units += 1;
-            owned[u.kind as usize] += 1;
             let t = self.map.tile(u.x, u.y);
             if t.is_land() && continent_index(t.continent) == k {
                 here[u.kind as usize] += 1;
