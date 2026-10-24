@@ -10,6 +10,8 @@ use crate::ui::tilerender::{cell, sp};
 
 pub const FONT: usize = 0;
 pub const LINE_H: i32 = 8;
+/// Bare-menu highlight bar width beyond the widest line (menu_select o 0x1ca94: max width + 5).
+const BARE_BAR_EXTRA: i32 = 5;
 
 /// Visual style of a panel/menu.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,6 +26,11 @@ pub enum PanelStyle {
     Green,
     /// White box with a cyan border (name entry).
     Cyan,
+    /// No panel: the menu is drawn over a box that is part of the picture (the DIFFS.PIC
+    /// setup menus), laid out as CIV.EXE's `menu_draw` does from the menu origin: title at
+    /// (+5, +5) in colour 3, rows from +13 on the font's pitch with the text after a leading blank,
+    /// the selected row on a cyan bar from +3 as wide as the widest line.
+    Bare,
 }
 
 pub struct StyleColours {
@@ -78,6 +85,11 @@ pub fn draw_styled_panel(fb: &mut Surface, ctx: &UiContext, r: Rect, style: Pane
             fb.rect_outline(r, outer);
             fb.rect_outline(r.inset(1), cream);
             StyleColours { text: tan, title: tan, hilite_bar: cream, hilite_text: black, disabled: bg }
+        }
+        PanelStyle::Bare => {
+            let pal = &ctx.palette;
+            let black = pal.nearest([0, 0, 0]);
+            StyleColours { text: black, title: pal.nearest([0, 170, 170]), hilite_bar: pal.nearest([85, 255, 255]), hilite_text: black, disabled: pal.nearest([0, 170, 170]) }
         }
         PanelStyle::Green => {
             fb.fill_rect(r, theme::GREEN);
@@ -218,7 +230,10 @@ impl MenuDialog {
     }
 
     fn layout(&mut self, ctx: &UiContext) {
-        if self.font != FONT {
+        if self.style == PanelStyle::Bare {
+            // menu_draw's pitch is the font height itself (0:0x7c3)
+            self.line_h = ctx.fonts.get(self.font).line_height() - 1;
+        } else if self.font != FONT {
             self.line_h = ctx.fonts.get(self.font).line_height();
         }
         let mut w = self.min_width;
@@ -245,6 +260,41 @@ impl MenuDialog {
             let y = self.row_y(i);
             my >= y - 1 && my < y + self.line_h - 1
         })
+    }
+
+    /// `PanelStyle::Bare` layout (see there).
+    fn draw_bare(&self, fb: &mut Surface, ctx: &UiContext, cols: &StyleColours) {
+        let (x, y) = (self.rect.x, self.rect.y);
+        let font = self.font;
+        let mut bar_w = 0;
+        for t in &self.title {
+            bar_w = bar_w.max(text_width(&ctx.fonts, font, t));
+        }
+        for it in &self.items {
+            bar_w = bar_w.max(text_width(&ctx.fonts, font, &format!(" {it}")));
+        }
+        // the lines are drawn as the menu text holds them, each ended by a line break, so no
+        // glyph is the last of its string and all are cut to their advance (see draw_glyph_run)
+        for (i, t) in self.title.iter().enumerate() {
+            draw_text(fb, &ctx.fonts, &TextStyle::new(font, cols.title), x + 5, y + 5 + i as i32 * self.line_h, &format!("{t} "));
+        }
+        for (i, it) in self.items.iter().enumerate() {
+            let colour = if self.disabled[i] { cols.disabled } else { cols.text };
+            draw_text(fb, &ctx.fonts, &TextStyle::new(font, colour), x + 5, self.row_y(i), &format!(" {it} "));
+        }
+        // the highlight recolours the row's background 15 -> 11 (o 0x1cab2), so text and the
+        // title's descenders keep their colours
+        if let Some(i) = Some(self.sel).filter(|&i| i < self.items.len() && !self.disabled[i]) {
+            let page = ctx.palette.nearest([255, 255, 255]);
+            let r = Rect::new(x + 3, self.row_y(i) - 1, bar_w + BARE_BAR_EXTRA, self.line_h);
+            for py in r.y..r.bottom() {
+                for px in r.x..r.right() {
+                    if fb.get(px, py) == page {
+                        fb.put(px, py, cols.hilite_bar);
+                    }
+                }
+            }
+        }
     }
 
     fn move_sel(&mut self, delta: i32) {
@@ -329,6 +379,10 @@ impl Screen for MenuDialog {
 
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
         let cols = draw_styled_panel(fb, ctx, self.rect, self.style);
+        if self.style == PanelStyle::Bare {
+            self.draw_bare(fb, ctx, &cols);
+            return;
+        }
         let mut y = self.rect.y + self.top_pad;
         let title_colour = self.title_colour.unwrap_or(cols.title);
         for t in &self.title {

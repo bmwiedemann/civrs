@@ -6,7 +6,7 @@
 
 use crate::assets::text::{paragraphs, substitute, Vars};
 use crate::gfx::text::draw_text;
-use crate::gfx::{Rect, Surface, TextStyle};
+use crate::gfx::{Surface, TextStyle};
 use crate::platform::Event;
 use crate::ui::context::UiContext;
 use crate::ui::screen::{DialogResult, Screen, Transition};
@@ -40,13 +40,6 @@ fn advance_lines(names: &[&str]) -> Vec<String> {
     }
     out.push(format!("{line}and Roads."));
     out
-}
-
-/// Difficulty portrait in DIFFS.PIC as the intro copies it: x 21 (even levels) or 80 (odd),
-/// y 6 + 35 * level, 53x47.
-fn portrait(difficulty: usize) -> Rect {
-    let d = difficulty as i32;
-    Rect::new(if d & 1 == 1 { 80 } else { 21 }, 6 + 35 * d, 53, 47)
 }
 
 impl Screen for LeaderIntro {
@@ -97,7 +90,7 @@ impl Screen for LeaderIntro {
         fb.fill(PAGE);
         crate::ui::pedia_entry::draw_border(fb, ctx, self.border);
         let diffs = ctx.pic("DIFFS");
-        fb.blit_part(&diffs.surf, portrait(ctx.game().setup.difficulty as usize), 134, 20, None);
+        fb.blit_part(&diffs.surf, crate::ui::setup::portrait(ctx.game().setup.difficulty as usize), 134, 20, None);
         let st = TextStyle::new(0, 0);
         for (i, l) in self.lines.iter().enumerate() {
             draw_text(fb, &ctx.fonts, &st, TEXT_X, TEXT_Y + LINE_H * i as i32, l);
@@ -124,11 +117,5 @@ mod tests {
         assert_eq!(advance_lines(&["Alphabet"]), vec!["Alphabet, and Roads."]);
         assert_eq!(advance_lines(&["Bronze Working", "Ceremonial Burial"]), vec!["Bronze Working, Ceremonial Burial, ", "and Roads."]);
         assert_eq!(advance_lines(&["Alphabet", "Bronze Working", "Pottery"]), vec!["Alphabet, Bronze Working, ", "Pottery, and Roads."]);
-    }
-
-    #[test]
-    fn portraits_follow_the_difficulty() {
-        assert_eq!(portrait(0), Rect::new(21, 6, 53, 47));
-        assert_eq!(portrait(3), Rect::new(80, 111, 53, 47));
     }
 }
