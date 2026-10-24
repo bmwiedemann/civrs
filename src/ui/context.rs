@@ -58,6 +58,8 @@ pub struct UiContext {
     pub warp_mouse: Option<(i32, i32)>,
     /// Save slot last loaded or saved (ds:0xe168), preselected by the save menu.
     pub last_slot: Option<usize>,
+    /// World seed for new games from the command line (`--seed`), instead of the clock.
+    pub seed_override: Option<u64>,
     pic_cache: RefCell<HashMap<String, Rc<Picture>>>,
     /// Game state, once a game is running.
     pub game: Option<crate::game::Game>,
@@ -95,6 +97,7 @@ impl UiContext {
             mouse_down: false,
             warp_mouse: None,
             last_slot: None,
+            seed_override: None,
             pic_cache: RefCell::new(cache),
             game: None,
             ai: crate::ai::Ai::new(1),

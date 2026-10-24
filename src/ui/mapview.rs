@@ -138,10 +138,12 @@ impl MapView {
         }
     }
 
-    /// The view's left column wraps around with the map (`vx` in 0..MAP_W).
+    /// Put (x, y) at view column 7, row 6, as CIV.EXE does for units, the minimap and FindCity
+    /// (`draw_map_view(civ, x - 7, y - 6)`, e.g. o 0x2486, 0x43b8); draw_map_view clamps the
+    /// row to 0..38. The view's left column wraps around with the map (`vx` in 0..MAP_W).
     pub fn center_on(&mut self, x: i32, y: i32) {
-        self.vx = Map::wrap_x(x - 6);
-        self.vy = (y - 5).clamp(0, MAP_H as i32 - VIEW_H);
+        self.vx = Map::wrap_x(x - 7);
+        self.vy = (y - 6).clamp(0, MAP_H as i32 - VIEW_H);
     }
 
     fn ensure_visible(&mut self, x: i32, y: i32) {

@@ -150,6 +150,9 @@ impl SetupFlow {
 
     fn generate(&mut self, ctx: &mut UiContext) -> Transition {
         self.setup.world = if self.kind == 2 { WorldSource::Earth } else { WorldSource::Random(self.params) };
+        if let Some(seed) = ctx.seed_override {
+            self.setup.seed = seed;
+        }
         let earth = if self.kind == 2 { ctx.assets.load_earth().ok() } else { None };
         let game = crate::game::Game::new(self.setup.clone(), earth.as_ref());
         ctx.game = Some(game);

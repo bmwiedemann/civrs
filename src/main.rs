@@ -553,6 +553,7 @@ fn main() {
             std::process::exit(1);
         }
     };
+    ctx.seed_override = cli.seed;
     let mut app = civrs::app::App::new(ctx, first);
     if let Some(engine) = app.ctx.audio.engine() {
         if let Err(e) = backend.start_audio(engine) {
