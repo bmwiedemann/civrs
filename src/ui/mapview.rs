@@ -31,6 +31,8 @@ enum BarAction {
     Save,
     Revolution,
     Quit,
+    /// Retire (ds:0xdc48 = 2): the quit question, then the end-of-game scores (0x2c20).
+    Retire,
     /// An order: the key (with Shift) it posts, as the original stores it in ds:0xd4ca.
     Key(Key, bool),
     Advisor(u8),
@@ -61,6 +63,9 @@ pub(crate) enum Pending {
     DisbandConfirm(UnitId),
     FoundCityConfirm(UnitId),
     QuitConfirm,
+    RetireConfirm,
+    /// The retirement screens are over: leave the game.
+    Retired,
     RevolutionConfirm,
     Error,
     /// A note in front of the founding animation of the first city.
@@ -447,7 +452,7 @@ impl MapView {
                 add(&mut items, "Save Game", BarAction::Save, first_turn);
                 add(&mut items, "REVOLUTION!", BarAction::Revolution, false);
                 add(&mut items, " ", BarAction::Nothing, false);
-                add(&mut items, "Retire", BarAction::Quit, false);
+                add(&mut items, "Retire", BarAction::Retire, false);
                 add(&mut items, "QUIT to DOS", BarAction::Quit, false);
             }
             1 => {
@@ -543,8 +548,8 @@ impl MapView {
                 self.pending = Pending::RevolutionConfirm;
                 Transition::Push(Box::new(YesNo::new(vec!["Are you sure you want a REVOLUTION?".into()], "_No thanks.", "_Yes, we need a new government.").with_pos(64, 80)))
             }
-            BarAction::Quit => {
-                self.pending = Pending::QuitConfirm;
+            action @ (BarAction::Quit | BarAction::Retire) => {
+                self.pending = if action == BarAction::Retire { Pending::RetireConfirm } else { Pending::QuitConfirm };
                 Transition::Push(Box::new(YesNo::new(vec!["Are you sure you".into(), "want to Quit?".into()], "Keep Playing", "Yes, Quit").with_pos(100, 80)))
             }
             BarAction::Key(key, shift) => self.key_order(ctx, key, crate::platform::Mods { shift, ctrl: false, alt: false }),
@@ -1226,6 +1231,15 @@ impl Screen for MapView {
                 }
                 Transition::None
             }
+            Pending::RetireConfirm => {
+                if result != DialogResult::No {
+                    return Transition::None;
+                }
+                ctx.game_mut().retire();
+                self.pending = Pending::Retired;
+                Transition::Push(crate::ui::endgame::end_screen(ctx, crate::game::EndReason::Retired))
+            }
+            Pending::Retired => Transition::Quit,
             Pending::Diplomat(id, c) => match result {
                 DialogResult::Choice(i) => crate::ui::unit_actions::diplomat_choice(self, ctx, id, c, i),
                 _ => Transition::None,

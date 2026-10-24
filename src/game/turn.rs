@@ -378,6 +378,20 @@ impl Game {
         self.civ_politics(slot);
     }
 
+    /// GAME > Retire answered "Yes, Quit" (ds:0xdc48 = 2): the game ends now and the human's
+    /// score is frozen for the end-of-game screens (0x2c20).
+    pub fn retire(&mut self) {
+        if self.ended.is_none() {
+            self.ended = Some(EndReason::Retired);
+        }
+        if !self.scoring_over {
+            self.scoring_over = true;
+            let human = self.human_slot;
+            let total = self.score(human).total;
+            self.player_mut(human).final_score = Some(total);
+        }
+    }
+
     /// Pollution, global warming, spaceship flight, end-of-game checks (once per turn, after all
     /// players and before the turn counter advances).
     pub fn process_world(&mut self) {
