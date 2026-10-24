@@ -112,7 +112,8 @@ impl TitleScreen {
         self.phase = Phase::Menu;
         self.menu_up = true;
         let items: Vec<String> = MAIN_MENU.iter().map(|s| s.to_string()).collect();
-        Transition::Push(Box::new(MenuDialog::new(vec![], items).with_pos(86, 135).with_style(PanelStyle::Brown).with_size(154, 53).with_top_pad(7).no_cancel()))
+        // main_menu 0x1f24: popup_menu3(text, 100, 140), framed (even y) in colour 7 of LOGO.PIC
+        Transition::Push(Box::new(MenuDialog::new(vec![], items).with_pos(100, 140).with_style(PanelStyle::Framed).with_font(0).with_top_pad(5).with_hotkeys().no_cancel()))
     }
 
     fn start_dissolve(&mut self, ctx: &UiContext) {

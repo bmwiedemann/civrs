@@ -33,6 +33,12 @@ pub enum PanelStyle {
     /// is drawn in 3 on white (15), else in 15, and the highlight recolours that background to
     /// 11 from +3, as wide as the widest line + 5.
     Bare,
+    /// `menu_draw`'s frame for a menu at an even y (`draw_frame` 0x1d1a2 with colour 7): fill
+    /// (x+1, y+1)..(x+w, y+h) in 7, bevel from (x+1, y+1) with the top and right edges in 8 and
+    /// the bottom and left in 15, black outline (x, y)..(x+w+2, y+h+2), where w = widest line
+    /// + 8 and h = lines * pitch + 6. Inside, the layout and colours are `Bare`'s with
+    /// background 7. (Before a game, ds:0x2f98 = 0: a plain fill, not the stone texture.)
+    Framed,
 }
 
 pub struct StyleColours {
@@ -88,7 +94,7 @@ pub fn draw_styled_panel(fb: &mut Surface, ctx: &UiContext, r: Rect, style: Pane
             fb.rect_outline(r.inset(1), cream);
             StyleColours { text: tan, title: tan, hilite_bar: cream, hilite_text: black, disabled: bg }
         }
-        PanelStyle::Bare => {
+        PanelStyle::Bare | PanelStyle::Framed => {
             // the menu's own EGA colours; the title colour depends on the background (draw_bare)
             StyleColours { text: 0, title: 15, hilite_bar: 11, hilite_text: 0, disabled: 3 }
         }
@@ -231,7 +237,7 @@ impl MenuDialog {
     }
 
     fn layout(&mut self, ctx: &UiContext) {
-        if self.style == PanelStyle::Bare {
+        if matches!(self.style, PanelStyle::Bare | PanelStyle::Framed) {
             // menu_select o 0x1c8c3: the font's row count (0:0x7c3), 8 instead of 9
             let rows = ctx.fonts.get(self.font).line_height();
             self.line_h = if rows == 9 { 8 } else { rows };
@@ -268,9 +274,6 @@ impl MenuDialog {
     fn draw_bare(&self, fb: &mut Surface, ctx: &UiContext, cols: &StyleColours) {
         let (x, y) = (self.rect.x, self.rect.y);
         let font = self.font;
-        let bg = fb.get(x, y);
-        // a colour code in front of the title ("\x8cSelect Load File...") overrides it
-        let title_colour = self.title_colour.unwrap_or(if bg == 15 { 3 } else { cols.title });
         let mut bar_w = 0;
         for t in &self.title {
             bar_w = bar_w.max(text_width(&ctx.fonts, font, t));
@@ -278,6 +281,20 @@ impl MenuDialog {
         for it in &self.items {
             bar_w = bar_w.max(text_width(&ctx.fonts, font, &format!(" {it}")));
         }
+        let bg = if self.style == PanelStyle::Framed {
+            let (w, h) = (bar_w + 8, (self.title.len() + self.items.len()) as i32 * self.line_h + 6);
+            fb.fill_rect(Rect::new(x + 1, y + 1, w, h), 7);
+            fb.hline(x + 1, x + 1 + w, y + 1, 8);
+            fb.hline(x + 1, x + 1 + w, y + 1 + h, 15);
+            fb.vline(x + 1 + w, y + 1, y + 1 + h, 8);
+            fb.vline(x + 1, y + 2, y + 1 + h, 15);
+            fb.rect_outline(Rect::new(x, y, w + 3, h + 3), 0);
+            7
+        } else {
+            fb.get(x, y)
+        };
+        // a colour code in front of the title ("\x8cSelect Load File...") overrides it
+        let title_colour = self.title_colour.unwrap_or(if bg == 15 { 3 } else { cols.title });
         // the lines are drawn as the menu text holds them, each ended by a line break, so no
         // glyph is the last of its string and all are cut to their advance (see draw_glyph_run)
         for (i, t) in self.title.iter().enumerate() {
@@ -387,7 +404,7 @@ impl Screen for MenuDialog {
 
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
         let cols = draw_styled_panel(fb, ctx, self.rect, self.style);
-        if self.style == PanelStyle::Bare {
+        if matches!(self.style, PanelStyle::Bare | PanelStyle::Framed) {
             self.draw_bare(fb, ctx, &cols);
             return;
         }
