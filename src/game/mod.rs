@@ -356,7 +356,7 @@ impl Game {
             catch_up: 0,
             free_research: 0,
         };
-        game.place_starting_units(&slots, &world);
+        game.place_starting_units(&slots, &world, &mut wr);
         game.refresh_all_vision();
         game.active_unit = game.next_active_unit();
         game
@@ -365,10 +365,11 @@ impl Game {
     /// The start units (`civ_init` o 0x0493c: one Settlers on the start square) and the
     /// make-up of `start_report` (o 0x0515b, `mapgen::start_bonuses`): an extra Settlers for a
     /// start more than 3 points worse than the best and one free advance per point still
-    /// missing (`choose_research` 0xa5e:0x156a, which grants at once at turn 0; civrs draws them
-    /// with the computer's research choice). Every civ starts without gold, the human with 50
-    /// at Chieftain (o 0x0476d).
-    fn place_starting_units(&mut self, slots: &[(u8, u8, (i32, i32))], world: &mapgen::World) {
+    /// missing (`choose_research(civ, 0)` 0xa5e:0x156a, which grants at once at turn 0), civ by
+    /// civ. The draws continue CIV.EXE's random stream `wr` after the start squares, so the
+    /// advances match the original's for the same seed. Every civ starts without gold, the
+    /// human with 50 at Chieftain (o 0x0476d).
+    fn place_starting_units(&mut self, slots: &[(u8, u8, (i32, i32))], world: &mapgen::World, wr: &mut rng::MsRand) {
         for &(slot, _, (x, y)) in slots {
             self.add_unit(slot, rules::unit_ids::SETTLERS, x, y);
             self.players[slot as usize].gold = 0;
@@ -384,7 +385,8 @@ impl Game {
                 self.add_unit(slot, rules::unit_ids::SETTLERS, x, y);
             }
             for _ in 0..b.advances {
-                if let Some(a) = crate::ai::tech_ai::choose(self, slot) {
+                // random(4 * value) of the MS C library: signed, so a negative value never wins
+                if let Some(a) = crate::ai::tech_ai::draw_by(self, slot, None, |n| wr.random(n)) {
                     self.grant_advance(slot, a, science::AdvanceSource::Discovered);
                 }
             }
@@ -905,6 +907,17 @@ mod new_game_tests {
         assert_eq!(g.player(1).gold, 50);
         assert!((2..8).all(|s| g.player(s).gold == 0));
         assert_eq!((1..8).map(|s| g.player(s).advance_count()).collect::<Vec<_>>(), vec![1, 0, 1, 1, 1, 2, 3]);
+    }
+
+    #[test]
+    fn start_advances_follow_civ_exe_random_stream() {
+        // DOSBox run 1 (reference/original-screens/16_advisor_F6.png): clock seed 4763, Romans
+        // at Chieftain against 6 civilizations; start_report's choose_research draws continue
+        // the generator's stream
+        let g = Game::new(GameSetup { seed: 4763, ..Default::default() }, None);
+        let h = g.player(g.human_slot);
+        assert_eq!(h.advance_count(), 2);
+        assert!(h.knows(rules::advance_ids::BRONZE_WORKING) && h.knows(rules::advance_ids::CEREMONIAL_BURIAL));
     }
 
     #[test]

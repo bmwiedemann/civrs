@@ -250,6 +250,12 @@ pub fn draw_city(fb: &mut Surface, ctx: &UiContext, game: &Game, city: crate::ga
     }
 }
 
+/// A unit type's sprite in `owner`'s colours, without status marks (a city's stashed garrison,
+/// drawn through a scratch record in CIV.EXE).
+pub fn draw_unit_kind(fb: &mut Surface, ctx: &UiContext, kind: u8, owner: u8, px: i32, py: i32) {
+    blit_sprite_remap(fb, &ctx.sp.surf, sp::unit(kind), px, py, &civ_remap(owner));
+}
+
 /// Draw a unit sprite (with civ colours) at pixel (px,py).
 pub fn draw_unit(fb: &mut Surface, ctx: &UiContext, game: &Game, id: crate::game::UnitId, px: i32, py: i32, stacked: bool) {
     let u = game.unit(id);

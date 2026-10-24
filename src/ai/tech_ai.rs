@@ -26,9 +26,17 @@ fn candidates(g: &Game, slot: Slot) -> Vec<AdvanceId> {
 /// random(4 * value) and the highest draw wins, the first one on ties. `skip` is left out
 /// (the human's own current goal, ds:0x19be).
 pub fn draw(g: &mut Game, slot: Slot, skip: Option<AdvanceId>) -> Option<AdvanceId> {
+    let mut rng = g.rng.clone();
+    let a = draw_by(g, slot, skip, |n| rng.below(n.max(0) as u32) as i32);
+    g.rng = rng;
+    a
+}
+
+/// `draw` with another random source: `random(n)` for each candidate in order.
+pub fn draw_by(g: &Game, slot: Slot, skip: Option<AdvanceId>, mut random: impl FnMut(i32) -> i32) -> Option<AdvanceId> {
     let mut best: (i32, Option<AdvanceId>) = (-1, None);
     for a in candidates(g, slot) {
-        let w = g.rng.below((4 * value(g, slot, a)).max(0) as u32) as i32;
+        let w = random(4 * value(g, slot, a));
         if w > best.0 && Some(a) != skip {
             best = (w, Some(a));
         }

@@ -932,42 +932,65 @@ impl MapView {
             _ => {
                 if let Some(id) = g.active_unit {
                     if let Some(u) = g.unit_opt(id) {
+                        // draw_unit_panel (0x788d): lines 8 px apart from y 99
                         draw_text(fb, &ctx.fonts, &st, 4, y, p.adjective());
                         y += 8;
-                        let vet = if u.veteran { " (V)" } else { "" };
-                        draw_text(fb, &ctx.fonts, &st, 4, y, &format!("{}{}", u.info().name, vet));
+                        draw_text(fb, &ctx.fonts, &st, 4, y, u.info().name);
                         y += 8;
-                        let m = u.moves_left;
-                        let moves = if m % 3 == 0 { format!("{}", m / 3) } else { format!("{}/3", m) };
-                        draw_text(fb, &ctx.fonts, &st, 4, y, &format!("Moves: {moves}"));
+                        if u.veteran {
+                            draw_text(fb, &ctx.fonts, &st, 8, y, "Veteran");
+                            y += 8;
+                        }
+                        // "Moves: n[.thirds]", for aircraft "(n + fuel left * rate)" after it
+                        let m = u.moves_left as i32;
+                        let mut moves = format!("Moves: {}", (m / 3).clamp(0, 99));
+                        if m % 3 != 0 {
+                            moves += &format!(".{}", m % 3);
+                        }
+                        let info = u.info();
+                        if info.range != 0 {
+                            let left = info.range.saturating_sub(u.fuel) as i32;
+                            moves += &format!("({})", (m / 3).clamp(0, 99) + left * info.moves as i32);
+                        }
+                        draw_text(fb, &ctx.fonts, &st, 4, y, &moves);
                         y += 8;
                         let home = u.home.and_then(|h| g.city_opt(h)).map(|c| c.name.clone()).unwrap_or_else(|| "NONE".into());
                         // strcat_city_name ("NONE" for no home) in the panel's font (o 0x7ad9)
                         draw_text(fb, &ctx.fonts, &st, 4, y, &home);
                         y += 8;
-                        draw_text(fb, &ctx.fonts, &st, 4, y, &format!("({})", g.terrain_name(u.x, u.y)));
+                        draw_text(fb, &ctx.fonts, &st, 4, y, &format!("({})", g.map.tile(u.x, u.y).terrain.info().name));
                         y += 8;
                         let t = g.map.tile(u.x, u.y);
-                        for (flag, label) in [
-                            (tile_flags::ROAD, "Road"),
-                            (tile_flags::RAILROAD, "Railroad"),
-                            (tile_flags::IRRIGATION, "Irrigation"),
-                            (tile_flags::MINE, "Mine"),
-                            (tile_flags::FORTRESS, "Fortress"),
-                            (tile_flags::POLLUTION, "Pollution"),
-                        ] {
-                            if t.has(flag) {
-                                draw_text(fb, &ctx.fonts, &st, 4, y, &format!("({label})"));
-                                y += 8;
+                        let road = if t.has(tile_flags::RAILROAD) { Some("(RailRoad)") } else { t.has(tile_flags::ROAD).then_some("(Road)") };
+                        let farm = if t.has(tile_flags::IRRIGATION) { Some("(Irrigation)") } else { t.has(tile_flags::MINE).then_some("(Mining)") };
+                        for label in [road, farm, t.has(tile_flags::POLLUTION).then_some("(Pollution)")].into_iter().flatten() {
+                            draw_text(fb, &ctx.fonts, &st, 4, y, label);
+                            y += 8;
+                        }
+                        // the other units: a city's two stashed garrison units first, then the
+                        // stack from this unit on, 16 px apart, four to a row, while y < 184;
+                        // "+" at (74, 192) for the rest
+                        y += 4;
+                        let mut x = 8;
+                        if let Some(c) = g.city_at(u.x, u.y) {
+                            for (kind, _) in g.city(c).garrison_units() {
+                                tilerender::draw_unit_kind(fb, ctx, kind, u.owner, x, y);
+                                x += 16;
                             }
                         }
-                        // other units in the stack
-                        let others: Vec<UnitId> = g.units_at(u.x, u.y).into_iter().filter(|o| *o != id).collect();
-                        let mut x = 8;
-                        y = y.max(140);
-                        for o in others.iter().take(4) {
+                        let stack = g.units_at(u.x, u.y);
+                        let at = stack.iter().position(|o| *o == id).unwrap_or(0);
+                        for o in stack.iter().cycle().skip(at + 1).take(stack.len().saturating_sub(1)) {
+                            if y >= 184 {
+                                draw_text(fb, &ctx.fonts, &st, 74, 192, "+");
+                                break;
+                            }
                             tilerender::draw_unit(fb, ctx, g, *o, x, y, false);
-                            x += 18;
+                            x += 16;
+                            if x > 64 {
+                                x = 8;
+                                y += 16;
+                            }
                         }
                     }
                 }

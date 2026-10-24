@@ -42,9 +42,8 @@ impl CityFounded {
             // the current year (append_year 0x238:0x1720, ds:0xb220): the animation runs right
             // after the founding
             let text = format!("{} founded: {}.", c.name, crate::rules::year_text(g.year()));
-            let pal = ctx.pic_pal("HILL");
-            let black = pal.nearest([0, 0, 0]);
-            draw_text_centered(fb, &ctx.fonts, &TextStyle::new(3, black), 160, 2, &text);
+// font 6 (civrs 5), colour 0, centred at (160, 4) (0x1e526)
+            draw_text_centered(fb, &ctx.fonts, &TextStyle::new(5, 0), 160, 4, &text);
         }
     }
 
