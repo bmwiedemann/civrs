@@ -56,7 +56,7 @@ impl Screen for HallOfFame {
         }
     }
     fn palette(&self, ctx: &UiContext) -> Palette {
-        ctx.sp.pal
+        ctx.game_palette()
     }
     fn draws_parent(&self) -> bool {
         false

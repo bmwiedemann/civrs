@@ -168,6 +168,11 @@ fn coded_width(ctx: &UiContext, font: usize, s: &str) -> i32 {
     text_width(&ctx.fonts, font, &plain)
 }
 
+/// Draw text that may switch colour with 0x80 + n codes (menu lines, report rows).
+pub fn draw_coded_text(fb: &mut Surface, ctx: &UiContext, font: usize, x: i32, y: i32, s: &str, colour: u8) {
+    draw_coded(fb, ctx, font, x, y, s, colour)
+}
+
 /// Draw a menu line, switching colour at each code.
 fn draw_coded(fb: &mut Surface, ctx: &UiContext, font: usize, x: i32, y: i32, s: &str, colour: u8) {
     let mut colour = colour;

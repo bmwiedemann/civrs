@@ -27,27 +27,81 @@ pub fn citizens_row(fb: &mut Surface, ctx: &UiContext, x: i32, y: i32, happy: i3
 
 // ---- F7 Wonders of the World --------------------------------------------------------------
 
-pub fn paint_wonders(fb: &mut Surface, ctx: &UiContext) {
-    text_sh(fb, ctx, 80, 12, "Wonders of the World", WHITE, BLACK);
+/// F7 `wonders_of_the_world` (ovl 12 +0x80d). Nothing is drawn until the first built wonder: with
+/// none the key just goes back to the map. Otherwise pages of colour 3 with "The Wonders of the
+/// World" shadowed at (100, 12) and from y 32, 24 px apart, a box (8, y)..(311, y+15) in the
+/// owner's colour, the wonder's pictogram at (16, y+3) and "The <wonder> of <city>. (<Adj>)"
+/// (wonders 1..7; later ones "<wonder> in <city>...", a lost city " (Destroyed)") fitted to
+/// 270 px at (40, y+5) in 15; a page ends when the next row would pass y 180.
+pub struct WondersScreen {
+    rows: Vec<(u8, String, u8)>,
+    page: usize,
+}
+
+const WONDER_ROWS: usize = 7;
+
+pub fn wonders_screen(ctx: &UiContext) -> Box<dyn crate::ui::screen::Screen> {
     let g = ctx.game();
-    let mut y = 32;
-    let mut any = false;
+    let mut rows = Vec::new();
     for w in 1..=21u8 {
         let Some(cid) = g.wonders_built[w as usize] else { continue };
-        let Some(c) = g.city_opt(cid) else { continue };
-        any = true;
-        let obsolete = g.wonder_obsolete(w);
-        let colour = if obsolete { GREY } else { WHITE };
-        text_sh(fb, ctx, 16, y, rules::WONDERS[w as usize].name, colour, BLACK);
-        let owner = g.player(c.owner);
-        text_sh(fb, ctx, 176, y, &format!("{} ({})", c.name, owner.adjective()), colour, BLACK);
-        if obsolete {
-            tiny(fb, ctx, 290, y + 1, "OBS.", GREY);
-        }
-        y += LINE_H;
+        let name = rules::WONDERS[w as usize].name;
+        let mut text = if w <= 7 { format!("The {name}") } else { name.to_string() };
+        let colour = match g.city_opt(cid) {
+            Some(c) => {
+                let adj = g.player(c.owner).adjective();
+                text += &format!("{}{}. ({adj})", if w <= 7 { " of " } else { " in " }, c.name);
+                SLOT_COLOURS[(c.owner & 7) as usize].light
+            }
+            None => {
+                text += " (Destroyed)";
+                SLOT_COLOURS[0].light
+            }
+        };
+        rows.push((w, fit_text(ctx, &text, 270), colour));
     }
-    if !any {
-        text_sh(fb, ctx, 16, 40, "No Wonders of the World have been built yet.", WHITE, BLACK);
+    Box::new(WondersScreen { rows, page: 0 })
+}
+
+impl crate::ui::screen::Screen for WondersScreen {
+    fn handle(&mut self, ev: &crate::platform::Event, _ctx: &mut UiContext) -> crate::ui::screen::Transition {
+        use crate::platform::Event;
+        use crate::ui::screen::{DialogResult, Transition};
+        match ev {
+            Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } => {
+                self.page += 1;
+                if self.page * WONDER_ROWS >= self.rows.len() {
+                    Transition::Pop(DialogResult::Done)
+                } else {
+                    Transition::None
+                }
+            }
+            _ => Transition::None,
+        }
+    }
+    fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
+        if self.rows.is_empty() {
+            return;
+        }
+        fb.fill(3);
+        text_sh(fb, ctx, 100, 12, "The Wonders of the World", WHITE, BLACK);
+        let st = crate::gfx::TextStyle::new(FONT, 15);
+        for (i, (w, text, colour)) in self.rows.iter().skip(self.page * WONDER_ROWS).take(WONDER_ROWS).enumerate() {
+            let y = 32 + 24 * i as i32;
+            fb.rect_outline(Rect::new(8, y, 304, 16), *colour);
+            crate::ui::city_draw::imp_icon(fb, ctx, crate::ui::city_draw::wonder_cell(*w), 16, y + 3);
+            crate::gfx::text::draw_text(fb, &ctx.fonts, &st, 40, y + 5, text);
+        }
+    }
+    fn palette(&self, ctx: &UiContext) -> crate::assets::Palette {
+        ctx.game_palette()
+    }
+    /// With no wonder the map stays on the screen while the report waits for its key.
+    fn draws_parent(&self) -> bool {
+        self.rows.is_empty()
+    }
+    fn wants_cursor(&self) -> bool {
+        false
     }
 }
 

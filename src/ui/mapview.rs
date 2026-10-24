@@ -1407,7 +1407,7 @@ impl Screen for MapView {
     }
 
     fn palette(&self, ctx: &UiContext) -> crate::assets::Palette {
-        ctx.sp.pal
+        ctx.game_palette()
     }
 
     fn draws_parent(&self) -> bool {

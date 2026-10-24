@@ -548,7 +548,7 @@ impl Screen for Notice {
         if self.docker {
             ctx.pic_pal("DOCKER")
         } else {
-            ctx.sp.pal
+            ctx.game_palette()
         }
     }
     fn draws_parent(&self) -> bool {

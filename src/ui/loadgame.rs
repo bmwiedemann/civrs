@@ -216,7 +216,7 @@ impl Screen for SlotPage {
         if self.mode == SlotMode::LoadTitle {
             ctx.pic("LOGO").pal
         } else {
-            ctx.sp.pal
+            ctx.game_palette()
         }
     }
 

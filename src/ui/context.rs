@@ -145,6 +145,21 @@ impl UiContext {
         }
     }
 
+    /// The palette of the game screens as `load_main_palette` (0x3f6b) sets it: SP256.PAL
+    /// (= SP257's palette) for entries 0..127 and BACK<govt/2><A|M>.PAL for 128..255 (memcpy
+    /// of 0x180 bytes at entry 128; 'M' once the human knows Invention, never for Communism).
+    /// Before a game starts, SP257's palette.
+    pub fn game_palette(&self) -> Palette {
+        let mut pal = self.sp.pal;
+        if let Some(g) = &self.game {
+            let p = g.human();
+            let back = crate::ui::govtscreen::back_sheet(p.govt, p.knows(crate::rules::advance_ids::INVENTION));
+            let upper = self.pic_pal(&back);
+            pal.0[128..].copy_from_slice(&upper.0[128..]);
+        }
+        pal
+    }
+
     /// Palette of a picture (from its .PAL file if present, else its embedded palette).
     pub fn pic_pal(&self, name: &str) -> Palette {
         let key = format!("PAL:{}", name.to_ascii_uppercase());

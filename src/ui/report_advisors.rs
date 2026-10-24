@@ -5,7 +5,7 @@ use crate::assets::Palette;
 use crate::gfx::{Rect, Surface};
 use crate::platform::{Event, Key, MouseButton};
 use crate::game::Relation;
-use crate::rules;
+use crate::rules::{self, SLOT_COLOURS};
 use crate::ui::context::UiContext;
 use crate::ui::reports::*;
 use crate::ui::screen::{DialogResult, Screen, Transition};
@@ -44,45 +44,84 @@ pub fn paint_city_status(fb: &mut Surface, ctx: &UiContext) {
 
 // ---- F2 Military Status ----------------------------------------------------------------------
 
+/// F2 `military_status` (ovl 14 +0x3ad): one row per unit type the civ has counted
+/// (`Player::unit_counter`, ds:0xb3be) or in production, 9 px apart from y 32: a colour-9 rule
+/// at y - 2 from x 36, the icon at (2 or 18 alternately, y - 4), the name at (36, y) in 15,
+/// "(att/def/moves)" at 112 in 11, "N active" at 168 in 15 and "N in production" at 232 in 11.
 pub fn paint_military(fb: &mut Surface, ctx: &UiContext) {
     title_block(fb, ctx, "MILITARY STATUS");
     portrait(fb, ctx, 0);
     let g = ctx.game();
     let slot = g.human_slot;
-    // units by type, in unit-table order
-    let mut counts = [0u32; 28];
-    let mut in_city = [0u32; 28];
-    for u in g.all_units().filter(|u| u.owner == slot) {
-        let k = u.kind as usize % 28;
-        counts[k] += 1;
-        if g.city_at(u.x, u.y).is_some() {
-            in_city[k] += 1;
+    let counter = g.player(slot).unit_counter;
+    let mut building = [0i32; 28];
+    for c in g.cities_of(slot) {
+        if let crate::game::Production::Unit(u) = g.city(c).production {
+            building[u as usize % 28] += 1;
         }
     }
-    let kinds: Vec<usize> = (0..28).filter(|k| counts[*k] > 0).collect();
-    let pitch = if kinds.len() > 18 { 16 } else { 18 };
-    let rows = ((190 - 32) / pitch).max(1) as usize;
     let map = civ_remap(slot);
-    for (i, k) in kinds.iter().enumerate() {
-        let colx = (i / rows) as i32;
-        let row = (i % rows) as i32;
-        if colx > 1 {
-            break;
+    let st = |c: u8| crate::gfx::TextStyle::new(FONT, c);
+    let (mut y, mut row) = (32, 0);
+    for k in 0..28usize {
+        if counter[k] <= 0 && building[k] <= 0 {
+            continue;
         }
-        let x = 8 + colx * 144;
-        let y = 32 + row * pitch;
-        blit_sprite_remap(fb, &ctx.sp.surf, sp::unit(*k as u8), x, y - 1, &map);
-        text(fb, ctx, x + 20, y + 1, rules::UNITS[*k].name, WHITE);
-        let detail = if in_city[*k] > 0 { format!("x{}  ({} in cities)", counts[*k], in_city[*k]) } else { format!("x{}", counts[*k]) };
-        tiny(fb, ctx, x + 20, y + 9, &detail, CYAN);
+        fb.hline(36, 319, y - 2, 9);
+        blit_sprite_remap(fb, &ctx.sp.surf, sp::unit(k as u8), 2 + 16 * (row & 1), y - 4, &map);
+        row += 1;
+        let u = &rules::UNITS[k];
+        crate::gfx::text::draw_text(fb, &ctx.fonts, &st(15), 36, y, u.name);
+        crate::gfx::text::draw_text(fb, &ctx.fonts, &st(11), 112, y, &format!("({}/{}/{})", u.att, u.def, u.moves));
+        if counter[k] > 0 {
+            crate::gfx::text::draw_text(fb, &ctx.fonts, &st(15), 168, y, &format!("{} active", counter[k]));
+        }
+        if building[k] > 0 {
+            crate::gfx::text::draw_text(fb, &ctx.fonts, &st(11), 232, y, &format!("{} in production", building[k]));
+        }
+        y += 9;
     }
-    let total: u32 = counts.iter().sum();
-    if total == 0 {
-        text(fb, ctx, 8, 40, "No units.", WHITE);
-    } else {
-        let active = g.cities_of(slot).iter().map(|c| g.supported_units(*c).len() as u32).sum::<u32>();
-        text(fb, ctx, 8, 192, &format!("{total} units, {active} supported by cities"), CYAN);
+}
+
+/// F2's second page, `military_losses` (ovl 14 +0x61f): one row per unit type (0..26) any civ
+/// has lost (`Player::units_lost_by_type`), 7 px apart from y 28: a colour-8 rule at y - 1 from
+/// x 36, the icon, the name in 15, the human's losses at 104 in 12, then every other civ's 28 px
+/// further on in its colour; a box in the human's colour around the human's column.
+pub fn paint_military_losses(fb: &mut Surface, ctx: &UiContext) {
+    title_block(fb, ctx, "MILITARY LOSSES");
+    let g = ctx.game();
+    let me = g.human_slot;
+    let map = civ_remap(me);
+    let (mut y, mut row) = (28, 0);
+    for k in 0..27usize {
+        if !(0..8u8).any(|s| g.player(s).units_lost_by_type[k] != 0) {
+            continue;
+        }
+        fb.hline(36, 319, y - 1, 8);
+        blit_sprite_remap(fb, &ctx.sp.surf, sp::unit(k as u8), 2 + 16 * (row & 1), y - 4, &map);
+        row += 1;
+        let text = |fb: &mut Surface, x: i32, n: i16, c: u8| {
+            crate::gfx::text::draw_text(fb, &ctx.fonts, &crate::gfx::TextStyle::new(FONT, c), x, y, &n.to_string());
+        };
+        crate::gfx::text::draw_text(fb, &ctx.fonts, &crate::gfx::TextStyle::new(FONT, 15), 36, y, rules::UNITS[k].name);
+        let mine = g.player(me).units_lost_by_type[k];
+        if mine != 0 {
+            text(fb, 104, mine, 12);
+        }
+        let mut x = 104;
+        for s in 1..8u8 {
+            if s == me {
+                continue;
+            }
+            x += 28;
+            let n = g.player(s).units_lost_by_type[k];
+            if n != 0 {
+                text(fb, x, n, SLOT_COLOURS[s as usize].light);
+            }
+        }
+        y += 7;
     }
+    fb.rect_outline(Rect::new(100, 25, 19, y - 25 + 1), SLOT_COLOURS[me as usize].light);
 }
 
 // ---- F3 Intelligence -------------------------------------------------------------------------
@@ -252,7 +291,7 @@ impl Screen for AttitudeSurvey {
         tiny(fb, ctx, 8, 192, "SELECT A CIVILIZATION AND PRESS ENTER FOR AN AUDIENCE.", WHITE);
     }
     fn palette(&self, ctx: &UiContext) -> Palette {
-        ctx.sp.pal
+        ctx.game_palette()
     }
     fn draws_parent(&self) -> bool {
         false
@@ -261,58 +300,132 @@ impl Screen for AttitudeSurvey {
 
 // ---- F5 Trade Report ---------------------------------------------------------------------------
 
-pub fn paint_trade(fb: &mut Surface, ctx: &UiContext) {
-    title_block(fb, ctx, "TRADE REPORT");
-    portrait(fb, ctx, 1);
+/// F5 `trade_report` (ovl 14 +0x7f1): "City Trade" at (8, 32) in 15; from y 40, 8 px apart,
+/// each city's name (fitted to 62 px) shadowed at (16, y) and " lux\\/tax$/sci~" at (80, y) in
+/// 10, or " (Disorder)" in 12 (then it adds nothing to the totals); a page holds rows above
+/// y 180. Then "Total Income: N$" at (8, y + 4), "Discoveries: N turns" at (8, y + 12) (the
+/// research cost over the science, x1.5 with SETI), and in the right column "Maintenance Costs"
+/// at (160, 32) with "<count> <improvement>, <cost>$" rows in 14 from y 40 and "Total Cost".
+pub struct TradeReport {
+    rows: Vec<(String, String, bool)>,
+    page: usize,
+}
+
+const TRADE_ROWS: usize = 18;
+
+pub fn trade_report(ctx: &UiContext) -> Box<dyn Screen> {
     let g = ctx.game();
-    let cities = human_cities(ctx);
-    text(fb, ctx, 8, 33, "City Trade", WHITE);
-    let pitch = if cities.len() > 17 { 7 } else { LINE_H };
-    let (mut income, mut routes) = (0, 0);
-    let mut y = 40;
-    for id in &cities {
-        let c = g.city(*id);
-        let yl = g.city_yield(*id);
-        income += yl.tax;
-        routes += c.trade_routes.len();
-        if y <= 176 {
-            text_sh(fb, ctx, 16, y, &c.name, WHITE, BLACK);
-            let line = format!("{}{GLYPH_LUX}/{}{GLYPH_COIN}/{}{GLYPH_BULB}", yl.lux, yl.tax, yl.sci);
-            text(fb, ctx, 86, y, &line, LIGHT_GREEN);
-            if !c.trade_routes.is_empty() {
-                tiny(fb, ctx, 132, y + 1, &format!("{}RT", c.trade_routes.len()), LIGHT_GREEN);
+    let rows = human_cities(ctx)
+        .iter()
+        .map(|id| {
+            let c = g.city(*id);
+            let name = fit_text(ctx, &c.name, 62);
+            if c.disorder {
+                (name, " \u{8c}(Disorder)".to_string(), true)
+            } else {
+                let y = g.city_yield(*id);
+                (name, format!(" {}\\/{}$/{}~", y.lux, y.tax, y.sci), false)
             }
-            y += pitch;
+        })
+        .collect();
+    Box::new(TradeReport { rows, page: 0 })
+}
+
+impl TradeReport {
+    fn pages(&self) -> usize {
+        self.rows.len().div_ceil(TRADE_ROWS).max(1)
+    }
+}
+
+impl Screen for TradeReport {
+    fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
+        match ev {
+            Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } => {
+                self.page += 1;
+                if self.page >= self.pages() {
+                    Transition::Pop(DialogResult::Done)
+                } else {
+                    Transition::None
+                }
+            }
+            _ => Transition::None,
         }
     }
-    let y = y + 4;
-    text(fb, ctx, 8, y, &format!("Total Income: {income}{GLYPH_COIN}"), LIGHT_GREEN);
-    if routes > 0 {
-        text(fb, ctx, 8, y + 8, &format!("Trade routes: {routes}"), LIGHT_GREEN);
-    }
-    // maintenance by improvement type
-    text(fb, ctx, 160, 33, "Maintenance Costs", WHITE);
-    let mut counts = [0i32; 25];
-    for id in &cities {
-        for imp in g.city(*id).improvement_list() {
-            counts[imp as usize] += 1;
+
+    fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
+        let g = ctx.game();
+        fb.fill(2);
+        title_block(fb, ctx, "TRADE REPORT");
+        let st = |c: u8| crate::gfx::TextStyle::new(FONT, c);
+        let draw = |fb: &mut Surface, x: i32, y: i32, c: u8, s: &str| crate::ui::widgets::draw_coded_text(fb, ctx, FONT, x, y, s, c);
+        if self.page == 0 {
+            portrait(fb, ctx, 1);
+            crate::gfx::text::draw_text(fb, &ctx.fonts, &st(15), 8, 32, "City Trade");
         }
-    }
-    let mut y = 41;
-    let mut total = 0;
-    for (imp, n) in counts.iter().enumerate().filter(|(_, n)| **n > 0) {
-        let info = &rules::IMPROVEMENTS[imp];
-        let each = if imp as u8 == rules::improvement_ids::PALACE { 0 } else { g.improvement_upkeep(g.human_slot, imp as u8) };
-        let cost = *n * each;
-        total += cost;
-        if y <= 176 && each > 0 {
-            text(fb, ctx, 160, y, &format!("{} x{n}", info.name), PALE_YELLOW);
-            text_r(fb, ctx, 276, y, &format!("{cost}{GLYPH_COIN}"), PALE_YELLOW);
-            y += LINE_H;
+        let mut y = 40;
+        for (name, line, _) in self.rows.iter().skip(self.page * TRADE_ROWS).take(TRADE_ROWS) {
+            crate::gfx::text::draw_text(fb, &ctx.fonts, &st(0), 16, y + 1, name);
+            crate::gfx::text::draw_text(fb, &ctx.fonts, &st(15), 16, y, name);
+            draw(fb, 80, y, 10, line);
+            y += 8;
         }
+        if self.page + 1 < self.pages() {
+            return;
+        }
+        // the totals, the discovery time and the maintenance column close the last page
+        let me = g.human_slot;
+        let (mut tax, mut sci) = (0, 0);
+        for id in human_cities(ctx) {
+            if !g.city(id).disorder {
+                let yl = g.city_yield(id);
+                tax += yl.tax;
+                sci += yl.sci;
+            }
+        }
+        crate::gfx::text::draw_text(fb, &ctx.fonts, &st(10), 8, y + 4, &format!("Total Income: {tax}$"));
+        if g.owner_has_wonder(me, rules::wonder_ids::SETI_PROGRAM) {
+            sci += sci / 2;
+        }
+        if sci != 0 && y < 180 {
+            let era = if g.year() < 0 { 1 } else if g.year() < 1750 { 2 } else { 3 };
+            let turns = era * g.player(me).research_count as i32 * (2 * g.setup.difficulty as i32 + 6) / sci;
+            crate::gfx::text::draw_text(fb, &ctx.fonts, &st(10), 8, y + 12, &format!("Discoveries: {turns} turns"));
+        }
+        crate::gfx::text::draw_text(fb, &ctx.fonts, &st(15), 160, 32, "Maintenance Costs");
+        let mut costs = [0i32; 25];
+        let mut count = [0i32; 25];
+        for id in human_cities(ctx) {
+            for k in 2..=24u8 {
+                if g.city(id).has_improvement(k) {
+                    costs[k as usize] += g.improvement_upkeep(me, k);
+                    count[k as usize] += 1;
+                }
+            }
+        }
+        let (mut y, mut total) = (40, 0);
+        for k in 2..=24usize {
+            if costs[k] == 0 {
+                continue;
+            }
+            if y < 180 {
+                let line = format!("{} {}, {}$", count[k], rules::IMPROVEMENTS[k].name, costs[k]);
+                crate::gfx::text::draw_text(fb, &ctx.fonts, &st(14), 160, y, &line);
+                y += 8;
+            }
+            total += costs[k];
+        }
+        crate::gfx::text::draw_text(fb, &ctx.fonts, &st(14), 160, y + 4, &format!("Total Cost: {total}$"));
     }
-    let y = if y == 41 { 45 } else { y + 4 };
-    text(fb, ctx, 160, y, &format!("Total Cost: {total}{GLYPH_COIN}"), PALE_YELLOW);
+
+    fn palette(&self, ctx: &UiContext) -> Palette {
+        ctx.game_palette()
+    }
+    fn draws_parent(&self) -> bool {
+        false
+    }
+    fn wants_cursor(&self) -> bool {
+        false
+    }
 }
 
 // ---- F6 Science Report -------------------------------------------------------------------------

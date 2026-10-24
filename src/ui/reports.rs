@@ -49,6 +49,8 @@ pub const BG_BLUE: [u8; 3] = [49, 77, 178];
 pub const BG_LIGHT_BLUE: [u8; 3] = [121, 142, 255];
 pub const BG_GREEN: [u8; 3] = [45, 121, 0];
 pub const BG_TEAL: [u8; 3] = [0, 170, 170];
+/// Colour 4: F2's "MILITARY LOSSES" page.
+pub const BG_LOSSES: [u8; 3] = [130, 32, 20];
 
 #[inline]
 pub fn col(ctx: &UiContext, rgb: [u8; 3]) -> u8 {
@@ -69,19 +71,36 @@ pub fn text(fb: &mut Surface, ctx: &UiContext, x: i32, y: i32, s: &str, rgb: [u8
     spaced_run(fb, ctx, col(ctx, rgb), x, y, s)
 }
 
-/// Spaced text with a shadow at (+1,+1).
+/// Text with a shadow one pixel below, as `draw_text_shadow` (0x182:0x86) draws it.
 pub fn text_sh(fb: &mut Surface, ctx: &UiContext, x: i32, y: i32, s: &str, rgb: [u8; 3], shadow: [u8; 3]) -> i32 {
-    spaced_run(fb, ctx, col(ctx, shadow), x + 1, y + 1, s);
+    spaced_run(fb, ctx, col(ctx, shadow), x, y + 1, s);
     spaced_run(fb, ctx, col(ctx, rgb), x, y, s)
 }
 
+/// `fit_text(str, maxwidth)` (0x1f1ad): while too wide, drop the last character and make the
+/// new last one a '.', unless the character before it is a blank.
+pub fn fit_text(ctx: &UiContext, s: &str, max: i32) -> String {
+    let mut t: Vec<char> = s.chars().collect();
+    let w = |t: &[char]| crate::gfx::text::text_width(&ctx.fonts, FONT, &t.iter().collect::<String>());
+    while w(&t) > max && t.len() > 1 {
+        let n = t.len();
+        if n >= 3 && t[n - 3] != ' ' {
+            t[n - 2] = '.';
+        }
+        t.truncate(n - 1);
+    }
+    t.into_iter().collect()
+}
+
+/// Centred as `draw_text_centred` (0x182:0xb3) does: on the full advance width, trailing
+/// spacing column included.
 pub fn text_c(fb: &mut Surface, ctx: &UiContext, cx: i32, y: i32, s: &str, rgb: [u8; 3]) -> i32 {
-    let w = width(ctx, s);
+    let w = crate::gfx::text::text_width(&ctx.fonts, FONT, s);
     text(fb, ctx, cx - w / 2, y, s, rgb)
 }
 
 pub fn text_c_sh(fb: &mut Surface, ctx: &UiContext, cx: i32, y: i32, s: &str, rgb: [u8; 3], shadow: [u8; 3]) -> i32 {
-    let w = width(ctx, s);
+    let w = crate::gfx::text::text_width(&ctx.fonts, FONT, s);
     text_sh(fb, ctx, cx - w / 2, y, s, rgb, shadow)
 }
 
@@ -142,8 +161,10 @@ pub fn portrait(fb: &mut Surface, ctx: &UiContext, idx: i32) {
     if pic.surf.w < 160 {
         return;
     }
-    let map = remap_table(&pic.pal, &ctx.sp.pal);
-    fb.blit_remap(&pic.surf, Rect::new(idx * 40, 0, 40, 60), 278, 2, None, &map);
+    // load_govt_picture (o5 0x5c6b) loads the picture without its palette and copies its
+    // advisor strip to page 2 (160, 140); the reports copy from there, so the indices show in
+    // the game palette as they are
+    fb.blit_part(&pic.surf, Rect::new(idx * 40, 0, 40, 60), 278, 2, None);
 }
 
 // ---- dotted red/green page border (save/load pages, civilopedia entries) ---------------------
@@ -246,15 +267,37 @@ pub fn commas(n: i64) -> String {
 // ---- generic full-screen report page -----------------------------------------------------------
 
 /// A full-screen report drawn by `paint`; any key or click returns to the map.
+/// Draws the contents of a report page.
+pub type PaintFn = fn(&mut Surface, &UiContext);
+
 pub struct Page {
     pub bg: [u8; 3],
-    pub paint: fn(&mut Surface, &UiContext),
+    pub paint: PaintFn,
+    /// A second page shown after the first key (e.g. F2's "MILITARY LOSSES").
+    then: Option<([u8; 3], PaintFn)>,
     guard: u32,
 }
 
 impl Page {
-    pub fn new(bg: [u8; 3], paint: fn(&mut Surface, &UiContext)) -> Page {
-        Page { bg, paint, guard: 2 }
+    pub fn new(bg: [u8; 3], paint: PaintFn) -> Page {
+        Page { bg, paint, then: None, guard: 2 }
+    }
+
+    pub fn then(mut self, bg: [u8; 3], paint: PaintFn) -> Page {
+        self.then = Some((bg, paint));
+        self
+    }
+
+    fn next_or_done(&mut self) -> Transition {
+        match self.then.take() {
+            Some((bg, paint)) => {
+                self.bg = bg;
+                self.paint = paint;
+                self.guard = 2;
+                Transition::None
+            }
+            None => Transition::Pop(DialogResult::Done),
+        }
     }
 }
 
@@ -268,8 +311,8 @@ impl Screen for Page {
             return Transition::None;
         }
         match ev {
-            Event::Key { down: true, key, .. } if !matches!(key, Key::Unknown) => Transition::Pop(DialogResult::Done),
-            Event::MouseButton { down: true, .. } => Transition::Pop(DialogResult::Done),
+            Event::Key { down: true, key, .. } if !matches!(key, Key::Unknown) => self.next_or_done(),
+            Event::MouseButton { down: true, .. } => self.next_or_done(),
             _ => Transition::None,
         }
     }
@@ -278,7 +321,7 @@ impl Screen for Page {
         (self.paint)(fb, ctx);
     }
     fn palette(&self, ctx: &UiContext) -> Palette {
-        ctx.sp.pal
+        ctx.game_palette()
     }
     fn draws_parent(&self) -> bool {
         false
@@ -295,12 +338,12 @@ pub fn advisor(ctx: &UiContext, n: u8) -> Box<dyn Screen> {
     use crate::ui::report_world as w;
     match n {
         1 => Box::new(Page::new(BG_F1, a::paint_city_status)),
-        2 => Box::new(Page::new(BG_BLUE, a::paint_military)),
+        2 => Box::new(Page::new(BG_BLUE, a::paint_military).then(BG_LOSSES, a::paint_military_losses)),
         3 => Box::new(Page::new(BG_BLUE, a::paint_intelligence)),
         4 => Box::new(a::AttitudeSurvey::new(ctx)),
-        5 => Box::new(Page::new(BG_GREEN, a::paint_trade)),
+        5 => a::trade_report(ctx),
         6 => Box::new(Page::new(BG_BLUE, a::paint_science)),
-        7 => Box::new(Page::new(BG_TEAL, w::paint_wonders)),
+        7 => w::wonders_screen(ctx),
         8 => Box::new(Page::new(BG_TEAL, w::paint_top_five)),
         9 => Box::new(Page::new(BG_TEAL, w::paint_score)),
         10 => Box::new(Page::new(BLACK, w::paint_world_map)),
