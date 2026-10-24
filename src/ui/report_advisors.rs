@@ -3,7 +3,7 @@
 
 use crate::assets::Palette;
 use crate::gfx::{Rect, Surface};
-use crate::platform::{Event, Key, MouseButton};
+use crate::platform::Event;
 use crate::game::Relation;
 use crate::rules::{self, SLOT_COLOURS};
 use crate::ui::context::UiContext;
@@ -187,113 +187,89 @@ pub fn standing(g: &crate::game::Game, s: crate::game::Slot) -> String {
     w
 }
 
-/// Attitude Survey: the empire's mood, then the known civilisations; Enter on one opens the
-/// audience a Diplomat's "Meet with King" would (CIV.EXE has no such shortcut: its F4 survey,
-/// o 0x14369, only lists the cities; civrs keeps it).
+/// F4 `attitude_survey` (ovl 14 +0x15f4) on a colour-9 page: per city, 10 px apart from y 32,
+/// "<city>:" at (16, y) in 15, its citizens from x 80 + (4 * row & 7) at y - 3 (124 px wide),
+/// a cyan box (212, y - 1, 90, 10) with the pictograms of its Temple, MarketPlace, Bank,
+/// Cathedral and Colosseum (mask 0x2618) 18 px apart; rows past y 190 go on the next page.
+/// Then "Population: <n> Happy:x% Content:y% Unhappy:z%" at (16, y + 8), shares of the total
+/// size (1 when there are no citizens, so all is content).
 pub struct AttitudeSurvey {
-    civs: Vec<crate::game::Slot>,
-    sel: usize,
-    guard: u32,
+    cities: Vec<crate::game::CityId>,
+    page: usize,
 }
+
+const ATTITUDE_ROWS: usize = 16;
 
 impl AttitudeSurvey {
     pub fn new(ctx: &UiContext) -> AttitudeSurvey {
-        AttitudeSurvey { civs: known_civs(ctx.game()), sel: 0, guard: 2 }
+        AttitudeSurvey { cities: human_cities(ctx), page: 0 }
     }
-
-    fn row_y(i: usize) -> i32 {
-        56 + i as i32 * 16
-    }
-
-    fn audience(&self, _ctx: &mut UiContext) -> Transition {
-        match self.civs.get(self.sel).copied() {
-            Some(slot) => {
-                let g = _ctx.game();
-                let at = g.player(slot).capital.and_then(|c| g.city_opt(c)).map(|c| c.pos()).unwrap_or((-1, -1));
-                Transition::Push(crate::ui::diplomacy_ui::human_audience(slot, at))
-            }
-            None => Transition::Pop(DialogResult::Done),
-        }
+    fn pages(&self) -> usize {
+        self.cities.len().div_ceil(ATTITUDE_ROWS).max(1)
     }
 }
 
 impl Screen for AttitudeSurvey {
-    fn update(&mut self, _ctx: &mut UiContext) -> Transition {
-        self.guard = self.guard.saturating_sub(1);
-        Transition::None
-    }
-    fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
-        if self.guard > 0 {
-            return Transition::None;
-        }
-        let n = self.civs.len();
+    fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
         match ev {
-            Event::Key { key, down: true, .. } => match key {
-                Key::Up | Key::Kp(8) if n > 0 => self.sel = (self.sel + n - 1) % n,
-                Key::Down | Key::Kp(2) if n > 0 => self.sel = (self.sel + 1) % n,
-                Key::Enter | Key::Space if n > 0 => return self.audience(ctx),
-                Key::Unknown => {}
-                _ => return Transition::Pop(DialogResult::Done),
-            },
-            Event::MouseMove { x, y } => {
-                if (8..300).contains(x) {
-                    let i = (y - Self::row_y(0) + 2).div_euclid(16);
-                    if i >= 0 && (i as usize) < n {
-                        self.sel = i as usize;
-                    }
+            Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } => {
+                self.page += 1;
+                if self.page >= self.pages() {
+                    Transition::Pop(DialogResult::Done)
+                } else {
+                    Transition::None
                 }
             }
-            Event::MouseButton { button: MouseButton::Left, x, y, down: true } => {
-                let i = (y - Self::row_y(0) + 2).div_euclid(16);
-                if (8..300).contains(x) && i >= 0 && (i as usize) < n {
-                    self.sel = i as usize;
-                    return self.audience(ctx);
-                }
-                return Transition::Pop(DialogResult::Done);
-            }
-            Event::MouseButton { down: true, .. } => return Transition::Pop(DialogResult::Done),
-            _ => {}
+            _ => Transition::None,
         }
-        Transition::None
     }
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
-        page(fb, ctx, BG_LIGHT_BLUE);
+        fb.fill(9);
         title_block(fb, ctx, "ATTITUDE SURVEY");
         let g = ctx.game();
-        let me = g.human_slot;
-        let (mut happy, mut content, mut unhappy) = (0i64, 0i64, 0i64);
-        for c in g.cities_of(me) {
-            let h = g.city_happiness(c);
-            happy += h.happy as i64;
-            content += h.content as i64;
-            unhappy += h.unhappy as i64;
+        let st = crate::gfx::TextStyle::new(FONT, 15);
+        let mut y = 32;
+        for (i, id) in self.cities.iter().enumerate().skip(self.page * ATTITUDE_ROWS).take(ATTITUDE_ROWS) {
+            let c = g.city(*id);
+            crate::gfx::text::draw_text(fb, &ctx.fonts, &st, 16, y, &format!("{}:", c.name));
+            crate::ui::cityscreen::draw_citizens(fb, ctx, *id, 80 + ((4 * i as i32) & 7), y - 3, 124);
+            fb.fill_rect(Rect::new(212, y - 1, 90, 10), 11);
+            let mut x = 212;
+            for k in [4u8, 5, 10, 11, 14] {
+                if c.has_improvement(k) {
+                    if let Some(cell) = crate::ui::city_draw::improvement_cell(k) {
+                        crate::ui::city_draw::imp_icon(fb, ctx, cell, x, y - 1);
+                    }
+                    x += 18;
+                }
+            }
+            y += 10;
         }
-        let total = (happy + content + unhappy).max(1);
-        let pct = |v: i64| v * 100 / total;
-        let pop = commas(g.total_population(me));
-        let pop = if g.total_population(me) == 0 { "00,000".to_string() } else { pop };
-        let line = format!("Population: {pop} Happy:{}% Content:{}% Unhappy:{}%", pct(happy), pct(content), pct(unhappy));
-        text(fb, ctx, 16, 40, &line, WHITE);
-        if self.civs.is_empty() {
+        if self.page + 1 < self.pages() {
             return;
         }
-        for (i, s) in self.civs.iter().enumerate() {
-            let y = Self::row_y(i);
-            let p = g.player(*s);
-            if i == self.sel {
-                fb.fill_rect(Rect::new(8, y - 2, 292, 16), col(ctx, BG_BLUE));
-            }
-            let hostile = !g.treaty(*s, me);
-            text(fb, ctx, 16, y, &format!("{} {} of the {}", p.title(), p.leader, p.plural()), WHITE);
-            let line = format!("{}{}", standing(g, *s), if g.human().has_embassy(*s) { " (embassy)" } else { "" });
-            text(fb, ctx, 24, y + 8, &line, if hostile { [247, 85, 85] } else { CYAN });
+        let me = g.human_slot;
+        let (mut size, mut happy, mut unhappy) = (0i32, 0i32, 0i32);
+        for id in &self.cities {
+            let h = g.city_happiness(*id);
+            size += g.city(*id).size as i32;
+            happy += h.happy;
+            unhappy += h.unhappy;
         }
-        tiny(fb, ctx, 8, 192, "SELECT A CIVILIZATION AND PRESS ENTER FOR AN AUDIENCE.", WHITE);
+        let size = size.max(1);
+        // append_percent (0x14592): 100 * part / total, or 10 * part / (total / 10) from 300 on
+        let pct = |part: i32| if size < 300 { 100 * part / size } else { 10 * part / (size / 10) };
+        let pop = if g.total_population(me) == 0 { "00,000".to_string() } else { commas(g.total_population(me)) };
+        let line = format!("Population: {pop} Happy:{}% Content:{}% Unhappy:{}%", pct(happy), pct(size - happy - unhappy), pct(unhappy));
+        crate::gfx::text::draw_text(fb, &ctx.fonts, &st, 16, y + 8, &line);
     }
     fn palette(&self, ctx: &UiContext) -> Palette {
         ctx.game_palette()
     }
     fn draws_parent(&self) -> bool {
+        false
+    }
+    fn wants_cursor(&self) -> bool {
         false
     }
 }

@@ -68,11 +68,28 @@ impl Game {
         let p = self.player(slot);
         s.future_tech = p.future_techs as i32;
         s.peace = p.peace_turns as i32;
-        s.pollution = self.polluted_tiles_near(slot);
+        // civ_score (ovl 20 +0xca9): -10 per polluted square of the whole world (ds:0x6e94),
+        // peace 3 per turn up to 100 and only in AD years
+        s.pollution = self.polluted_tiles as i32;
         s.spaceship = self.spaceship_score(slot);
-        s.total = s.happy * 2 + s.content + s.wonders * 20 + s.future_tech * 5 + s.peace * 3 - s.pollution * 10 + s.spaceship;
+        s.total = s.happy * 2 + s.content + s.wonders * 20 + s.future_tech * 5 + self.peace_points(slot) - s.pollution * 10 + s.spaceship;
+        if let Some(bonus) = self.conquest_bonus().filter(|b| *b > s.total.max(0)) {
+            s.total = bonus;
+        }
+        s.total = s.total.max(0);
         s.percent = s.total * (self.setup.difficulty as i32 + 1) / 50;
         s
+    }
+
+    /// Peace points of the score: 3 per turn of peace, at most 100, only in AD years.
+    pub fn peace_points(&self, slot: Slot) -> i32 {
+        if self.year() > 0 { (3 * self.player(slot).peace_turns as i32).clamp(0, 100) } else { 0 }
+    }
+
+    /// The conquest victory's "Bonus Score" (o 0x1c5e3): 100 per rival (ds:0xd2f4 = civs - 1)
+    /// + 2 per turn left before turn 550 + 400; it replaces a lower total.
+    pub fn conquest_bonus(&self) -> Option<i32> {
+        (self.ended == Some(crate::game::EndReason::Conquest)).then(|| 100 * (self.setup.num_civs as i32 - 1) + 2 * (550 - self.turn as i32) + 400)
     }
 
     /// Polluted tiles inside the radius of any city of the player.

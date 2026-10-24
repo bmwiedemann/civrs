@@ -844,6 +844,36 @@ impl CityScreen {
     }
 }
 
+/// `draw_citizens(city, x, y, .., width)` (0xc91:0x6eca): the city's happy, content and
+/// unhappy citizens 7 px apart (width / size when that does not fit), the extra unhappy ones
+/// recoloured, then its specialists after a 4-px gap.
+pub fn draw_citizens(fb: &mut Surface, ctx: &UiContext, city: crate::game::CityId, x: i32, y: i32, width: i32) {
+    let g = ctx.game();
+    let c = g.city(city);
+    let h = g.city_happiness(city);
+    let n = c.size as i32;
+    let pitch = if n > 0 && 7 * n > width { (width / n).max(1) } else { 7 };
+    let mut x = x;
+    let mut pos = 0usize;
+    for (count, kind) in [(h.happy, 0), (h.content, 1), (h.unhappy, 2)] {
+        for i in 0..count.max(0) {
+            citizen(fb, ctx, citizen_index(kind == 0, kind == 1, kind == 2, pos), x, y);
+            if kind == 2 && i < h.extra {
+                recolour(fb, Rect::new(x, y, 12, 14), 5, 12);
+            }
+            x += pitch;
+            pos += 1;
+        }
+    }
+    if !c.specialists.is_empty() {
+        x += 4;
+        for sp in &c.specialists {
+            citizen(fb, ctx, specialist_index(*sp), x, y);
+            x += pitch;
+        }
+    }
+}
+
 impl Screen for CityScreen {
     fn update(&mut self, ctx: &mut UiContext) -> Transition {
         let Some(start) = self.start.take() else { return Transition::None };
