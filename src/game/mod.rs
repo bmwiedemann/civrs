@@ -192,7 +192,7 @@ pub struct Game {
     /// the game body in version-6 saves (older saves take `rules::calendar_year(turn)`).
     #[serde(skip)]
     pub year: i32,
-    /// Barbarian headings and the last-occupant map layer (not saved).
+    /// Barbarian headings and the last-occupant map layer (only the layer is saved, in a trailer).
     #[serde(skip)]
     pub barbarian_memory: barbarians::BarbarianMemory,
     /// The computer players' goal lists, continent policies and unit bytes civrs's records

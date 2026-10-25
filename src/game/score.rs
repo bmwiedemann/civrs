@@ -25,22 +25,49 @@ pub struct ScoreBreakdown {
     pub percent: i32,
 }
 
-/// One row of the demographics report.
+/// One statistic of the F11 demographics (`demographics`, ovl 12 +0xd6d, o 0x10ee2): the value
+/// of every civilization (index = slot), the viewer's own text, the unit `print_rank` appends to
+/// the leader's value, and whether the lowest value ranks first.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DemographicEntry {
-    /// Category name from `rules::DEMOGRAPHIC_CATEGORIES`.
-    pub category: &'static str,
-    /// The player's value in that category.
-    pub value: i64,
-    /// 1 = best among living civilisations.
-    pub rank: usize,
-    /// Number of civilisations ranked.
-    pub of: usize,
+pub struct DemographicRow {
+    pub label: &'static str,
+    pub values: [i32; 8],
+    pub text: String,
+    pub unit: &'static str,
+    pub lower_better: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Demographics {
-    pub entries: Vec<DemographicEntry>,
+/// `print_rank` (o 0x11add) over the active civilizations (`alive`): the viewer's rank (1 +
+/// the civs with a higher value), the leading value and its civ (the first highest, else the
+/// viewer). For lower-is-better rows each value is negated as the loop reaches its civ, so civs
+/// before the viewer compare against the viewer's value unnegated, as in CIV.EXE.
+pub fn demographic_rank(values: &[i32; 8], lower_better: bool, viewer: Slot, alive: &[Slot]) -> (usize, i32, Slot) {
+    let mut v = *values;
+    let (mut rank, mut best, mut best_civ) = (1, -9999, viewer);
+    for &c in alive {
+        let c = c as usize;
+        if lower_better {
+            v[c] = -v[c];
+        }
+        if v[c] > v[viewer as usize] {
+            rank += 1;
+        }
+        if best < v[c] {
+            best = v[c];
+            best_civ = c as Slot;
+        }
+    }
+    (rank, best, best_civ)
+}
+
+/// `format_population` (o 0x1d75d) of a 1 + 2 + .. + size sum: "1,240,000" for 124, "50,000"
+/// for 5.
+pub fn population_text(n: i32) -> String {
+    if n < 100 {
+        format!("{n}0,000")
+    } else {
+        format!("{},{:02}0,000", n / 100, n % 100)
+    }
 }
 
 /// Index into `rules::RATINGS` (best first) for a rating percentage (CIV.EXE o 0x2dd2): the
@@ -114,38 +141,79 @@ impl Game {
         units + cities
     }
 
-    /// Percentage of the player's citizens that are happy.
-    pub fn happiness_ratio(&self, slot: Slot) -> i64 {
-        let mut happy = 0i64;
-        let mut total = 0i64;
-        for c in self.all_cities().filter(|c| c.owner == slot) {
-            happy += self.city_happiness(c.id).happy as i64;
-            total += c.size as i64;
+    /// The thirteen rows of F11 for `viewer` (o 0x10ee2). Every city is recalculated and summed
+    /// per owner into: size (from 1), size + happy - unhappy, 2 * lux + tax, food - 2 * size,
+    /// food + shields + trade, shields, the pollution points above 0, the size of cities with a
+    /// Granary and again with an Aqueduct, and with a Library and again with a University; land
+    /// is the non-ocean squares of rows 2..47 last held by the civ's units.
+    pub fn demographics(&self, viewer: Slot) -> Vec<DemographicRow> {
+        use rules::{advance_ids as adv, improvement_ids as imp};
+        let mut size = [1i32; 8];
+        let (mut approval, mut trade, mut surplus, mut output, mut shields) = ([0i32; 8], [0i32; 8], [0i32; 8], [0i32; 8], [0i32; 8]);
+        let (mut pollution, mut health, mut lit, mut land) = ([0i32; 8], [0i32; 8], [0i32; 8], [0i32; 8]);
+        for x in 0..rules::MAP_W as i32 {
+            for y in 2..48 {
+                if self.map.tile(x, y).terrain != rules::Terrain::Ocean {
+                    land[self.last_occupant(x, y) as usize & 7] += 1;
+                }
+            }
         }
-        if total == 0 { 0 } else { happy * 100 / total }
-    }
+        for c in self.all_cities() {
+            let o = c.owner as usize & 7;
+            let n = c.size as i32;
+            let y = self.city_yield(c.id);
+            let h = self.city_happiness(c.id);
+            size[o] += n;
+            approval[o] += n + h.happy - h.unhappy;
+            trade[o] += 2 * y.lux + y.tax;
+            surplus[o] += y.food - 2 * n;
+            output[o] += y.food + y.shields + y.trade;
+            shields[o] += y.shields;
+            pollution[o] += self.pollution_points(c.id).max(0);
+            let with = |i| if c.has_improvement(i) { n } else { 0 };
+            health[o] += with(imp::GRANARY) + with(imp::AQUEDUCT);
+            lit[o] += with(imp::LIBRARY) + with(imp::UNIVERSITY);
+        }
+        let per_civ = |f: &dyn Fn(usize) -> i32| -> [i32; 8] { std::array::from_fn(f) };
+        let knows = |c: usize, a: u8| self.player(c as Slot).knows(a);
+        let me = viewer as usize;
+        let mut rows = Vec::new();
+        let mut row = |label, values: [i32; 8], text: String, unit, lower_better| rows.push(DemographicRow { label, values, text, unit, lower_better });
 
-    /// Value of a demographics category for a player.
-    fn demographic_value(&self, slot: Slot, category: usize) -> i64 {
-        match category {
-            0 => self.player(slot).gold as i64,
-            1 => self.power(slot) as i64,
-            2 => self.player(slot).advance_count() as i64 + self.player(slot).future_techs as i64,
-            3 => self.happiness_ratio(slot),
-            _ => self.total_population(slot),
-        }
-    }
-
-    /// Rank (1 = best) of the player among living civilisations in each category.
-    pub fn demographics(&self, slot: Slot) -> Demographics {
-        let civs = self.alive_slots();
-        let mut d = Demographics::default();
-        for (i, name) in rules::DEMOGRAPHIC_CATEGORIES.iter().enumerate() {
-            let mine = self.demographic_value(slot, i);
-            let better = civs.iter().filter(|s| **s != slot && self.demographic_value(**s, i) > mine).count();
-            d.entries.push(DemographicEntry { category: name, value: mine, rank: better + 1, of: civs.len().max(1) });
-        }
-        d
+        let v = per_civ(&|c| 50 * approval[c] / size[c]);
+        row("Approval Rating:", v, format!("{}%", v[me]), "%", false);
+        let v = per_civ(&|c| self.all_cities().filter(|k| k.owner as usize == c).map(|k| (1..=k.size as i32).sum::<i32>()).sum());
+        row("Population:", v, population_text(v[me]), "0000", false);
+        row("GNP:", trade, format!("{} million $", trade[me]), "M$", false);
+        row("Mfg. Goods:", shields, format!("{} Mtons", shields[me]), " Mtons", false);
+        row("Land Area:", land, format!("{},000 sq.miles", land[me]), ",000", false);
+        let v = per_civ(&|c| {
+            let mut l = (2 * size[c] + lit[c]) * 2 / size[c];
+            for a in [adv::ALPHABET, adv::WRITING, adv::LITERACY, adv::UNIVERSITY] {
+                if knows(c, a) {
+                    l *= 2;
+                }
+            }
+            l.clamp(0, 100)
+        });
+        row("Literacy:", v, format!("{}%", v[me]), "%", false);
+        let disease = per_civ(&|c| 50 * size[c] / (size[c] + health[c]) / if knows(c, adv::MEDICINE) { 2 } else { 1 });
+        row("Disease:", disease, format!("{}%", disease[me]), "%", true);
+        row("Pollution:", pollution, format!("{}0 tons/year", pollution[me]), "0 tons", true);
+        let v = per_civ(&|c| (1500 / (disease[c] + 20) - 10 * pollution[c] / size[c]).clamp(20, 99));
+        row("Life Expectancy:", v, format!("{} years", v[me]), " yrs", false);
+        let family = per_civ(&|c| 40 * surplus[c] / size[c] + 20);
+        row("Family Size:", family.map(|f| f / 10), format!("{}.{} children", family[me] / 10, family[me] % 10), "", false);
+        let v = per_civ(&|c| 10 * self.units_of(c as Slot).len() as i32 / size[c]);
+        row("Military Service:", v, format!("{} years", v[me]), " yrs", false);
+        let v = per_civ(&|c| {
+            let advances = self.player(c as Slot).research_count as i32;
+            if 30000 / (advances + 1) > trade[c] { trade[c] * advances / size[c] } else { trade[c] / size[c] * advances }
+        });
+        row("Annual Income:", v, format!("{}$ per capita", v[me]), "$", false);
+        let v = per_civ(&|c| 10 * output[c] / size[c]);
+        row("Productivity:", v, v[me].to_string(), "", false);
+        rows
     }
 
     /// Rating name ("your rating exceeds even that of ...") for a player's score.
@@ -175,10 +243,8 @@ mod tests {
         assert_eq!(rating_index(134), 0);
         assert_eq!(rating_index(0), 19);
         let d = g.demographics(slot);
-        assert_eq!(d.entries.len(), 5);
-        for e in &d.entries {
-            assert!(e.rank >= 1 && e.rank <= e.of);
-        }
-        assert_eq!(d.entries[4].rank, 1, "only civ with a city is the largest");
+        assert_eq!(d.len(), 13);
+        let (rank, _, best) = demographic_rank(&d[1].values, false, slot, &g.alive_slots());
+        assert_eq!((rank, best), (1, slot), "only civ with a city is the largest");
     }
 }

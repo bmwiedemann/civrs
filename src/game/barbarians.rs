@@ -26,8 +26,8 @@ const CLAIM: [(i32, i32); 45] = [
     (-3, 2), (-3, 1), (-3, 0), (-3, -1), (-3, -2), (-2, -3), (-1, -3),
 ];
 
-/// Bookkeeping CIV.EXE keeps in its unit records and map layers but the civrs save does not
-/// carry; it starts empty after a load, as the original's layers start on a new map.
+/// Bookkeeping CIV.EXE keeps in its unit records and map layers; only `occupant` is saved (in
+/// a trailer), the rest starts empty after a load, as the original's layers start on a new map.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BarbarianMemory {
     /// Unit byte +8, the barbarian's last direction (1..8; 0xff from `create_unit` 0x8b51).

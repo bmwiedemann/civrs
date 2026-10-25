@@ -32,7 +32,9 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// 15: then by the 72 first-discoverer bytes (`Game::first_discoverer`); older saves credit
 /// each known advance to the first civilization that researched it, else to the first that
 /// knows it.
-pub const VERSION: u16 = 15;
+/// 16: then by the tile-owner layer (`BarbarianMemory::occupant`, a u32 LE byte count and 80 x 50
+/// bytes or none); older saves start without it.
+pub const VERSION: u16 = 16;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -121,6 +123,8 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     }
     data.extend(g.players.iter().map(|p| p.start_civ));
     data.extend((0..72).map(|a| g.first_discoverer(a)));
+    data.extend_from_slice(&(g.barbarian_memory.occupant.len() as u32).to_le_bytes());
+    data.extend_from_slice(&g.barbarian_memory.occupant);
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -250,6 +254,11 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
             Some(b) if ver >= 15 => b.to_vec(),
             _ => migrate_first_discoverers(&g),
         };
+        at += 72;
+        if let Some(n) = rest.get(at..at + 4).filter(|_| names_ok && ver >= 16) {
+            let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
+            g.barbarian_memory.occupant = rest.get(at + 4..at + 4 + n).map(|b| b.to_vec()).unwrap_or_default();
+        }
     } else {
         for p in g.players.iter_mut() {
             p.start_civ = p.civ;
@@ -573,7 +582,7 @@ mod tests {
     }
 
     #[test]
-    fn first_discoverers_are_set_once_after_turn_0_and_survive_a_save() {
+    fn first_discoverers_and_tile_owners_survive_a_save() {
         let mut g = Game::new(GameSetup { seed: 6, ..Default::default() }, None);
         let h = g.human_slot;
         let other = if h == 2 { 3 } else { 2 };
@@ -583,12 +592,14 @@ mod tests {
         g.grant_advance(other, adv::POTTERY, AdvanceSource::Discovered);
         g.grant_advance(h, adv::POTTERY, AdvanceSource::From(other));
         assert_eq!(g.first_discoverer(adv::POTTERY), other);
+        g.note_occupant(other, 10, 10);
         let dir = std::env::temp_dir().join(format!("civrs-first-{}", std::process::id()));
         let path = dir.join("s.sav");
         super::save_game(&path, &g).unwrap();
         let l = super::load_game(&path).unwrap();
         let _ = std::fs::remove_dir_all(dir);
         assert_eq!(l.first_discoverer, g.first_discoverer);
+        assert_eq!(l.barbarian_memory.occupant, g.barbarian_memory.occupant);
     }
 
     #[test]

@@ -294,60 +294,70 @@ pub fn paint_world_map(fb: &mut Surface, ctx: &UiContext) {
 
 // ---- F11 Demographics --------------------------------------------------------------------------
 
-fn ordinal(n: usize) -> String {
-    let suffix = match (n % 10, n % 100) {
-        (1, 11) | (2, 12) | (3, 13) => "th",
-        (1, _) => "st",
-        (2, _) => "nd",
-        (3, _) => "rd",
-        _ => "th",
-    };
-    format!("{n}{suffix}")
+/// F11 `demographics(civ)` (ovl 12 +0xd6d, o 0x10ee2) on a colour-1 screen: "<Adjective>
+/// Demographics" centred at y 4, then from y 24, 12 px apart, each statistic's label shadowed at
+/// (8, y), the human's value at (104, y) and `print_rank` (o 0x11add): a colour-9 rule (4..316,
+/// y - 3), "<rank>st/nd/rd/th" shadowed at (192, y) and, when another civ leads and the human
+/// has an embassy with it, "(<civ>: <value><unit>)" ending at x 318 in its colour.
+pub struct Demographics {
+    rows: Vec<crate::game::score::DemographicRow>,
 }
 
-/// Value of a demographics category for a slot (mirrors `Game::demographics`).
-fn demographic_value(g: &crate::game::Game, slot: crate::game::Slot, category: usize) -> i64 {
-    match category {
-        0 => g.player(slot).gold as i64,
-        1 => g.power(slot) as i64,
-        2 => g.player(slot).advance_count() as i64 + g.player(slot).future_techs as i64,
-        3 => g.happiness_ratio(slot),
-        _ => g.total_population(slot),
+impl Demographics {
+    pub fn new(ctx: &UiContext) -> Demographics {
+        Demographics { rows: ctx.game().demographics(ctx.game().human_slot) }
     }
 }
 
-fn demographic_text(category: usize, v: i64) -> String {
-    match category {
-        0 => format!("{v}{GLYPH_COIN}"),
-        1 => format!("{v} power"),
-        2 => format!("{v} advances"),
-        3 => format!("{v}%"),
-        _ => commas(v),
-    }
-}
-
-pub fn paint_demographics(fb: &mut Surface, ctx: &UiContext) {
-    title_block(fb, ctx, "DEMOGRAPHICS");
-    let g = ctx.game();
-    let me = g.human_slot;
-    let d = g.demographics(me);
-    let alive = g.alive_slots();
-    text_sh(fb, ctx, 16, 36, "Category", WHITE, BLACK);
-    text_sh(fb, ctx, 120, 36, "Value", WHITE, BLACK);
-    text_sh(fb, ctx, 184, 36, "Rank", WHITE, BLACK);
-    text_sh(fb, ctx, 224, 36, "Best", WHITE, BLACK);
-    fb.hline(16, 304, 44, col(ctx, WHITE));
-    for (i, e) in d.entries.iter().enumerate() {
-        let y = 50 + i as i32 * 20;
-        tiny(fb, ctx, 16, y + 1, e.category, WHITE);
-        text_sh(fb, ctx, 120, y, &demographic_text(i, e.value), WHITE, BLACK);
-        text_sh(fb, ctx, 184, y, &ordinal(e.rank), WHITE, BLACK);
-        let best = alive.iter().copied().max_by_key(|s| demographic_value(g, *s, i));
-        if let Some(b) = best {
-            let known = b == me || g.human().has_contact(b);
-            let name = if known { g.player(b).plural().to_string() } else { "Unknown".to_string() };
-            text_sh(fb, ctx, 224, y, &name, if b == me { CYAN } else { WHITE }, BLACK);
+impl crate::ui::screen::Screen for Demographics {
+    fn handle(&mut self, ev: &crate::platform::Event, _ctx: &mut UiContext) -> crate::ui::screen::Transition {
+        use crate::platform::Event;
+        use crate::ui::screen::{DialogResult, Transition};
+        match ev {
+            Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } => Transition::Pop(DialogResult::Done),
+            _ => Transition::None,
         }
     }
-    text_c_sh(fb, ctx, 160, 168, &format!("Civilizations ranked: {}", alive.len()), WHITE, BLACK);
+    fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
+        use crate::ui::widgets::draw_coded_text;
+        fb.fill(1);
+        let g = ctx.game();
+        let me = g.human_slot;
+        let title = format!("{} Demographics", g.human().adjective());
+        let w = crate::gfx::text::text_width(&ctx.fonts, FONT, &title);
+        draw_coded_text(fb, ctx, FONT, 160 - w / 2, 4, &title, 15);
+        let alive = g.alive_slots();
+        let shadowed = |fb: &mut Surface, x: i32, y: i32, t: &str| {
+            draw_coded_text(fb, ctx, FONT, x, y + 1, t, 0);
+            draw_coded_text(fb, ctx, FONT, x, y, t, 15);
+        };
+        for (i, r) in self.rows.iter().enumerate() {
+            let y = 24 + 12 * i as i32;
+            shadowed(fb, 8, y, r.label);
+            draw_coded_text(fb, ctx, FONT, 104, y, &r.text, 15);
+            let (rank, best, civ) = crate::game::score::demographic_rank(&r.values, r.lower_better, me, &alive);
+            let suffix = match rank {
+                1 => "st",
+                2 => "nd",
+                3 => "rd",
+                _ => "th",
+            };
+            fb.hline(4, 316, y - 3, 9);
+            shadowed(fb, 192, y, &format!("{rank}{suffix}"));
+            if civ != me && g.human().has_embassy(civ) {
+                let lead = format!("({}: {}{})", g.player(civ).plural(), best.abs(), r.unit);
+                let w = crate::gfx::text::text_width(&ctx.fonts, FONT, &lead);
+                draw_coded_text(fb, ctx, FONT, 318 - w, y, &lead, SLOT_COLOURS[civ as usize].light);
+            }
+        }
+    }
+    fn palette(&self, ctx: &UiContext) -> crate::assets::Palette {
+        ctx.game_palette()
+    }
+    fn draws_parent(&self) -> bool {
+        false
+    }
+    fn wants_cursor(&self) -> bool {
+        false
+    }
 }
