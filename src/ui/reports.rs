@@ -119,13 +119,15 @@ pub fn page(fb: &mut Surface, ctx: &UiContext, bg: [u8; 3]) {
     fb.fill(col(ctx, bg));
 }
 
-/// The three centred title lines of an advisor report: "CITY STATUS" / "Empire of the Romans" /
-/// "Emperor Caesar: 4000 BC" at y 2, 10, 18.
+/// The three centred title lines of an advisor report: "CITY STATUS" / "Empire of the Romans"
+/// (Kingdom, Republic by government) / "Emperor Caesar: 4000 BC" at y 2, 10, 18.
 pub fn title_block(fb: &mut Surface, ctx: &UiContext, title: &str) {
     let g = ctx.game();
     let p = g.human();
     text_c(fb, ctx, 160, 2, title, WHITE);
-    text_c(fb, ctx, 160, 10, &format!("Empire of the {}", p.plural()), WHITE);
+    // government / 2 picks the word (o 0x12dc6)
+    let realm = ["Empire", "Kingdom", "Republic"][p.govt as usize / 2];
+    text_c(fb, ctx, 160, 10, &format!("{realm} of the {}", p.plural()), WHITE);
     text_c(fb, ctx, 160, 18, &format!("{} {}: {}", p.title(), p.leader, g.year_text()), WHITE);
 }
 
@@ -339,7 +341,7 @@ pub fn advisor(ctx: &UiContext, n: u8) -> Box<dyn Screen> {
     match n {
         1 => Box::new(Page::new(BG_F1, a::paint_city_status)),
         2 => Box::new(Page::new(BG_BLUE, a::paint_military).then(BG_LOSSES, a::paint_military_losses)),
-        3 => Box::new(Page::new(BG_BLUE, a::paint_intelligence)),
+        3 => Box::new(a::Intelligence::new(ctx)),
         4 => Box::new(a::AttitudeSurvey::new(ctx)),
         5 => a::trade_report(ctx),
         6 => Box::new(Page::new(BG_BLUE, a::paint_science)),

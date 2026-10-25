@@ -3,7 +3,7 @@
 
 use crate::assets::Palette;
 use crate::gfx::{Rect, Surface};
-use crate::platform::Event;
+use crate::platform::{Event, Key};
 use crate::game::Relation;
 use crate::rules::{self, SLOT_COLOURS};
 use crate::ui::context::UiContext;
@@ -126,48 +126,133 @@ pub fn paint_military_losses(fb: &mut Surface, ctx: &UiContext) {
 
 // ---- F3 Intelligence -------------------------------------------------------------------------
 
-/// Living foreign civilisations the human has met.
-fn known_civs(g: &crate::game::Game) -> Vec<crate::game::Slot> {
-    g.contacts_of(g.human_slot).into_iter().filter(|s| *s != 0).collect()
+/// F3 `intelligence_report()` (ovl 14 +0xd43, o 0x13ab8) on a colour-1 page: per civ in the
+/// game, 24 px apart from y 32, a colour-9 line (4..316, y - 2) and "<civ>: <leader>" at (8, y)
+/// in 15 with a shadow. The human and civs with an embassy add government, treasury and (on
+/// Chieftain and Warlord) the units at (160, y) in the civ's colour, then from (16, y + 8) its
+/// standing with each civ in 7, 96 px apart, wrapping past x 240: ALLIED, PEACE or WAR (contact
+/// without peace). Other civs get "No embassy established." at (96, y) in their colour (CIV.EXE
+/// draws no name there). Foreign rows with an embassy carry an "INFO<n>" button at
+/// (281, 24n + 20)-(318, 24n + 29); 1..7 or a click right of x 281 on row (y - 28) / 24 opens
+/// [`Dossier`] for that row, any other key or click closes the report.
+pub struct Intelligence {
+    /// Row -> civ for the rows that show full information.
+    rows: Vec<Option<crate::game::Slot>>,
+    guard: u32,
 }
 
-pub fn paint_intelligence(fb: &mut Surface, ctx: &UiContext) {
-    title_block(fb, ctx, "INTELLIGENCE REPORT");
-    portrait(fb, ctx, 2);
-    let g = ctx.game();
-    let me = g.human_slot;
-    let civs = known_civs(g);
-    if civs.is_empty() {
-        text(fb, ctx, 8, 40, "No contact with other civilizations.", WHITE);
-        return;
+impl Intelligence {
+    pub fn new(ctx: &UiContext) -> Intelligence {
+        let g = ctx.game();
+        let me = g.human_slot;
+        let rows = g.alive_slots().into_iter().map(|s| (s == me || g.human().has_embassy(s)).then_some(s)).collect();
+        Intelligence { rows, guard: 2 }
     }
-    for (i, s) in civs.iter().enumerate() {
-        let y = 32 + i as i32 * 24;
-        let p = g.player(*s);
-        let treaty = match g.relation(me, *s) {
-            Relation::War => "War",
-            Relation::Peace => "Peace",
-            Relation::NoContact => "No contact",
-        };
-        text(fb, ctx, 8, y, &format!("{} {} of the {}", p.title(), p.leader, p.plural()), WHITE);
-        text(fb, ctx, 200, y, treaty, if treaty == "War" { [247, 85, 85] } else { CYAN });
-        if g.human().has_embassy(*s) {
-            let line = format!(
-                "{}, {}{GLYPH_COIN}, {} cities, {} advances",
-                rules::GOVERNMENTS[p.govt as usize].name,
-                p.gold,
-                g.cities_of(*s).len(),
-                p.advance_count() + p.future_techs as u32
-            );
-            text(fb, ctx, 16, y + 8, &line, CYAN);
-            let cap = p.capital.and_then(|c| g.city_opt(c)).map(|c| c.name.clone()).unwrap_or_else(|| "none".into());
-            // computer players keep no research goal (CIV.EXE choose_research 0x0bb4a)
-            let researching = p.researching.map(|a| format!(" Researching {}.", rules::ADVANCES[a as usize].name)).unwrap_or_default();
-            text(fb, ctx, 16, y + 16, &format!("Capital: {cap}.{researching}"), CYAN);
-        } else {
-            text(fb, ctx, 16, y + 8, "No embassy: no further information.", GREY);
+
+    fn open(&self, row: i32, ctx: &UiContext) -> Transition {
+        let me = ctx.game().human_slot;
+        match usize::try_from(row).ok().and_then(|r| self.rows.get(r).copied().flatten()) {
+            Some(s) if s != me => Transition::Push(Box::new(Dossier::new(s))),
+            _ => Transition::Pop(DialogResult::Done),
         }
     }
+}
+
+impl Screen for Intelligence {
+    fn update(&mut self, _ctx: &mut UiContext) -> Transition {
+        self.guard = self.guard.saturating_sub(1);
+        Transition::None
+    }
+    fn resume(&mut self, _result: DialogResult, _ctx: &mut UiContext) -> Transition {
+        self.guard = 2;
+        Transition::None
+    }
+    fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
+        if self.guard > 0 {
+            return Transition::None;
+        }
+        match ev {
+            Event::Key { down: true, key: Key::Char(c @ '1'..='7'), .. } => self.open(*c as i32 - '1' as i32, ctx),
+            Event::Key { down: true, key, .. } if !matches!(key, Key::Unknown) => Transition::Pop(DialogResult::Done),
+            // C division truncates: rows reach up from y 5
+            Event::MouseButton { down: true, x, y, .. } if *x > 281 => self.open((*y - 28) / 24, ctx),
+            Event::MouseButton { down: true, .. } => Transition::Pop(DialogResult::Done),
+            _ => Transition::None,
+        }
+    }
+    fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
+        use crate::game::diplomacy::flags;
+        use crate::ui::widgets::draw_coded_text;
+        fb.fill(1);
+        title_block(fb, ctx, "INTELLIGENCE REPORT");
+        let g = ctx.game();
+        let me = g.human_slot;
+        let line = |fb: &mut Surface, x: i32, y: i32, t: &str, c: u8| draw_coded_text(fb, ctx, FONT, x, y, t, c);
+        for (n, s) in g.alive_slots().into_iter().enumerate() {
+            let mut y = 32 + 24 * n as i32;
+            fb.hline(4, 316, y - 2, 9);
+            let p = g.player(s);
+            let colour = SLOT_COLOURS[s as usize].light;
+            let Some(_) = self.rows.get(n).copied().flatten() else {
+                line(fb, 96, y, "No embassy established.", colour);
+                continue;
+            };
+            let name = format!("{}: {}", p.plural(), p.leader);
+            line(fb, 8, y + 1, &name, 0);
+            line(fb, 8, y, &name, 15);
+            let mut info = format!("{}, {}$", rules::GOVERNMENTS[p.govt as usize].adjective, p.gold);
+            if g.difficulty() as u8 <= 1 {
+                info += &format!(", {} Units.", g.units_of(s).len());
+            }
+            line(fb, 160, y, &info, colour);
+            y += 8;
+            let mut x = 16;
+            for o in 1..8u8 {
+                if x > 240 {
+                    x = 16;
+                    y += 8;
+                }
+                let f = p.flags(o);
+                let state = if f & flags::PEACE != 0 {
+                    if f & flags::ALLIANCE != 0 { ":\u{8f} ALLIED" } else { ":\u{8f} PEACE" }
+                } else if f & (flags::CONTACT | flags::PEACE) == flags::CONTACT {
+                    ":\u{8c} WAR"
+                } else {
+                    continue;
+                };
+                line(fb, x, y, &format!("{}{state}", g.player(o).plural()), 7);
+                x += 96;
+            }
+            if s != me {
+                let r = 24 * (n as i32 + 1);
+                draw_button(fb, ctx, Rect::new(281, r + 20, 38, 10), &format!("INFO{}", n + 1), colour);
+            }
+        }
+    }
+    fn palette(&self, ctx: &UiContext) -> Palette {
+        ctx.game_palette()
+    }
+    fn draws_parent(&self) -> bool {
+        false
+    }
+    fn wants_cursor(&self) -> bool {
+        true
+    }
+}
+
+/// `draw_button(x1, y1, x2, y2, text, col)` (0xc91:0x71b5) in the report font, `r` covering
+/// x1..=x2, y1..=y2: fill up to x2-1/y2-1, top and left lines in col+8 (7 from col 8 up),
+/// bottom and right in 8 (col-8), the label in col^8 centred on ((x1+x2)/2+1, (y1+y2)/2-2).
+fn draw_button(fb: &mut Surface, ctx: &UiContext, r: Rect, label: &str, col: u8) {
+    let (light, dark) = if col < 8 { (col + 8, 8) } else { (7, col - 8) };
+    let (x2, y2) = (r.right() - 1, r.bottom() - 1);
+    fb.fill_rect(Rect::new(r.x, r.y, r.w - 1, r.h - 1), col);
+    fb.hline(r.x, x2, r.y, light);
+    fb.vline(r.x, r.y, y2, light);
+    fb.hline(r.x + 1, x2, y2, dark);
+    fb.vline(x2, r.y, y2, dark);
+    let w = crate::gfx::text::text_width(&ctx.fonts, FONT, label);
+    crate::ui::widgets::draw_coded_text(fb, ctx, FONT, (r.x + x2) / 2 + 1 - w / 2, (r.y + y2) / 2 - 2, label, col ^ 8);
 }
 
 /// `civ_dossier(civ)` (ovl 14 +0x1164, o 0x13ed9) on a colour-1 page under the human's title
@@ -223,7 +308,7 @@ impl Screen for Dossier {
         let capital = g.all_cities().filter(|c| c.owner == s && c.has_improvement(rules::improvement_ids::PALACE)).last().map_or("NONE".to_string(), |c| c.name.clone());
         line(fb, 16, y, &format!("Capital:\u{8f} {capital}"), 9);
         y += 8;
-        line(fb, 16, y, &format!("Government:\u{8f} {}", rules::GOVERNMENTS[p.govt as usize].name), 9);
+        line(fb, 16, y, &format!("Government:\u{8f} {}", rules::GOVERNMENTS[p.govt as usize].adjective), 9);
         y += 8;
         line(fb, 16, y, &format!("Treasury:\u{8f} {}$", p.gold), 9);
         y += 8;
