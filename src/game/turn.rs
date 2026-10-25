@@ -393,6 +393,17 @@ impl Game {
         }
     }
 
+    /// The game ends for `reason` unless it already has: the first ending shows the scores,
+    /// one after the human kept playing does not (ds:0x4cd8 bit 0x100).
+    pub fn end_game(&mut self, reason: EndReason) {
+        if self.ended.is_some() {
+            return;
+        }
+        self.ended = Some(reason);
+        self.keep_playing_asked = false;
+        self.push_event(if self.scoring_over { GameEvent::GameEndedAgain(reason) } else { GameEvent::GameEnded(reason) });
+    }
+
     /// Pollution, global warming, spaceship flight, end-of-game checks (once per turn, after all
     /// players and before the turn counter advances).
     pub fn process_world(&mut self) {
@@ -409,20 +420,21 @@ impl Game {
         if year == end_year - 20 {
             self.push_event(GameEvent::RetirementWarning(self.human_slot));
         }
-        if self.ended.is_none() && !self.scoring_over && year >= end_year {
-            self.ended = Some(EndReason::TimeLimit);
-            self.push_event(GameEvent::GameEnded(EndReason::TimeLimit));
+        if !self.scoring_over && year >= end_year {
+            self.end_game(EndReason::TimeLimit);
         }
-        // the game is over for scoring purposes: freeze the score and ask the human once
+        // the game is over: freeze the score once, and after the ending (0x2bd7) a conquest
+        // quits while any other ending asks *FAME whether to keep playing
         if let Some(reason) = self.ended {
+            let human = self.human_slot;
             if !self.scoring_over {
                 self.scoring_over = true;
-                let human = self.human_slot;
                 let total = self.score(human).total;
                 self.player_mut(human).final_score = Some(total);
-                if reason != EndReason::Destroyed && self.player(human).alive {
-                    self.push_event(GameEvent::NeedsDecision(Decision::KeepPlaying { reason }));
-                }
+            }
+            if !self.keep_playing_asked && !matches!(reason, EndReason::Destroyed | EndReason::Conquest) && self.player(human).alive {
+                self.keep_playing_asked = true;
+                self.push_event(GameEvent::NeedsDecision(Decision::KeepPlaying { reason }));
             }
         }
     }

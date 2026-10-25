@@ -3,6 +3,8 @@
 //! limit / conquest, ARCH.PIC with the KING.TXT ARCH text afterwards, and the spaceship
 //! arrival (see `spaceship_ui`); a conquest first shows `conquest`'s trophy wall. `end_game_scores` (0x2c20) opens with the power graph and,
 //! unless the human retired (ds:0xdc48 = 2), the replay (see `replay`).
+//! A conquest, a retirement and "No, I'm done." to *FAME end the program on ADSCREEN.PIC
+//! (`AdScreen`, 0x2c8a).
 
 use crate::assets::text::{paragraphs, substitute, Vars};
 use crate::assets::Palette;
@@ -39,7 +41,8 @@ pub fn end_screen(ctx: &UiContext, reason: EndReason) -> Box<dyn Screen> {
             // the game-over newspaper (overlay 21 with ds:0x1c66), then conquest_victory
             let news = crate::ui::widgets::MessageBox::new(vec!["Your civilization".into(), "has conquered".into(), "the entire planet!".into()]);
             let wall = ScoreWall::new(ctx, vec![format!("{leader}, you have conquered the world!")]);
-            chain(vec![Box::new(news), Box::new(crate::ui::conquest::Conquest::new(ctx)), Box::new(PowerGraph), Box::new(Replay::new()), Box::new(wall)])
+            // no *FAME question: a conquest ends the game (ds:0xdc48 = 1, 0x2c09)
+            chain(vec![Box::new(news), Box::new(crate::ui::conquest::Conquest::new(ctx)), Box::new(PowerGraph), Box::new(Replay::new()), Box::new(wall), Box::new(AdScreen)])
         }
         EndReason::TimeLimit => {
             let wall = ScoreWall::new(ctx, vec!["Your reign has reached the end of its allotted time.".to_string()]);
@@ -47,8 +50,50 @@ pub fn end_screen(ctx: &UiContext, reason: EndReason) -> Box<dyn Screen> {
         }
         EndReason::Retired => {
             let wall = ScoreWall::new(ctx, vec![format!("{leader} retires from the throne of the {civ}.")]);
-            chain(vec![Box::new(PowerGraph), Box::new(wall), arch_screen(ctx)])
+            chain(vec![Box::new(PowerGraph), Box::new(wall), arch_screen(ctx), Box::new(AdScreen)])
         }
+    }
+}
+
+/// An ending after the human kept playing (ds:0x4cd8 bit 0x100): the same ending without
+/// `end_game_scores` (0x2bc1); a conquest still quits.
+pub fn end_again_screen(ctx: &UiContext, reason: EndReason) -> Box<dyn Screen> {
+    match reason {
+        EndReason::Spaceship(slot) => crate::ui::spaceship_ui::arrival_screen(ctx, slot),
+        EndReason::Conquest => {
+            let news = crate::ui::widgets::MessageBox::new(vec!["Your civilization".into(), "has conquered".into(), "the entire planet!".into()]);
+            chain(vec![Box::new(news), Box::new(crate::ui::conquest::Conquest::new(ctx)), Box::new(AdScreen)])
+        }
+        // the time limit only ends a game once, and a destroyed civilization has no scores
+        other => end_screen(ctx, other),
+    }
+}
+
+/// `show_ad_screen_and_exit` (0x2c8a): the music stops, ADSCREEN.PIC until a key, and the
+/// program ends.
+pub struct AdScreen;
+
+impl Screen for AdScreen {
+    fn on_enter(&mut self, ctx: &mut UiContext) {
+        ctx.audio.stop();
+    }
+    fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
+        match ev {
+            Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } => Transition::Quit,
+            _ => Transition::None,
+        }
+    }
+    fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
+        fb.blit(&ctx.pic("ADSCREEN").surf, 0, 0);
+    }
+    fn palette(&self, ctx: &UiContext) -> Palette {
+        ctx.pic_pal("ADSCREEN")
+    }
+    fn draws_parent(&self) -> bool {
+        false
+    }
+    fn wants_cursor(&self) -> bool {
+        false
     }
 }
 

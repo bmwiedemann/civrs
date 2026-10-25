@@ -545,10 +545,7 @@ impl Game {
         let Some(slot) = winner else { return };
         self.player_mut(slot).spaceship.landed = true;
         self.push_event(GameEvent::SpaceshipArrived(slot));
-        if self.ended.is_none() {
-            self.ended = Some(EndReason::Spaceship(slot));
-            self.push_event(GameEvent::GameEnded(EndReason::Spaceship(slot)));
-        }
+        self.end_game(EndReason::Spaceship(slot));
     }
 
     /// Spaceship score (o 0x1c3cc): success % * colonists / 2 (colonists = habitation modules)

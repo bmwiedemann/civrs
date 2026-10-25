@@ -175,6 +175,9 @@ pub struct Game {
     pub ended: Option<EndReason>,
     /// Scoring stopped (player chose to keep playing after the end).
     pub scoring_over: bool,
+    /// The *FAME question for the current ending is out (asked once per ending).
+    #[serde(skip)]
+    pub keep_playing_asked: bool,
     /// Per-slot visibility bitmap (bit per slot) recomputed by `refresh_vision`.
     pub vision: Vec<u8>,
     #[serde(default)]
@@ -365,6 +368,7 @@ impl Game {
             global_warming_count: 0,
             ended: None,
             scoring_over: false,
+            keep_playing_asked: false,
             vision: vec![0; rules::MAP_W * rules::MAP_H],
             events: VecDeque::new(),
             nukes_enabled: false,
@@ -918,6 +922,24 @@ mod calendar_tests {
         g.year = 2099;
         g.process_world();
         assert_eq!(g.ended, Some(EndReason::TimeLimit));
+    }
+
+    #[test]
+    fn keep_playing_is_asked_per_ending_and_a_second_ending_has_no_scores() {
+        let mut g = Game::new(GameSetup { seed: 9, ..Default::default() }, None);
+        let asked = |ev: &[GameEvent]| ev.iter().any(|e| matches!(e, GameEvent::NeedsDecision(Decision::KeepPlaying { .. })));
+        g.end_game(EndReason::Spaceship(g.human_slot));
+        g.process_world();
+        let ev = g.take_events();
+        assert!(ev.contains(&GameEvent::GameEnded(EndReason::Spaceship(g.human_slot))) && asked(&ev));
+        g.process_world();
+        assert!(!asked(&g.take_events()));
+        // "Yes, keep playing."; then a conquest: no scores again and no question (0x2c09)
+        g.apply_decision(&Decision::KeepPlaying { reason: EndReason::Spaceship(g.human_slot) }, DecisionReply::Yes);
+        g.end_game(EndReason::Conquest);
+        g.process_world();
+        let ev = g.take_events();
+        assert!(ev.contains(&GameEvent::GameEndedAgain(EndReason::Conquest)) && !asked(&ev));
     }
 }
 

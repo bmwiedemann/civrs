@@ -1144,7 +1144,11 @@ impl Screen for MapView {
             Pending::Decision => {
                 if let (Some(d), Some(runner)) = (self.current_decision.take(), self.runner.as_mut()) {
                     let reply = dialogs::reply_for(&d, &result);
+                    let done = Self::done_playing(&d, &reply);
                     runner.resolve(ctx.game.as_mut().expect("game"), reply);
+                    if let Some(t) = done {
+                        return t;
+                    }
                     // decisions that open the city screen
                     if let Decision::ProductionChoice { city, .. } = d {
                         if ctx.game().city_opt(city).is_some() {
@@ -1158,7 +1162,11 @@ impl Screen for MapView {
             Pending::Event | Pending::Error => {
                 if let Some(d) = self.loose_decision.take() {
                     let reply = dialogs::reply_for(&d, &result);
+                    let done = Self::done_playing(&d, &reply);
                     ctx.game_mut().apply_decision(&d, reply);
+                    if let Some(t) = done {
+                        return t;
+                    }
                 }
                 // events produced while the dialog was up (audiences, unit actions)
                 if let Some(s) = self.next_event_screen(ctx) {
@@ -1520,6 +1528,11 @@ impl Screen for MapView {
 }
 
 impl MapView {
+    /// "No, I'm done." to *FAME (ds:0xdc48 = 1): ADSCREEN and the end of the program (0x2c16).
+    fn done_playing(d: &Decision, reply: &crate::game::DecisionReply) -> Option<Transition> {
+        (matches!(d, Decision::KeepPlaying { .. }) && *reply == crate::game::DecisionReply::No).then(|| Transition::Push(Box::new(crate::ui::endgame::AdScreen)))
+    }
+
 
     /// Event dialog with map-view specific preparation (centre on nuclear strikes).
     /// Queue the game's new events and return the dialog for the first one that has one.

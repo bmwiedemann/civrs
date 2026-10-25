@@ -202,6 +202,9 @@ pub enum GameEvent {
     /// its palace level (`tri5_level` of its cities' size + happy - unhappy), whether it has
     /// cities and whether the human may see its row.
     HistorianReport { historian: u8, category: u8, rows: Vec<HistorianRow> },
+    /// The game ends again after the human kept playing (ds:0x4cd8 bit 0x100): the ending
+    /// without `end_game_scores` (0x2bc1).
+    GameEndedAgain(EndReason),
 }
 
 /// A choice the engine needs from the human player before continuing.

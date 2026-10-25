@@ -9,7 +9,7 @@ use crate::rules;
 use crate::ui::context::UiContext;
 use crate::ui::eventpics;
 use crate::ui::screen::Screen;
-use crate::ui::widgets::{MenuDialog, MessageBox, YesNo};
+use crate::ui::widgets::{MenuDialog, MessageBox};
 
 /// Start the sound CIV.EXE plays for an event (before its dialog opens).
 pub fn sound_for_event(ctx: &UiContext, ev: &GameEvent) {
@@ -35,7 +35,7 @@ pub fn sound_for_event(ctx: &UiContext, ev: &GameEvent) {
         GameEvent::WarDeclared { a: x, b: y } if *x == me || *y == me => a.play(Sound::WarDrums),
         GameEvent::NuclearStrike { .. } => a.play(Sound::Nuke),
         GameEvent::CivDestroyed { by, civ, .. } if *by == me => a.national_theme(*civ, true),
-        GameEvent::GameEnded(reason) => match reason {
+        GameEvent::GameEnded(reason) | GameEvent::GameEndedAgain(reason) => match reason {
             crate::game::EndReason::Destroyed => a.play(Sound::Lose),
             crate::game::EndReason::Spaceship(_) => a.play(Sound::MainTheme),
             // conquest and retirement show their plaque over the full anthem
@@ -353,6 +353,7 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             Some(Box::new(Sequence { first: Some(anim), then: Some(eventpics::travelers_report(text)) }))
         }
         GameEvent::GameEnded(reason) => Some(crate::ui::endgame::end_screen(ctx, *reason)),
+        GameEvent::GameEndedAgain(reason) => Some(crate::ui::endgame::end_again_screen(ctx, *reason)),
         // a computer Diplomat's deeds are announced to the human whoever was involved
         // (CIV.EXE o 0x1d817 / 0x1d9a3, popups at (80,80))
         GameEvent::DiplomatStole { by, adv, .. } => {
@@ -435,7 +436,12 @@ pub fn screen_for_decision(ctx: &mut UiContext, d: &Decision) -> Box<dyn Screen>
             Box::new(MenuDialog::new(vec![format!("Treasury empty! {name} must sell..."), "Pick one...".into()], items).no_cancel())
         }
         Decision::Diplomacy(state) => crate::ui::diplomacy_ui::audience_screen(state.clone()),
-        Decision::KeepPlaying { .. } => Box::new(YesNo::new(vec!["Do you wish to".into(), "continue playing?".into()], "Yes, keep playing.", "No, I'm done.")),
+        // *FAME (popup_menu at (80, 80), 0x2bf9): "No, I'm done." first
+        Decision::KeepPlaying { .. } => {
+            let lines = ctx.texts.king.section("FAME").map(|l| l.to_vec()).unwrap_or_default();
+            let m = crate::assets::text::split_menu(&lines);
+            Box::new(MenuDialog::new(m.body, m.choices).with_pos(80, 80).no_cancel())
+        }
         // CIV.EXE o 0x1855b / 0x18591 at (100,80) over the ship (Esc there wastes the part;
         // here a type must be chosen)
         Decision::SpaceshipPart { slot, kind } => {
@@ -471,7 +477,7 @@ pub fn reply_for(d: &Decision, r: &crate::ui::screen::DialogResult) -> crate::ga
     use crate::game::DecisionReply;
     use crate::ui::screen::DialogResult;
     match (d, r) {
-        (Decision::KeepPlaying { .. }, DialogResult::Yes | DialogResult::Choice(0)) => DecisionReply::Yes,
+        (Decision::KeepPlaying { .. }, DialogResult::Yes | DialogResult::Choice(1)) => DecisionReply::Yes,
         (Decision::KeepPlaying { .. }, _) => DecisionReply::No,
         // the audience screen has run the whole audience itself
         (Decision::Diplomacy(_), _) => DecisionReply::Cancel,

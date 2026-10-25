@@ -33,6 +33,10 @@ const TEXT_AT: u32 = 240;
 const DISSOLVE_AT: u32 = TEXT_AT + 60;
 /// Driver duration of the dissolve into the wall with the new trophy (0:0x7b5(1, 30)).
 const DISSOLVE: u32 = 30;
+/// VGA: the old picture fades to black (fade_to_colour(5, 0, 0, 0)), then the slam fades in
+/// from black (fade_palette(8, ...)) before its ticks start.
+const FADE_OUT: u32 = 5;
+const FADE_IN: u32 = 8;
 
 /// Where trophy slot `i` hangs: two rows of seven, the first at y 49, the second above it.
 fn slot_pos(i: usize) -> (i32, i32) {
@@ -54,6 +58,11 @@ fn trophy_slot(n: u8) -> usize {
 /// One slam under way.
 struct Slam {
     t: u32,
+    /// Fade ticks left: out of the old picture (`from`), then into the slam palette.
+    fade_out: u32,
+    fade_in: u32,
+    from: Palette,
+    to: Palette,
     /// The visible screen; `page` is what it dissolves into (page 1: the wall with every
     /// trophy, then the plaque text).
     screen: Surface,
@@ -131,8 +140,11 @@ impl Conquest {
         let face_at = (90 + fx.0 - 180 - fx.1, fy.0 - 64 - fy.1 - 2);
         screen.blit_part(&sheet.surf, FACE_BEFORE, face_at.0, face_at.1, Some(0));
         ctx.audio.national_theme(tribe, true);
-        // the slam palette: SLAM1.PAL with the king's colours 64..143 (fade_palette(8, ...))
-        self.pal = Some(ctx.pic_pal("SLAM1").merged(&ctx.pic_pal(&king), 64..=143));
+        // the slam palette: SLAM1.PAL with the king's colours 64..143
+        let from = self.palette(ctx);
+        let to = ctx.pic_pal("SLAM1").merged(&ctx.pic_pal(&king), 64..=143);
+        self.pal = Some(to);
+        let (fade_out, fade_in) = if ctx.instant { (0, 0) } else { (FADE_OUT, FADE_IN) };
         let slot = trophy_slot(self.count);
         self.count = self.count.wrapping_add(1);
         if let Some(t) = self.trophies.get_mut(slot) {
@@ -145,7 +157,7 @@ impl Conquest {
             // "the " is copied first and then overwritten (strcpy, 0xdfa4)
             format!("{} civilization!", self.adjective(g, civ)),
         ];
-        Slam { t: 0, screen, page, face_at, king, lines, dissolve: None }
+        Slam { t: 0, fade_out, fade_in, from, to, screen, page, face_at, king, lines, dissolve: None }
     }
 
     /// Runs the silent replay to the next slam (mode 4: only the tribe changes and the
@@ -164,7 +176,10 @@ impl Conquest {
                 *t ^= 8;
             }
             if let Some(s) = slam {
-                self.screen = s.screen.clone();
+                // the old picture stays up while it fades out
+                if s.fade_out == 0 {
+                    self.screen = s.screen.clone();
+                }
                 self.phase = Phase::Slam(Box::new(s));
                 return true;
             }
@@ -199,6 +214,17 @@ impl Screen for Conquest {
     }
     fn update(&mut self, ctx: &mut UiContext) -> Transition {
         let Phase::Slam(s) = &mut self.phase else { return Transition::None };
+        if s.fade_out > 0 {
+            s.fade_out -= 1;
+            if s.fade_out == 0 {
+                self.screen = s.screen.clone();
+            }
+            return Transition::None;
+        }
+        if s.fade_in > 0 {
+            s.fade_in -= 1;
+            return Transition::None;
+        }
         s.t += 1;
         if s.t == TEXT_AT || (ctx.instant && s.t == 1) {
             Self::plaque(&mut s.screen, ctx, &s.lines);
@@ -244,7 +270,11 @@ impl Screen for Conquest {
         fb.blit(&self.screen, 0, 0);
     }
     fn palette(&self, ctx: &UiContext) -> Palette {
-        self.pal.unwrap_or_else(|| ctx.game_palette())
+        match &self.phase {
+            Phase::Slam(s) if s.fade_out > 0 => s.from.dimmed((255 * s.fade_out / FADE_OUT) as u8),
+            Phase::Slam(s) if s.fade_in > 0 => s.to.dimmed((255 * (FADE_IN - s.fade_in) / FADE_IN) as u8),
+            _ => self.pal.unwrap_or_else(|| ctx.game_palette()),
+        }
     }
     fn draws_parent(&self) -> bool {
         false

@@ -579,18 +579,14 @@ impl Game {
             self.active_unit = None;
         }
         if slot == self.human_slot {
-            if self.ended.is_none() {
-                self.ended = Some(EndReason::Destroyed);
-                self.push_event(GameEvent::GameEnded(EndReason::Destroyed));
-            }
+            self.end_game(EndReason::Destroyed);
             return;
         }
         if self.respawn_civ(slot) {
             return;
         }
-        if self.alive_slots().len() == 1 && self.player(self.human_slot).alive && self.ended.is_none() {
-            self.ended = Some(EndReason::Conquest);
-            self.push_event(GameEvent::GameEnded(EndReason::Conquest));
+        if self.alive_slots().len() == 1 && self.player(self.human_slot).alive {
+            self.end_game(EndReason::Conquest);
         }
     }
 
