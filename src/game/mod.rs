@@ -223,6 +223,10 @@ pub struct Game {
     /// after the game body in version-15 saves.
     #[serde(skip)]
     pub first_discoverer: Vec<u8>,
+    /// The historian's turn ds:0x1c26 (80 + random(50) at the start, then 20 + random(40)
+    /// after each report, 0x28de); stored after the game body in version-17 saves.
+    #[serde(skip)]
+    pub historian_timer: u32,
     /// ds:0x70d8: set while an attack is resolved, so `remove_unit` counts the dead in
     /// `Player::units_lost_by_type` (delete_unit 0x8d71). Not saved.
     #[serde(skip)]
@@ -276,7 +280,7 @@ impl Game {
     /// Create a new game: generate the world, place civilisations and starting units.
     ///
     /// As CIV.EXE: the world generator's random numbers (`MsRand`) go on into the new-game
-    /// setup (o 0x04175: the random-event timer draws random(50)) and `civ_init` (o 0x0493c) for
+    /// setup (o 0x04175: the historian timer draws random(50)) and `civ_init` (o 0x0493c) for
     /// slots 1..7 in turn: a computer civilization draws its tribe (random(16) until it is one
     /// of the slot's two) and then its start square (`mapgen::start_square`). "N
     /// Civilizations" lets slots 1..N play (ds:0x6b8a = 0xff >> (7 - N)); CIV.EXE only offers
@@ -293,7 +297,7 @@ impl Game {
             (WorldSource::Earth, None) => mapgen::generate(WorldParams::normal(), seed32),
         };
         let mut wr = world.rng;
-        wr.random(50);
+        let historian = wr.random(50) as u32;
         let human_slot = rules::slot_for_civ(setup.human_civ);
         let n = setup.num_civs.clamp(3, 7);
         let mut active: Vec<u8> = (1..=n).collect();
@@ -370,6 +374,7 @@ impl Game {
             treaty_break_ok: None,
             warming_counter: 0,
             first_discoverer: vec![0; 72],
+            historian_timer: 80 + historian,
             counting_losses: false,
             catch_up: 0,
             free_research: 0,

@@ -172,6 +172,7 @@ impl TurnRunner {
                 Phase::NewTurn => {
                     g.advance_calendar();
                     g.update_research_catch_up();
+                    g.historian_check();
                     let slot = g.human_slot;
                     g.reset_moves(slot);
                     g.progress_work(slot);

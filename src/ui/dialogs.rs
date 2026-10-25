@@ -272,6 +272,7 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             msg(vec![format!("{} spaceship", g.player(*slot).adjective()), if *launched { "returns to Earth.".into() } else { "construction cancelled.".into() }])
         }
         GameEvent::PalaceAddition(s) if *s == me => Some(crate::ui::palace::palace_addition(ctx)),
+        GameEvent::HistorianReport { historian, category, rows } => Some(Box::new(crate::ui::report_world::Historian::new(*historian, *category, rows.clone()))),
         // the computer players' treaties and wars, for the human with an embassy (CIV.EXE
         // 0x15247, 0x152f8, 0x14aa4, at (100, 80))
         GameEvent::PeaceTreaty { a, b } => msg(vec![format!("{} and", civ(*a)), format!("{} sign", civ(*b)), "a peace treaty.".into()]),

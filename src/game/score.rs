@@ -78,11 +78,6 @@ pub fn rating_index(percent: i32) -> usize {
     (19 - level) as usize
 }
 
-/// Index into `rules::ADJECTIVES` (best first) for a score percentage.
-pub fn adjective_index(percent: i32) -> usize {
-    ((100 - percent.clamp(0, 100)) * 6 / 100) as usize
-}
-
 impl Game {
     pub fn score(&self, slot: Slot) -> ScoreBreakdown {
         let mut s = ScoreBreakdown::default();
@@ -216,6 +211,59 @@ impl Game {
         rows
     }
 
+    /// The historian at the turn change (0x28de, after the calendar and the 50-turn reports):
+    /// once the turn reaches `historian_timer` it moves on by 20 + random(40) and
+    /// `historian_report` (o 0x10b57) ranks the civilizations in category random(5) — gold,
+    /// military strength, known advances, size + happy - unhappy or size of their cities — by
+    /// historian random(4). Rows go to the best value first (the last civ of equal values),
+    /// civs that dropped below 0 are left out; a row is shown when it is the human's, the human
+    /// has an embassy there, or on Chieftain.
+    pub fn historian_check(&mut self) {
+        if self.turn < self.historian_timer {
+            return;
+        }
+        self.historian_timer = self.turn + 20 + self.rng.below(40);
+        let category = self.rng.below(5) as u8;
+        let historian = self.rng.below(4) as u8;
+        let alive = self.alive_slots();
+        let mut values = [0i32; 8];
+        let mut acc = [0i32; 8];
+        for c in self.all_cities() {
+            let o = c.owner as usize & 7;
+            let h = self.city_happiness(c.id);
+            acc[o] += c.size as i32 + h.happy - h.unhappy;
+            values[o] += match category {
+                3 => c.size as i32 + h.happy - h.unhappy,
+                4 => c.size as i32,
+                _ => 0,
+            };
+        }
+        for s in 0..8u8 {
+            match category {
+                0 => values[s as usize] = self.player(s).gold,
+                1 => values[s as usize] = self.military_strength(s),
+                2 => values[s as usize] = (0..72).filter(|a| self.player(s).knows(*a)).count() as i32,
+                _ => {}
+            }
+        }
+        let me = self.human_slot;
+        let mut rows = Vec::new();
+        for _ in &alive {
+            let mut best = (0, None);
+            for &c in &alive {
+                if values[c as usize] >= best.0 {
+                    best = (values[c as usize], Some(c));
+                }
+            }
+            let Some(c) = best.1 else { continue };
+            values[c as usize] = -1;
+            let shown = c == me || self.human().has_embassy(c) || self.setup.difficulty == rules::Difficulty::Chieftain;
+            let has_cities = self.all_cities().any(|k| k.owner == c);
+            rows.push(super::events::HistorianRow { slot: c, palace_level: super::palace::tri5_level(acc[c as usize]), has_cities, shown });
+        }
+        self.push_event(super::events::GameEvent::HistorianReport { historian, category, rows });
+    }
+
     /// Rating name ("your rating exceeds even that of ...") for a player's score.
     pub fn rating_name(&self, slot: Slot) -> &'static str {
         rules::RATINGS[rating_index(self.score(slot).percent)]
@@ -227,6 +275,45 @@ mod tests {
     use super::*;
     use crate::game::GameSetup;
     use crate::rules::unit_ids;
+
+    #[test]
+    fn demographic_ranks_follow_print_rank() {
+        // lower is better: civs before the viewer meet its unnegated value (o 0x11b08)
+        let v = [0, 30, 10, 20, 0, 0, 0, 0];
+        assert_eq!(demographic_rank(&v, true, 3, &[1, 2, 3]), (1, -10, 2));
+        assert_eq!(demographic_rank(&v, false, 3, &[1, 2, 3]), (2, 30, 1));
+        assert_eq!(population_text(124), "1,240,000");
+        assert_eq!(population_text(105), "1,050,000");
+        assert_eq!(population_text(5), "50,000");
+    }
+
+    #[test]
+    fn the_historian_ranks_every_civ_and_rearms_his_timer() {
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        assert!((80..130).contains(&g.historian_timer));
+        g.set_turn(g.historian_timer - 1);
+        g.historian_check();
+        assert!(g.events.is_empty());
+        for s in g.alive_slots() {
+            g.player_mut(s).gold = 10 * s as i32;
+        }
+        g.set_turn(g.historian_timer);
+        let turn = g.turn;
+        // draw until the category is gold
+        let rows = loop {
+            g.historian_timer = g.turn;
+            g.events.clear();
+            g.historian_check();
+            if let Some(crate::game::events::GameEvent::HistorianReport { category: 0, rows, .. }) = g.events.front() {
+                break rows.clone();
+            }
+        };
+        assert!((turn + 20..turn + 60).contains(&g.historian_timer));
+        let mut want = g.alive_slots();
+        want.reverse();
+        assert_eq!(rows.iter().map(|r| r.slot).collect::<Vec<_>>(), want, "richest first");
+        assert!(rows.iter().any(|r| r.slot == g.human_slot && r.shown));
+    }
 
     #[test]
     fn score_non_negative_and_ranked() {

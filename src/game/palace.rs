@@ -158,6 +158,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn computer_palaces_grow_with_the_level() {
+        assert_eq!((tri5_level(-3), tri5_level(5), tri5_level(6), tri5_level(15), tri5_level(16)), (0, 0, 1, 1, 2));
+        let small = computer_palace(2, 0, 4763);
+        assert_eq!(small.level[3..=5].iter().map(|l| *l as i32).sum::<i32>(), 0, "3 parts, none above level 0");
+        // 15 parts, levels up to 3 (36 parts overflow the nine slots: after 999 tries a part
+        // goes in anyway)
+        let big = computer_palace(2, 12, 4763);
+        assert!(big.level.iter().all(|l| *l <= 3));
+        assert!(big.level[..9].iter().filter(|l| **l > 0).count() > 3);
+        assert!((0..9).filter(|i| big.level[*i] >= 0).all(|i| big.style[i] == 2 % 3));
+    }
+
+    #[test]
     fn starts_as_stone_building() {
         let p = Palace::default();
         let offered: Vec<usize> = (1..=11).filter(|i| p.offered(*i)).collect();
@@ -182,4 +195,51 @@ mod tests {
         assert_eq!(p.level[3], MAX_BUILDING);
         assert_eq!(p.pick(3), None);
     }
+}
+
+/// `tri5_level(n)` (0x4018): the k reached when 5, 10, 15, .. are taken from `n` until it is no
+/// longer above 0 is 5 * (k + 1); 0 for n <= 5.
+pub fn tri5_level(n: i32) -> i32 {
+    let (mut n, mut k) = (n, 0);
+    loop {
+        k += 5;
+        n -= k;
+        if n <= 0 {
+            return k / 5 - 1;
+        }
+    }
+}
+
+/// A computer civilization's palace as `draw_palace` (0x3823) makes it up from a palace
+/// `level`: slots 3..5 start at level 0, then clamp(level + 3, 3, 36) parts each raise the slot
+/// (low byte of seed = seed * 5 + 1) % 9 of the 16-bit generator seeded with civ * map seed,
+/// redrawn (up to 999 tries) while the slot would pass its inner neighbour, the mirror slot
+/// (7 - slot left, 9 - slot right, as CIV.EXE has it) is not built, or the level would exceed
+/// clamp / 5 or 3. Every part takes the style civ % 3.
+pub fn computer_palace(civ: u8, level: i32, map_seed: u32) -> Palace {
+    let parts = (level + 3).clamp(3, 36);
+    let max = parts / 5;
+    let mut lv = [-1i32; 9];
+    lv[3..=5].fill(0);
+    let mut p = Palace { level: [-1; SECTIONS], style: [0; SECTIONS] };
+    let mut seed = (civ as u16).wrapping_mul(map_seed as u16);
+    for _ in 0..parts {
+        let mut tries = 0;
+        loop {
+            seed = seed.wrapping_mul(5).wrapping_add(1);
+            let s = (seed & 0xff) as usize % 9;
+            let new = lv[s] + 1;
+            let bad = (s < 4 && (lv[s + 1] < new || lv[7 - s] == -1)) || (s > 4 && (lv[s - 1] < new || lv[9 - s] == -1)) || new > max || new > 3;
+            tries += 1;
+            if !bad || tries >= 999 {
+                lv[s] = new;
+                p.style[s] = civ % 3;
+                break;
+            }
+        }
+    }
+    for (i, l) in lv.iter().enumerate() {
+        p.level[i] = *l as i8;
+    }
+    p
 }

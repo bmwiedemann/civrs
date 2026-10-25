@@ -34,7 +34,9 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// knows it.
 /// 16: then by the tile-owner layer (`BarbarianMemory::occupant`, a u32 LE byte count and 80 x 50
 /// bytes or none); older saves start without it.
-pub const VERSION: u16 = 16;
+/// 17: then by the historian's turn (`Game::historian_timer`, u32 LE); older saves take 20
+/// turns after their turn, 80 at the earliest.
+pub const VERSION: u16 = 17;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -125,6 +127,7 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     data.extend((0..72).map(|a| g.first_discoverer(a)));
     data.extend_from_slice(&(g.barbarian_memory.occupant.len() as u32).to_le_bytes());
     data.extend_from_slice(&g.barbarian_memory.occupant);
+    data.extend_from_slice(&g.historian_timer.to_le_bytes());
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -258,11 +261,17 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
         if let Some(n) = rest.get(at..at + 4).filter(|_| names_ok && ver >= 16) {
             let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
             g.barbarian_memory.occupant = rest.get(at + 4..at + 4 + n).map(|b| b.to_vec()).unwrap_or_default();
+            at += 4 + n;
         }
+        g.historian_timer = match rest.get(at..at + 4).filter(|_| names_ok && ver >= 17) {
+            Some(b) => u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+            None => (g.turn + 20).max(80),
+        };
     } else {
         for p in g.players.iter_mut() {
             p.start_civ = p.civ;
         }
+        g.historian_timer = (g.turn + 20).max(80);
         g.first_discoverer = migrate_first_discoverers(&g);
     }
     match slots.and_then(|n| rest.get(seen + 4..seen + 4 + n)) {
@@ -593,6 +602,7 @@ mod tests {
         g.grant_advance(h, adv::POTTERY, AdvanceSource::From(other));
         assert_eq!(g.first_discoverer(adv::POTTERY), other);
         g.note_occupant(other, 10, 10);
+        g.historian_timer = 123;
         let dir = std::env::temp_dir().join(format!("civrs-first-{}", std::process::id()));
         let path = dir.join("s.sav");
         super::save_game(&path, &g).unwrap();
@@ -600,6 +610,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
         assert_eq!(l.first_discoverer, g.first_discoverer);
         assert_eq!(l.barbarian_memory.occupant, g.barbarian_memory.occupant);
+        assert_eq!(l.historian_timer, 123);
     }
 
     #[test]

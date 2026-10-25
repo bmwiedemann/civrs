@@ -71,6 +71,15 @@ pub enum HutOutcome {
     EmptyScrolls,
 }
 
+/// One ranked civilization of the historian's report.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HistorianRow {
+    pub slot: Slot,
+    pub palace_level: i32,
+    pub has_cities: bool,
+    pub shown: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum GameEvent {
     CityGrew(CityId),
@@ -188,6 +197,11 @@ pub enum GameEvent {
     /// "Development of ADV\nmakes existing Barracks\nobsolete." (CIV.EXE 0xc6ea): the human
     /// learned Gunpowder or Combustion and its Barracks are gone.
     BarracksObsolete { slot: Slot, adv: AdvanceId },
+    /// `historian_report` (o 0x10b57): historian 0..3 (`rules::HISTORIANS`), category 0..4
+    /// (`rules::DEMOGRAPHIC_CATEGORIES`) and the civilizations from best to worst, each with
+    /// its palace level (`tri5_level` of its cities' size + happy - unhappy), whether it has
+    /// cities and whether the human may see its row.
+    HistorianReport { historian: u8, category: u8, rows: Vec<HistorianRow> },
 }
 
 /// A choice the engine needs from the human player before continuing.

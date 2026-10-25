@@ -926,7 +926,7 @@ impl MapView {
         }
         fb.hline(3, 76, 71, theme::GREEN);
         if p.capital.is_some() {
-            draw_mini_palace(fb, ctx, &p.palace(), 8, 58);
+            crate::ui::palace::draw_small_palace(fb, ctx, &p.palace(), 8, 58);
         }
         let st = TextStyle::new(0, theme::TEXT);
         // the original appends the font's person ('#') and coin ('$') glyphs to the figures
@@ -1585,29 +1585,6 @@ impl MapView {
 
     pub fn show_error(&mut self, ctx: &mut UiContext, e: &crate::game::RuleError) -> Transition {
         self.error(ctx, e)
-    }
-}
-
-/// The palace in the status panel (CIV.EXE 0x3823): each building section above level 0 as
-/// a 7x15 piece of SP257, 7 px apart from `x`. A style row of SP257 (y 16 * style) holds four
-/// levels of five pieces from x 160: left tower, left wall, centre, right wall, right tower.
-fn draw_mini_palace(fb: &mut Surface, ctx: &UiContext, palace: &crate::game::palace::Palace, x: i32, y: i32) {
-    let lv = |i: usize| palace.level.get(i).copied().unwrap_or(-1);
-    for s in 0..9usize {
-        let level = lv(s);
-        if level <= 0 {
-            continue;
-        }
-        let piece = match s {
-            0..=3 if lv(s.wrapping_sub(1)) == -1 || s == 1 => 0,
-            0..=3 => 1,
-            5..=8 if lv(s + 1) == -1 || s == 7 => 4,
-            5..=8 => 3,
-            _ => 2,
-        };
-        let idx = (level as i32 - 1).clamp(0, 3) * 5 + piece;
-        let src = Rect::new(160 + 7 * idx, 16 * palace.style[s] as i32, 7, 15);
-        fb.blit_part(&ctx.sp.surf, src, x + 7 * s as i32, y - 1, Some(0));
     }
 }
 

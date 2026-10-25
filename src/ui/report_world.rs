@@ -292,6 +292,87 @@ pub fn paint_world_map(fb: &mut Surface, ctx: &UiContext) {
     }
 }
 
+// ---- the historian ---------------------------------------------------------------------------
+
+/// `historian_report` (o 0x10b57) on a colour-3 screen: "<Historian> completes his epic
+/// history:" and "'The <CATEGORY> Civilizations in the World'" centred at y 4 and 12 in 15,
+/// then, after `wait_ticks(60)` each, the rows the human may see, 24 px apart from y 32: the
+/// civ's sidebar palace (`draw_palace` 0x3823 at (128, y - 13): a colour-2 line (123..196, y),
+/// the pieces when it has cities), a (8, y, 304, 16) frame in its colour and "<n>. The <Glorious
+/// .. Hopeless> Civilization of the <civ>." at (40, y + 5) in 15, n the rank among all rows.
+/// Input waits until every row is up.
+pub struct Historian {
+    historian: u8,
+    category: u8,
+    rows: Vec<crate::game::events::HistorianRow>,
+    t: u32,
+}
+
+impl Historian {
+    pub fn new(historian: u8, category: u8, rows: Vec<crate::game::events::HistorianRow>) -> Historian {
+        Historian { historian, category, rows, t: 0 }
+    }
+    fn revealed(&self) -> usize {
+        (self.t / 60) as usize
+    }
+    fn shown(&self) -> usize {
+        self.rows.iter().filter(|r| r.shown).count()
+    }
+}
+
+impl crate::ui::screen::Screen for Historian {
+    fn update(&mut self, _ctx: &mut UiContext) -> crate::ui::screen::Transition {
+        self.t += 1;
+        crate::ui::screen::Transition::None
+    }
+    fn handle(&mut self, ev: &crate::platform::Event, _ctx: &mut UiContext) -> crate::ui::screen::Transition {
+        use crate::platform::Event;
+        use crate::ui::screen::{DialogResult, Transition};
+        if self.revealed() < self.shown() {
+            return Transition::None;
+        }
+        match ev {
+            Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } => Transition::Pop(DialogResult::Done),
+            _ => Transition::None,
+        }
+    }
+    fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
+        use crate::ui::widgets::draw_coded_text;
+        fb.fill(3);
+        let g = ctx.game();
+        let centred = |fb: &mut Surface, y: i32, t: &str| {
+            let w = crate::gfx::text::text_width(&ctx.fonts, FONT, t);
+            draw_coded_text(fb, ctx, FONT, 160 - w / 2, y, t, 15);
+        };
+        let who = rules::HISTORIANS.get(self.historian as usize).copied().unwrap_or("Herodotus");
+        centred(fb, 4, &format!("{who} completes his epic history:"));
+        let what = rules::DEMOGRAPHIC_CATEGORIES.get(self.category as usize).copied().unwrap_or("LARGEST");
+        centred(fb, 12, &format!("'The {what} Civilizations in the World'"));
+        let mut y = 32;
+        for (rank, r) in self.rows.iter().enumerate().filter(|(_, r)| r.shown).take(self.revealed()) {
+            fb.hline(123, 196, y, 2);
+            if r.has_cities {
+                let palace = if r.slot == g.human_slot { g.player(r.slot).palace() } else { crate::game::palace::computer_palace(r.slot, r.palace_level, g.map.seed) };
+                crate::ui::palace::draw_small_palace(fb, ctx, &palace, 128, y - 13);
+            }
+            let colour = SLOT_COLOURS[r.slot as usize & 7].light;
+            fb.rect_outline(Rect::new(8, y, 304, 16), colour);
+            let line = format!("{}. The {} Civilization of the {}.", rank + 1, rules::ADJECTIVES[rank.min(6)], g.player(r.slot).plural());
+            draw_coded_text(fb, ctx, FONT, 40, y + 5, &line, 15);
+            y += 24;
+        }
+    }
+    fn palette(&self, ctx: &UiContext) -> crate::assets::Palette {
+        ctx.game_palette()
+    }
+    fn draws_parent(&self) -> bool {
+        false
+    }
+    fn wants_cursor(&self) -> bool {
+        false
+    }
+}
+
 // ---- F11 Demographics --------------------------------------------------------------------------
 
 /// F11 `demographics(civ)` (ovl 12 +0xd6d, o 0x10ee2) on a colour-1 screen: "<Adjective>

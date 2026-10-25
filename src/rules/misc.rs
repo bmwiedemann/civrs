@@ -121,10 +121,10 @@ pub static RATINGS: [&str; 20] = [
     "Dan Quayle",
 ];
 
-/// Historians quoted on the score screen.
+/// The historians of `historian_report` (ds:0x4516).
 pub static HISTORIANS: [&str; 4] = ["Herodotus", "Pliny", "Toynbee", "Gibbon"];
 
-/// Rating adjectives, best first.
+/// The historian's words for the ranks, best first (ds:0x451e).
 pub static ADJECTIVES: [&str; 7] = [
     "Glorious", "Great", "Fine", "Mediocre", "Puny", "Pathetic", "Hopeless",
 ];
@@ -137,7 +137,7 @@ pub static COMMODITIES: [&str; 8] = [
 /// Newspaper name suffixes.
 pub static NEWSPAPERS: [&str; 5] = ["Weekly", "Today", "Times", "Tribune", "News"];
 
-/// Demographics report categories.
+/// The historian's categories (ds:0x452c).
 pub static DEMOGRAPHIC_CATEGORIES: [&str; 5] = [
     "WEALTHIEST",
     "MOST POWERFUL",
