@@ -89,7 +89,7 @@ fn perform(view: &mut MapView, ctx: &mut UiContext, id: UnitId, c: CityId, actio
     };
     let g = ctx.game();
     let screen: Box<dyn Screen> = match result {
-        DiplomatResult::Embassy => crate::ui::reports::advisor(ctx, 3),
+        DiplomatResult::Embassy => Box::new(crate::ui::report_advisors::Dossier::new(owner)),
         DiplomatResult::Investigated => crate::ui::cityscreen::city_screen_view(c),
         DiplomatResult::Stole(a) => {
             let lines = vec![format!("{} steal", g.player(g.human_slot).plural()), format!("{}.", rules::ADVANCES[a as usize].name)];

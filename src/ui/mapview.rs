@@ -755,6 +755,22 @@ impl MapView {
                     g.active_unit = Some(id);
                     return self.caravan_menu(ctx, id, c, dir);
                 }
+                // the move routine asks a Diplomat on goto as it asks one moved by hand, and
+                // cancels the goto (0x5c15 into o 0x1d575, 0x5dc1)
+                Ok(MoveOutcome::EnteredForeignCity(c)) => {
+                    let g = ctx.game_mut();
+                    g.unit_mut(id).order = UnitOrder::None;
+                    g.unit_mut(id).goto = None;
+                    g.active_unit = Some(id);
+                    return self.foreign_city_menu(ctx, id, c);
+                }
+                Ok(MoveOutcome::BribeOffer(t)) => {
+                    let g = ctx.game_mut();
+                    g.unit_mut(id).order = UnitOrder::None;
+                    g.unit_mut(id).goto = None;
+                    g.active_unit = Some(id);
+                    return self.bribe_offer(ctx, id, t, dir);
+                }
                 Ok(_) | Err(_) => {
                     let g = ctx.game_mut();
                     if let Some(u) = g.unit_opt(id) {

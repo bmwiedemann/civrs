@@ -170,6 +170,102 @@ pub fn paint_intelligence(fb: &mut Surface, ctx: &UiContext) {
     }
 }
 
+/// `civ_dossier(civ)` (ovl 14 +0x1164, o 0x13ed9) on a colour-1 page under the human's title
+/// block: "Subject: the <civ>" in 15 with a shadow at (16, 32); from y 44 in colour 9 at x 16,
+/// 8 px apart, the leader, the leader's traits in 7 at x 24, then after 4 px the capital (the
+/// last city with a Palace), government, treasury and, on Chieftain and Warlord, the units;
+/// "Foreign Affairs:" with "At PEACE"/"At WAR with the <civ>." per contact, and after 4 px
+/// "Technologies:" newest first until y 192. Shown by an embassy and "Check Intelligence".
+pub struct Dossier {
+    civ: crate::game::Slot,
+    guard: u32,
+}
+
+impl Dossier {
+    pub fn new(civ: crate::game::Slot) -> Dossier {
+        Dossier { civ, guard: 2 }
+    }
+}
+
+impl Screen for Dossier {
+    fn update(&mut self, _ctx: &mut UiContext) -> Transition {
+        self.guard = self.guard.saturating_sub(1);
+        Transition::None
+    }
+    fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
+        match ev {
+            Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } if self.guard == 0 => Transition::Pop(DialogResult::Done),
+            _ => Transition::None,
+        }
+    }
+    fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
+        use crate::ui::widgets::draw_coded_text;
+        fb.fill(1);
+        title_block(fb, ctx, "INTELLIGENCE REPORT");
+        let g = ctx.game();
+        let s = self.civ;
+        let p = g.player(s);
+        let line = |fb: &mut Surface, x: i32, y: i32, t: &str, c: u8| draw_coded_text(fb, ctx, FONT, x, y, t, c);
+        let subject = format!("Subject: the {}", p.plural());
+        line(fb, 16, 33, &subject, 0);
+        line(fb, 16, 32, &subject, 15);
+        let mut y = 44;
+        line(fb, 16, y, &format!("Leader:\u{8f} {} {}", p.title(), p.leader), 9);
+        y += 8;
+        let civ = p.civ();
+        for (v, pos, neg) in [(civ.aggressive, "Aggressive", "Friendly"), (civ.expansionist, "Expansionistic", "Perfectionist"), (civ.civilized, "Civilized", "Militaristic")] {
+            if v != 0 {
+                line(fb, 24, y, if v > 0 { pos } else { neg }, 7);
+                y += 8;
+            }
+        }
+        y += 4;
+        let capital = g.all_cities().filter(|c| c.owner == s && c.has_improvement(rules::improvement_ids::PALACE)).last().map_or("NONE".to_string(), |c| c.name.clone());
+        line(fb, 16, y, &format!("Capital:\u{8f} {capital}"), 9);
+        y += 8;
+        line(fb, 16, y, &format!("Government:\u{8f} {}", rules::GOVERNMENTS[p.govt as usize].name), 9);
+        y += 8;
+        line(fb, 16, y, &format!("Treasury:\u{8f} {}$", p.gold), 9);
+        y += 8;
+        if g.difficulty() as u8 <= 1 {
+            line(fb, 16, y, &format!("Military:\u{8f} {} Units.", g.units_of(s).len()), 9);
+            y += 12;
+        }
+        line(fb, 16, y, "Foreign Affairs:", 9);
+        y += 8;
+        for o in 1..8u8 {
+            let f = p.flags(o);
+            if f & crate::game::diplomacy::flags::CONTACT == 0 {
+                continue;
+            }
+            let state = if f & crate::game::diplomacy::flags::PEACE != 0 { "At\u{8f} PEACE" } else { "At\u{8c} WAR" };
+            line(fb, 24, y, &format!("{state}\u{87} with the {}.", g.player(o).plural()), 7);
+            y += 8;
+        }
+        y += 4;
+        line(fb, 16, y, "Technologies:", 9);
+        y += 8;
+        for a in (0..72u8).rev() {
+            if p.knows(a) {
+                line(fb, 24, y, rules::ADVANCES[a as usize].name, 7);
+                y += 8;
+                if y >= 192 {
+                    break;
+                }
+            }
+        }
+    }
+    fn palette(&self, ctx: &UiContext) -> Palette {
+        ctx.game_palette()
+    }
+    fn draws_parent(&self) -> bool {
+        false
+    }
+    fn wants_cursor(&self) -> bool {
+        false
+    }
+}
+
 // ---- F4 Attitude Survey ----------------------------------------------------------------------
 
 /// How civilization `s` stands towards the human, in the words of CIV.EXE's dossier (o 0x14256

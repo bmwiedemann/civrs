@@ -269,7 +269,7 @@ impl Screen for AudienceScreen {
         }
         self.sub_shown = true;
         if st.proposal == Proposal::Intelligence {
-            return Transition::Push(crate::ui::reports::advisor(ctx, 3));
+            return Transition::Push(Box::new(crate::ui::report_advisors::Dossier::new(st.ai)));
         }
         let lines = self.plain_lines(ctx);
         if st.proposal == Proposal::Emissary {

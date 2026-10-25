@@ -262,6 +262,13 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
             }
         }
     }
+    // older saves keep a ship's cargo aboard in port; there it belongs to the city's stack
+    let ports: Vec<bool> = g.units.iter().map(|u| u.as_ref().is_some_and(|u| u.carried_by.is_some() && g.map.is_land(u.x, u.y))).collect();
+    for (u, port) in g.units.iter_mut().zip(ports) {
+        if let (Some(u), true) = (u, port) {
+            u.carried_by = None;
+        }
+    }
     g.update_research_catch_up();
     Ok(g)
 }

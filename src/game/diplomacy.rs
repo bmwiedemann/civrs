@@ -553,15 +553,13 @@ impl Game {
         amount
     }
 
-    /// Establish an embassy of `slot` with `with` (o 0x1d6ce: [human][owner] |= 0x40).
+    /// Establish an embassy of `slot` with `with` (o 0x1d6ce: [human][owner] |= 0x40); the
+    /// dossier that follows is all the human sees of it.
     pub fn establish_embassy(&mut self, slot: Slot, with: Slot) {
         if slot == with || slot == 0 || with == 0 {
             return;
         }
-        if !self.player(slot).has_embassy(with) {
-            self.raise_flag(slot, with, EMBASSY);
-            self.push_event(GameEvent::EmbassyEstablished { slot, with });
-        }
+        self.raise_flag(slot, with, EMBASSY);
     }
 
     /// The human has an embassy with `a` or `b`: CIV.EXE then reports their wars and treaties.

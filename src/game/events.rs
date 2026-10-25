@@ -129,7 +129,8 @@ pub enum GameEvent {
     UnitExpired { slot: Slot, kind: UnitTypeId, at: (i32, i32) },
     /// A nuclear weapon detonated at `at` (city hit, if any).
     NuclearStrike { at: (i32, i32), by: Slot, city: Option<CityId> },
-    /// `slot` established an embassy with `with`.
+    /// `slot` established an embassy with `with` (no longer raised: the dossier shows it; the
+    /// variant stays for saves with pending events).
     EmbassyEstablished { slot: Slot, with: Slot },
     GameEnded(EndReason),
     TurnStarted(u32),

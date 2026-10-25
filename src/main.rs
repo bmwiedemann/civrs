@@ -196,7 +196,7 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
         // previews compare against plain captures: no CIVILIZATION NOTE hints on top
         game.hints_shown = u32::MAX;
         // (mapcity: the map screen after founding that city)
-        if !matches!(parts[0], "map" | "mapall" | "founded" | "built") {
+        if !matches!(parts[0], "map" | "mapall" | "founded" | "built" | "city" | "diplomat") {
             // reports want a city: found one with the first human Settlers
             let slot = game.human_slot;
             if let Some(s) = game.units_of(slot).into_iter().find(|u| game.unit(*u).kind == civrs::rules::unit_ids::SETTLERS) {

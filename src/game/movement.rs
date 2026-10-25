@@ -83,6 +83,14 @@ impl Game {
             // a Diplomat meeting a lone foreign unit outside a city may bribe it, at war or not
             // (CIV.EXE 0x5da5, o 0x1dbae): the human is asked; the computer pays when half its
             // treasury covers the price; then the Diplomat moves on to its new unit
+            // a Diplomat or Caravan may not go from the sea into a foreign city (0x5b91); a
+            // Diplomat goes in whatever the treaties, before any question (0x5c04)
+            if city_here.is_some() && matches!(u.kind, unit_ids::CARAVAN | unit_ids::DIPLOMAT) && self.map.is_ocean(u.x, u.y) {
+                return Ok(MoveOutcome::Blocked);
+            }
+            if let Some(c) = city_here.filter(|_| u.kind == unit_ids::DIPLOMAT) {
+                return Ok(MoveOutcome::EnteredForeignCity(c));
+            }
             if u.kind == unit_ids::DIPLOMAT && city_here.is_none() && units_here.len() == 1 {
                 let target_id = units_here[0];
                 if self.is_human(slot) {
@@ -93,6 +101,10 @@ impl Game {
                 }
                 self.bribe_unit(slot, target_id);
                 return self.step(id, d, ask_caravan);
+            }
+            // bribe_unit refuses a stack, and a Diplomat never attacks (0x5f45)
+            if u.kind == unit_ids::DIPLOMAT && !units_here.is_empty() {
+                return Ok(MoveOutcome::Blocked);
             }
             if !hostile {
                 // Caravan / diplomat may enter foreign cities at peace.
@@ -245,8 +257,12 @@ impl Game {
         // a ship leaving a city takes along the sentried units of its kind there, land units
         // onto transports and aircraft onto a Carrier, up to its capacity (CIV.EXE 0x6932); a
         // computer's ship takes every unit that is not fortified or fortifying (0x693f), and
-        // they travel sentried (0x69e5). Deviation: civrs leaves units at work behind.
+        // they travel sentried (0x69e5). Deviation: civrs leaves units at work behind. Only at
+        // sea does the whole stack go along, so what it brought in is chosen again here.
         if u.is_sea() && u.info().capacity > 0 && self.map.tile(u.x, u.y).is_land() {
+            for o in self.all_units().filter(|o| o.carried_by == Some(id)).map(|o| o.id).collect::<Vec<_>>() {
+                self.unit_mut(o).carried_by = None;
+            }
             let air = u.kind == unit_ids::CARRIER;
             let computer = !self.is_human(slot);
             let waiting: Vec<UnitId> = self
@@ -269,14 +285,19 @@ impl Game {
         if u.carried_by.is_some() && target.is_land() {
             self.unit_mut(id).carried_by = None;
         }
-        // units aboard move with ship
+        // units aboard move with ship; in port they are units of the city again, to be
+        // activated, and go along only when sentried
         if u.is_sea() {
             let cargo: Vec<UnitId> = self.all_units().filter(|c| c.carried_by == Some(id)).map(|c| c.id).collect();
+            let port = target.is_land();
             for c in cargo {
                 let cu = self.unit_mut(c);
                 cu.x = tx;
                 cu.y = ty;
                 cu.seen_by = 0;
+                if port {
+                    cu.carried_by = None;
+                }
             }
         }
         // aircraft landing in a city / carrier refuels
@@ -721,6 +742,67 @@ mod tests {
         assert!(at.contains(&(third, unit_ids::PHALANX)) && at.contains(&(third, unit_ids::DIPLOMAT)), "{at:?}");
         assert!(!at.iter().any(|(o, _)| *o == other));
         assert_eq!(g.player(third).gold, 50);
+    }
+
+    #[test]
+    fn a_ship_leaves_the_awake_units_it_brought_into_port() {
+        use crate::game::UnitOrder;
+        let mut g = Game::new(GameSetup { seed: 1, ..Default::default() }, None);
+        let slot = g.human_slot;
+        let (x, y) = (40, 25);
+        g.map.get_mut(x, y).unwrap().terrain = Terrain::Grassland;
+        g.map.get_mut(x + 1, y).unwrap().terrain = Terrain::Ocean;
+        g.add_city(slot, "Port".into(), x, y);
+        let ship = g.add_unit(slot, unit_ids::SAIL, x + 1, y);
+        let (awake, asleep) = (g.add_unit(slot, unit_ids::MILITIA, x + 1, y), g.add_unit(slot, unit_ids::MILITIA, x + 1, y));
+        for u in [awake, asleep] {
+            g.unit_mut(u).carried_by = Some(ship);
+            g.unit_mut(u).order = UnitOrder::Sentry;
+        }
+        assert_eq!(g.try_move(ship, Dir8::W), Ok(MoveOutcome::Moved));
+        assert_eq!(g.unit(awake).carried_by, None);
+        // in port the units can be given orders like any other
+        g.unit_mut(awake).order = UnitOrder::None;
+        g.unit_mut(ship).moves_left = 3;
+        assert_eq!(g.try_move(ship, Dir8::E), Ok(MoveOutcome::Moved));
+        assert_eq!(g.unit(awake).pos(), (x, y));
+        assert_eq!((g.unit(asleep).pos(), g.unit(asleep).carried_by), ((x + 1, y), Some(ship)));
+    }
+
+    /// A human Diplomat at (39,25) beside a city of a civ at peace with the human at (40,25).
+    fn diplomat_before_city() -> (Game, UnitId, crate::game::Slot) {
+        let mut g = Game::new(GameSetup { seed: 1, ..Default::default() }, None);
+        let human = g.human_slot;
+        let other = g.civ_slots().into_iter().find(|s| *s != human).unwrap();
+        for xx in 38..=41 {
+            for yy in 24..=26 {
+                let t = g.map.get_mut(xx, yy).unwrap();
+                t.terrain = Terrain::Grassland;
+                t.city = None;
+            }
+        }
+        g.add_city(other, "Abroad".into(), 40, 25);
+        g.make_peace(human, other);
+        let dip = g.add_unit(human, unit_ids::DIPLOMAT, 39, 25);
+        (g, dip, other)
+    }
+
+    #[test]
+    fn diplomats_enter_foreign_cities_from_land_only() {
+        let (mut g, dip, other) = diplomat_before_city();
+        g.add_unit(other, unit_ids::PHALANX, 40, 25);
+        assert!(matches!(g.try_move(dip, Dir8::E), Ok(MoveOutcome::EnteredForeignCity(_))));
+        g.map.get_mut(39, 25).unwrap().terrain = Terrain::Ocean;
+        assert_eq!(g.try_move(dip, Dir8::E), Ok(MoveOutcome::Blocked));
+    }
+
+    #[test]
+    fn diplomats_stop_at_foreign_stacks_without_a_treaty_question() {
+        let (mut g, dip, other) = diplomat_before_city();
+        for _ in 0..2 {
+            g.add_unit(other, unit_ids::PHALANX, 39, 24);
+        }
+        assert_eq!(g.try_move(dip, Dir8::N), Ok(MoveOutcome::Blocked));
     }
 }
 
