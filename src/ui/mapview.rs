@@ -782,11 +782,29 @@ impl MapView {
                 }
             }
         }
+        // a unit that ends its goto with moves left keeps the focus
+        let g = ctx.game_mut();
+        let keep = g.unit_opt(id).is_some_and(|u| u.owner == g.human_slot && u.order == UnitOrder::None && u.moves_left > 0);
+        if keep {
+            g.active_unit = Some(id);
+        }
         if let Some(s) = self.next_event_screen(ctx) {
             self.pending = Pending::Event;
             return Transition::Push(s);
         }
-        self.activate_next(ctx);
+        if keep {
+            let (x, y) = ctx.game().unit(id).pos();
+            self.ensure_visible(x, y);
+            self.last_centered = Some(id);
+            self.mode = Mode::Normal;
+        } else {
+            // at the turn's start a unit kept by an earlier goto stays in focus
+            let g = ctx.game();
+            let idle = g.active_unit.and_then(|a| g.unit_opt(a)).is_some_and(|u| u.owner == g.human_slot && u.order == UnitOrder::None && u.moves_left > 0);
+            if !idle {
+                self.activate_next(ctx);
+            }
+        }
         Transition::None
     }
 
