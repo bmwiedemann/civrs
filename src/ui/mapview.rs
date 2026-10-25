@@ -33,6 +33,8 @@ enum BarAction {
     Quit,
     /// Retire (ds:0xdc48 = 2): the quit question, then the end-of-game scores (0x2c20).
     Retire,
+    /// View Replay: the replay of a finished game that goes on (ds:0x4cd8 bit 8).
+    Replay,
     /// An order: the key (with Shift) it posts, as the original stores it in ds:0xd4ca.
     Key(Key, bool),
     Advisor(u8),
@@ -460,6 +462,9 @@ impl MapView {
                 add(&mut items, " ", BarAction::Nothing, false);
                 add(&mut items, "Retire", BarAction::Retire, false);
                 add(&mut items, "QUIT to DOS", BarAction::Quit, false);
+                if g.scoring_over {
+                    add(&mut items, "View Replay", BarAction::Replay, false);
+                }
             }
             1 => {
                 let key = |c: char| BarAction::Key(Key::Char(c), false);
@@ -565,6 +570,7 @@ impl MapView {
             }
             BarAction::Key(key, shift) => self.key_order(ctx, key, crate::platform::Mods { shift, ctrl: false, alt: false }),
             BarAction::Advisor(n) => Transition::Push(crate::ui::reports::advisor(ctx, n)),
+            BarAction::Replay => Transition::Push(Box::new(crate::ui::replay::Replay::new())),
             BarAction::Civilopedia(c) => Transition::Push(crate::ui::civilopedia::category(ctx, c)),
             BarAction::Nothing => Transition::None,
         }
@@ -1208,7 +1214,7 @@ impl Screen for MapView {
                         match r {
                             Ok(c) => {
                                 if !name.trim().is_empty() {
-                                    ctx.game_mut().city_mut(c).name = name.trim().to_string();
+                                    ctx.game_mut().set_city_name(c, name.trim().to_string());
                                 }
                                 // FIRSTPRODUCT comes before the founding animation
                                 let note = ctx.game_mut().take_events().into_iter().find_map(|e| match e {

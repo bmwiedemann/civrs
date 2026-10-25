@@ -21,6 +21,7 @@ pub mod pedia_data;
 pub mod pedia_entry;
 pub mod report_advisors;
 pub mod report_world;
+pub mod replay;
 pub mod reports;
 pub mod reveal;
 pub mod screen;

@@ -1,7 +1,8 @@
 //! End-of-game screens: SAD.PIC when the civilisation is destroyed, the SLAM1.PIC score wall
 //! with the leader's portrait (score, rating, Hall of Fame entry) for retirement / the time
 //! limit / conquest, ARCH.PIC with the KING.TXT ARCH text afterwards, and the spaceship
-//! arrival (see `spaceship_ui`).
+//! arrival (see `spaceship_ui`). `end_game_scores` (0x2c20) opens with the power graph and,
+//! unless the human retired (ds:0xdc48 = 2), the replay (see `replay`).
 
 use crate::assets::text::{paragraphs, substitute, Vars};
 use crate::assets::Palette;
@@ -13,6 +14,7 @@ use crate::rules;
 use crate::ui::context::UiContext;
 use crate::ui::diplomacy_ui::{face_rect, king_index};
 use crate::ui::eventpics::{Dismiss, PicScreen};
+use crate::ui::replay::{PowerGraph, Replay};
 use crate::ui::reveal::Reveal;
 use crate::ui::screen::{DialogResult, Screen, Transition};
 use crate::ui::wonderscreen::blit_scaled;
@@ -32,17 +34,32 @@ pub fn end_screen(ctx: &UiContext, reason: EndReason) -> Box<dyn Screen> {
             let lines = vec![format!("The {civ} civilization has been destroyed!"), format!("{leader}, your reign is over.")];
             Box::new(Chain { screen: Box::new(PicScreen::new("SAD", lines).with_caption_pos(20, 20).with_dissolve(ctx, DISSOLVE)), next: Some(arch_screen(ctx)) })
         }
-        EndReason::Spaceship(slot) => crate::ui::spaceship_ui::arrival_screen(ctx, slot),
+        EndReason::Spaceship(slot) => chain(vec![crate::ui::spaceship_ui::arrival_screen(ctx, slot), Box::new(PowerGraph), Box::new(Replay::new())]),
         EndReason::Conquest => {
             let wall = ScoreWall::new(ctx, vec![format!("{leader}, you have conquered the world!")]);
-            Box::new(Chain { screen: Box::new(wall), next: None })
+            chain(vec![Box::new(PowerGraph), Box::new(Replay::new()), Box::new(wall)])
         }
-        EndReason::TimeLimit | EndReason::Retired => {
-            let first = if reason == EndReason::Retired { format!("{leader} retires from the throne of the {civ}.") } else { "Your reign has reached the end of its allotted time.".to_string() };
-            let wall = ScoreWall::new(ctx, vec![first]);
-            Box::new(Chain { screen: Box::new(wall), next: Some(arch_screen(ctx)) })
+        EndReason::TimeLimit => {
+            let wall = ScoreWall::new(ctx, vec!["Your reign has reached the end of its allotted time.".to_string()]);
+            chain(vec![Box::new(PowerGraph), Box::new(Replay::new()), Box::new(wall), arch_screen(ctx)])
+        }
+        EndReason::Retired => {
+            let wall = ScoreWall::new(ctx, vec![format!("{leader} retires from the throne of the {civ}.")]);
+            chain(vec![Box::new(PowerGraph), Box::new(wall), arch_screen(ctx)])
         }
     }
+}
+
+/// The screens one after the other.
+fn chain(screens: Vec<Box<dyn Screen>>) -> Box<dyn Screen> {
+    let mut next: Option<Box<dyn Screen>> = None;
+    for screen in screens.into_iter().rev() {
+        next = Some(match next {
+            None => screen,
+            Some(n) => Box::new(Chain { screen, next: Some(n) }),
+        });
+    }
+    next.expect("an empty chain")
 }
 
 /// ARCH.PIC with the "Centuries later, archeologists discover..." text.
@@ -72,11 +89,11 @@ impl Screen for Chain {
     }
     fn update(&mut self, ctx: &mut UiContext) -> Transition {
         let t = self.screen.update(ctx);
-        self.forward(t)
+        self.forward(t, ctx)
     }
     fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
         let t = self.screen.handle(ev, ctx);
-        self.forward(t)
+        self.forward(t, ctx)
     }
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
         self.screen.draw(fb, ctx);
@@ -85,20 +102,26 @@ impl Screen for Chain {
         self.screen.palette(ctx)
     }
     fn draws_parent(&self) -> bool {
-        false
+        self.screen.draws_parent()
     }
     fn wants_cursor(&self) -> bool {
-        false
+        self.screen.wants_cursor()
     }
 }
 
 impl Chain {
-    fn forward(&mut self, t: Transition) -> Transition {
+    fn forward(&mut self, t: Transition, ctx: &mut UiContext) -> Transition {
         match t {
             Transition::Pop(_) => match self.next.take() {
                 Some(n) => Transition::Replace(n),
                 None => Transition::Pop(DialogResult::Done),
             },
+            // a screen of the chain that hands over to another keeps the rest of the chain
+            Transition::Replace(mut s) => {
+                s.on_enter(ctx);
+                self.screen = s;
+                Transition::None
+            }
             other => other,
         }
     }

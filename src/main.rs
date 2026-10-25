@@ -310,6 +310,10 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
             "invaders" => civrs::ui::eventpics::invaders_screen(&ctx, ctx.game().cities_of(ctx.game().human_slot).first().copied(), vec!["Barbarians land".into(), "near Rome!".into()]),
             "endgame" => civrs::ui::endgame::end_screen(&ctx, match seed { 1 => civrs::game::EndReason::Destroyed, 2 => civrs::game::EndReason::Conquest, 3 => civrs::game::EndReason::Spaceship(1), _ => civrs::game::EndReason::Retired }),
             "arch" => civrs::ui::endgame::arch_screen(&ctx),
+            "powergraph" => Box::new(civrs::ui::replay::PowerGraph),
+            // the menu over the map with seed 0, a quick replay played to its end otherwise
+            "replay" if seed == 0 => civrs::ui::eventpics::over_map(Box::new(civrs::ui::replay::Replay::new())),
+            "replay" => Box::new(civrs::ui::replay::Replay::played_out(&ctx)),
             // screen:story:0:0 with CIVRS_FRAMES=N: the evolution story N ticks in
             "story" => civrs::ui::story::story_screen(),
             "leader" => civrs::ui::intro_message::leader_intro(),
