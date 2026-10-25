@@ -167,7 +167,7 @@ pub struct Game {
     pub rng: Rng,
     pub setup: GameSetup,
     pub options: Options,
-    /// City that built each wonder (index = WonderId).
+    /// City that built each wonder (index = WonderId); `WONDER_LOST` once that city is gone.
     pub wonders_built: [Option<CityId>; 22],
     pub polluted_tiles: u16,
     pub global_warming_count: u8,
@@ -236,6 +236,10 @@ pub struct Game {
     #[serde(skip)]
     pub free_research: u8,
 }
+
+/// `wonders_built` entry of a wonder whose city was destroyed: built, owned by no one, listed
+/// as "(Destroyed)" (CIV.EXE stores city 0x80). No city has this id.
+pub const WONDER_LOST: CityId = CityId::MAX;
 
 fn no_audience() -> i8 {
     -1
@@ -772,9 +776,10 @@ impl Game {
                 u.home = None;
             }
         }
+        // its wonders are lost for good (destroy_city sets ds:0x6ea8[w] = 0x80)
         for w in self.wonders_built.iter_mut() {
             if *w == Some(id) {
-                *w = None;
+                *w = Some(WONDER_LOST);
             }
         }
         if self.players[owner as usize].capital == Some(id) {
@@ -904,6 +909,21 @@ mod calendar_tests {
 #[cfg(test)]
 mod new_game_tests {
     use super::*;
+
+    #[test]
+    fn a_destroyed_citys_wonders_stay_built_and_owned_by_no_one() {
+        let mut g = Game::new(GameSetup { seed: 7, ..Default::default() }, None);
+        let me = g.human_slot;
+        g.player_mut(me).learn(rules::advance_ids::BRONZE_WORKING);
+        let c = g.add_city(me, "Rome".into(), 20, 20);
+        let again = g.add_city(me, "Veii".into(), 30, 20);
+        assert!(g.can_build_wonder(again, rules::wonder_ids::COLOSSUS));
+        g.wonders_built[rules::wonder_ids::COLOSSUS as usize] = Some(c);
+        g.remove_city(c);
+        assert_eq!(g.wonders_built[rules::wonder_ids::COLOSSUS as usize], Some(WONDER_LOST));
+        assert!(!g.owner_has_wonder(me, rules::wonder_ids::COLOSSUS));
+        assert!(!g.can_build_wonder(again, rules::wonder_ids::COLOSSUS));
+    }
 
     #[test]
     fn a_new_game_starts_where_civ_exe_does() {
