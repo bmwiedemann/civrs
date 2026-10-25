@@ -29,7 +29,10 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// 14: then by each player's tribe names (`Player::tribe_names`): plural and adjective, each a
 /// u8 length and the bytes, 0/0 for none; then each player's starting tribe (`start_civ`, one
 /// byte; older files take the current tribe).
-pub const VERSION: u16 = 14;
+/// 15: then by the 72 first-discoverer bytes (`Game::first_discoverer`); older saves credit
+/// each known advance to the first civilization that researched it, else to the first that
+/// knows it.
+pub const VERSION: u16 = 15;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -117,6 +120,7 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
         }
     }
     data.extend(g.players.iter().map(|p| p.start_civ));
+    data.extend((0..72).map(|a| g.first_discoverer(a)));
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -241,10 +245,16 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
         for (i, p) in g.players.iter_mut().enumerate() {
             p.start_civ = starts.map_or(p.civ, |b| b[i]);
         }
+        at += g.players.len();
+        g.first_discoverer = match names_ok.then(|| rest.get(at..at + 72)).flatten() {
+            Some(b) if ver >= 15 => b.to_vec(),
+            _ => migrate_first_discoverers(&g),
+        };
     } else {
         for p in g.players.iter_mut() {
             p.start_civ = p.civ;
         }
+        g.first_discoverer = migrate_first_discoverers(&g);
     }
     match slots.and_then(|n| rest.get(seen + 4..seen + 4 + n)) {
         Some(b) => {
@@ -271,6 +281,17 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     }
     g.update_research_catch_up();
     Ok(g)
+}
+
+/// First discoverers for a save from before version 15: the first civilization 1..7 that
+/// researched the advance itself (source 0), else the first that knows it.
+fn migrate_first_discoverers(g: &Game) -> Vec<u8> {
+    (0..72u8)
+        .map(|a| {
+            let knows = |s: &u8| g.player(*s).knows(a);
+            (1..8u8).filter(knows).find(|s| g.player(*s).advance_source(a) == 0).or_else(|| (1..8u8).find(knows)).unwrap_or(0)
+        })
+        .collect()
 }
 
 /// Bytes per civilization of the version-9 AI trailer: 16 persistent goals of 4 bytes, the
@@ -549,6 +570,25 @@ mod tests {
         }
         assert_eq!(l.human().advance_source(adv::CURRENCY), 2);
         assert_eq!(l.human().advance_source(adv::POTTERY), -2);
+    }
+
+    #[test]
+    fn first_discoverers_are_set_once_after_turn_0_and_survive_a_save() {
+        let mut g = Game::new(GameSetup { seed: 6, ..Default::default() }, None);
+        let h = g.human_slot;
+        let other = if h == 2 { 3 } else { 2 };
+        g.grant_advance(h, adv::CURRENCY, AdvanceSource::Discovered);
+        assert_eq!(g.first_discoverer(adv::CURRENCY), 0, "advances at turn 0 are not recorded");
+        g.turn = 10;
+        g.grant_advance(other, adv::POTTERY, AdvanceSource::Discovered);
+        g.grant_advance(h, adv::POTTERY, AdvanceSource::From(other));
+        assert_eq!(g.first_discoverer(adv::POTTERY), other);
+        let dir = std::env::temp_dir().join(format!("civrs-first-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        let l = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(l.first_discoverer, g.first_discoverer);
     }
 
     #[test]

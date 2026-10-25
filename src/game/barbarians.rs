@@ -59,12 +59,11 @@ pub enum BarbarianCommand {
 }
 
 impl Game {
-    /// Has any civilisation (not the barbarians) discovered the advance? CIV.EXE keeps the
-    /// first discoverer at far 0x26f1:[0x4b0 + 2 * adv] & 7 (set by grant_advance 0xc756),
-    /// which survives the discoverer's destruction; known advances of destroyed civs count
-    /// here the same way.
+    /// Has any civilisation discovered the advance after turn 0? CIV.EXE reads the first
+    /// discoverer at far 0x26f1:[0x4b0 + 2 * adv] & 7 (set by grant_advance 0xc756), which
+    /// survives the discoverer's destruction.
     pub fn discovered_by_anyone(&self, a: u8) -> bool {
-        self.players.iter().skip(1).any(|p| p.knows(a))
+        self.first_discoverer(a) != 0
     }
 
     /// The city nearest to (x,y) and its distance (0x1d43:0xf8 with the distance of 0x1d6af):
@@ -863,8 +862,8 @@ mod tests {
         g.turn = 152;
         g.barbarian_spawn();
         assert!(g.units_of(0).is_empty());
-        g.player_mut(3).learn(adv::AUTOMOBILE);
         g.turn = 159;
+        g.grant_advance(3, adv::AUTOMOBILE, crate::game::science::AdvanceSource::Discovered);
         g.barbarian_spawn();
         assert!(g.units_of(0).iter().all(|u| !g.unit(*u).is_sea()));
         // before the start turn nothing at all

@@ -598,7 +598,7 @@ impl Game {
     /// 10 - k/64 from the nearest city, on a continent with at least 32 - turn/16 - k/64 site
     /// squares and, after 1 AD, no city, and has no hut; 2000 tries), one Settlers there, each
     /// advance the human knows and a computer civilization found with probability 1/2
-    /// (civrs keeps no first-discoverer table: some computer civilization knows it), Despotism,
+    /// (first discoverer, which may be the slot's destroyed civilization), Despotism,
     /// no gold, science (civilized trait + 3) tenths, tax the rest but one tenth, and clean
     /// diplomacy both ways. Barbarian units within 8 squares are deleted.
     pub fn respawn_civ(&mut self, slot: Slot) -> bool {
@@ -626,7 +626,8 @@ impl Game {
         self.ai_memory.policies[slot as usize] = None;
         let human = self.human_slot;
         for a in 0..rules::advances::REAL_ADVANCE_COUNT as u8 {
-            let found_by_ai = (1..8u8).any(|s| s != human && s != slot && self.player(s).knows(a));
+            // the first discoverer may be this slot's destroyed civilization (o5 0x4af1)
+            let found_by_ai = ![0, human].contains(&self.first_discoverer(a));
             if self.player(human).knows(a) && found_by_ai && self.rng.below(2) == 0 {
                 self.grant_advance(slot, a, super::science::AdvanceSource::Discovered);
             }

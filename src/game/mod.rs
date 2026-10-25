@@ -218,6 +218,11 @@ pub struct Game {
     /// the game body in version-9 saves.
     #[serde(skip)]
     pub warming_counter: u16,
+    /// The first discoverer of each advance, far 0x26f1:[0x4b0 + 2 * adv] & 7 (0 = none yet):
+    /// set by `grant_advance` after turn 0 (0xc743) and kept when that civ is destroyed; stored
+    /// after the game body in version-15 saves.
+    #[serde(skip)]
+    pub first_discoverer: Vec<u8>,
     /// ds:0x70d8: set while an attack is resolved, so `remove_unit` counts the dead in
     /// `Player::units_lost_by_type` (delete_unit 0x8d71). Not saved.
     #[serde(skip)]
@@ -360,6 +365,7 @@ impl Game {
             diplo_latch: -1,
             treaty_break_ok: None,
             warming_counter: 0,
+            first_discoverer: vec![0; 72],
             counting_losses: false,
             catch_up: 0,
             free_research: 0,

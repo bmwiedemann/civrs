@@ -119,10 +119,8 @@ impl Game {
         }
         self.player_mut(slot).beakers += sci;
         if human && self.setup.difficulty == rules::Difficulty::Chieftain {
-            // CIV.EXE marks an advance's first discoverer after turn 0; civrs takes any other
-            // civ that knows it
             let goal = self.player(slot).researching;
-            if goal.is_some_and(|a| (1..8).any(|s| s != slot && self.player(s).knows(a))) {
+            if goal.is_some_and(|a| self.first_discoverer(a) != 0) {
                 self.player_mut(slot).beakers += sci;
             }
         }
@@ -167,6 +165,11 @@ impl Game {
         self.pick_research(slot);
     }
 
+    /// The civilisation that found advance `a` first after turn 0 (0 = nobody yet).
+    pub fn first_discoverer(&self, a: AdvanceId) -> Slot {
+        self.first_discoverer.get(a as usize).map_or(0, |s| s & 7)
+    }
+
     /// Give an advance to a player (no research bookkeeping); returns false if already known.
     /// CIV.EXE `grant_advance` 0x0c2f4: the advance bit and its source byte (also at turn 0,
     /// where nothing else happens); then the research count (ds:0xe898) rises, a wonder made
@@ -195,7 +198,7 @@ impl Game {
         if let Some(s) = self.player_mut(slot).advance_source.get_mut(a as usize) {
             *s = source.code();
         }
-        let new_to_world = !(1..8).any(|s| self.player(s).knows(a));
+        let new_to_world = self.first_discoverer(a) == 0;
         self.player_mut(slot).learn(a);
         if self.player(slot).researching == Some(a) {
             self.player_mut(slot).researching = None;
@@ -220,6 +223,12 @@ impl Game {
             }
             if self.player(slot).human {
                 self.push_event(GameEvent::BarracksObsolete { slot, adv: a });
+            }
+        }
+        // the first civilisation to learn it after turn 0 (0xc743)
+        if new_to_world {
+            if let Some(f) = self.first_discoverer.get_mut(a as usize) {
+                *f = slot;
             }
         }
         self.great_library_check(a);

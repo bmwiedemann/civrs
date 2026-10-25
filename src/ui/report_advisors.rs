@@ -11,34 +11,74 @@ use crate::ui::reports::*;
 use crate::ui::screen::{DialogResult, Screen, Transition};
 use crate::ui::tilerender::{blit_sprite_remap, civ_remap, sp};
 
-/// Human cities in founding order.
+/// Human cities in city-table order, as the reports walk cities 0..127.
 fn human_cities(ctx: &UiContext) -> Vec<crate::game::CityId> {
     let g = ctx.game();
-    let mut v = g.cities_of(g.human_slot);
-    v.sort_by_key(|c| g.city(*c).founded_turn);
-    v
+    g.cities_of(g.human_slot)
 }
 
 // ---- F1 City Status --------------------------------------------------------------------------
 
-pub fn paint_city_status(fb: &mut Surface, ctx: &UiContext) {
-    title_block(fb, ctx, "CITY STATUS");
-    let g = ctx.game();
-    let cities = human_cities(ctx);
-    let pitch = if cities.len() > 20 { 7 } else { LINE_H };
-    for (i, id) in cities.iter().enumerate() {
-        let y = 32 + i as i32 * pitch;
-        if y > 192 {
-            break;
+/// F1 `city_status(civ)` (ovl 14 +0x186f, o 0x145e4) on a colour-8 page: per city, 8 px apart
+/// from y 32, its name at (8, y) and "<size>-<food>{ <shields>| <trade>}" at (80, y) in 15, then
+/// at (172, y) the production: an improvement or wonder name fitted to 96 px, a unit name in full,
+/// followed by "\x87 (<stored>/<10 * cost>)". Rows from y 192 go on the next page.
+pub struct CityStatus {
+    cities: Vec<crate::game::CityId>,
+    page: usize,
+}
+
+const STATUS_ROWS: usize = 20;
+
+impl CityStatus {
+    pub fn new(ctx: &UiContext) -> CityStatus {
+        CityStatus { cities: human_cities(ctx), page: 0 }
+    }
+}
+
+impl Screen for CityStatus {
+    fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
+        match ev {
+            Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } => {
+                self.page += 1;
+                if self.page * STATUS_ROWS >= self.cities.len() {
+                    Transition::Pop(DialogResult::Done)
+                } else {
+                    Transition::None
+                }
+            }
+            _ => Transition::None,
         }
-        let c = g.city(*id);
-        let yl = g.city_yield(*id);
-        let name_col = if c.disorder { [247, 85, 85] } else { WHITE };
-        text(fb, ctx, 8, y, &c.name, name_col);
-        let res = format!("{}-{}{GLYPH_FOOD} {}{GLYPH_SHIELD} {}{GLYPH_TRADE}", c.size, yl.food, yl.shields, yl.trade);
-        text(fb, ctx, 80, y, &res, WHITE);
-        let end = text(fb, ctx, 172, y, c.production.name(), WHITE);
-        text(fb, ctx, end + 4, y, &format!("({}/{})", c.shields, g.production_cost(c.id, c.production)), GREY);
+    }
+    fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
+        use crate::game::Production;
+        use crate::ui::widgets::draw_coded_text;
+        fb.fill(8);
+        title_block(fb, ctx, "CITY STATUS");
+        let g = ctx.game();
+        let mut y = 32;
+        for id in self.cities.iter().skip(self.page * STATUS_ROWS).take(STATUS_ROWS) {
+            let c = g.city(*id);
+            let yl = g.city_yield(*id);
+            draw_coded_text(fb, ctx, FONT, 8, y, &c.name, 15);
+            let res = format!("{}-{}{GLYPH_FOOD} {}{GLYPH_SHIELD} {}{GLYPH_TRADE}", c.size, yl.food, yl.shields, yl.trade);
+            draw_coded_text(fb, ctx, FONT, 80, y, &res, 15);
+            let name = match c.production {
+                Production::Unit(_) => c.production.name().to_string(),
+                _ => fit_text(ctx, c.production.name(), 96),
+            };
+            draw_coded_text(fb, ctx, FONT, 172, y, &format!("{name}\u{87} ({}/{})", c.shields, c.production.cost()), 15);
+            y += 8;
+        }
+    }
+    fn palette(&self, ctx: &UiContext) -> Palette {
+        ctx.game_palette()
+    }
+    fn draws_parent(&self) -> bool {
+        false
+    }
+    fn wants_cursor(&self) -> bool {
+        false
     }
 }
 
@@ -47,10 +87,10 @@ pub fn paint_city_status(fb: &mut Surface, ctx: &UiContext) {
 /// F2 `military_status` (ovl 14 +0x3ad): one row per unit type the civ has counted
 /// (`Player::unit_counter`, ds:0xb3be) or in production, 9 px apart from y 32: a colour-9 rule
 /// at y - 2 from x 36, the icon at (2 or 18 alternately, y - 4), the name at (36, y) in 15,
-/// "(att/def/moves)" at 112 in 11, "N active" at 168 in 15 and "N in production" at 232 in 11.
+/// "(att/def/moves)" at 112 in 11, "N active" at 168 in 15 and "N in production" at 232 in 11;
+/// then the military advisor at (278, 2).
 pub fn paint_military(fb: &mut Surface, ctx: &UiContext) {
     title_block(fb, ctx, "MILITARY STATUS");
-    portrait(fb, ctx, 0);
     let g = ctx.game();
     let slot = g.human_slot;
     let counter = g.player(slot).unit_counter;
@@ -81,6 +121,8 @@ pub fn paint_military(fb: &mut Surface, ctx: &UiContext) {
         }
         y += 9;
     }
+    // copied from page 2 (160, 140) after the rows, over their right ends
+    portrait(fb, ctx, 0);
 }
 
 /// F2's second page, `military_losses` (ovl 14 +0x61f): one row per unit type (0..26) any civ
@@ -439,7 +481,7 @@ impl Screen for AttitudeSurvey {
         }
         let size = size.max(1);
         // append_percent (0x14592): 100 * part / total, or 10 * part / (total / 10) from 300 on
-        let pct = |part: i32| if size < 300 { 100 * part / size } else { 10 * part / (size / 10) };
+        let pct = |part: i32| if part < 300 { 100 * part / size } else { 10 * part / (size / 10) };
         let pop = if g.total_population(me) == 0 { "00,000".to_string() } else { commas(g.total_population(me)) };
         let line = format!("Population: {pop} Happy:{}% Content:{}% Unhappy:{}%", pct(happy), pct(size - happy - unhappy), pct(unhappy));
         crate::gfx::text::draw_text(fb, &ctx.fonts, &st, 16, y + 8, &line);
@@ -587,6 +629,8 @@ impl Screen for TradeReport {
 
 // ---- F6 Science Report -------------------------------------------------------------------------
 
+/// F6 `science_report` (ovl 14 +0x14b, o 0x12ec0) on a colour-1 page: the research box with a
+/// bulb per beaker, "Researching <advance>", then the known advances in three columns.
 pub fn paint_science(fb: &mut Surface, ctx: &UiContext) {
     title_block(fb, ctx, "SCIENCE REPORT");
     let g = ctx.game();
@@ -613,19 +657,18 @@ pub fn paint_science(fb: &mut Surface, ctx: &UiContext) {
         text_c(fb, ctx, 161, 26, &line, BLACK);
         text_c(fb, ctx, 160, 26, &line, WHITE);
     }
-    // known advances in index order, three per row
-    let mut known: Vec<&str> = p.known_advances().iter().map(|a| rules::ADVANCES[*a as usize].name).collect();
-    if p.future_techs > 0 {
-        known.push("Future Tech.");
-    }
-    let mut y = 42;
-    for (i, name) in known.iter().enumerate() {
-        text(fb, ctx, 8 + (i % 3) as i32 * 100, y, name, CYAN);
-        if i % 3 == 2 {
+    // known advances 0..71 in three columns, white for those this civ found first (0x13085)
+    let me = g.human_slot;
+    let (mut y, mut n) = (42, 0);
+    for a in (0..72u8).filter(|a| p.knows(*a)) {
+        let c = if g.first_discoverer(a) == me { 15 } else { 11 };
+        crate::ui::widgets::draw_coded_text(fb, ctx, FONT, 8 + (n % 3) * 100, y, rules::ADVANCES[a as usize].name, c);
+        n += 1;
+        if n % 3 == 0 {
             y += 7;
-            if y > 192 {
-                break;
-            }
+        }
+        if y > 192 {
+            break;
         }
     }
 }

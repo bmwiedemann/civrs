@@ -44,7 +44,6 @@ pub const CREAM: [u8; 3] = [255, 255, 223];
 pub const TAN: [u8; 3] = [219, 206, 166];
 pub const BROWN: [u8; 3] = [162, 125, 97];
 /// Page backgrounds.
-pub const BG_F1: [u8; 3] = [77, 77, 77];
 pub const BG_BLUE: [u8; 3] = [49, 77, 178];
 pub const BG_LIGHT_BLUE: [u8; 3] = [121, 142, 255];
 pub const BG_GREEN: [u8; 3] = [45, 121, 0];
@@ -339,7 +338,7 @@ pub fn advisor(ctx: &UiContext, n: u8) -> Box<dyn Screen> {
     use crate::ui::report_advisors as a;
     use crate::ui::report_world as w;
     match n {
-        1 => Box::new(Page::new(BG_F1, a::paint_city_status)),
+        1 => Box::new(a::CityStatus::new(ctx)),
         2 => Box::new(Page::new(BG_BLUE, a::paint_military).then(BG_LOSSES, a::paint_military_losses)),
         3 => Box::new(a::Intelligence::new(ctx)),
         4 => Box::new(a::AttitudeSurvey::new(ctx)),
