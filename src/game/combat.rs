@@ -359,6 +359,8 @@ impl Game {
         if by != 0 {
             self.player_mut(by).gold += gold;
         }
+        // the replay records the city as taken (0x13f97)
+        self.replay_city(super::replay::kind::CAPTURE, by, c);
         // steal an advance (steal_advance 0x14468): a computer captor takes the one it values
         // most, the human picks one from a menu
         let mut adv = None;
@@ -572,6 +574,7 @@ impl Game {
         }
         let (adjective, civ) = (self.player(slot).adjective().to_string(), self.player(slot).civ);
         self.push_event(GameEvent::CivDestroyed { slot, by, adjective, civ });
+        self.replay_log(super::replay::kind::DESTROYED, &[slot, by]);
         if self.active_unit.map(|a| self.unit_opt(a).is_none()).unwrap_or(false) {
             self.active_unit = None;
         }

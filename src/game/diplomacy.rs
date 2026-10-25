@@ -394,8 +394,11 @@ impl Game {
     }
 
     /// CIV.EXE 0x15386 `set_diplo_flag(a, b, flag)`: both ways; a treaty also forgets the
-    /// fighting (`FOUGHT`). (It logs replay event 3 for a new treaty.)
+    /// fighting (`FOUGHT`). A new treaty goes into the replay.
     pub fn set_diplo_flag(&mut self, a: Slot, b: Slot, flag: u16) {
+        if flag & PEACE != 0 && self.player(a).diplo[b as usize] & PEACE == 0 {
+            self.replay_log(crate::game::replay::kind::PEACE, &[a << 4 | b]);
+        }
         self.raise_flag(a, b, flag);
         self.raise_flag(b, a, flag);
         if flag == PEACE {
@@ -405,8 +408,11 @@ impl Game {
     }
 
     /// CIV.EXE 0x153f7 `clear_diplo_flag(a, b, flag)`: both ways; the end of a treaty also ends
-    /// an alliance. (It logs replay event 2 for a broken treaty.)
+    /// an alliance. A broken treaty goes into the replay.
     pub fn clear_diplo_flag(&mut self, a: Slot, b: Slot, flag: u16) {
+        if flag & PEACE != 0 && self.player(a).diplo[b as usize] & PEACE != 0 {
+            self.replay_log(crate::game::replay::kind::WAR, &[a << 4 | b]);
+        }
         let flag = if flag & PEACE != 0 { flag | ALLIANCE } else { flag };
         self.drop_flag(a, b, flag);
         self.drop_flag(b, a, flag);

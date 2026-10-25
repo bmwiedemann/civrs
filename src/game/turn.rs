@@ -171,7 +171,7 @@ impl TurnRunner {
                 }
                 Phase::NewTurn => {
                     g.advance_calendar();
-                    g.update_research_catch_up();
+                    g.fifty_turn_block();
                     g.historian_check();
                     let slot = g.human_slot;
                     g.reset_moves(slot);
@@ -398,7 +398,8 @@ impl Game {
     pub fn process_world(&mut self) {
         self.global_warming_check();
         self.disaster_check();
-        // the end of the power ranking (0x3121): the world against a leading human
+        // the power ranking (0x3121): the power history, then the world against a leading human
+        self.record_power();
         self.gang_up_on_leader();
         self.spaceship_arrivals();
         // the coming year is the one CIV.EXE compares after its advance (0x2a28, 0x2a98):
@@ -768,6 +769,8 @@ impl Game {
                     self.push_event(GameEvent::ProductionBlocked { city: c, item: prod });
                     return;
                 }
+                // logged before a computer Diplomat looks for its place (0xdf0c)
+                self.replay_unit_built(owner, k);
                 // a computer Diplomat starts out next to a human city, heading for it; with no
                 // such city the shields are given back and nothing is built (CIV.EXE 0xded6,
                 // 0xe124..0xe379)
@@ -845,6 +848,7 @@ impl Game {
                     return;
                 }
                 self.wonders_built[w as usize] = Some(c);
+                self.replay_log(super::replay::kind::WONDER, &[owner, w + 1]);
                 let cost = self.production_cost(c, prod);
                 let cm = self.city_mut(c);
                 cm.add_wonder(w);
@@ -935,8 +939,9 @@ impl Game {
             return;
         }
         let turns = if self.owner_has_wonder(slot, won::PYRAMIDS) { 0 } else { 1 + self.rng.below(4) as u8 };
-        // set_government(civ, 0) forgets the vendettas (0x15079)
+        // set_government(civ, 0) forgets the vendettas (0x15079) and logs the change
         self.forget_vendettas(slot);
+        self.replay_log(super::replay::kind::GOVERNMENT, &[slot, Govt::Anarchy as u8]);
         {
             let p = self.player_mut(slot);
             p.govt = Govt::Anarchy;
@@ -984,6 +989,7 @@ impl Game {
         }
         if self.player(slot).govt != g {
             self.forget_vendettas(slot);
+            self.replay_log(super::replay::kind::GOVERNMENT, &[slot, g as u8]);
         }
         {
             let p = self.player_mut(slot);
@@ -1438,6 +1444,8 @@ impl Game {
         if to != 0 {
             self.player_mut(to).gold += gold;
         }
+        // capture_city logs the city as taken (0x13f97)
+        self.replay_city(super::replay::kind::CAPTURE, to, c);
         let known: Vec<AdvanceId> = self.player(from).known_advances().into_iter().filter(|a| !self.player(to).knows(*a)).collect();
         let adv = self.rng.pick(&known).copied();
         if let Some(a) = adv {

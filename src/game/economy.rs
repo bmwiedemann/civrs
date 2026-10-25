@@ -938,7 +938,7 @@ impl Game {
         if self.all_cities().any(|o| o.id != c && o.name.eq_ignore_ascii_case(name)) {
             return Err(RuleError::Other("There is already a city of that name."));
         }
-        self.city_mut(c).name = name.chars().take(13).collect();
+        self.set_city_name(c, name.chars().take(13).collect());
         Ok(())
     }
 

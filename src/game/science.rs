@@ -46,8 +46,8 @@ impl Game {
         v
     }
 
-    /// Catch-up bonus to the beakers per advance (CIV.EXE 0x27e0, ds:0xd2de), set once a turn
-    /// right after the year advances (`update_research_catch_up`): from 1 AD, the highest
+    /// Catch-up bonus to the beakers per advance (CIV.EXE 0x27e0, ds:0xd2de), set every 50
+    /// turns right after the year advances (`fifty_turn_block`): from 1 AD, the highest
     /// research count of civs 1..7 (ds:0x804c, dead ones too) less turn/9, clamped to 0..6.
     pub fn research_catch_up(&self) -> i32 {
         self.catch_up
@@ -230,6 +230,7 @@ impl Game {
             if let Some(f) = self.first_discoverer.get_mut(a as usize) {
                 *f = slot;
             }
+            self.replay_log(super::replay::kind::DISCOVERY, &[slot, a]);
         }
         self.great_library_check(a);
         true
@@ -398,16 +399,21 @@ mod tests {
     }
 
     #[test]
-    fn catch_up_is_set_once_a_turn_from_the_leader() {
-        // 0x27e0: from 1 AD, clamp(max research count - turn / 9, 0, 6)
+    fn catch_up_is_set_every_fifty_turns_from_the_leader() {
+        // 0x2769..0x280c: on turns divisible by 50, from 1 AD, clamp(max research count -
+        // turn / 9, 0, 6)
         let (mut g, _, ai) = fixture();
         g.set_turn(200);
         g.player_mut(ai).research_count = 25;
         assert_eq!(g.research_catch_up(), 0, "not until the turn begins");
-        g.update_research_catch_up();
+        g.fifty_turn_block();
         assert_eq!(g.research_catch_up(), (25 - 200 / 9).clamp(0, 6));
-        g.set_turn(10);
-        g.update_research_catch_up();
+        g.player_mut(ai).research_count = 40;
+        g.set_turn(201);
+        g.fifty_turn_block();
+        assert_eq!(g.research_catch_up(), 3, "kept between the marks");
+        g.set_turn(50);
+        g.fifty_turn_block();
         assert_eq!(g.research_catch_up(), 0, "BC");
     }
 

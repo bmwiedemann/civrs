@@ -476,15 +476,7 @@ impl Game {
     /// gold / 32 + 8 * citizens + research count + sum of unit costs; ties go to the lower
     /// slot). CIV.EXE ranks once per turn; this ranks on the spot.
     pub(crate) fn power_rank(&self, slot: Slot) -> i32 {
-        let strength = |s: Slot| -> i32 {
-            let p = self.player(s);
-            if !p.in_game || !p.alive {
-                return 0;
-            }
-            let citizens: i32 = self.all_cities().filter(|c| c.owner == s).map(|c| c.size as i32).sum();
-            let units: i32 = self.all_units().filter(|u| u.owner == s).map(|u| rules::UNITS[u.kind as usize].cost as i32).sum();
-            p.gold / 32 + 8 * citizens + p.research_count as i32 + units
-        };
+        let strength = |s: Slot| self.power_strength(s);
         let mine = strength(slot);
         let above = (1..8u8).filter(|o| *o != slot).filter(|o| {
             let v = strength(*o);

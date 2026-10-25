@@ -22,6 +22,7 @@ pub mod palace;
 pub mod player;
 pub mod pollution;
 pub mod production;
+pub mod replay;
 pub mod rng;
 pub mod science;
 pub mod score;
@@ -227,6 +228,10 @@ pub struct Game {
     /// after each report, 0x28de); stored after the game body in version-17 saves.
     #[serde(skip)]
     pub historian_timer: u32,
+    /// The replay log and the power history (`replay::History`); stored after the game body
+    /// in version-18 saves.
+    #[serde(skip)]
+    pub history: replay::History,
     /// ds:0x70d8: set while an attack is resolved, so `remove_unit` counts the dead in
     /// `Player::units_lost_by_type` (delete_unit 0x8d71). Not saved.
     #[serde(skip)]
@@ -375,6 +380,7 @@ impl Game {
             warming_counter: 0,
             first_discoverer: vec![0; 72],
             historian_timer: 80 + historian,
+            history: replay::History::default(),
             counting_losses: false,
             catch_up: 0,
             free_research: 0,
@@ -758,11 +764,15 @@ impl Game {
         self.auto_assign(id);
         // a city sees only its 3x3 block (14_city_screen / 26_turn_12 captures)
         self.map.explore(owner, x, y, 1);
+        // found_city o 0x1b4e4
+        self.replay_city(replay::kind::CITY, owner, id);
         id
     }
 
     /// Remove a city from the map (destroyed).
     pub fn remove_city(&mut self, id: CityId) {
+        // destroy_city 0xa793 logs the city as gone
+        self.replay_city(replay::kind::CITY, 0xff, id);
         let (x, y, owner) = {
             let c = self.city(id);
             (c.x, c.y, c.owner)

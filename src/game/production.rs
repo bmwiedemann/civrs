@@ -188,22 +188,13 @@ impl Game {
     }
 
     /// ds:0x8078 (power ranking 0x3121..0x330e): the human is the strongest civilization, has
-    /// more than four cities and no nuclear weapon, after turn 200. Strength is |gold|/32 + 8 *
-    /// citizens + advances + the cost of every unit (in rows of ten shields).
+    /// more than four cities and no nuclear weapon, after turn 200 (strength: `power_strength`).
     pub fn world_gangs_up(&self) -> bool {
         let h = self.human_slot;
         if self.turn <= 200 || self.cities_of(h).len() <= 4 || self.all_units().any(|u| u.owner == h && u.kind == unit_ids::NUCLEAR) {
             return false;
         }
-        let power = |s: Slot| -> i32 {
-            let p = self.player(s);
-            if !p.alive {
-                return 0;
-            }
-            let citizens: i32 = self.all_cities().filter(|c| c.owner == s).map(|c| c.size as i32).sum();
-            let units: i32 = self.all_units().filter(|u| u.owner == s).map(|u| u.info().cost as i32).sum();
-            p.gold / 32 + 8 * citizens + p.research_count as i32 + units
-        };
+        let power = |s: Slot| self.power_strength(s);
         let ph = power(h);
         // the ranking takes the first of equals
         (1..8).all(|o| o == h || if o < h { power(o) < ph } else { power(o) <= ph })

@@ -36,7 +36,10 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// bytes or none); older saves start without it.
 /// 17: then by the historian's turn (`Game::historian_timer`, u32 LE); older saves take 20
 /// turns after their turn, 80 at the earliest.
-pub const VERSION: u16 = 17;
+/// 18: then by the replay log and power history (`Game::history`, a u32 LE byte count and its
+/// bincode) and the research catch-up bonus (`Game::catch_up`, i32 LE, set every 50 turns);
+/// older saves start with empty histories and compute the bonus for their turn.
+pub const VERSION: u16 = 18;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -128,6 +131,10 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     data.extend_from_slice(&(g.barbarian_memory.occupant.len() as u32).to_le_bytes());
     data.extend_from_slice(&g.barbarian_memory.occupant);
     data.extend_from_slice(&g.historian_timer.to_le_bytes());
+    let history = bincode::serialize(&g.history).map_err(|e| SaveError::Format(e.to_string()))?;
+    data.extend_from_slice(&(history.len() as u32).to_le_bytes());
+    data.extend_from_slice(&history);
+    data.extend_from_slice(&g.catch_up.to_le_bytes());
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -231,6 +238,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
             }
         }
     }
+    let mut catch_up = None;
     // version 14: the tribe names, after the counters
     if ver >= 14 {
         let mut at = counters + 112 * g.players.len();
@@ -267,6 +275,13 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
             Some(b) => u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
             None => (g.turn + 20).max(80),
         };
+        at += 4;
+        if let Some(n) = rest.get(at..at + 4).filter(|_| names_ok && ver >= 18) {
+            let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
+            g.history = rest.get(at + 4..at + 4 + n).and_then(|b| bincode::deserialize(b).ok()).unwrap_or_default();
+            at += 4 + n;
+            catch_up = rest.get(at..at + 4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+        }
     } else {
         for p in g.players.iter_mut() {
             p.start_civ = p.civ;
@@ -297,7 +312,10 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
             u.carried_by = None;
         }
     }
-    g.update_research_catch_up();
+    match catch_up {
+        Some(v) => g.catch_up = v,
+        None => g.update_research_catch_up(),
+    }
     Ok(g)
 }
 
@@ -591,7 +609,7 @@ mod tests {
     }
 
     #[test]
-    fn first_discoverers_and_tile_owners_survive_a_save() {
+    fn first_discoverers_tile_owners_and_histories_survive_a_save() {
         let mut g = Game::new(GameSetup { seed: 6, ..Default::default() }, None);
         let h = g.human_slot;
         let other = if h == 2 { 3 } else { 2 };
@@ -603,6 +621,9 @@ mod tests {
         assert_eq!(g.first_discoverer(adv::POTTERY), other);
         g.note_occupant(other, 10, 10);
         g.historian_timer = 123;
+        g.record_power();
+        g.replay_log(crate::game::replay::kind::WONDER, &[other, 3]);
+        g.catch_up = 4;
         let dir = std::env::temp_dir().join(format!("civrs-first-{}", std::process::id()));
         let path = dir.join("s.sav");
         super::save_game(&path, &g).unwrap();
@@ -611,6 +632,8 @@ mod tests {
         assert_eq!(l.first_discoverer, g.first_discoverer);
         assert_eq!(l.barbarian_memory.occupant, g.barbarian_memory.occupant);
         assert_eq!(l.historian_timer, 123);
+        assert_eq!(l.history, g.history);
+        assert_eq!(l.catch_up, 4, "the bonus of the last 50-turn mark");
     }
 
     #[test]
