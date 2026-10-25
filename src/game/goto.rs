@@ -16,7 +16,7 @@
 //! not wrap its distances; lakes of fewer than 5 squares are avoided by the greedy step.
 //! Deviations: the links are computed from the map when first needed (CIV.EXE: with the world)
 //! and never again; out-of-map squares, which CIV.EXE reads from neighbouring pixel planes,
-//! count as ocean.
+//! count as ocean; the local search prices the step it picks (see `local_search`).
 
 use super::goals::BlockLinks;
 use super::map::{tile_flags, Map, Slot, UnitId};
@@ -290,8 +290,10 @@ impl Game {
     /// road from a road, +3 for one-move units, else 3 x the terrain's move cost; land units
     /// keep to land and ships to the sea, cities let both in; at most 225 squares are taken
     /// from the queue), stopping where the cost passes the cheapest found for the probe's own
-    /// square. Then the step to the neighbour of least cost below 99, ties going to fewer units
-    /// there (4 each) plus distance to `w`. Returns (direction or -1, cost found).
+    /// square. Then the step to the neighbour of least cost below 99 plus the price of the step
+    /// itself (a deviation: CIV.EXE leaves the step out, so a settler beside a road would cross
+    /// a mountain instead), ties going to fewer units there (4 each) plus distance to `w`.
+    /// Returns (direction or -1, cost found).
     fn local_search(&mut self, p: Probe, w: (i32, i32), limit: i32) -> (i32, i32) {
         let (ox, oy) = (w.0 - 8, w.1 - 8);
         // the probe's square in window coordinates (CIV.EXE indexes it unwrapped)
@@ -305,6 +307,16 @@ impl Game {
         let cell = |x: i32, y: i32| -> Option<usize> {
             let (cx, cy) = (x - ox, y - oy);
             ((0..16).contains(&cx) && (0..16).contains(&cy)).then(|| (cx * 16 + cy) as usize)
+        };
+        // the price of a step between two squares, by the far square's terrain
+        let edge = |road_a: bool, road_b: bool, t: Terrain| -> i32 {
+            if road_a && road_b {
+                1
+            } else if p.one_move {
+                3
+            } else {
+                3 * t.info().move_cost as i32
+            }
         };
         let mut found = 0;
         let reuse = self.ai_memory.goto_cache.waypoint == Some(w)
@@ -341,13 +353,7 @@ impl Game {
                             if (t == Terrain::Ocean) != p.sea && self.city_at(wx, ny).is_none() {
                                 continue;
                             }
-                            let cost = if road && self.exe_road(wx, ny) {
-                                c + 1
-                            } else if p.one_move {
-                                c + 3
-                            } else {
-                                c + 3 * t.info().move_cost as i32
-                            };
+                            let cost = c + edge(road, self.exe_road(wx, ny), t);
                             let Some(i) = cell(nx, ny) else { continue };
                             if grid[i] != 0 && grid[i] as i32 <= cost {
                                 continue;
@@ -368,9 +374,11 @@ impl Game {
         if limit <= found {
             return (-1, found);
         }
-        let mut best = 99;
+        let mut best = i32::MAX;
         let mut dir = -1;
         let mut tie = 0;
+        let road_here = self.exe_road(p.x, p.y);
+        let here = self.map.terrain(p.x, p.y);
         for k in 1..=8 {
             let nx = near(p.x + DX[k]);
             let ny = p.y + DY[k];
@@ -383,9 +391,12 @@ impl Game {
             }
             let Some(i) = cell(nx, ny) else { continue };
             let gv = self.ai_memory.goto_cache.grid[i] as i32;
-            if gv == 0 {
+            if gv == 0 || gv >= 99 {
                 continue;
             }
+            // deviation: CIV.EXE compares the neighbours' costs alone, so a road on this
+            // step never counted; add the step as the flood would price it
+            let gv = gv + edge(road_here, self.exe_road(wx, ny), here);
             let crowd = |g: &Game| 4 * g.units_at(wx, ny).len() as i32 + Map::civ_distance(w, (wx, ny));
             if gv < best {
                 best = gv;
@@ -692,6 +703,38 @@ mod tests {
         assert_eq!(*pos.last().unwrap(), (14, 10), "{pos:?}");
         assert!(pos.iter().any(|p| p.1 >= 20), "goes round the south end: {pos:?}");
         assert!(pos.iter().all(|p| g.map.is_land(p.0, p.1)));
+    }
+
+    #[test]
+    fn a_settler_keeps_to_the_road_beside_the_mountains() {
+        let mut g = flat();
+        let h = g.human_slot;
+        // the civ1.sav case, moved to (20,15): a road south from the start, mountains east of it
+        let (ox, oy) = (20, 15);
+        for (dx, dy) in [(0, 0), (-1, 1), (0, 1), (1, 1), (-1, 2), (0, 2), (1, 2), (0, 3)] {
+            g.map.get_mut(ox + dx, oy + dy).unwrap().flags |= tile_flags::ROAD;
+        }
+        for (dx, dy) in [(1, 2), (2, 2), (1, 3), (2, 3), (2, 4)] {
+            g.map.get_mut(ox + dx, oy + dy).unwrap().terrain = Terrain::Mountains;
+        }
+        let id = g.add_unit(h, unit_ids::SETTLERS, ox, oy);
+        let goal = (ox + 1, oy + 4);
+        g.set_goto(id, goal.0, goal.1);
+        let mut pos = vec![g.unit(id).pos()];
+        for _ in 0..10 {
+            let Some(d) = g.goto_step(id) else { break };
+            let (x, y) = g.unit(id).pos();
+            let (dx, dy) = d.delta();
+            let u = g.unit_mut(id);
+            u.x = x + dx;
+            u.y = y + dy;
+            pos.push((x + dx, y + dy));
+            if (x + dx, y + dy) == goal {
+                break;
+            }
+        }
+        assert_eq!(*pos.last().unwrap(), goal, "{pos:?}");
+        assert!(pos[..pos.len() - 1].iter().all(|&(x, y)| g.map.tile(x, y).has(tile_flags::ROAD)), "{pos:?}");
     }
 
     #[test]
