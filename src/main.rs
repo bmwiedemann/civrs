@@ -311,6 +311,16 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
             "endgame" => civrs::ui::endgame::end_screen(&ctx, match seed { 1 => civrs::game::EndReason::Destroyed, 2 => civrs::game::EndReason::Conquest, 3 => civrs::game::EndReason::Spaceship(1), _ => civrs::game::EndReason::Retired }),
             "arch" => civrs::ui::endgame::arch_screen(&ctx),
             "powergraph" => Box::new(civrs::ui::replay::PowerGraph),
+            // the conquest ending of the autoplayed game (CIVRS_FRAMES = ticks into it)
+            // (the autoplayed human destroys no one: civs 2..4 are logged as destroyed by him)
+            "conquest" => {
+                let g = ctx.game_mut();
+                let me = g.human_slot;
+                for s in (2..5u8).filter(|s| *s != me) {
+                    g.replay_log(civrs::game::replay::kind::DESTROYED, &[s, me]);
+                }
+                Box::new(civrs::ui::conquest::Conquest::new(&ctx))
+            }
             // the menu over the map with seed 0, a quick replay played to its end otherwise
             "replay" if seed == 0 => civrs::ui::eventpics::over_map(Box::new(civrs::ui::replay::Replay::new())),
             "replay" => Box::new(civrs::ui::replay::Replay::played_out(&ctx)),

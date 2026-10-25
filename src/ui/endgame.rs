@@ -1,7 +1,7 @@
 //! End-of-game screens: SAD.PIC when the civilisation is destroyed, the SLAM1.PIC score wall
 //! with the leader's portrait (score, rating, Hall of Fame entry) for retirement / the time
 //! limit / conquest, ARCH.PIC with the KING.TXT ARCH text afterwards, and the spaceship
-//! arrival (see `spaceship_ui`). `end_game_scores` (0x2c20) opens with the power graph and,
+//! arrival (see `spaceship_ui`); a conquest first shows `conquest`'s trophy wall. `end_game_scores` (0x2c20) opens with the power graph and,
 //! unless the human retired (ds:0xdc48 = 2), the replay (see `replay`).
 
 use crate::assets::text::{paragraphs, substitute, Vars};
@@ -36,8 +36,10 @@ pub fn end_screen(ctx: &UiContext, reason: EndReason) -> Box<dyn Screen> {
         }
         EndReason::Spaceship(slot) => chain(vec![crate::ui::spaceship_ui::arrival_screen(ctx, slot), Box::new(PowerGraph), Box::new(Replay::new())]),
         EndReason::Conquest => {
+            // the game-over newspaper (overlay 21 with ds:0x1c66), then conquest_victory
+            let news = crate::ui::widgets::MessageBox::new(vec!["Your civilization".into(), "has conquered".into(), "the entire planet!".into()]);
             let wall = ScoreWall::new(ctx, vec![format!("{leader}, you have conquered the world!")]);
-            chain(vec![Box::new(PowerGraph), Box::new(Replay::new()), Box::new(wall)])
+            chain(vec![Box::new(news), Box::new(crate::ui::conquest::Conquest::new(ctx)), Box::new(PowerGraph), Box::new(Replay::new()), Box::new(wall)])
         }
         EndReason::TimeLimit => {
             let wall = ScoreWall::new(ctx, vec!["Your reign has reached the end of its allotted time.".to_string()]);

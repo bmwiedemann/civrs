@@ -3,6 +3,7 @@
 pub mod cityfounded;
 pub mod city_draw;
 pub mod city_view;
+pub mod conquest;
 pub mod cityscreen;
 pub mod civilopedia;
 pub mod context;
