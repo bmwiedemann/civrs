@@ -102,14 +102,20 @@ def shot(path):
     subprocess.run(['import', '-display', DISPLAY, '-window', 'root', '-crop', '640x400+0+%d' % top(), path], env=ENV)
 
 
-def click(x, y, button=1):
-    """A mouse click at (x, y) of CIV.EXE's 320x200 screen. The captured mouse only moves
-    relatively (one picture pixel per host pixel), so the pointer is first pushed into the
-    top-left corner, where the driver clamps it, and then moved by (2x, 2y)."""
+def park():
+    """Push the captured mouse pointer into the top-left corner (where the driver clamps
+    it), out of the way of a menu that follows the pointer."""
     for _ in range(6):
         subprocess.run(['xdotool', 'mousemove_relative', '--', '-150', '-150'], env=ENV)
         time.sleep(0.1)
     time.sleep(0.3)
+
+
+def click(x, y, button=1):
+    """A mouse click at (x, y) of CIV.EXE's 320x200 screen. The captured mouse only moves
+    relatively (one picture pixel per host pixel), so the pointer is first pushed into the
+    top-left corner, where the driver clamps it, and then moved by (2x, 2y)."""
+    park()
     subprocess.run(['xdotool', 'mousemove_relative', '--', str(2 * x + 1), str(2 * y + 1)], env=ENV)
     time.sleep(0.5)
     subprocess.run(['xdotool', 'mousedown', str(button), 'sleep', '0.2', 'mouseup', str(button)], env=ENV)

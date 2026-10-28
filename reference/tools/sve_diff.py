@@ -9,6 +9,8 @@
         (CIVIL2.SVE) and copy every new turn's save to OUT_DIR/t<TURN>.SVE/.MAP. Space only
         skips a unit, so the human's units keep their orders; check OUT_DIR/shot*.png and
         act*.png for dialogs the Space/Return keys answered (production menus, advances).
+        The palace screen gets its first section and style, the copy-protection quiz
+        (every 50th turn in BC) its right answer (quiz.py).
     python3 -I sve_diff.py diff CIVRS START.SVE RESULT.SVE [RESULT.SVE ...] [--actions SCRIPT]
         For each CIV.EXE result: civrs imports START.SVE, plays (result turn - start turn)
         turns with the human doing only the script's actions (--dump state:N) and is diffed
@@ -133,6 +135,7 @@ def act(w, k, click, shot):
 
 def play(game, slot, turns, out, script=None):
     import dosciv
+    import quiz
     os.makedirs(out, exist_ok=True)
     actions = parse_actions(script) if script else {}
     dosciv.start(game)
@@ -172,17 +175,70 @@ def play(game, slot, turns, out, script=None):
             act(w, k, dosciv.click, act_shot)
             act_shot()
 
+    def palace(px):
+        # the palace screen (overlay 17, o 0x15f75): "Which section shall we improve?" in a
+        # grey text box at (40, 16) of the screen over the sky of CBACK.PIC
+        return px(81, 48) == b'\0\0\0' and px(83, 48) == b'\xff\xff\xff' and px(100, 40) == bytes([170] * 3) and min(px(40, 20)) > 200
+
+    def improve_palace():
+        # a section key 1..7 is taken while its level is below 4 (unbuilt ones snap to the
+        # nearest built edge), a part key A..C while its level is below 3; the box goes once a
+        # key is taken. Then '1' is the first style (a part takes it as the closing key), and
+        # while the new palace stands under its sky it waits for a key: Escape. A Return
+        # would be taken on the map, where the End of Turn prompt ends the turn unsaved.
+        for key in ['4', '3', '5', '2', '6', '1', '7', 'a', 'b', 'c']:
+            k([key, 'sleep3'])
+            if not palace(screen()):
+                k(['1', 'sleep6'])
+                for _ in range(3):
+                    if min(screen()(40, 20)) <= 200:
+                        break
+                    k(['Escape', 'sleep4'])
+                return
+
     def save_game():
         # the GAME menu opens with Tax Rate highlighted (cyan at (100, 32)); anything else is
-        # a dialog (city view, production or research menu), answered with Return
+        # a dialog (city view, production or research menu), answered with Return, or the
+        # palace screen
         k(['alt+g', 'sleep1'])
-        if screen()(100, 32) != cyan:
-            k(['Return', 'sleep2'])
-            return False
-        k(['Down', 'Down', 'Down', 'Down', 'Return', 'sleep1', 'Return', 'sleep2'])
-        # the slot list: slot n is the band from y = 90 + 16 n; walk the cursor to slot 2
         px = screen()
-        rows_ = [n for n in range(10) if px(106, 90 + 16 * n + 4) == cyan]
+        if px(100, 32) != cyan:
+            if palace(px):
+                print('palace screen', flush=True)
+                improve_palace()
+            elif quiz.is_quiz(px):
+                # the copy-protection quiz (overlay 16): a second wrong answer would delete
+                # every unit of the human. The menu follows the mouse pointer (menu_select
+                # 0x1c867), so the answer is a click on its line
+                dosciv.park()
+                k(['sleep1'])
+                q = os.path.join(out, 'quiz%02d.png' % n_shot[0])
+                dosciv.shot(q)
+                adv, lines, y = quiz.solve(game, q)
+                print('quiz', adv, y, lines, flush=True)
+                # no icon: the page of the verdict ("*CORRECT"), which waits for a key; an
+                # icon but not all the lines: the menu is still being drawn
+                if y is not None:
+                    dosciv.click(160, y)
+                    k(['sleep3'])
+                elif adv is None:
+                    k(['Escape', 'sleep3'])
+                else:
+                    k(['sleep2'])
+            else:
+                k(['Return', 'sleep2'])
+            return False
+        k(['Down', 'Down', 'Down', 'Down', 'Return', 'sleep2'])
+        # the slot list: slot n is the band from y = 90 + 16 n; walk the cursor to slot 2.
+        # The drive prompt comes first, but not after the palace screen (its require_disk):
+        # a Return there would save to the slot under the cursor at once
+        def slots():
+            px = screen()
+            return [n for n in range(10) if px(106, 90 + 16 * n + 4) == cyan]
+        rows_ = slots()
+        if not rows_:
+            k(['Return', 'sleep2'])
+            rows_ = slots()
         if not rows_:
             k(['Escape', 'sleep1'])
             return False

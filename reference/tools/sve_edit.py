@@ -21,11 +21,32 @@ The .MAP next to IN.SVE is copied next to OUT.SVE. Edits (offsets as src/save/sv
                                human's view of them at (x+80, ...) (default: REAL)
     gold:CIV:N                 the civ's gold
     diplo:A:B:V                the diplomacy word of A towards B (0x648 + 16 A + 2 B)
+    build:CITY:A,B,...         build the improvements A, B (ids as src/rules/improvements.rs:
+                               record bit id - 1)
+    wonder:W:CITY              wonder W (src/rules/wonders.rs) stands in CITY (0x8672 + 2 W)
+    govt:CIV:G                 the government (0x538: 1 Despotism, 2 Monarchy, 3 Communism,
+                               4 Republic, 5 Democracy)
+    rates:CIV:TAX,SCI          the tax and science rates in percent (0x738, 0x8bb0: tenths)
+    tile:X,Y:BITS              OR the improvement bits into the square and the human's view of
+                               it (as imp:), pollution (0x40) also counted in 0x8a9e
+    warming:N                  the global warming counter (0x8aa0)
+    contact:CIV:TURN           the civ's last contact turn (0x758); a computer civ in
+                               contact asks for an audience when it sees a human unit 16
+                               turns after it (unit_look), so a turn ahead keeps it quiet
+    owner:CITY:CIV             the city's owner (+0xb) and its square's mark on map page 2
+    work:CITY:N                the city works its first N land or ocean squares in CIV.EXE's
+                               radius order (ds:0x2498), skipping squares other cities work or
+                               foreign units hold, and has size - N specialists (entertainers
+                               unless a later codes= says otherwise); give it after size=
 """
 import struct
 import sys
 
 CITIES, UNITS, ADV, RCOUNT, COUNTS, NUNITS, CITIZENS, GOLD, DIPLO = 0x1508, 0x26c0, 0x4e8, 0x4d8, 0x158, 0x6d8, 0x708, 0x138, 0x648
+WONDERS, GOVT, TAX, SCIENCE, POLLUTED = 0x8672, 0x538, 0x738, 0x8bb0, 0x8a9e
+# the city radius in CIV.EXE's order (ds:0x2498 / 0x24c2, src/game/economy.rs EXE_RADIUS)
+RADIUS = [(0, -1), (1, 0), (0, 1), (-1, 0), (1, -1), (1, 1), (-1, 1), (-1, -1), (0, -2), (2, 0), (0, 2), (-2, 0),
+          (-1, -2), (1, -2), (2, -1), (2, 1), (1, 2), (-1, 2), (-2, 1), (-2, -1)]
 # moves (whole squares) by unit type, as src/rules/units.rs
 MOVES = [1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 2, 3, 3, 2, 10, 8, 3, 3, 3, 4, 6, 4, 3, 5, 4, 16, 2, 1]
 
@@ -38,7 +59,7 @@ def put(d, o, v):
     struct.pack_into('<h', d, o, v)
 
 
-def edit(d, e):
+def edit(d, e, page):
     kind, *a = e.split(':')
     if kind == 'adv':
         civ = int(a[0])
@@ -94,6 +115,74 @@ def edit(d, e):
         put(d, GOLD + 2 * int(a[0]), int(a[1]))
     elif kind == 'diplo':
         put(d, DIPLO + 16 * int(a[0]) + 2 * int(a[1]), int(a[2], 0))
+    elif kind == 'build':
+        r = CITIES + 0x1c * int(a[0])
+        bits = struct.unpack_from('<I', d, r)[0]
+        for n in map(int, a[1].split(',')):
+            bits |= 1 << (n - 1)
+        struct.pack_into('<I', d, r, bits)
+    elif kind == 'wonder':
+        put(d, WONDERS + 2 * int(a[0]), int(a[1]))
+    elif kind == 'govt':
+        put(d, GOVT + 2 * int(a[0]), int(a[1]))
+    elif kind == 'rates':
+        tax, sci = map(int, a[1].split(','))
+        put(d, TAX + 2 * int(a[0]), tax // 10)
+        put(d, SCIENCE + 2 * int(a[0]), sci // 10)
+    elif kind == 'tile':
+        x, y = map(int, a[0].split(','))
+        bits = int(a[1], 0)
+        lo, hi = 320 * (y + 100) + x, 320 * (y + 150) + x
+        old = page[lo] & 15 | (page[hi] & 15) << 4
+        if bits & 0x40 and not old & 0x40:
+            put(d, POLLUTED, w(d, POLLUTED) + 1)
+        for dx in (0, 80):
+            # the square and the human's view of it (x + 80); bit 0x80 stays
+            v = (page[lo + dx] & 15 | (page[hi + dx] & 7) << 4) | bits & 0x7f
+            page[lo + dx] = page[lo + dx] & 0xf0 | v & 15
+            page[hi + dx] = page[hi + dx] & 0xf8 | v >> 4 & 7
+    elif kind == 'contact':
+        put(d, 0x758 + 2 * int(a[0]), int(a[1]))
+    elif kind == 'warming':
+        put(d, 0x8aa0, int(a[0]))
+    elif kind == 'owner':
+        r = CITIES + 0x1c * int(a[0])
+        civ = int(a[1])
+        old = d[r + 0xb] & 7
+        size = d[r + 7]
+        put(d, CITIZENS + 2 * old, w(d, CITIZENS + 2 * old) - size)
+        put(d, CITIZENS + 2 * civ, w(d, CITIZENS + 2 * civ) + size)
+        # the city counts (0x6c8, ds:0x6b66)
+        put(d, 0x6c8 + 2 * old, w(d, 0x6c8 + 2 * old) - 1)
+        put(d, 0x6c8 + 2 * civ, w(d, 0x6c8 + 2 * civ) + 1)
+        d[r + 0xb] = civ
+        at = 320 * d[r + 5] + d[r + 4] + 160
+        page[at] = page[at] & 8 | civ
+    elif kind == 'work':
+        c = int(a[0])
+        r = CITIES + 0x1c * c
+        n, cx, cy = int(a[1]), d[r + 4], d[r + 5]
+        taken = set()
+        for o in range(128):
+            q = CITIES + 0x1c * o
+            if o != c and d[q + 6] != 0xff:
+                m = struct.unpack_from('<I', d, q + 0x10)[0]
+                taken |= {((d[q + 4] + dx) % 80, d[q + 5] + dy) for b, (dx, dy) in enumerate(RADIUS) if m >> b & 1}
+        owner = d[r + 0xb] & 7
+        mask = 0
+        for b, (dx, dy) in enumerate(RADIUS):
+            if bin(mask).count('1') == n:
+                break
+            sq = ((cx + dx) % 80, cy + dy)
+            held = page[320 * sq[1] + sq[0] + 160]
+            if sq in taken or (held & 8 and held & 7 != owner):
+                continue
+            mask |= 1 << b
+        assert bin(mask).count('1') == n, 'only %d free squares' % bin(mask).count('1')
+        spec = d[r + 7] - n
+        assert spec >= 0
+        struct.pack_into('<I', d, r + 0x10, mask | 1 << 20 | spec << 26)
+        struct.pack_into('<H', d, r + 0x14, 0xffff)
     else:
         raise ValueError(e)
 
@@ -240,7 +329,7 @@ def main(src, dst, *edits):
                 page[lo] = page[lo] & 0xf0 | v & 15
                 page[hi] = page[hi] & 0xf8 | v >> 4 & 7
             continue
-        edit(d, e)
+        edit(d, e, page)
         # a unit marks its square on map page 2: (x + 160, y) = civ | 8 (0x1a68:0x13d1)
         if e.startswith('unit:'):
             civ, x, y = int(e.split(':')[1]), *map(int, e.split(':')[3].split(','))
