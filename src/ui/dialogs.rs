@@ -362,10 +362,11 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
         }
         // civ_destroyed (o5 0x4fe1): "<adjective> civilization / destroyed by <plural>!"
         GameEvent::CivDestroyed { adjective, by, .. } => news(vec![format!("{adjective} civilization"), "destroyed".into(), format!("by {}!", civ(*by))]),
-        // CIV.EXE 0x18fb1 (ds:0x2a70), drawn as the Defense Minister's box at (100,32); the
-        // minister's portrait is not drawn here
+        // CIV.EXE 0x18fb1 (ds:0x2a70), the Defense Minister's box at (100, 32)
         GameEvent::BarbariansLanded { near_city, target, .. } if *target == me => Some(Box::new(
-            MessageBox::new(vec!["Barbarian raiding party".into(), format!("lands near {}!", near_city.map(city_name).unwrap_or_default()), "Citizens are alarmed.".into()]).with_pos(100, 32),
+            MenuDialog::new(vec!["Barbarian raiding party".into(), format!("lands near {}!", near_city.map(city_name).unwrap_or_default()), "Citizens are alarmed.".into()], Vec::new())
+                .with_pos(100, 32)
+                .with_speaker(SPEAKER_DEFENSE),
         )),
         // CIV.EXE 0x2fd3 (ds:0x1d12..0x1d6c): the variant follows the first discovery of
         // Industrialization or Gunpowder by anyone
@@ -564,9 +565,8 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
             if *by == me {
                 return Some(anim);
             }
-            let text: Box<dyn Screen> = Box::new(
-                MessageBox::new(vec![format!("{} use", g.player(*by).plural()), "nuclear weapons!".into()]).with_title("Defense Minister:").with_pos(100, 80),
-            );
+            let text: Box<dyn Screen> =
+                Box::new(MenuDialog::new(vec![format!("{} use", g.player(*by).plural()), "nuclear weapons!".into()], Vec::new()).with_pos(100, 80).with_speaker(SPEAKER_DEFENSE));
             Some(Box::new(Sequence { first: Some(text), then: Some(anim) }))
         }
         GameEvent::SdiProtects { city } => Some(Box::new(MessageBox::new(vec![format!("SDI protects {}.", city_name(*city))]).with_pos(80, 100))),
