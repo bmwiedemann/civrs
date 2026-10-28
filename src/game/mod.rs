@@ -644,30 +644,40 @@ impl Game {
         Map::in_bounds(x, y) && self.vision[Map::idx(x, y)] & (1 << slot) != 0
     }
 
+    /// Recompute what `slot` sees now (its units' 3x3 or 5x5 and its cities' 3x3) and mark
+    /// what its units' looks explore (`unit_look` 0x8038..0x8236): the barbarians explore
+    /// nothing; a computer civ the eight squares around and, with 5x5 sight, the outer ring
+    /// (a ship's on ocean only), but not the unit's own square, which only its creation marks
+    /// (create_unit 0x8bcc); the human that square too. A city's sight explores nothing.
     pub fn refresh_vision(&mut self, slot: Slot) {
         let bit = 1u8 << slot;
         for v in self.vision.iter_mut() {
             *v &= !bit;
         }
-        // (x, y, radius, outer ring on ocean only)
-        let mut spots: Vec<(i32, i32, i32, bool)> = Vec::new();
+        // (x, y, radius, outer ring on ocean only, a unit's look)
+        let mut spots: Vec<(i32, i32, i32, bool, bool)> = Vec::new();
         for u in self.all_units() {
             if u.owner == slot {
-                spots.push((u.x, u.y, u.sight_range(), u.is_sea()));
+                spots.push((u.x, u.y, u.sight_range(), u.is_sea(), true));
             }
         }
         for c in self.all_cities() {
             if c.owner == slot {
-                spots.push((c.x, c.y, 1, false));
+                spots.push((c.x, c.y, 1, false, false));
             }
         }
-        for (x, y, r, sea) in spots {
+        let human = slot == self.human_slot;
+        for (x, y, r, sea, look) in spots {
             for yy in (y - r)..=(y + r) {
                 for xx in (x - r)..=(x + r) {
                     let outer = (xx - x).abs() > 1 || (yy - y).abs() > 1;
                     if Map::in_bounds(xx, yy) && !(sea && outer && !self.map.tile(xx, yy).is_ocean()) {
-                        self.vision[Map::idx(xx, yy)] |= bit;
-                        self.map.tiles[Map::idx(xx, yy)].explored |= bit;
+                        let i = Map::idx(xx, yy);
+                        self.vision[i] |= bit;
+                        let centre = (xx, yy) == (x, y);
+                        if look && slot != 0 && (human || !centre) {
+                            self.map.tiles[i].explored |= bit;
+                        }
                     }
                 }
             }
@@ -696,6 +706,10 @@ impl Game {
         self.players[owner as usize].stats.units_built += 1;
         self.players[owner as usize].unit_counter[kind as usize % 28] += 1;
         self.note_occupant(owner, x, y);
+        // its square becomes known to its owner, the barbarians too (0x8bcc)
+        if let Some(t) = self.map.get_mut(x, y) {
+            t.explored |= 1 << owner;
+        }
         // create_unit 0x8b51 starts the unit without a heading
         self.ai_memory.heading.remove(&id);
         self.barbarian_memory.heading.remove(&id);
@@ -993,6 +1007,37 @@ pub fn terrain_is_land(t: Terrain) -> bool {
 #[cfg(test)]
 mod calendar_tests {
     use super::*;
+
+    #[test]
+    fn unit_looks_explore_by_civ_and_cities_explore_nothing() {
+        // unit_look 0x8038: the human from the unit's square, a computer civ around it only,
+        // the barbarians nothing beyond the square create_unit marks (0x8bcc)
+        let mut g = Game::new(GameSetup { seed: 9, ..Default::default() }, None);
+        let h = g.human_slot;
+        let ai = (1..8u8).find(|s| *s != h).unwrap();
+        for y in 20..30 {
+            for x in 30..60 {
+                let t = g.map.get_mut(x, y).unwrap();
+                t.terrain = Terrain::Grassland;
+                t.explored = 0;
+            }
+        }
+        let (u0, ua, uh) = (g.add_unit(0, rules::unit_ids::LEGION, 33, 25), g.add_unit(ai, rules::unit_ids::LEGION, 43, 25), g.add_unit(h, rules::unit_ids::LEGION, 53, 25));
+        for (id, slot) in [(u0, 0), (ua, ai), (uh, h)] {
+            let (x, y) = g.unit(id).pos();
+            g.map.get_mut(x, y).unwrap().explored = 0;
+            g.refresh_vision(slot);
+        }
+        assert!(!g.explored(0, 33, 25) && !g.explored(0, 34, 25));
+        assert!(!g.explored(ai, 43, 25) && g.explored(ai, 44, 26));
+        assert!(g.explored(h, 53, 25) && g.explored(h, 52, 24));
+        // a city sees its 3x3 but explores none of it
+        g.remove_unit(ua);
+        g.add_city(ai, "Seen".into(), 40, 22);
+        g.map.get_mut(41, 23).unwrap().explored = 0;
+        g.refresh_vision(ai);
+        assert!(g.visible_to(ai, 41, 23) && !g.explored(ai, 41, 23));
+    }
 
     #[test]
     fn calendar_skips_year_zero_and_doubles_the_beakers() {

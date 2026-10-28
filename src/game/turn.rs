@@ -1883,6 +1883,10 @@ impl Game {
             cm.improvements &= kept;
         }
         self.city_changed_hands(c, from, to);
+        // city_revolt shows the new owner the city's 21 squares (o 0x1e183, 0x1e1b0)
+        for (dx, dy) in rules::CITY_RADIUS {
+            self.map.explore(to, pos.0 + dx as i32, pos.1 + dy as i32, 0);
+        }
         // steal_advance after the messages (0x14232), as for a city taken by force
         let adv = self.capture_steal(to, from);
         self.players[to as usize].stats.cities_captured += 1;
