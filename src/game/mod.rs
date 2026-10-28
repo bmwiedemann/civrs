@@ -737,6 +737,18 @@ impl Game {
         self.all_units().filter(|u| u.owner == slot).count() < MAX_UNITS
     }
 
+    /// `add_unit` with create_unit's limit (CIV.EXE 0x8b62): `None` when all of `owner`'s
+    /// unit slots are in use; a human then gets the *UMAX box once a turn (0x8d24, ds:0xd760).
+    pub fn try_add_unit(&mut self, owner: Slot, kind: UnitTypeId, x: i32, y: i32) -> Option<UnitId> {
+        if !self.unit_room(owner) {
+            if owner == self.human_slot && !std::mem::replace(&mut self.unit_limit_shown, true) {
+                self.push_event(GameEvent::UnitLimit(owner));
+            }
+            return None;
+        }
+        Some(self.add_unit(owner, kind, x, y))
+    }
+
     pub fn push_event(&mut self, e: GameEvent) {
         let (before, after) = self.hints_for_event(&e);
         self.events.extend(before);

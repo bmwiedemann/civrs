@@ -357,14 +357,17 @@ impl Game {
     }
 
     /// `by` pays for unit `target`, which is replaced by a new unit of the same type of its own
-    /// (CIV.EXE o 0x1de0d). Returns the new unit.
-    pub fn bribe_unit(&mut self, by: Slot, target: UnitId) -> UnitId {
+    /// (CIV.EXE o 0x1de0d). Returns the new unit, none when all of `by`'s unit slots are in
+    /// use: the bribed unit is gone and paid for all the same (o 0x1de64).
+    pub fn bribe_unit(&mut self, by: Slot, target: UnitId) -> Option<UnitId> {
         let cost = self.bribe_cost(target);
         let t = self.unit(target).clone();
         self.remove_unit(target);
-        let new = self.add_unit(by, t.kind, t.x, t.y);
+        let new = self.try_add_unit(by, t.kind, t.x, t.y);
         // the new unit is also seen by the unit's former owner (o 0x1de89)
-        self.unit_mut(new).seen_by |= 1 << t.owner;
+        if let Some(n) = new {
+            self.unit_mut(n).seen_by |= 1 << t.owner;
+        }
         self.player_mut(by).gold -= cost;
         self.refresh_vision(by);
         self.refresh_vision(t.owner);
@@ -1075,8 +1078,8 @@ impl Game {
                 // Diplomat, so 0xe05d sends it to 0xe3bc, which empties the store and builds
                 // nothing; civrs does what the code meant.)
                 if k == unit_ids::DIPLOMAT && !human {
-                    if let Some(((dx, dy), target)) = self.ai_diplomat_site(owner) {
-                        let id = self.add_unit(owner, k, dx, dy);
+                    // without a free unit slot nothing is built and nothing is paid (0xe30b)
+                    if let Some((target, id)) = self.ai_diplomat_site(owner).and_then(|(at, t)| self.try_add_unit(owner, k, at.0, at.1).map(|id| (t, id))) {
                         self.unit_mut(id).home = Some(c);
                         let (tx, ty) = self.city(target).pos();
                         self.set_goto(id, tx, ty);
@@ -1091,14 +1094,10 @@ impl Game {
                 // with every unit slot in use the shields are spent on nothing and the store
                 // is emptied (create_unit 0x8b62 returns -1; 0xdeb8, 0xdf9d -> 0xe3bc), and the
                 // human hears *UMAX once a turn
-                if !self.unit_room(owner) {
+                let Some(id) = self.try_add_unit(owner, k, x, y) else {
                     self.city_mut(c).shields = 0;
-                    if human && !std::mem::replace(&mut self.unit_limit_shown, true) {
-                        self.push_event(GameEvent::UnitLimit(owner));
-                    }
                     return;
-                }
-                let id = self.add_unit(owner, k, x, y);
+                };
                 self.unit_mut(id).home = Some(c);
                 // "New units are Veterans when produced at a city containing a BARRACKS": every
                 // kind of unit (CIV.EXE 0xdf72)
@@ -1831,8 +1830,18 @@ impl Game {
         let kept = self.capture_losses(true);
         let mut gone = Vec::new();
         let mut gone_heading = Vec::new();
+        // create_unit fails once all of the new owner's unit slots are in use: the unit is
+        // only deleted (o 0x1e393)
+        let mut room = super::MAX_UNITS.saturating_sub(self.all_units().filter(|u| u.owner == to).count());
+        let mut full = false;
         for u in self.units.iter_mut().flatten().filter(|u| u.owner == from) {
             if Map::dist((u.x, u.y), pos) <= 1 && !self.map.is_ocean(u.x, u.y) {
+                if room == 0 {
+                    full = true;
+                    gone.push(u.id);
+                    continue;
+                }
+                room -= 1;
                 // deleted and re-created for the new owner (o 0x1de40 / 0x1de6e)
                 self.players[from as usize].unit_counter[u.kind as usize % 28] -= 1;
                 self.players[to as usize].unit_counter[u.kind as usize % 28] += 1;
@@ -1848,6 +1857,9 @@ impl Game {
         }
         for id in gone {
             self.remove_unit(id);
+        }
+        if full && to == self.human_slot && !std::mem::replace(&mut self.unit_limit_shown, true) {
+            self.push_event(GameEvent::UnitLimit(to));
         }
         for id in gone_heading {
             self.ai_memory.heading.remove(&id);
@@ -2315,6 +2327,34 @@ mod tests {
         assert_eq!(g.units_of(me).len(), before);
         assert_eq!(g.city(c).shields, 0);
         assert_eq!(g.take_events().iter().filter(|e| matches!(e, GameEvent::UnitLimit(_))).count(), 1);
+    }
+
+    #[test]
+    fn a_bribe_or_a_revolt_beyond_127_units_only_deletes() {
+        // bribe o 0x1de64: the unit is gone and paid for; city_revolt o 0x1e393: deleted
+        let (mut g, c) = fixture();
+        let me = g.human_slot;
+        let (x, y) = g.city(c).pos();
+        let o = (1..8).find(|s| *s != me).unwrap();
+        g.players[o as usize].alive = true;
+        let t = g.add_unit(o, unit_ids::LEGION, x + 2, y);
+        while g.unit_room(me) {
+            g.add_unit(me, unit_ids::MILITIA, x, y);
+        }
+        g.player_mut(me).gold = 1000;
+        let cost = g.bribe_cost(t);
+        g.take_events();
+        assert_eq!(g.bribe_unit(me, t), None);
+        assert!(g.unit_opt(t).is_none());
+        assert_eq!(g.player(me).gold, 1000 - cost);
+        assert_eq!(g.take_events().iter().filter(|e| matches!(e, GameEvent::UnitLimit(_))).count(), 1);
+        // the garrison of a city of `o` that revolts to the full human is deleted
+        let other = g.add_city(o, "Other".into(), x + 4, y);
+        let (ox, oy) = g.city(other).pos();
+        let guard = g.add_unit(o, unit_ids::PHALANX, ox, oy);
+        g.transfer_city(other, me);
+        assert!(g.unit_opt(guard).is_none());
+        assert_eq!(g.units_of(me).len(), crate::game::MAX_UNITS);
     }
 
     #[test]

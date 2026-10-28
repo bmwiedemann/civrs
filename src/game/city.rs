@@ -219,8 +219,14 @@ impl Game {
             return;
         }
         let (owner, (x, y)) = (city.owner, city.pos());
-        for (kind, veteran) in city.garrison_units().collect::<Vec<_>>() {
-            let id = self.add_unit(owner, kind, x, y);
+        let mut kept = no_garrison();
+        for (i, code) in city.garrison.into_iter().enumerate().filter(|(_, g)| *g != NO_GARRISON) {
+            let (kind, veteran) = (code & 0x3f, code & GARRISON_VETERAN != 0);
+            // a unit with no free unit slot stays stashed (0x7ec6)
+            let Some(id) = self.try_add_unit(owner, kind, x, y) else {
+                kept[i] = code;
+                continue;
+            };
             // a unit let out is no new one
             self.players[owner as usize].stats.units_built -= 1;
             let u = self.unit_mut(id);
@@ -229,7 +235,7 @@ impl Game {
             u.home = Some(c);
         }
         let cm = self.city_mut(c);
-        cm.garrison = no_garrison();
+        cm.garrison = kept;
         cm.garrison_out = true;
     }
 

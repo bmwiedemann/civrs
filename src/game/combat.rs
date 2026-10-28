@@ -650,8 +650,9 @@ impl Game {
                 let owner = self.city(c).owner;
                 if home_owner(self, &u) == Some(owner) {
                     if owner == new_slot {
-                        let n = self.recreate_unit(&u, new_slot);
-                        self.keep_flags(n, &u);
+                        if let Some(n) = self.recreate_unit(&u, new_slot) {
+                            self.keep_flags(n, &u);
+                        }
                     }
                 } else {
                     self.recreate_unit(&u, owner);
@@ -659,12 +660,13 @@ impl Game {
             } else {
                 let stack: Vec<UnitId> = self.units_at(u.x, u.y).into_iter().filter(|s| *s != id && self.unit(*s).owner == from).collect();
                 if home_owner(self, &u) == Some(new_slot) {
-                    let n = self.recreate_unit(&u, new_slot);
-                    self.keep_flags(n, &u);
-                    self.unit_mut(n).home = u.home;
+                    if let Some(n) = self.recreate_unit(&u, new_slot) {
+                        self.keep_flags(n, &u);
+                        self.unit_mut(n).home = u.home;
+                    }
                     for s in stack {
                         let Some(su) = self.unit_opt(s).cloned() else { continue };
-                        let n = self.recreate_unit(&su, new_slot);
+                        let Some(n) = self.recreate_unit(&su, new_slot) else { continue };
                         self.keep_flags(n, &su);
                         // CIV.EXE leaves rebel-supported units of the stack the home
                         // create_unit gives them (o 0x1521a); they keep their own here
@@ -695,13 +697,15 @@ impl Game {
     /// Delete unit `u` and create one of its type on its square for `owner` (`delete_unit`
     /// 0x8d6c, which drowns a ship's cargo, then `create_unit` 0x8b51 with its home rule).
     /// Cargo re-created before its ship rides on in the new one; the old owner's drowns.
-    fn recreate_unit(&mut self, u: &Unit, owner: Slot) -> UnitId {
+    /// With all of `owner`'s unit slots in use the unit is only deleted (civil_war does not
+    /// check and writes to slot -1, o 0x15088).
+    fn recreate_unit(&mut self, u: &Unit, owner: Slot) -> Option<UnitId> {
         let aboard: Vec<UnitId> = self.all_units().filter(|c| c.carried_by == Some(u.id) && c.owner != u.owner).map(|c| c.id).collect();
         for c in &aboard {
             self.unit_mut(*c).carried_by = None;
         }
         self.remove_unit(u.id);
-        let n = self.add_unit(owner, u.kind, u.x, u.y);
+        let n = self.try_add_unit(owner, u.kind, u.x, u.y)?;
         self.players[owner as usize].stats.units_built -= 1;
         if self.city_at(u.x, u.y).is_none() {
             self.unit_mut(n).carried_by = u.carried_by;
@@ -709,7 +713,7 @@ impl Game {
         for c in aboard {
             self.unit_mut(c).carried_by = Some(n);
         }
-        n
+        Some(n)
     }
 
     /// The unit flags but the sentry bit go over to the re-created unit (o 0x1509f).
@@ -1887,7 +1891,7 @@ mod tests {
         let (mut g, h, o) = sightings_game();
         let t = g.add_unit(o, unit_ids::LEGION, 15, 15);
         g.player_mut(h).gold = 1000;
-        let n = g.bribe_unit(h, t);
+        let n = g.bribe_unit(h, t).unwrap();
         assert_eq!(g.unit(n).seen_by, 1 << h | 1 << o);
     }
 }

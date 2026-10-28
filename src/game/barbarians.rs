@@ -212,9 +212,11 @@ impl Game {
                 self.push_event(GameEvent::AdvanceAcquired { slot, adv: *a, source: "hut".into() });
             }
             HutOutcome::Mercenaries(k) => {
-                // create_unit (0x8b51) does not set the moves byte; none are given here
-                let m = self.add_unit(slot, *k, u.x, u.y);
-                self.unit_mut(m).moves_left = 0;
+                // create_unit (0x8b51) does not set the moves byte; none are given here. With
+                // every unit slot in use there are none (CIV.EXE then writes to slot -1, 0x9aa5)
+                if let Some(m) = self.try_add_unit(slot, *k, u.x, u.y) {
+                    self.unit_mut(m).moves_left = 0;
+                }
             }
             HutOutcome::AdvancedTribe(_) => {
                 if let Some(c) = self.hut_city(slot, u.x, u.y) {
@@ -232,8 +234,9 @@ impl Game {
                     if Map::in_bounds(nx, ny) && self.owner_at(nx, ny).is_none() && self.map.is_land(nx, ny) {
                         let kind = if self.map.terrain(nx, ny).info().move_cost > 2 { unit_ids::LEGION } else { unit_ids::CAVALRY };
                         // seen by the civ that opened the hut (0x9ab3)
-                        let b = self.add_barbarian(kind, nx, ny);
-                        self.unit_mut(b).seen_by |= 1 << slot;
+                        if let Some(b) = self.add_barbarian(kind, nx, ny) {
+                            self.unit_mut(b).seen_by |= 1 << slot;
+                        }
                     }
                     i += step;
                 }
@@ -286,13 +289,15 @@ impl Game {
         Some(c)
     }
 
-    /// A barbarian unit as `create_unit` (0x8b51) makes it: no veteran flag, no heading.
-    fn add_barbarian(&mut self, kind: UnitTypeId, x: i32, y: i32) -> UnitId {
-        let id = self.add_unit(0, kind, x, y);
+    /// A barbarian unit as `create_unit` (0x8b51) makes it: no veteran flag, no heading; none
+    /// when the barbarians' 127 unit slots are in use (0x8b62). CIV.EXE's callers do not check
+    /// and write to slot -1 (0x2dfb, 0x30b2, 0x9aa5); civrs skips the unit.
+    fn add_barbarian(&mut self, kind: UnitTypeId, x: i32, y: i32) -> Option<UnitId> {
+        let id = self.try_add_unit(0, kind, x, y)?;
         self.barbarian_memory.heading.remove(&id);
         self.players[0].alive = true;
         self.players[0].in_game = true;
-        id
+        Some(id)
     }
 
     /// First turn of barbarian activity: (5 - difficulty) * 30 (CIV.EXE 0x2d08), 150 on
@@ -338,11 +343,12 @@ impl Game {
         }
         let Some((x, y)) = at else { return };
         let count = (self.turn as i32 / 150 + 1).clamp(1, 3);
-        let ship = self.add_barbarian(if count < 3 { unit_ids::SAIL } else { unit_ids::FRIGATE }, x, y);
+        // no ship, no room for its crew either
+        let Some(ship) = self.add_barbarian(if count < 3 { unit_ids::SAIL } else { unit_ids::FRIGATE }, x, y) else { return };
         let troops = if self.discovered_by_anyone(adv::EXPLOSIVES) { unit_ids::KNIGHTS } else { unit_ids::LEGION };
         for i in 0..=count {
             let kind = if i == count { unit_ids::DIPLOMAT } else { troops };
-            let u = self.add_barbarian(kind, x, y);
+            let Some(u) = self.add_barbarian(kind, x, y) else { break };
             let um = self.unit_mut(u);
             um.carried_by = Some(ship);
             um.order = UnitOrder::Sentry;
@@ -409,7 +415,7 @@ impl Game {
                 (_, false, true) => unit_ids::CHARIOT,
                 (_, false, false) => unit_ids::CAVALRY,
             };
-            let u = self.add_barbarian(kind, x, y);
+            let Some(u) = self.add_barbarian(kind, x, y) else { break };
             self.unit_mut(u).leader = kind == unit_ids::DIPLOMAT;
             // seen by every civilization that knows the square (0x30cd)
             let known = self.map.tile(x, y).explored;
@@ -887,8 +893,8 @@ mod tests {
             }
         }
         // the ship one square west of the coast at (4, 10)
-        let ship = g.add_barbarian(unit_ids::SAIL, 4, 10);
-        let l = g.add_barbarian(unit_ids::LEGION, 4, 10);
+        let ship = g.add_barbarian(unit_ids::SAIL, 4, 10).unwrap();
+        let l = g.add_barbarian(unit_ids::LEGION, 4, 10).unwrap();
         g.unit_mut(l).carried_by = Some(ship);
         g.unit_mut(l).order = UnitOrder::Sentry;
         g.take_events();
@@ -911,8 +917,8 @@ mod tests {
             g.map.get_mut(x, y).unwrap().terrain = Terrain::Ocean;
         }
         let city = g.add_city(human, "Bare".into(), 5, 9);
-        let ship = g.add_barbarian(unit_ids::SAIL, 4, 10);
-        let l = g.add_barbarian(unit_ids::LEGION, 4, 10);
+        let ship = g.add_barbarian(unit_ids::SAIL, 4, 10).unwrap();
+        let l = g.add_barbarian(unit_ids::LEGION, 4, 10).unwrap();
         g.unit_mut(l).carried_by = Some(ship);
         g.unit_mut(l).order = UnitOrder::Sentry;
         // 0x18ef3 skips city squares for the landing, 0x18e8d attacks only units
@@ -929,10 +935,10 @@ mod tests {
         let mut g = plain_world(23);
         let human = g.human_slot;
         g.add_city(human, "Port".into(), 9, 9);
-        let ship = g.add_barbarian(unit_ids::SAIL, 4, 10);
+        let ship = g.add_barbarian(unit_ids::SAIL, 4, 10).unwrap();
         let mut troops = Vec::new();
         for kind in [unit_ids::LEGION, unit_ids::LEGION, unit_ids::DIPLOMAT] {
-            let u = g.add_barbarian(kind, 4, 10);
+            let u = g.add_barbarian(kind, 4, 10).unwrap();
             let um = g.unit_mut(u);
             um.carried_by = Some(ship);
             um.order = UnitOrder::Sentry;
@@ -954,10 +960,10 @@ mod tests {
     fn a_lone_barbarian_holds_its_city() {
         let mut g = plain_world(29);
         let c = g.add_city(0, "Camp".into(), 15, 15);
-        let b = g.add_barbarian(unit_ids::LEGION, 15, 15);
+        let b = g.add_barbarian(unit_ids::LEGION, 15, 15).unwrap();
         assert_eq!(g.barbarian_command(b), BarbarianCommand::Fortify);
         // with company the Legion (an attacker) moves on, the Phalanx (a defender) stays
-        let p = g.add_barbarian(unit_ids::PHALANX, 15, 15);
+        let p = g.add_barbarian(unit_ids::PHALANX, 15, 15).unwrap();
         assert!(matches!(g.barbarian_command(b), BarbarianCommand::Step(_)));
         assert_eq!(g.barbarian_command(p), BarbarianCommand::Fortify);
         assert_eq!(g.city(c).owner, 0);
@@ -969,7 +975,7 @@ mod tests {
         let human = g.human_slot;
         let c = g.add_city(human, "Target".into(), 20, 10);
         g.add_city(human, "Second".into(), 20, 20);
-        let b = g.add_barbarian(unit_ids::LEGION, 19, 10);
+        let b = g.add_barbarian(unit_ids::LEGION, 19, 10).unwrap();
         // next to an enemy city: straight in (direction E)
         assert_eq!(g.barbarian_command(b), BarbarianCommand::Step(Dir8::E));
         assert_eq!(g.city(c).pos(), (20, 10));
