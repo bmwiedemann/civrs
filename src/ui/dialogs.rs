@@ -283,7 +283,8 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
                 "Barbarian uprising"
             };
             let near = g.nearest_city_exe(at.0, at.1).0.map(city_name).unwrap_or_default();
-            news(vec!["Travellers report:".into(), what.into(), format!("near {near}!")])
+            // a plain box at (100, 32) whose first line is "Travellers report:" (0x3032)
+            Some(Box::new(MessageBox::new(vec![what.into(), format!("near {near}!")]).with_title("Travellers report:").with_pos(100, 32)))
         }
         // KING.TXT *LEADER (combat 0x1a04c)
         GameEvent::BarbarianLeaderCaptured { slot, gold } if *slot == me => {
