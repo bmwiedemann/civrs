@@ -271,7 +271,14 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&P
             // event screens (DIALOGS track): screen:NAME:ARG
             "discovery" => civrs::ui::discovery::discovery_screen(&ctx, seed as u8),
             "wonder" => civrs::ui::wonderscreen::wonder_screen(&ctx, (seed as u8).clamp(1, 21), "Rome", ctx.game().human_slot),
-            "govt" => civrs::ui::govtscreen::govt_screen(&ctx, civrs::rules::Govt::from_u8(seed as u8).unwrap_or(civrs::rules::Govt::Monarchy)),
+            // screen:govt:GOVT (1 Despotism .. 5 Democracy) over the map
+            "govt" => {
+                let govt = civrs::rules::Govt::from_u8(seed as u8).filter(|g| *g != civrs::rules::Govt::Anarchy).unwrap_or(civrs::rules::Govt::Monarchy);
+                let g = ctx.game_mut();
+                let me = g.human_slot;
+                g.player_mut(me).govt = govt;
+                civrs::ui::eventpics::over_map(civrs::ui::govtscreen::govt_screen(&ctx, govt).unwrap())
+            }
             "diplomacy" => {
                 use civrs::game::diplomacy::{DiplomacyState, Proposal};
                 let g = ctx.game_mut();

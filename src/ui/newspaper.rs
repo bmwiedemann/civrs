@@ -36,22 +36,23 @@ pub struct Newspaper {
     badge: &'static str,
     edge: [i32; 16],
     date: String,
-    press: MessageBox,
+    /// "Press any key to continue." (left out by newspaper(-2), which only draws the page)
+    press: Option<MessageBox>,
 }
 
 /// The newspaper with `headline` (one string per line), named after `city`, or after the
 /// human's city when `None` (the -1 argument).
 pub fn newspaper(headline: Vec<String>, city: Option<CityId>) -> Box<dyn Screen> {
-    Box::new(Newspaper {
-        headline,
-        city,
-        masthead: String::new(),
-        flanks: false,
-        badge: "EXTRA!",
-        edge: [100; 16],
-        date: String::new(),
-        press: MessageBox::new(vec!["Press any key to continue.".into()]).with_pos(80, 128),
-    })
+    let mut n = front_page(headline, city);
+    n.press = Some(MessageBox::new(vec!["Press any key to continue.".into()]).with_pos(80, 128));
+    Box::new(n)
+}
+
+/// newspaper(-2) (o 0x1cbc7, 0x1cf5a): only the front page, drawn over what is on screen and
+/// returning at once, without the screen save, the "Press any key" box and its wait. The
+/// caller draws the rest and waits itself (government_changed o 0x5d17).
+pub fn front_page(headline: Vec<String>, city: Option<CityId>) -> Newspaper {
+    Newspaper { headline, city, masthead: String::new(), flanks: false, badge: "EXTRA!", edge: [100; 16], date: String::new(), press: None }
 }
 
 /// The city of a newspaper(-1) (o 0x1cb7d..0x1cbbb): the first of the human's cities in table
@@ -65,6 +66,14 @@ pub fn paper_city(g: &crate::game::Game) -> Option<CityId> {
         }
     }
     found
+}
+
+/// The city of a newspaper(-2) (same loop, o 0x1cbac): only a city with a Palace names it, the
+/// last of the human's in table order. Without one CIV.EXE goes on with city -2 and prints
+/// whatever that record holds; civrs falls back to `paper_city`.
+pub fn palace_paper_city(g: &crate::game::Game) -> Option<CityId> {
+    let me = g.human_slot;
+    g.all_cities().filter(|c| c.owner == me && c.has_improvement(crate::rules::improvement_ids::PALACE)).map(|c| c.id).last().or_else(|| paper_city(g))
 }
 
 impl Screen for Newspaper {
@@ -94,15 +103,20 @@ impl Screen for Newspaper {
         self.flanks = w < 200;
         self.badge = if rng.random(2) == 0 { "FLASH" } else { "EXTRA!" };
         self.date = format!("January 1, {}", ctx.game.as_ref().map(|g| g.year_text()).unwrap_or_default());
-        self.press.on_enter(ctx);
+        if let Some(p) = self.press.as_mut() {
+            p.on_enter(ctx);
+        }
     }
     fn update(&mut self, ctx: &mut UiContext) -> Transition {
-        self.press.update(ctx)
+        match self.press.as_mut() {
+            Some(p) => p.update(ctx),
+            None => Transition::Pop(DialogResult::Done),
+        }
     }
     fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
-        match self.press.handle(ev, ctx) {
-            Transition::Pop(_) => Transition::Pop(DialogResult::Done),
-            t => t,
+        match self.press.as_mut().map(|p| p.handle(ev, ctx)) {
+            Some(Transition::Pop(_)) | None => Transition::Pop(DialogResult::Done),
+            Some(t) => t,
         }
     }
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
@@ -132,6 +146,8 @@ impl Screen for Newspaper {
         draw_text(fb, &ctx.fonts, &TextStyle::new(FONT3, 0), 272, 3, self.badge);
         draw_text(fb, &ctx.fonts, &TextStyle::new(FONT1, 0), 272, 28, "10 cents");
         draw_text(fb, &ctx.fonts, &TextStyle::new(FONT1, 0), 8, 28, &self.date);
-        self.press.draw(fb, ctx);
+        if let Some(p) = self.press.as_mut() {
+            p.draw(fb, ctx);
+        }
     }
 }

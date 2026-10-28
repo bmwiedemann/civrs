@@ -325,7 +325,8 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             paper(vec!["Discontented citizens of".into(), format!("{} revolt:", city_name(*city)), "Government Collapses!".into()], Some(*city))
         }
         GameEvent::AnarchyEnded { slot } if *slot == me => None,
-        GameEvent::GovernmentChanged { slot, govt } if *slot == me => Some(crate::ui::govtscreen::govt_screen(ctx, *govt)),
+        // government_changed (o 0x5d17, after load_govt_picture at 0x14f2d); nothing under Anarchy
+        GameEvent::GovernmentChanged { slot, govt } if *slot == me => crate::ui::govtscreen::govt_screen(ctx, *govt),
         GameEvent::UnitLimit(slot) if *slot == me => {
             let lines = ctx.texts.king.section("UMAX").map(paragraphs).unwrap_or_else(|| vec!["Too many units.".into()]);
             msg(lines)
