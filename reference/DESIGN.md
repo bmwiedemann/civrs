@@ -423,14 +423,17 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
   pillage at once (0x4c80); irrigation water 0x77fd (city squares never count); settlers join city <10 (no Aqueduct exception); cities may be adjacent; Esc undo.
 - Combat: `A = att*8*vet1.5`, `D = def*8*terrain/2*fortified1.5*fortress2*walls: def*8*terrain/2*3 instead of fortification, not vs attack-12 units (Artillery, Bomber) nor for air defenders (0x198ca)*vet1.5`; loop rolling `rng.below(A)` vs `rng.below(D)`;
   winner 50% veteran; stack dies outside city/fortress; city shrinks on lost defence without walls; Fighters only vs air; ground units capture; capture plunders gold
-  `gold*size/total`, steals an advance, 1/3 improvements destroyed, Palace destroyed; size-1 city destroyed; capital loss with >=6 cities -> civil war (ESCHISM);
+  `gold*size/total` (also from a destroyed city), steals an advance (also from a destroyed one), Palace/Temple/Courthouse/Cathedral lost and by force every second
+  one of improvements 1..16 (`& 0xaaaa >> random(2)`) and all of 17.. (0x13ef5); trade routes stay; size-1 city destroyed; civil war only for a computer player's
+  Palace city with > 4 cities ranked above the human (0x13db4);
   nukes (Manhattan) 3x3 kill + half size + pollution, SDI blocks.
 - Pollution (0x12de9, human cities only: 0x12ddd skips it for the AI): P = shields/f - 20 + size*techs/4 (f 3 Recycling / 2 Hydro,Nuclear,Hoover / 1; Mass Transit: techs 0), polluted when 2P > random(256 - advances*difficulty/2); Nuclear Plant meltdown 1 in 3 per turn of disorder until Fusion Power (0x12f46: plant lost, 3x3 cities halved, land polluted 2/3); global warming when polluted tiles >= 8+4k (terrain shifts).
 - Huts: gold 25/50/100, advance, mercenaries, barbarians (not for Settlers / near own city), empty [c1/approx].
 - Disasters D1..D6 after turn 10 (1/200 per city size>=3), each cancelled by the matching improvement; off after Medicine/Industrialization [approx].
 - Governments table (max rate / free units / unhappy per abroad unit / tile penalty / trade bonus / corruption / settler food / martial law):
   Anarchy lux-only/size/0/yes/no/4/1/3; Despotism 60/size/0/yes/no/3/1/3; Monarchy 70/0/0/no/no/2/1/3; Communism 80/0/0/no/no/2 flat/1/3; Republic 80/0/1/no/yes/1/2/0;
-  Democracy 100/0/2/no/yes/0/2/0. Revolution: 1-4 turns anarchy (0 with Pyramids) -> choose govt menu -> GOVT screen; senate auto-accepts peace under Rep/Dem.
+  Democracy 100/0/2/no/yes/0/2/0. Revolution: anarchy until the civ's politics on a turn with turn & 3 == 0, or the next turn with the Pyramids (0x1495a); a Democracy collapsing
+  in disorder holds the human one more such turn (0x12820); computer players then take Despotism -> choose govt menu -> GOVT screen; senate auto-accepts peace under Rep/Dem.
 - Diplomacy (peace/war): contact on adjacency; AI audience on first contact and periodically by attitude; attitude = traits + treaty + embassies - war - power ratio +
   random; proposals EXCHANGE/CANCEL/TRIBUTE/TAKECIV/PEACE/GIVECIV/GIVECASH/GROVEL/THREAT/TREATY/HELPME/CRUSADE/... from KING.TXT; human audience menu
   (peace / military proposal / demand tribute); embassies reveal intel; Great Wall/UN owner always offered peace (o 0x66d1, 0x151b2); AI-AI relations rolled every 10 turns.
@@ -440,11 +443,12 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
   obsolete when any civ learns the advance (0xc91:0x6c8d); caravan help = 50 shields.
 - Spaceship: after Apollo; structural <=39, component <=16, module <=12; launch when >=1/2/3 and structurals cover; flight turns `max(6, 100/(2+components/2))`;
   success from life support/habitation; capital capture loses it; arrival wins.
-- Score: 2*happy + content + 20*wonders + 5*future tech + 3*peace turns (after 1 AD) - 10*polluted tiles + spaceship bonus; rating from RATINGS/ADJECTIVES;
+- Score (citizens counted at 40% luxuries, o 0x1c0e0): 2*happy + content + 20*wonders + 5*future tech + 3*peace turns (after 1 AD) - 10*polluted tiles + spaceship bonus; rating from RATINGS/ADJECTIVES;
   end on year limit / spaceship / conquest / destruction / retire; hall of fame.
 - AI: production priority list (defenders, settlers by expansionist trait, Temple/Granary/Barracks/Library/Marketplace/Walls/Aqueduct/Courthouse by state,
   attackers in groups when at war, caravans/wonders in best city); unit roles (settle via best_city_site, fortify, group attack when A/(A+D) > 0.4, explore);
-  tax 50/sci 50 with lux bumps; revolution to Monarchy/Republic; difficulty scales AI cost %, content, starting techs.
+  rates of update_civ_tax_rates (0xa699: lux +-1 by disorder, sci = civilized + (10 - lux)/2, +1 when rich, 0 with Robotics; set_government tax 4 - gov/2);
+  revolution to Monarchy/Republic; difficulty scales AI cost %, content, starting techs.
 
 ## Input model
 Keyboard: numpad 1-9/arrows move (Home/PgUp/End/PgDn diagonals); Space skip; w wait; f fortify; s sentry; g goto; r road/rail; i irrigate; m mine;
