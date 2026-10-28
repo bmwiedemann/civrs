@@ -702,22 +702,21 @@ impl Game {
         self.events.drain(..).collect()
     }
 
-    /// Next city name for a civilisation (its own list, then the spare pool).
+    /// Next city name for a civilisation (found_city o 0x1b3c5): the first name of the
+    /// 256-name table (16 per tribe 1..7, 9..15, then 32 spare ones) never given to a city
+    /// in this game, looking in the tribe's own 16, then the spare ones, then the whole table
+    /// from the start. CIV.EXE marks a name used for good (es:0x540[name]), so a destroyed
+    /// city's name is not given again; civrs takes the names the replay has logged.
     pub fn next_city_name(&mut self, slot: Slot) -> String {
         let civ = self.players[slot as usize].civ as usize;
-        let used: Vec<String> = self.all_cities().map(|c| c.name.clone()).collect();
+        let mut used: Vec<String> = self.all_cities().map(|c| c.name.clone()).collect();
+        used.extend(self.history.names.iter().cloned());
         let list = &rules::CIVS[civ].cities;
-        let cursor = self.players[slot as usize].city_name_cursor as usize;
-        for i in 0..16 {
-            let n = list[(cursor + i) % 16];
-            if !used.iter().any(|u| u == n) {
-                self.players[slot as usize].city_name_cursor = ((cursor + i + 1) % 16) as u8;
-                return n.to_string();
-            }
-        }
-        for n in rules::SPARE_CITY_NAMES.iter() {
-            if !used.iter().any(|u| u == n) {
-                return n.to_string();
+        let table: Vec<&str> = (1..16).filter(|t| *t != 8).flat_map(|t| rules::CIVS[t].cities.iter().copied()).chain(rules::SPARE_CITY_NAMES.iter().copied()).collect();
+        let own = if civ == 0 || civ == 8 { 224 } else { 16 * (if civ > 7 { civ - 2 } else { civ - 1 }) };
+        for i in (own..own + 16).chain(224..256).chain(0..256) {
+            if !used.iter().any(|u| u == table[i]) {
+                return table[i].to_string();
             }
         }
         // generate "<Name> II", "<Name> III"...
@@ -777,12 +776,16 @@ impl Game {
         if let Some(t) = self.map.get_mut(x, y) {
             t.city = Some(id);
             t.set(tile_flags::HUT, false);
-            t.set(tile_flags::POLLUTION, false);
             // "A city founded in a Fortress square destroys the Fortress"; the mine goes too and
             // the square gets a road (CIV.EXE o 0x1b4f2)
             t.set(tile_flags::FORTRESS, false);
             t.set(tile_flags::MINE, false);
             t.set(tile_flags::ROAD, true);
+            // and irrigation where it adds food without changing the terrain (o 0x1b525:
+            // terrain table ds:0x44a < -1), which stays when the city is gone
+            if matches!(t.terrain.info().irrigate, rules::Terraform::Bonus(_)) {
+                t.set(tile_flags::IRRIGATION, true);
+            }
         }
         self.auto_assign(id);
         // a city sees only its 3x3 block (14_city_screen / 26_turn_12 captures)
@@ -979,6 +982,31 @@ mod calendar_tests {
 #[cfg(test)]
 mod new_game_tests {
     use super::*;
+
+    #[test]
+    fn city_names_are_given_once_in_table_order() {
+        let mut g = Game::new(GameSetup { seed: 7, ..Default::default() }, None);
+        let s = g.human_slot;
+        let list = rules::CIVS[g.player(s).civ as usize].cities;
+        let first = g.next_city_name(s);
+        assert_eq!(first, list[0]);
+        {
+            let t = g.map.get_mut(20, 20).unwrap();
+            t.terrain = rules::Terrain::Plains;
+            t.flags = tile_flags::POLLUTION | tile_flags::MINE;
+        }
+        let c = g.add_city(s, first, 20, 20);
+        g.remove_city(c);
+        // the founding left road and irrigation, took the mine and kept the pollution
+        let t = g.map.tile(20, 20);
+        assert_eq!(t.flags & (tile_flags::ROAD | tile_flags::IRRIGATION | tile_flags::MINE | tile_flags::POLLUTION), tile_flags::ROAD | tile_flags::IRRIGATION | tile_flags::POLLUTION);
+        // a destroyed city's name stays used (es:0x540, o 0x1b3c5)
+        assert_eq!(g.next_city_name(s), list[1]);
+        for (i, n) in list.iter().enumerate().skip(1) {
+            g.add_city(s, n.to_string(), 2 + 2 * i as i32, 30);
+        }
+        assert_eq!(g.next_city_name(s), rules::SPARE_CITY_NAMES[0]);
+    }
 
     #[test]
     fn a_destroyed_citys_wonders_stay_built_and_owned_by_no_one() {
