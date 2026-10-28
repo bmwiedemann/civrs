@@ -11,9 +11,14 @@ The .MAP next to IN.SVE is copied next to OUT.SVE. Edits (offsets as src/save/sv
                                (CIV.EXE radius bit mask, bit 20 the centre), codes (the 2-bit
                                specialist codes +0x14: 1 taxman, 2 scientist, 3 entertainer),
                                status; a size change also changes the owner's citizens (0x708)
-    unit:CIV:TYPE:X,Y[:HOME[:FLAGS]]   a new unit in the civ's lowest free record, with no
+    unit:CIV:TYPE:X,Y[:HOME[:FLAGS[:SEEN]]]   a new unit in the civ's lowest free record, with no
                                goto, full moves (thirds) and the stack ring of its square; the
-                               civ's unit counters (0x158, and 0x6d8 for non-Settlers) go up
+                               civ's unit counters (0x158, and 0x6d8 for non-Settlers) go up;
+                               SEEN = the civs that have seen it (+9, bit per civ)
+    imp:X,Y:REAL[:SEEN]        the square's improvement bits on map page 2 (0x02 irrigation,
+                               0x04 mine, 0x08 road, 0x10 railroad, 0x20 fortress, 0x40
+                               pollution; low nibble at (x, y+100), high at (x, y+150)) and the
+                               human's view of them at (x+80, ...) (default: REAL)
     gold:CIV:N                 the civ's gold
     diplo:A:B:V                the diplomacy word of A towards B (0x648 + 16 A + 2 B)
 """
@@ -70,11 +75,12 @@ def edit(d, e):
         x, y = map(int, a[2].split(','))
         home = int(a[3]) if len(a) > 3 else 0xff
         flags = int(a[4], 0) if len(a) > 4 else 0
+        seen = int(a[5], 0) if len(a) > 5 else 0
         base = UNITS + 0x600 * civ
         i = next(i for i in range(128) if d[base + 12 * i + 3] == 0xff)
         here = [j for j in range(128) if d[base + 12 * j + 3] != 0xff and d[base + 12 * j + 1] == x and d[base + 12 * j + 2] == y]
         r = base + 12 * i
-        d[r:r + 12] = bytes([flags, x, y, typ, 3 * MOVES[typ], 0, 0xff, 0, 0xff, 0, 0xff, home])
+        d[r:r + 12] = bytes([flags, x, y, typ, 3 * MOVES[typ], 0, 0xff, 0, 0xff, seen, 0xff, home])
         if here:
             # the stack ring +0xa: put the new unit after the first one of the square
             first = base + 12 * here[0]
@@ -224,6 +230,16 @@ def main(src, dst, *edits):
     d = bytearray(open(src, 'rb').read())
     page, head = read_map(src[:-3] + 'MAP')
     for e in edits:
+        if e.startswith('imp:'):
+            _, xy, *bits = e.split(':')
+            x, y = map(int, xy.split(','))
+            real = int(bits[0], 0)
+            for dx, v in ((0, real), (80, int(bits[1], 0) if len(bits) > 1 else real)):
+                # (bit 0x80, the second river sprites, stays)
+                lo, hi = 320 * (y + 100) + x + dx, 320 * (y + 150) + x + dx
+                page[lo] = page[lo] & 0xf0 | v & 15
+                page[hi] = page[hi] & 0xf8 | v >> 4 & 7
+            continue
         edit(d, e)
         # a unit marks its square on map page 2: (x + 160, y) = civ | 8 (0x1a68:0x13d1)
         if e.startswith('unit:'):

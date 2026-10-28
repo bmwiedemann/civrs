@@ -159,13 +159,11 @@ pub fn import(sve: &Path) -> Result<Game, SaveError> {
     let mut g = import_bytes(&data, &map)?;
     // load_game sets ds:0xdf60 = 2 for the slots from 4 on (o 0xf0bc, slot ds:0xe168), and
     // then move_units (0x40c0) gives the human's units their full moves again, as at the start
-    // of a turn; slots 0..3 (ds:0xdf60 = 1) keep the saved moves
+    // of a turn; slots 0..3 (ds:0xdf60 = 1) keep the saved moves. Its loop then completes
+    // the fortifications of the units that have moves (0x4215..0x4243), as `reset_moves`.
     if slot_of(sve).is_some_and(|n| n >= 4) {
-        let extra = g.extra_sea_move(g.human_slot);
         let human = g.human_slot;
-        for u in g.units.iter_mut().flatten().filter(|u| u.owner == human) {
-            u.moves_left = u.full_moves() + if u.is_sea() && extra { 3 } else { 0 };
-        }
+        g.reset_moves(human);
         g.active_unit = None;
         g.reset_unit_loop();
         g.active_unit = g.next_active_unit();
