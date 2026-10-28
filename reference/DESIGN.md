@@ -469,7 +469,7 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
 ## Input model
 Keyboard: numpad 1-9/arrows move (Home/PgUp/End/PgDn diagonals); Space skip; w wait; f fortify; s sentry; g goto; r road/rail; i irrigate; m mine;
 f fortify (Settlers: fortress); P pillage; p clean pollution; b build/join city; h home; u unload; D disband; c centre; Enter end turn; Esc cancel/undo; G/O/A/W/C menus;
-F1-F12 reports; Alt-R leaders randomized; Alt-V sound; Ctrl-S/Ctrl-L quick save/load; Alt-Q quit prompt (no Ctrl-Q); Esc on the map: nothing, in the goto choice too (keyboard-only: look cursor off); g again ends the goto choice (keyboard-only: g puts the look cursor on the unit and Enter picks its square). City screen: I H M V R Esc, Shift-M, Shift-A.
+F1-F12 reports; Alt-R leaders randomized; Alt-V sound; Ctrl-S/Ctrl-L quick save/load; Alt-Q quit prompt (Ctrl-Q too, a civrs extra); Esc on the map: nothing (keyboard-only: look cursor off), but in the goto choice Esc ends it (a civrs extra; CIV.EXE ignores it); g again ends the goto choice (keyboard-only: g puts the look cursor on the unit and Enter picks its square). City screen: I H M V R Esc, Shift-M, Shift-A.
 Mouse (320x200 space): LMB menu bar/items; LMB tile: own city -> city screen, own unit -> activate/stack list, else centre; RMB adjacent tile -> move;
 goto LMB = destination; LMB minimap centres; LMB unit box cycles; dialogs LMB choose, RMB cancel; city map LMB toggles worker, citizen click cycles specialist.
 Software cursor TORCH.PIC (hot spot top-left, corner colour transparent) drawn in 320x200 space; hardware cursor hidden.
@@ -480,7 +480,7 @@ window (else the view centre, 0x7363), moves with the keypad instead of the unit
 the view jumps to (x - 8, y - 7)), blinks as a 16x16 outline white/black with the unit (0x8a43/0x8aff)
 and on Enter acts as a left click on its square (0x4605 -> 0x4909); `MapView::look_key`. 'g' uses the
 same cursor (0x4e83); civrs's goto mode keeps its own keypad cursor. With a mouse CIV.EXE ignores Tab
-and Esc on the map (checked live in DOSBox), so civrs does too; the only quit question is Alt-Q
+and Esc on the map (checked live in DOSBox), so civrs does too; the only quit question is Alt-Q (civrs also takes Ctrl-Q)
 (0x728c, "Are you sure you\nwant to Quit?" / "Keep Playing" / "Yes, Quit" at (100, 80)).
 
 ## Build order, tracks and milestones

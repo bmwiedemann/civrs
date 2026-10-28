@@ -1012,11 +1012,12 @@ impl MapView {
 
     /// A key while the goto's square is chosen: 'g' again ends the choice (0x4f21 flips
     /// [bp-0x36]), and in the keyboard-only mode switches the look cursor off (0x4ec0). Any
-    /// other key does what it does outside the choice (None): Esc nothing with a mouse
-    /// (0x72d3), the keypad moves the unit, or the look cursor, whose Enter clicks the square
-    /// (0x4605 -> 0x4909).
+    /// other key does what it does outside the choice (None): the keypad moves the unit, or
+    /// the look cursor, whose Enter clicks the square (0x4605 -> 0x4909). As a civrs extra Esc
+    /// also ends the choice (in CIV.EXE it does nothing with a mouse, 0x72d3).
     fn goto_key(&mut self, ctx: &mut UiContext, key: Key, mods: crate::platform::Mods) -> Option<Transition> {
-        if key != Key::Char('g') || mods.alt || mods.ctrl || mods.shift {
+        let end = key == Key::Esc || key == Key::Char('g') && !(mods.alt || mods.ctrl || mods.shift);
+        if !end {
             return None;
         }
         if ctx.keyboard_only {
@@ -1729,8 +1730,8 @@ impl Screen for MapView {
                             Err(e) => format!("Save failed: {e}"),
                         })))
                     }
-                    // Alt-Q only (0x1000 -> 0x728c); Ctrl-Q is no key of move_units
-                    Key::Char('q') if mods.alt => {
+                    // Alt-Q (0x1000 -> 0x728c); Ctrl-Q is a civrs extra, no key of move_units
+                    Key::Char('q') if mods.ctrl || mods.alt => {
                         self.pending = Pending::QuitConfirm;
                         Transition::Push(Box::new(YesNo::new(vec!["Are you sure you".into(), "want to Quit?".into()], "Keep Playing", "Yes, Quit").with_pos(100, 80)))
                     }
@@ -2151,16 +2152,19 @@ mod tests {
     #[test]
     fn goto_keys_with_a_mouse_and_with_the_keyboard_only() {
         let Some((mut ctx, mut mv, id)) = view() else { return };
-        // Ctrl-Q is no key (only Alt-Q, 0x1000 -> 0x728c)
-        assert!(matches!(mv.handle(&key(Key::Char('q'), CTRL), &mut ctx), Transition::None));
+        // Alt-Q asks to quit (0x1000 -> 0x728c), and so does Ctrl-Q as a civrs extra
         assert!(matches!(mv.handle(&key(Key::Char('q'), ALT), &mut ctx), Transition::Push(_)));
         mv.pending = Pending::None;
-        // with a mouse Esc keeps the goto choice (0x72d3), 'g' again ends it (0x4f21)
+        assert!(matches!(mv.handle(&key(Key::Char('q'), CTRL), &mut ctx), Transition::Push(_)));
+        mv.pending = Pending::None;
+        // 'g' again ends the goto choice (0x4f21); Esc does too as a civrs extra (CIV.EXE
+        // ignores it with a mouse, 0x72d3)
         mv.handle(&key(Key::Char('g'), NONE), &mut ctx);
         assert_eq!(mv.mode, Mode::Goto);
+        mv.handle(&key(Key::Char('g'), NONE), &mut ctx);
+        assert_eq!(mv.mode, Mode::Normal);
+        mv.handle(&key(Key::Char('g'), NONE), &mut ctx);
         mv.handle(&key(Key::Esc, NONE), &mut ctx);
-        assert_eq!(mv.mode, Mode::Goto);
-        mv.handle(&key(Key::Char('g'), NONE), &mut ctx);
         assert_eq!(mv.mode, Mode::Normal);
         assert_eq!(mv.look, None);
         // keyboard only: 'g' puts the look cursor on the unit (0x4e99), the keypad moves it,
