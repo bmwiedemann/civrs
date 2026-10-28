@@ -907,7 +907,9 @@ impl Game {
             return;
         }
         self.push_event(GameEvent::CityDefected { city: c, admired, from: city.owner });
-        self.revolt_city(c, to);
+        // city_revolt (o 0x1e06a) hands it over with capture_city (0x13d76), whose capture
+        // message the human reads when involved or with an embassy
+        self.transfer_city(c, to);
         self.refresh_vision(to);
         self.refresh_vision(city.owner);
         self.city_lost_check(city.owner, to);

@@ -1662,6 +1662,8 @@ mod tests {
         g.city_unrest(c);
         assert_eq!(g.city(c).owner, 2);
         assert!(g.events.iter().any(|e| matches!(e, GameEvent::CityDefected { city, admired: a, from: 1 } if *city == c && *a == admired)));
+        // and capture_city's message follows (city_revolt o 0x1e06a -> 0x13d76)
+        assert!(g.events.iter().any(|e| matches!(e, GameEvent::CityCaptured { city, by: 2, from: 1, .. } if *city == c)));
     }
 
     /// The human (slot h) and an opponent o on the flat arena, everything at war.
