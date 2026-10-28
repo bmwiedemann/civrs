@@ -373,8 +373,11 @@ impl Game {
             adv = Some(a);
             self.push_event(GameEvent::AdvanceAcquired { slot: by, adv: a, source: "conquest".into() });
         }
-        // improvements: each has a 1/3 chance of being destroyed (wonders survive); Palace is lost
-        let doomed: Vec<u8> = city.improvement_list().into_iter().filter(|i| *i == imp::PALACE || self.rng.chance(33)).collect();
+        // improvements (CIV.EXE 0x13ef5..0x13f1a; wonders survive): the Palace, Temple,
+        // Courthouse and Cathedral go (mask 0xfbb6), then every other one of the first 16 by
+        // a coin (0xaaaa >> random(2)) and all those from SDI Defense on
+        let mask = 0xfbb6u32 & (0xaaaa >> self.rng.below(2));
+        let doomed: Vec<u8> = city.improvement_list().into_iter().filter(|i| mask & (1 << (*i - 1)) == 0).collect();
         {
             let cm = self.city_mut(c);
             cm.owner = by;
@@ -927,7 +930,9 @@ mod tests {
         // a second city keeps civ 2 in the game (losing its last one would destroy it)
         g.add_city(2, "Home".into(), 40, 30);
         g.city_mut(c).size = 3;
-        g.city_mut(c).add_improvement(imp::TEMPLE);
+        for i in 1..=20 {
+            g.city_mut(c).add_improvement(i);
+        }
         g.auto_assign(c);
         g.player_mut(2).gold = 300;
         g.player_mut(2).learn(crate::rules::advance_ids::ALPHABET);
@@ -939,7 +944,12 @@ mod tests {
         let city = g.city(c);
         assert_eq!(city.owner, 1);
         assert_eq!(city.size, 2);
-        assert!(!city.has_improvement(imp::PALACE));
+        // CIV.EXE 0x13ef5..0x13f1a: one parity of the first 16 survives, but never the
+        // Palace, Temple, Courthouse or Cathedral, nor anything from SDI Defense on
+        let kept = city.improvement_list();
+        let odd = kept.first().is_some_and(|i| i % 2 == 1);
+        let expect: Vec<u8> = (1..=16).filter(|i| (i % 2 == 1) == odd && ![imp::PALACE, imp::TEMPLE, imp::COURTHOUSE, imp::CATHEDRAL].contains(i)).collect();
+        assert_eq!(kept, expect);
         // CIV.EXE 0x143fd: gold * size / (citizens + 1) = 300 * 3 / (3 + 1 + 1)
         assert_eq!(g.player(1).gold - before, 180);
         assert_eq!(g.player(2).gold, 120);
