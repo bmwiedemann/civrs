@@ -34,15 +34,16 @@ impl Game {
     /// move code has it (0x5ac7): only onto an empty square, never off a ship, and only when
     /// both squares are `zoc_blocked` (0x9581): no city there and a unit of another civ on a
     /// neighbouring square of the same kind (`enemy_adjacent` 0x95ac, land beside land),
-    /// treaty or not, barbarians too.
-    pub fn zoc_blocks(&self, unit: &super::Unit, from: (i32, i32), to: (i32, i32)) -> bool {
-        if !unit.is_land() || matches!(unit.kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN) {
+    /// treaty or not, barbarians too. The two tests come first, for every land unit, and show
+    /// the human what they find (`zoc_blocked_look`); the exemptions follow (0x5b01, 0x5b08).
+    pub fn zoc_blocks(&mut self, unit: &super::Unit, from: (i32, i32), to: (i32, i32)) -> bool {
+        if !unit.is_land() || self.all_units().any(|u| u.id != unit.id && (u.x, u.y) == to) {
             return false;
         }
-        if self.map.tile(from.0, from.1).is_ocean() || self.all_units().any(|u| u.id != unit.id && (u.x, u.y) == to) {
+        if !(self.zoc_blocked_look(unit.owner, from.0, from.1) && self.zoc_blocked_look(unit.owner, to.0, to.1)) {
             return false;
         }
-        self.zoc_blocked(unit.owner, from.0, from.1) && self.zoc_blocked(unit.owner, to.0, to.1)
+        !matches!(unit.kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN) && !self.map.tile(from.0, from.1).is_ocean()
     }
 
     /// Try to move the unit one step. Handles combat, city capture, huts and boarding.
@@ -921,6 +922,24 @@ mod zoc_tests {
         coast.map.get_mut(41, 26).unwrap().terrain = Terrain::Ocean;
         coast.add_unit(other, unit_ids::TRIREME, 41, 26);
         assert_eq!(coast.try_move(id, Dir8::E), Ok(MoveOutcome::Moved));
+    }
+
+    #[test]
+    fn the_zoc_test_shows_the_human_the_foreign_unit_and_city_it_finds() {
+        // enemy_adjacent 0x9645..0x971c: the move is refused, what the test found is shown
+        let (mut g, id) = open_field();
+        let h = g.human_slot;
+        let other = if h == 2 { 3 } else { 2 };
+        let c = g.add_city(other, "Far".into(), 41, 24);
+        g.city_mut(c).size = 3;
+        g.city_mut(c).known_size = 0;
+        let guard = g.add_unit(other, unit_ids::MILITIA, 41, 24);
+        g.unit_mut(guard).seen_by = 1 << other;
+        g.map.get_mut(41, 24).unwrap().explored &= !(1 << h);
+        assert_eq!(g.try_move(id, Dir8::E), Err(RuleError::Zoc));
+        assert_eq!(g.city(c).known_size, 3);
+        assert_ne!(g.unit(guard).seen_by & 1 << h, 0);
+        assert!(g.map.tile(41, 24).explored_by(h));
     }
 
     #[test]

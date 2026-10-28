@@ -114,8 +114,39 @@ impl Game {
     }
 
     pub fn enemy_adjacent(&self, civ: Slot, x: i32, y: i32) -> bool {
+        self.enemy_adjacent_square(civ, x, y).is_some()
+    }
+
+    /// The first neighbour (directions 1..8) that `enemy_adjacent` 0x95ac finds: of the same
+    /// kind as (x, y), with units of another civilization.
+    fn enemy_adjacent_square(&self, civ: Slot, x: i32, y: i32) -> Option<(i32, i32)> {
         let land = self.map.is_land(x, y);
-        Map::neighbours8(x, y).any(|(nx, ny)| self.map.is_land(nx, ny) == land && self.all_units().any(|u| u.x == nx && u.y == ny && u.owner != civ))
+        (1..=8).map(|k| (Map::wrap_x(x + DX[k]), y + DY[k])).filter(|&(nx, ny)| Map::in_bounds(nx, ny)).find(|&(nx, ny)| self.map.is_land(nx, ny) == land && self.unit_owner_at(nx, ny).is_some_and(|o| o != civ))
+    }
+
+    /// `zoc_blocked` as the move code and the goto step call it, with what `enemy_adjacent`
+    /// does for the human (0x9645..0x971c): the first unit of the foreign square found becomes
+    /// seen by him and the square explored, and a city there shows him its size (city +8).
+    pub fn zoc_blocked_look(&mut self, civ: Slot, x: i32, y: i32) -> bool {
+        if self.city_at(x, y).is_some() {
+            return false;
+        }
+        let Some((nx, ny)) = self.enemy_adjacent_square(civ, x, y) else { return false };
+        let h = self.human_slot;
+        if civ == h {
+            if let Some(first) = self.units_at(nx, ny).first().copied() {
+                if self.unit(first).seen_by & 1 << h == 0 {
+                    self.unit_mut(first).seen_by |= 1 << h;
+                    self.map.explore(h, nx, ny, 0);
+                }
+            }
+            if let Some(c) = self.city_at(nx, ny) {
+                let size = self.city(c).size;
+                self.city_mut(c).known_size = size;
+                self.map.explore(h, nx, ny, 0);
+            }
+        }
+        true
     }
 
     /// The block links of the map, worked out on first use.
@@ -573,7 +604,7 @@ impl Game {
         let sea = u.info().domain == Domain::Sea;
         let air = u.info().domain == Domain::Air;
         let road_here = self.exe_road(u.x, u.y);
-        let zoc_here = self.zoc_blocked(civ, u.x, u.y);
+        let zoc_here = self.zoc_blocked_look(civ, u.x, u.y);
         let heading = self.heading(id);
         let mut best = 9999;
         let mut pick = 0;
@@ -592,7 +623,7 @@ impl Game {
             let own_city = self.city_at(nx, ny).is_some() && self.last_occupant(nx, ny) == civ;
             let ok = if owner.is_none() || owner == Some(civ) {
                 let kind_ok = (t == Terrain::Ocean) == sea;
-                if kind_ok && !(zoc_here && self.zoc_blocked(civ, nx, ny)) {
+                if kind_ok && !(zoc_here && self.zoc_blocked_look(civ, nx, ny)) {
                     true
                 } else {
                     air || own_city
