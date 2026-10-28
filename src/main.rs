@@ -324,7 +324,18 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&P
             // crowd marches over the human's first city (10 frames per step of the march)
             "riot" => civrs::ui::eventpics::disorder_screen(&ctx, ctx.game().cities_of(ctx.game().human_slot)[0]),
             "love" => civrs::ui::eventpics::celebration_screen(&ctx, ctx.game().cities_of(ctx.game().human_slot)[0]),
-            "invaders" => civrs::ui::eventpics::invaders_screen(&ctx, ctx.game().cities_of(ctx.game().human_slot).first().copied(), vec!["Barbarians land".into(), "near Rome!".into()]),
+            "invaders" => civrs::ui::eventpics::invaders_screen(&ctx, ctx.game().human_slot, ctx.game().cities_of(ctx.game().human_slot).first().copied(), vec!["Barbarians land".into(), "near Rome!".into()]),
+            // a city captured with Animations on: screen:capture:SEED:TURNS (the human's
+            // first city taken by civ 2; CIVRS_FRAMES moves the march on)
+            "capture" => {
+                let g = ctx.game_mut();
+                let c = g.cities_of(g.human_slot)[0];
+                g.players[2].in_game = true;
+                g.players[2].alive = true;
+                g.city_mut(c).owner = 2;
+                let lines = vec![format!("{} capture", g.player(2).plural()), format!("{}. 10 gold", g.city(c).name), "pieces plundered.".into()];
+                civrs::ui::eventpics::invaders_screen(&ctx, 2, Some(c), lines)
+            }
             "endgame" => civrs::ui::endgame::end_screen(&ctx, match seed { 1 => civrs::game::EndReason::Destroyed, 2 => civrs::game::EndReason::Conquest, 3 => civrs::game::EndReason::Spaceship(1), _ => civrs::game::EndReason::Retired }),
             "arch" => civrs::ui::endgame::arch_screen(&ctx),
             "newspaper" => civrs::ui::eventpics::over_map(civrs::ui::newspaper::newspaper(vec!["Scientists alarmed by".into(), "rising temperatures.".into(), "Global Warming feared!".into()], None)),

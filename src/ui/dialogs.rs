@@ -166,7 +166,8 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             msg(vec![format!("Development of {}", rules::ADVANCES[*adv as usize].name), "makes existing Barracks".into(), "obsolete.".into()])
         }
         GameEvent::Disorder(c) if g.city(*c).owner == me => Some(eventpics::disorder_screen(ctx, *c)),
-        GameEvent::DisorderOngoing { city, .. } if g.city(*city).owner == me => msg(eventpics::disorder_lines(ctx, *city)),
+        // the riot message without its animation, at (100, 80) (CIV.EXE 0x126a5..0x126b7)
+        GameEvent::DisorderOngoing { city, .. } if g.city(*city).owner == me => Some(Box::new(MessageBox::new(eventpics::disorder_lines(ctx, *city)).with_pos(100, 80))),
         GameEvent::DisorderEnded(c) if g.city(*c).owner == me => msg(vec![format!("Order restored in {}.", city_name(*c))]),
         GameEvent::Celebration(c) if g.city(*c).owner == me => Some(eventpics::celebration_screen(ctx, *c)),
         // "'We love the TITLE'\ncelebration canceled\nin CITY." in the city's newspaper, not
@@ -216,13 +217,19 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
         }
         GameEvent::UnitLost { slot, kind, reason, .. } if *slot == me => msg(vec![format!("{} {}.", rules::UNITS[*kind as usize].name, reason)]),
         // capture_city (CIV.EXE 0x14014..0x14130): with the human on either side "PLURAL
-        // capture\nCITY. N gold\npieces plundered." in the city's newspaper (with animations
-        // the original shows it over the city view, overlay 19, not ported); a computer
+        // capture\nCITY. N gold\npieces plundered."; with Animations (ds:0x19c0 bit 3) in a
+        // box over the captured city's view (overlay 19 +0 with -2) while the captor's
+        // invaders march past (overlay 19 +0x167b), else in the city's newspaper. A computer
         // captor's theft follows as "PLURAL take\nADVANCE." (steal_advance 0x145a6). Between
         // computer players only a human embassy with either side tells, as "Spies report:"
         // at (100, 80) (0x1416d..0x1422a).
         GameEvent::CityCaptured { city, by, from, gold, adv } if *by == me || *from == me => {
-            let news = paper(vec![format!("{} capture", g.player(*by).plural()), format!("{}. {} gold", city_name(*city), gold), "pieces plundered.".into()], Some(*city));
+            let lines = vec![format!("{} capture", g.player(*by).plural()), format!("{}. {} gold", city_name(*city), gold), "pieces plundered.".into()];
+            let news = if g.options.animations {
+                Some(eventpics::invaders_screen(ctx, *by, g.city_opt(*city).map(|_| *city), lines))
+            } else {
+                paper(lines, Some(*city))
+            };
             match adv {
                 Some(a) if *from == me => Some(Box::new(Sequence {
                     first: news,

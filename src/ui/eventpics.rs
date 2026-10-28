@@ -337,13 +337,14 @@ pub fn celebration_screen(ctx: &UiContext, city: CityId) -> Box<dyn Screen> {
     crowd_or_message(ctx, March::Love, sheet, Some(city), lines)
 }
 
-/// Invaders marching past (CIV.EXE o 0x1a7f0): INVADERS.PIC once Gunpowder and Automobile are
-/// known, INVADER2.PIC with Gunpowder only, INVADER3.PIC before; over the view of `city` when
-/// given, else over the bare meadow.
-pub fn invaders_screen(ctx: &UiContext, city: Option<CityId>, lines: Vec<String>) -> Box<dyn Screen> {
-    let sheet = if !human_knows(ctx, adv::GUNPOWDER) {
+/// Invaders marching past (CIV.EXE o 0x1a7f0, `anim_invaders(civ)`): INVADERS.PIC once `civ`
+/// knows Gunpowder and Automobile, INVADER2.PIC with Gunpowder only, INVADER3.PIC before;
+/// over the view of `city` when given, else over the bare meadow.
+pub fn invaders_screen(ctx: &UiContext, civ: crate::game::Slot, city: Option<CityId>, lines: Vec<String>) -> Box<dyn Screen> {
+    let knows = |a| ctx.game.as_ref().map(|g| g.player(civ).knows(a)).unwrap_or(false);
+    let sheet = if !knows(adv::GUNPOWDER) {
         "INVADER3"
-    } else if human_knows(ctx, adv::AUTOMOBILE) {
+    } else if knows(adv::AUTOMOBILE) {
         "INVADERS"
     } else {
         "INVADER2"
