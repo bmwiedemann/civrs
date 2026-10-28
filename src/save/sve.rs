@@ -52,9 +52,13 @@ mod off {
     pub const GOVERNMENT: usize = 0x0538;
     pub const POLICIES: usize = 0x0548;
     pub const DIPLOMACY: usize = 0x0648;
+    pub const CITIZENS: usize = 0x0708;
+    pub const STRENGTH: usize = 0x0718;
+    pub const RANKS: usize = 0x0728;
     pub const TAX: usize = 0x0738;
     pub const LAST_CONTACT: usize = 0x0758;
     pub const TRIBE: usize = 0x0778;
+    pub const CENSUS: usize = 0x0788;
     pub const POWER: usize = 0x0ba8;
     pub const CITIES: usize = 0x1508;
     pub const UNITS: usize = 0x26c0;
@@ -515,6 +519,28 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
             g.ai_memory.policies[c] = Some(pol);
         }
     }
+    // the census of each civ's last AI turn (SVE 0x0788: ds:0x6cac defence, 0x807a attack,
+    // 0x6b96 cities per civ and continent; 0x0708 ds:0xd2f8 citizens, 0x0718 ds:0x6e82
+    // strength, 0x0728 ds:0x803c power rank); land squares and sites are counted from the map
+    let live = g.live_census();
+    {
+        let m = &mut g.ai_memory;
+        for c in 0..8usize {
+            for k in 0..16 {
+                let at = 32 * c + 2 * k;
+                m.census.defence[c][k] = s.w(off::CENSUS + at) as i32;
+                m.census.attack[c][k] = s.w(off::CENSUS + 0x100 + at) as i32;
+                m.census.cities[c][k] = s.w(off::CENSUS + 0x200 + at) as i32;
+            }
+            m.census.citizens[c] = s.civ_w(off::CITIZENS, c) as i32;
+            m.census.strength[c] = s.civ_w(off::STRENGTH, c) as i32;
+            m.ranks[c] = s.civ_w(off::RANKS, c).clamp(0, 7) as u8;
+        }
+        m.census.squares = live.squares;
+        m.census.sites = live.sites;
+        let h = g.human_slot as usize;
+        m.census.faces_human = (0..8).filter(|&c| h < 8 && (1..15).any(|k| m.census.defence[c][k] != 0 && m.census.cities[h][k] > 1)).fold(0, |f, c| f | 1 << c);
+    }
 
     // global tables
     g.first_discoverer = (0..72).map(|a| s.w(off::FIRST + 2 * a) as u8 & 7).collect();
@@ -638,6 +664,23 @@ mod tests {
         let first = &g.history.records()[0];
         assert_eq!((first.turn, first.kind, first.args[0]), (0, crate::game::replay::kind::CITY, 1));
         assert_eq!(g.history.name(first.args[1]), "Rome");
+    }
+
+    #[test]
+    fn imports_the_census_of_each_civs_last_ai_turn() {
+        // ai_civ_turn runs after the civ's cities and the game is saved in the human's moves,
+        // so the snapshot holds the human's cities as they were then (CIVIL1 has a city
+        // founded since: the save's own city count, SVE 0x06c8, does not have it either)
+        for n in [0u8, 1, 3, 4] {
+            let Some(g) = sample(n) else { continue };
+            let h = g.human_slot;
+            let sizes: i32 = g.all_cities().filter(|c| c.owner == h).map(|c| c.size as i32).sum();
+            let c = &g.ai_memory.census;
+            assert!(c.citizens[h as usize] <= sizes && (n != 0 || c.citizens[h as usize] == sizes), "CIVIL{n}");
+            assert!(c.strength[h as usize] > 0, "CIVIL{n}");
+            let on_land: i32 = c.cities[h as usize].iter().sum();
+            assert!(on_land >= 1 && on_land <= g.all_cities().filter(|x| x.owner == h).count() as i32, "CIVIL{n}");
+        }
     }
 
     #[test]
