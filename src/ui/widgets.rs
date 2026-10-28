@@ -759,7 +759,10 @@ impl Screen for MenuDialog {
     }
 }
 
-/// Ticks a chosen menu row stays up (CIV.EXE 0x1cc73).
+/// Ticks a chosen menu row stays up (CIV.EXE 0x1cc73). In 16 colours menu_select first
+/// turns the row's highlight (11) into the title colour ds:0x654c (0x1cc3c; colour 11 again,
+/// so no change, with the help flag ds:0x2f9c, 0x1cb98); in 256 colours (ds:0xd762, as civrs
+/// draws) it leaves the highlight as it is (0x1cb89).
 pub const MENU_CHOICE_TICKS: u32 = 20;
 
 impl MenuDialog {
