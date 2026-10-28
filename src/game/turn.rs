@@ -785,16 +785,19 @@ impl Game {
                 self.replay_unit_built(owner, k);
                 // a computer Diplomat starts out next to a human city, heading for it; with no
                 // such city the shields are given back and nothing is built (CIV.EXE 0xded6,
-                // 0xe124..0xe379)
+                // 0xe124..0xe379); either way the city re-chooses, as after every unit (0xe3b1)
                 if k == unit_ids::DIPLOMAT && !human {
-                    let Some(((dx, dy), target)) = self.ai_diplomat_site(owner) else { return };
-                    let id = self.add_unit(owner, k, dx, dy);
-                    self.unit_mut(id).home = Some(c);
-                    let (tx, ty) = self.city(target).pos();
-                    self.set_goto(id, tx, ty);
-                    self.city_mut(c).shields -= self.production_cost(c, prod);
-                    self.refresh_vision(owner);
-                    self.push_event(GameEvent::ItemBuilt { city: c, item: prod });
+                    if let Some(((dx, dy), target)) = self.ai_diplomat_site(owner) {
+                        let id = self.add_unit(owner, k, dx, dy);
+                        self.unit_mut(id).home = Some(c);
+                        let (tx, ty) = self.city(target).pos();
+                        self.set_goto(id, tx, ty);
+                        self.city_mut(c).shields -= self.production_cost(c, prod);
+                        self.refresh_vision(owner);
+                        self.push_event(GameEvent::ItemBuilt { city: c, item: prod });
+                    }
+                    let next = self.ai_production(c);
+                    self.city_mut(c).production = next;
                     return;
                 }
                 let id = self.add_unit(owner, k, x, y);
@@ -1902,6 +1905,10 @@ mod diplomat_tests {
         g.complete_production(home, Production::Unit(unit_ids::DIPLOMAT));
         assert_eq!(g.city(home).shields, cost, "the shields are given back");
         assert!(!g.all_units().any(|u| u.kind == unit_ids::DIPLOMAT));
+        // and the city chooses again, as after any unit (0xe3b1)
+        let advice = g.ai_production(home);
+        assert_eq!(g.city(home).production, advice);
+        g.city_mut(home).production = Production::Unit(unit_ids::DIPLOMAT);
         // near enough, but at peace with the human: none either
         g.unit_mut(warrior).x = 16;
         g.set_relation(h, a, Relation::Peace);
@@ -1911,6 +1918,8 @@ mod diplomat_tests {
         let d = g.all_units().find(|u| u.kind == unit_ids::DIPLOMAT).unwrap();
         assert_eq!((d.pos(), d.goto, d.home), ((16, 21), Some((20, 20)), Some(home)));
         assert_eq!(g.city(home).shields, 0);
+        let advice = g.ai_production(home);
+        assert_eq!(g.city(home).production, advice);
     }
 
     #[test]
