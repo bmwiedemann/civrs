@@ -554,6 +554,23 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   row, the unit records and their order, the view-dependent next unit, scroll_to, the click on a
   lone unit, the moves after a load from slot 4, and the taxes and workers of a city that builds
   Settlers. CIV.EXE accepts 70% tax under Despotism from the rate menu (o 0x6fd9), as civrs does.
+- Hand-edited saves (`reference/tools/sve_edit.py IN.SVE OUT.SVE EDIT...`: advances, city
+  fields, new units, gold, diplomacy; it re-encodes the .MAP to mark each new unit's square on
+  map page 2, (x + 160, y) = civ | 8, which unit_at 0x1a68:0x145e needs to see the unit). A
+  city's specialists are the count in bits 26.. of its worked word (0xcce3), not its unworked
+  citizens. CIVIL5.txt / CIVIL6.txt (the edits in their headers) cover specialists, caravans
+  (help, keep moving, routes), the Settlers' fortress, pillage, home city, disbanding, and
+  attacks on a barbarian, a treaty partner's Settlers and a city. They match 4..6 turns but for
+  the veteran rolls (random(2), 0x1a20a) and the fortress's time, which CIV.EXE takes from a
+  stale local of move_units (0x522a reads [bp-0x3e], set only by the road/irrigation/mine/move
+  code; civrs uses the square's terrain).
+- The runs found and fixed: the policy a re-choice reads (0x15cd1 stores it first), the
+  re-choice of a computer city emptied by an attack (0x625e), 'f' as the only fortress key and
+  'D' without a question, the next unit off the screen (from the loop's mark, 0x4150/0x4381),
+  and what a load does for the human (politics, ai_civ_turn, goals and his units' looks,
+  0x2503..0x25af, 0x41e3). The looks run unit by unit as CIV.EXE's loop reaches them, so a
+  computer's emissary can appear in the middle of the human's actions: scripts keep units of
+  civilizations at war apart.
 - dosbox's captured mouse only moves relatively, one 640x400 picture pixel per host pixel, and the
   picture sits letterboxed at y = 40 of the 640x480 window: `dosciv.click` pushes the pointer into
   the top-left corner, where the driver clamps it, and then moves it by (2x + 1, 2y + 1).

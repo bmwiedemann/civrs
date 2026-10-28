@@ -1,0 +1,14 @@
+# CIVIL6: CIVIL4 edited by hand, made with
+#   sve_edit.py CIVIL4.SVE CIVIL6.SVE adv:1:2,9,16,18,24 city:0:prod=-25
+#     unit:1:27:12,28:0 unit:1:3:11,19 unit:1:8:11,21 diplo:1:3:3 diplo:3:1:3
+# Rome builds the Pyramids; a treaty with the Germans. Turn 50: the caravan keeps moving into
+# Rome (row 0) and sentries; the Militia fortifies (it comes next: the loop takes the first
+# unit off the screen from its mark on, 0x4381); the Legion breaks the treaty ("Germans cancel
+# peace treaty" takes a Return) and kills the German Settlers; the Catapult empties Berlin,
+# which shrinks and re-chooses at once (0x625e). Matches 4 turns but for the Catapult's
+# veteran roll.
+turn 50
+unit 12,28 k2:0 s
+unit 14,14 f
+unit 11,19 k6:1 ret
+unit 11,21 k8

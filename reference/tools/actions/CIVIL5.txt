@@ -1,0 +1,28 @@
+# CIVIL5: CIVIL4 edited by hand (the sample has no Construction, no city of size 5, no
+# caravan), made with
+#   sve_edit.py CIVIL4.SVE CIVIL5.SVE adv:1:1,2,16,18,24,25,45
+#     city:0:size=6,prod=-27,codes=0xff,worked=0x10100021
+#     unit:1:27:12,28:0 unit:1:27:11,21:0 unit:1:0:8,24:4 unit:1:1:12,27 unit:1:1:9,25
+#     unit:1:1:11,26 unit:1:3:11,30 unit:0:1:10,31 diplo:1:3:3 diplo:3:1:3
+# Rome size 6 with two squares and four entertainers (the count in bits 26.. of the worked
+# word) builds the Colossus; a treaty with the Germans. Turn 50: a taxman and a scientist, a
+# worker toggled; one caravan helps the wonder, one sets up a route with Berlin; the Settlers
+# build a fortress ('f'); a Militia pillages the road at 12,27, one is rehomed in Caesarea,
+# one disbanded; the Legion attacks a barbarian Militia. Matches 6 turns but for the Legion's
+# veteran roll (random(2), 0x1a20a) and the fortress, which CIV.EXE times from a stale local
+# of move_units (0x522a reads [bp-0x3e]; civrs uses the square's own terrain).
+turn 50
+city Rome 12,29 spec 1
+city Rome 12,29 spec 2
+city Rome 12,29 spec 2
+city Rome 12,29 tile 1,1
+unit 12,28 k2:2
+unit 8,24 f
+unit 12,27 P
+unit 9,25 h space
+unit 11,26 D
+unit 11,30 k1
+unit 14,14 f
+unit 11,21 k8 ret
+turn 51
+city Rome 12,29 tile 0,0
