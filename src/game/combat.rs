@@ -295,6 +295,9 @@ impl Game {
         self.remove_unit(id);
         let mut losers: Vec<Slot> = Vec::new();
         let mut killers: Vec<Slot> = Vec::new();
+        // the announcement and the explosion come before the SDI messages (0x1a463..0x1a4a0)
+        let city = self.city_at(x, y);
+        self.push_event(GameEvent::NuclearStrike { at: (x, y), by, city });
         for (xx, yy) in std::iter::once((Map::wrap_x(x), y)).chain(Map::neighbours8(x, y)) {
             if let Some(c) = self.city_at(xx, yy).filter(|c| self.city(*c).has_improvement(imp::SDI_DEFENSE)) {
                 self.push_event(GameEvent::SdiProtects { city: c });
@@ -313,7 +316,6 @@ impl Game {
                 }
             }
         }
-        let city = self.city_at(x, y);
         for c in self.nuclear_fallout(x, y) {
             let owner = self.city(c).owner;
             if !losers.contains(&owner) {
@@ -326,7 +328,6 @@ impl Game {
         for l in killers.into_iter().filter(|l| *l != by) {
             self.raise_flag(l, by, super::diplomacy::flags::VENDETTA | super::diplomacy::flags::NUCLEAR);
         }
-        self.push_event(GameEvent::NuclearStrike { at: (x, y), by, city });
         self.refresh_vision(by);
         for l in losers {
             self.refresh_vision(l);

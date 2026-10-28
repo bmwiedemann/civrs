@@ -543,15 +543,21 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
             news(paragraphs(&substitute(&lines, &v)))
         }
         GameEvent::UnitExpired { .. } => None,
-        GameEvent::NuclearStrike { at, by, city } => {
-            // The explosion plays at the viewport centre (the map view centres on the strike
-            // first); the report box follows.
+        // nuclear_attack (CIV.EXE 0x1a463): a computer's strike is announced first by the
+        // Defense Minister (ds:0x2f9e = 3) at (100, 80), "<Plural> use\nnuclear weapons!"
+        // (ds:0x2b77); the explosion follows (o 0x1dedc). The human's own strike has no text.
+        // The explosion plays at the viewport centre (the map view centres on the strike first).
+        GameEvent::NuclearStrike { at, by, .. } => {
             let vx = crate::game::Map::wrap_x(at.0 - crate::ui::mapview::VIEW_W / 2);
             let vy = (at.1 - crate::ui::mapview::VIEW_H / 2).clamp(0, crate::rules::MAP_H as i32 - crate::ui::mapview::VIEW_H);
             let anim = eventpics::nuke_animation_at_tile(at.0, at.1, vx, vy);
-            let where_ = city.map(city_name).filter(|n| !n.is_empty()).map(|n| format!("on {n}")).unwrap_or_else(|| format!("at {},{}", at.0, at.1));
-            let text = vec![format!("The {} launch", civ(*by)), format!("a nuclear attack {where_}!")];
-            Some(Box::new(Sequence { first: Some(anim), then: Some(eventpics::travelers_report(text)) }))
+            if *by == me {
+                return Some(anim);
+            }
+            let text: Box<dyn Screen> = Box::new(
+                MessageBox::new(vec![format!("{} use", g.player(*by).plural()), "nuclear weapons!".into()]).with_title("Defense Minister:").with_pos(100, 80),
+            );
+            Some(Box::new(Sequence { first: Some(text), then: Some(anim) }))
         }
         GameEvent::SdiProtects { city } => Some(Box::new(MessageBox::new(vec![format!("SDI protects {}.", city_name(*city))]).with_pos(80, 100))),
         GameEvent::GameEnded(reason) => Some(crate::ui::endgame::end_screen(ctx, *reason)),

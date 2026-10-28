@@ -409,25 +409,43 @@ impl Screen for CrowdScreen {
 
 /// NUKE1.PIC: 7x4 frames of 44x44 in 45-px cells.
 pub const NUKE_GRID: SheetGrid = SheetGrid { origin: (1, 1), cell: (44, 44), cols: 7, rows: 4 };
-const NUKE_FRAMES: i32 = 28;
+/// `nuke_animation` shows frames 0..27, then 21..27 again: 35 steps (o 0x1e033).
+const NUKE_STEPS: u64 = 35;
+/// Ticks (60 Hz) each step stays up (`wait_ticks(5)`, o 0x1e003).
+const NUKE_STEP_TICKS: u64 = 5;
+
+/// Frame of NUKE1 shown at `step`: 0..27, then the last seven again (o 0x1e039).
+fn nuke_frame(step: u64) -> i32 {
+    let s = step as i32;
+    if s < 28 { s } else { s - 7 }
+}
 
 pub struct NukeAnimation {
-    cx: i32,
-    cy: i32,
+    /// Top-left corner of the 44x44 explosion on screen.
+    x: i32,
+    y: i32,
     t: u64,
+}
+
+/// Explosion whose 44x44 box has its top-left corner at screen (`x`, `y`), kept inside the
+/// map window: x in 80..=276, y in 8..=156 (CIV.EXE o 0x1df86..0x1dfaf). Near an edge the
+/// box shifts rather than being cut.
+fn nuke_at(x: i32, y: i32) -> Box<dyn Screen> {
+    Box::new(NukeAnimation { x: x.clamp(80, 276), y: y.clamp(8, 156), t: 0 })
 }
 
 /// Explosion animation centred on screen pixel (`cx`, `cy`), drawn over the map.
 pub fn nuke_animation(cx: i32, cy: i32) -> Box<dyn Screen> {
-    Box::new(NukeAnimation { cx, cy, t: 0 })
+    nuke_at(cx - 22, cy - 22)
 }
 
-/// Explosion over map tile (`x`, `y`) given the map view origin (`vx`, `vy`).
+/// Explosion over map tile (`x`, `y`) given the map view origin (`vx`, `vy`): the box starts at
+/// (16 * dx + 66, 16 * dy - 6), 14 px left of and above the square (o 0x1df5d).
 pub fn nuke_animation_at_tile(x: i32, y: i32, vx: i32, vy: i32) -> Box<dyn Screen> {
     use crate::ui::mapview::{VIEW_X, VIEW_Y};
-    let px = VIEW_X + crate::game::Map::wrap_x(x - vx) * crate::ui::tilerender::TILE + 8;
-    let py = VIEW_Y + (y - vy) * crate::ui::tilerender::TILE + 8;
-    nuke_animation(px, py)
+    let px = VIEW_X + crate::game::Map::wrap_x(x - vx) * crate::ui::tilerender::TILE - 14;
+    let py = VIEW_Y + (y - vy) * crate::ui::tilerender::TILE - 14;
+    nuke_at(px, py)
 }
 
 impl Screen for NukeAnimation {
@@ -436,9 +454,11 @@ impl Screen for NukeAnimation {
     fn on_enter(&mut self, ctx: &mut UiContext) {
         ctx.audio.play(crate::audio::Sound::Nuke);
     }
+    /// Each step draws its frame over the saved map, waits 5 ticks and puts the map back, so
+    /// the map is clean when the last step ends (o 0x1dfe6..0x1e028).
     fn update(&mut self, _ctx: &mut UiContext) -> Transition {
         self.t += 1;
-        if self.t > (NUKE_FRAMES as u64) * 3 + 10 {
+        if self.t >= NUKE_STEPS * NUKE_STEP_TICKS {
             return Transition::Pop(DialogResult::Done);
         }
         Transition::None
@@ -447,7 +467,7 @@ impl Screen for NukeAnimation {
         Transition::None
     }
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
-        let frame = ((self.t / 3) as i32).min(NUKE_FRAMES - 1);
+        let frame = nuke_frame((self.t / NUKE_STEP_TICKS).min(NUKE_STEPS - 1));
         let nuke = ctx.pic("NUKE1");
         let r = NUKE_GRID.rect(frame);
         // remap the explosion colours into the active (map) palette
@@ -458,13 +478,23 @@ impl Screen for NukeAnimation {
             *m = dst_pal.nearest(src_pal.rgb(i as u8));
         }
         let key = nuke.surf.get(r.x, r.y);
-        let clip = Rect::new(crate::ui::mapview::VIEW_X, crate::ui::mapview::VIEW_Y, 240, 192);
-        fb.set_clip(Some(clip));
-        fb.blit_remap(&nuke.surf, r, self.cx - 22, self.cy - 22, Some(key), &map);
-        fb.set_clip(None);
+        fb.blit_remap(&nuke.surf, r, self.x, self.y, Some(key), &map);
     }
     fn wants_cursor(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod nuke_tests {
+    use super::*;
+
+    #[test]
+    fn nuke_replays_the_last_seven_frames() {
+        let frames: Vec<i32> = (0..NUKE_STEPS).map(nuke_frame).collect();
+        assert_eq!(frames.len(), 35);
+        assert_eq!(&frames[..28], &(0..28).collect::<Vec<_>>()[..]);
+        assert_eq!(&frames[28..], &[21, 22, 23, 24, 25, 26, 27]);
     }
 }
 
