@@ -1,6 +1,6 @@
 # WONDERS (slot 7 in a scratch copy of the game): CIVIL4 edited by hand, made with
 #   sve_edit.py CIVIL4.SVE CIVIL7.SVE adv:1:1,5,7,25,26,29,16 adv:2:31 adv:3:31
-#     city:0:size=7,food=30 work:0:7 imp:0:4,11 city:4:size=6,food=10 work:4:6 imp:4:11
+#     city:0:size=7,food=30 work:0:7 build:0:4,11 city:4:size=6,food=10 work:4:6 build:4:11
 #     wonder:1:0 wonder:2:0 wonder:8:0 wonder:9:4 wonder:5:4 unit:1:17:14,29:0
 # The Romans own the Pyramids, the Hanging Gardens and Magellan's Expedition (Rome) and
 # Michelangelo's Chapel and the Great Library (Caesarea); both cities have a Cathedral.

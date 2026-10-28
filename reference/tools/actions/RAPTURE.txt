@@ -1,7 +1,7 @@
 # RAPTURE (slot 5 in a scratch copy of the game): CIVIL4 edited by hand, made with
 #   sve_edit.py CIVIL4.SVE CIVIL5.SVE adv:1:1,2,4,5,9,16,25,26,29,42,44,45,53 govt:1:4
-#     rates:1:30,0 city:0:size=4,food=10 work:0:4 imp:0:4,5 city:4:size=4,food=10 work:4:4
-#     imp:4:4,5 tile:12,28:0x0a tile:11,29:0x0a tile:12,30:0x0a tile:13,30:0x0a
+#     rates:1:30,0 city:0:size=4,food=10 work:0:4 build:0:4,5 city:4:size=4,food=10 work:4:4
+#     build:4:4,5 tile:12,28:0x0a tile:11,29:0x0a tile:12,30:0x0a tile:13,30:0x0a
 #     tile:11,30:0x0a tile:10,25:0x0a tile:11,25:0x0a tile:10,26:0x0a tile:11,26:0x0a
 #     tile:9,24:0x0a tile:9,26:0x0a
 # The Republic at 70% luxuries: Rome and Caesarea (size 4, Temple and Marketplace, irrigated
