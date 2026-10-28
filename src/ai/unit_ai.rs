@@ -194,7 +194,7 @@ fn peace(g: &Game, a: Slot, b: Slot) -> bool {
 /// - City goals (0x159be): a city of the civ with nobody in it (and no stashed garrison) asks
 ///   for a defender (type 2, priority 4); a foreign city of a civ it has no unbroken treaty with,
 ///   that it has seen (cities of computer players count as seen, and everything once turn x
-///   difficulty passes 200), is an attack goal (type 1, or 3 with City Walls, priority 5) on
+///   difficulty passes 200), is an attack goal (type 1, priority 5, 3 with City Walls) on
 ///   turns where (city + turn) & 3 != 0; an empty foreign city is also a type 2 goal of
 ///   priority 2.
 /// - Policies (0x15cd1): a changed continent policy re-chooses production there (0x18bef).
@@ -247,8 +247,9 @@ fn city_goals(g: &mut Game, slot: Slot) {
         if city.owner != slot {
             let seen = turn * difficulty > 200 || g.explored(slot, city.x, city.y) || city.owner != human;
             if seen && !keeps_peace(g, slot, city.owner) && (c as i32 + turn) & 3 != 0 {
-                let kind = if g.city_has_walls(&city) { goal::SEA } else { goal::ATTACK };
-                g.add_goal(slot, city.x, city.y, kind, 5);
+                // (0x15c23): City Walls lower the priority to 3
+                let prio = if g.city_has_walls(&city) { 3 } else { 5 };
+                g.add_goal(slot, city.x, city.y, goal::ATTACK, prio);
             }
         }
         if g.units_at(city.x, city.y).is_empty() && city.garrison[0] == crate::game::city::NO_GARRISON {
@@ -282,7 +283,7 @@ fn update_policies(g: &mut Game, census: &Census, slot: Slot) {
 ///   threatened continent;
 /// - it takes the goal of its role on its continent (Bombers: any attack goal of odd priority
 ///   on alternate turns, or a walled city) with the lowest distance x units already sent /
-///   (priority + 1) (Bombers 2 within reach, else 4 x distance, over priority + 1), when that
+///   (priority + 1) (Bombers 2 x distance within one move, else 4 x distance, over priority + 1), when that
 ///   is at most 4 x priority x the reserve; fortified units only from outside a city, for
 ///   goals of priority 2 or more that are near enough (priority x reserve >= the score) or
 ///   untouched. The goal's count starts at the reserve and rises by one per unit sent.
@@ -329,11 +330,8 @@ fn task_units(g: &mut Game, slot: Slot, reserve: i32) {
                 if prio & 1 == 0 || (i as i32 + turn / 2) & 1 == 0 {
                     continue;
                 }
-                if u.info().moves as i32 >= d {
-                    2 / (prio + 1)
-                } else {
-                    4 * d / (prio + 1)
-                }
+                // (0x1636a): twice the distance within one move, else four times
+                (if u.info().moves as i32 >= d { 2 } else { 4 }) * d / (prio + 1)
             } else {
                 d * assigned[i] / (prio + 1)
             };
@@ -1862,6 +1860,44 @@ mod tests {
         g.unit_mut(id).x = 18;
         assert_eq!(g.site_layer(18, 20), s as i32);
         assert_ne!(unit_command(&mut g, s, id), Command::Build);
+    }
+
+    #[test]
+    fn a_walled_enemy_city_is_an_attack_goal_of_priority_three() {
+        use crate::rules::improvement_ids as imp;
+        let mut g = arena();
+        let s = ai(&g);
+        let e = (2..5).find(|o| *o != s && *o != g.human_slot).unwrap();
+        g.set_relation(s, e, crate::game::Relation::War);
+        let open = g.add_city(e, "Open".into(), 30, 20);
+        let walled = g.add_city(e, "Walled".into(), 30, 25);
+        g.city_mut(walled).improvements |= 1 << imp::CITY_WALLS;
+        g.add_unit(e, unit_ids::PHALANX, 30, 20);
+        g.add_unit(e, unit_ids::PHALANX, 30, 25);
+        let turn = (0..4).find(|t| (open as u32 + t) & 3 != 0 && (walled as u32 + t) & 3 != 0).unwrap();
+        g.turn = turn;
+        city_goals(&mut g, s);
+        let goals: Vec<_> = g.ai_memory.goals[s as usize].iter().filter(|o| !o.is_free()).map(|o| (o.pos(), o.kind, o.priority)).collect();
+        assert!(goals.contains(&((30, 20), goal::ATTACK, 5)), "{goals:?}");
+        assert!(goals.contains(&((30, 25), goal::ATTACK, 3)), "{goals:?}");
+    }
+
+    #[test]
+    fn a_bomber_scores_twice_the_distance_of_a_goal_within_one_move() {
+        let mut g = arena();
+        let s = ai(&g);
+        let b = g.add_unit(s, unit_ids::BOMBER, 10, 10);
+        let reach = g.unit(b).info().moves as i32;
+        // slots 0 and 2 (the parity rule takes every other slot): a far goal of priority 3
+        // scores 2 x reach / 4, a near one of priority 1 scores 2 x 1 / 2 (slot 1 has an even
+        // priority, which Bombers skip)
+        g.add_goal(s, 10 + reach, 10, goal::SEA, 3);
+        g.add_goal(s, 20, 20, goal::SEA, 2);
+        g.add_goal(s, 11, 10, goal::SEA, 1);
+        assert_eq!(g.ai_memory.goals[s as usize][2].pos(), (11, 10));
+        g.turn = 2;
+        task_units(&mut g, s, 3);
+        assert_eq!(g.unit(b).goto, Some((11, 10)));
     }
 
     #[test]
