@@ -79,6 +79,9 @@ pub fn rating_index(percent: i32) -> usize {
 }
 
 impl Game {
+    /// `civ_score(civ, show)` (ovl 20 +0xca9, o 0x1c01e). CIV.EXE totals it in ds:0xddfe, the
+    /// barbarians' word of the score accumulator, so an F9 during the human's turn hands the
+    /// historian the human's score for their palace; civrs leaves `score_acc` alone.
     pub fn score(&self, slot: Slot) -> ScoreBreakdown {
         let mut s = ScoreBreakdown::default();
         // civ_score sets the taxes to 6 - science while it counts the citizens (o 0x1c0e0..
