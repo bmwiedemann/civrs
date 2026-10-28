@@ -1120,7 +1120,17 @@ impl Screen for MapView {
                 return Transition::Push(Box::new(LayoutTutorial::new(ctx, (Map::wrap_x(self.vx + 7), self.vy + 6))));
             }
         }
-        if self.first_turn_hint {
+        // then the civ loop of turn 0 up to the human (game_turn 0x24d7): the civilizations
+        // before it move first
+        if self.first_turn_hint && self.runner.is_none() {
+            if let Some(r) = ctx.game_mut().take_opening() {
+                ctx.game_mut().active_unit = None;
+                self.runner = Some(r);
+                self.mode = Mode::Processing;
+                self.pause = 0;
+            }
+        }
+        if self.first_turn_hint && self.mode != Mode::Processing {
             self.first_turn_hint = false;
             // the start tile gets no BUILDCITY note on top of this one
             self.hint_checked = ctx.game().active_unit.map(|id| (id, ctx.game().unit(id).pos()));

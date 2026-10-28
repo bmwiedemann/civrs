@@ -31,13 +31,25 @@ pub enum TurnStep {
     Done,
 }
 
+/// Where a `TurnRunner` stands in CIV.EXE's turn loop (game_turn 0x2412). Each civilization
+/// in slot order (barbarians first) has its cities processed (update_civ_tax_rates 0x250d), then
+/// its politics (0x252b), then its units move (0x25af); after civ 7 come the barbarian raids,
+/// global warming and the other world events (0x2620..0x26e7), then the turn counter and the
+/// year advance (0x26ec). The human moves its units interactively, so a runner starts after
+/// them, runs the civilizations after the human, the world and the new turn, and the
+/// civilizations before the human, and stops after the human's cities and politics.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Phase {
-    HumanCities,
-    AiPlayers,
-    Barbarians,
+    /// The end of the human's units (hazards).
+    HumanUnits,
+    /// The civilizations after the human (`ai_index` = next slot).
+    LaterCivs,
     World,
     NewTurn,
+    /// The barbarians and the civilizations before the human (`ai_index` = next slot).
+    EarlierCivs,
+    /// The human's cities and politics, before its units move.
+    HumanStart,
     Done,
 }
 
@@ -47,6 +59,9 @@ pub struct TurnRunner {
     pub ai_index: usize,
     pub pending: std::collections::VecDeque<TurnStepSer>,
     pub waiting: Option<Decision>,
+    /// The opening of a new game ran first (`Game::opening`); go on with a whole turn.
+    #[serde(default)]
+    pub then_turn: bool,
 }
 
 /// Serialisable subset of TurnStep (events/decisions only).
@@ -89,7 +104,45 @@ impl Default for TurnRunner {
 
 impl TurnRunner {
     pub fn new() -> TurnRunner {
-        TurnRunner { phase: Phase::HumanCities, ai_index: 0, pending: Default::default(), waiting: None }
+        TurnRunner { phase: Phase::HumanUnits, ai_index: 0, pending: Default::default(), waiting: None, then_turn: false }
+    }
+
+    /// Turn 0 of a new game up to the human's first move: the civilizations before the human
+    /// (game_turn runs its civ loop from civ 0 at turn 0 too), then the human's (empty) cities
+    /// and its politics.
+    pub fn opening() -> TurnRunner {
+        TurnRunner { phase: Phase::EarlierCivs, ..TurnRunner::new() }
+    }
+
+    /// One computer civilization's turn in game_turn's civ loop: its cities and rates
+    /// (0x250d), politics (0x252b), then `AiDriver::play_turn` (ai_civ_turn 0x2536,
+    /// ai_reset_goals 0x2541, move_units 0x25af) with the units' work and hazards.
+    fn civ_turn(&mut self, g: &mut Game, ai: &mut dyn AiDriver, slot: Slot) {
+        if slot == 0 {
+            // the barbarians' cities (0xa5e2 for civ 0), then their units
+            g.reset_moves(0);
+            for c in g.cities_of(0) {
+                if g.city_opt(c).is_some() {
+                    g.process_city(c);
+                }
+            }
+            self.run_ai(g, ai, 0);
+            g.process_unit_hazards(0);
+            self.drain_events(g);
+            return;
+        }
+        if slot == g.human_slot || !g.player(slot).in_game || !g.player(slot).alive {
+            return;
+        }
+        g.process_player_cities(slot);
+        self.drain_events(g);
+        g.process_player_turn_start(slot);
+        g.reset_moves(slot);
+        g.progress_work(slot);
+        self.drain_events(g);
+        self.run_ai(g, ai, slot);
+        g.process_unit_hazards(slot);
+        self.drain_events(g);
     }
 
     fn drain_events(&mut self, g: &mut Game) {
@@ -130,47 +183,24 @@ impl TurnRunner {
                 return s.into();
             }
             match self.phase {
-                Phase::HumanCities => {
-                    let slot = g.human_slot;
-                    g.process_player_turn_end(slot);
+                Phase::HumanUnits => {
+                    g.process_unit_hazards(g.human_slot);
                     self.drain_events(g);
-                    self.phase = Phase::AiPlayers;
-                    self.ai_index = 1;
+                    self.phase = Phase::LaterCivs;
+                    self.ai_index = g.human_slot as usize + 1;
                 }
-                Phase::AiPlayers => {
+                Phase::LaterCivs => {
                     if self.ai_index >= 8 {
-                        self.phase = Phase::Barbarians;
+                        self.phase = Phase::World;
                         continue;
                     }
                     let slot = self.ai_index as Slot;
                     self.ai_index += 1;
-                    if slot == g.human_slot || !g.player(slot).in_game || !g.player(slot).alive {
-                        continue;
-                    }
-                    g.reset_moves(slot);
-                    g.progress_work(slot);
-                    g.process_player_turn_start(slot);
-                    self.drain_events(g);
-                    self.run_ai(g, ai, slot);
-                    g.process_player_turn_end(slot);
-                    self.drain_events(g);
-                }
-                Phase::Barbarians => {
-                    g.reset_moves(0);
-                    // the raids of `barbarians()` (end of turn, CIV.EXE 0x2620) move at once, as
-                    // civ 0 opens the next turn's civ loop; then its cities and units (0x24cf)
-                    g.barbarian_spawn();
-                    for c in g.cities_of(0) {
-                        if g.city_opt(c).is_some() {
-                            g.process_city(c);
-                        }
-                    }
-                    self.run_ai(g, ai, 0);
-                    g.process_unit_hazards(0);
-                    self.drain_events(g);
-                    self.phase = Phase::World;
+                    self.civ_turn(g, ai, slot);
                 }
                 Phase::World => {
+                    // barbarians() (0x2620) raids, then warming, disasters, power, treasury
+                    g.barbarian_spawn();
                     g.process_world();
                     self.drain_events(g);
                     self.phase = Phase::NewTurn;
@@ -180,15 +210,31 @@ impl TurnRunner {
                     g.fifty_turn_block();
                     g.historian_check();
                     g.palace_growth_check();
+                    self.drain_events(g);
+                    self.phase = Phase::EarlierCivs;
+                    self.ai_index = 0;
+                }
+                Phase::EarlierCivs => {
+                    if self.ai_index >= g.human_slot as usize {
+                        self.phase = Phase::HumanStart;
+                        continue;
+                    }
+                    let slot = self.ai_index as Slot;
+                    self.ai_index += 1;
+                    self.civ_turn(g, ai, slot);
+                }
+                Phase::HumanStart => {
                     let slot = g.human_slot;
+                    g.process_player_cities(slot);
+                    self.drain_events(g);
+                    g.process_player_turn_start(slot);
                     g.reset_moves(slot);
                     g.progress_work(slot);
-                    g.process_player_turn_start(slot);
                     g.refresh_all_vision();
                     g.active_unit = None;
                     g.active_unit = g.next_active_unit();
                     self.drain_events(g);
-                    self.phase = Phase::Done;
+                    self.phase = if std::mem::take(&mut self.then_turn) { Phase::HumanUnits } else { Phase::Done };
                 }
                 Phase::Done => return TurnStep::Done,
             }
@@ -316,13 +362,26 @@ impl Game {
         new
     }
 
-    /// Begin end-of-turn processing for the human player.
+    /// Begin end-of-turn processing for the human player. A new game whose opening did not
+    /// run yet (`opening`) runs it first.
     pub fn end_turn(&mut self) -> TurnRunner {
-        TurnRunner::new()
+        match self.take_opening() {
+            Some(mut r) => {
+                r.then_turn = true;
+                r
+            }
+            None => TurnRunner::new(),
+        }
     }
 
-    /// City growth, production, science and gold for one player (end of its turn).
-    pub fn process_player_turn_end(&mut self, slot: Slot) {
+    /// The opening of a new game (`TurnRunner::opening`), once, before the human's first move.
+    pub fn take_opening(&mut self) -> Option<TurnRunner> {
+        std::mem::take(&mut self.opening).then(TurnRunner::opening)
+    }
+
+    /// City growth, production, science and gold for one player: the first step of its turn
+    /// in CIV.EXE's civ loop (update_civ_tax_rates 0xa5e2, called at 0x250d).
+    pub fn process_player_cities(&mut self, slot: Slot) {
         // update_civ_tax_rates (0xa5e2) notes a city above size 5 with as many unhappy as
         // happy citizens (bit 0) and a city in disorder (bit 1)
         let mut flags = 0u8;
@@ -342,7 +401,6 @@ impl Game {
         if !self.player(slot).human && slot != 0 {
             self.ai_tax_rates(slot, flags);
         }
-        self.process_unit_hazards(slot);
         // the treasury holds at most 30000 gold, capped after the civ's cities (0x2515)
         if self.player(slot).gold > 30000 {
             self.player_mut(slot).gold = 30000;
@@ -439,10 +497,9 @@ impl Game {
     /// fourth turn when no city is in disorder or balanced (`flags` 0) and science + taxes are
     /// below 8, within 0..4; science is the leader's "civilized" trait + (10 - luxuries) / 2, one
     /// more with more gold than turn + 100, none at all once Robotics is known; taxes get the
-    /// rest. No government limit applies. CIV.EXE processes a civ's cities before its politics
-    /// and units, civrs after them, so the turn CIV.EXE has at this point is civrs's turn + 1.
+    /// rest. No government limit applies.
     pub fn ai_tax_rates(&mut self, slot: Slot, flags: u8) {
-        let turn = self.turn as i32 + 1;
+        let turn = self.turn as i32;
         let p = self.player(slot);
         let (sci, tax) = ((100 - p.tax as i32 - p.lux as i32) / 10, p.tax as i32 / 10);
         let mut lux = 10 - (sci + tax);
@@ -2071,13 +2128,75 @@ mod tests {
         assert_eq!(g.governments_available(slot).len(), 5);
     }
 
+    /// Records which civilization plays at which turn.
+    struct Recorder(Vec<(Slot, u32)>);
+
+    impl AiDriver for Recorder {
+        fn play_turn(&mut self, g: &mut Game, slot: Slot, _sink: &mut dyn FnMut(TurnStep)) {
+            self.0.push((slot, g.turn));
+        }
+    }
+
+    fn run(g: &mut Game, r: &mut TurnRunner, ai: &mut dyn AiDriver) {
+        loop {
+            match r.step(g, ai) {
+                TurnStep::Done => break,
+                TurnStep::Decision(_) => r.resolve(g, DecisionReply::Choice(0)),
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn civilizations_play_in_slot_order_around_the_turn_counter() {
+        // game_turn 0x2412: civ 0..7 at turn T, then the counter; the human moves inside the
+        // loop, so the civilizations after it end turn T and those before it open turn T + 1
+        let mut g = Game::new(GameSetup { seed: 42, num_civs: 7, human_civ: 4, ..Default::default() }, None);
+        let h = g.human_slot;
+        assert!(h > 1 && h < 7, "human slot {h}");
+        let mut ai = Recorder(Vec::new());
+        let mut r = g.take_opening().expect("a new game opens");
+        run(&mut g, &mut r, &mut ai);
+        assert!(g.take_opening().is_none());
+        let before: Vec<Slot> = (0..h).filter(|s| *s == 0 || g.player(*s).alive).collect();
+        let after: Vec<Slot> = (h + 1..8).filter(|s| g.player(*s).alive).collect();
+        assert_eq!(ai.0, before.iter().map(|s| (*s, 0)).collect::<Vec<_>>());
+        ai.0.clear();
+        let mut r = g.end_turn();
+        run(&mut g, &mut r, &mut ai);
+        let want: Vec<(Slot, u32)> = after.iter().map(|s| (*s, 0)).chain(before.iter().map(|s| (*s, 1))).collect();
+        assert_eq!(ai.0, want);
+        assert_eq!(g.turn, 1);
+    }
+
+    #[test]
+    fn the_humans_cities_are_processed_before_its_units_move() {
+        // 0x250d before 0x25af: a city grows at the start of the human's turn, after the
+        // computer players have moved
+        let (mut g, c) = fixture();
+        g.opening = false;
+        g.city_mut(c).food = 1000;
+        struct Sizes(CityId, Vec<u8>);
+        impl AiDriver for Sizes {
+            fn play_turn(&mut self, g: &mut Game, _slot: Slot, _sink: &mut dyn FnMut(TurnStep)) {
+                self.1.push(g.city(self.0).size);
+            }
+        }
+        let mut ai = Sizes(c, Vec::new());
+        let mut r = g.end_turn();
+        run(&mut g, &mut r, &mut ai);
+        assert!(!ai.1.is_empty() && ai.1.iter().all(|s| *s == 1), "{:?}", ai.1);
+        assert!(g.city(c).size > 1);
+        assert_eq!(g.turn, 1);
+    }
+
     #[test]
     fn gold_is_capped_at_30000_after_the_cities() {
         // 0x2515: every civ, after update_civ_tax_rates
         let (mut g, _c) = fixture();
         let me = g.human_slot;
         g.player_mut(me).gold = 31000;
-        g.process_player_turn_end(me);
+        g.process_player_cities(me);
         assert_eq!(g.player(me).gold, 30000);
     }
 
@@ -2099,9 +2218,8 @@ mod tests {
         g.ai_tax_rates(ai, 2);
         let sci = civilized + (10 - 3) / 2;
         assert_eq!((g.player(ai).lux, g.player(ai).tax as i32), (30, (10 - sci - 3) * 10));
-        // every fourth turn (CIV.EXE's turn = civrs's + 1) without trouble, while sci + tax < 8:
-        // one less
-        g.set_turn(7);
+        // every fourth turn without trouble, while sci + tax < 8: one less
+        g.set_turn(8);
         g.ai_tax_rates(ai, 0);
         assert_eq!(g.player(ai).lux, 20);
         // rich: one more for science; Robotics: none

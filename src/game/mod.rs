@@ -254,6 +254,10 @@ pub struct Game {
     /// Not saved.
     #[serde(skip)]
     pub free_research: u8,
+    /// A new game whose turn 0 has not yet run the civilizations before the human
+    /// (`TurnRunner::opening`). Not saved: a saved game is in the human's turn.
+    #[serde(skip)]
+    pub opening: bool,
 }
 
 /// `wonders_built` entry of a wonder whose city was destroyed: built, owned by no one, listed
@@ -401,6 +405,7 @@ impl Game {
             counting_losses: false,
             catch_up: 0,
             free_research: 0,
+            opening: true,
         };
         game.place_starting_units(&slots, &world, &mut wr);
         game.refresh_all_vision();

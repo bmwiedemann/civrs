@@ -363,6 +363,11 @@ game: `Game{map,units,cities,players,turn,current,active_unit,rng,setup,options,
 city_yield, city_happiness, available_production`), empire (`set_rates, set_research, researchable, revolution, choose_government, score, demographics`),
 turn: `end_turn() -> TurnRunner` whose `step(&mut Game, &mut dyn AiDriver) -> TurnStep::{Event(GameEvent),Decision(Decision),AiMove{..},Combat{..},Done}`
 is a resumable state machine so the UI can show dialogs/animations between steps; `RuleError` variants map 1:1 to ERROR.TXT sections.
+The runner follows game_turn's civ loop (0x2412): per civ in slot order its cities (0xa5e2, 0x250d),
+politics (0x252b), then units (0x25af); after civ 7 the barbarian raids and world events, then turn + 1. It starts
+after the human's units: civs after the human (turn T), world, new turn, barbarians and civs before the human
+(turn T + 1), the human's cities and politics, then `Done` for the human to move. A new game first runs
+`TurnRunner::opening` (`Game::opening`, not saved) so the civs before the human move at turn 0 as well.
 ai: `trait AiDriver{play_turn(&mut Game, slot, sink)}`, `city_ai::choose_production`, `unit_ai::act/best_city_site`, `diplo_ai::{attitude,on_contact,respond}`,
 `tech_ai::choose`, `barbarians::{spawn,play}`, `path::astar` (shared with human goto).
 ui: `trait Screen{on_enter,handle(&Event)->Transition,update()->Transition,resume(DialogResult)->Transition,draw(&mut Surface),palette()}`;
