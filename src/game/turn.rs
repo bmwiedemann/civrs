@@ -137,6 +137,8 @@ impl TurnRunner {
     /// (0x250d), politics (0x252b), then `AiDriver::play_turn` (ai_civ_turn 0x2536,
     /// ai_reset_goals 0x2541, move_units 0x25af) with the units' work and hazards.
     fn civ_turn(&mut self, g: &mut Game, ai: &mut dyn AiDriver, slot: Slot) {
+        // the score accumulator of every civ 0..7 as its turn comes, alive or not (0x25f5)
+        g.score_acc[slot as usize] = 0;
         if slot == 0 {
             // the barbarians' cities (0xa5e2 for civ 0), then their units
             g.reset_moves(0);
@@ -234,7 +236,7 @@ impl TurnRunner {
                     g.advance_calendar();
                     g.fifty_turn_block();
                     g.historian_check();
-                    g.milestone_quiet_step();
+                    g.score_turn_change();
                     g.palace_growth_check();
                     // the sidebar again (0x29ef)
                     g.population_milestone();
@@ -253,6 +255,7 @@ impl TurnRunner {
                 }
                 Phase::HumanStart => {
                     let slot = g.human_slot;
+                    g.score_acc[slot as usize] = 0;
                     g.process_player_cities(slot);
                     self.drain_events(g);
                     g.process_player_turn_start(slot);
@@ -611,12 +614,23 @@ impl Game {
         }
     }
 
-    /// ds:0x3484 at the turn change (CIV.EXE 0x2939..0x2960): -3 (just loaded) -> -2 -> 0.
-    pub fn milestone_quiet_step(&mut self) {
-        match self.milestone_quiet {
-            -3 => self.milestone_quiet = -2,
-            -2 => self.milestone_quiet = 0,
-            _ => {}
+    /// The score accumulator at the turn change, after the historian (CIV.EXE 0x2907..0x2960):
+    /// 25 for each wonder 1..=21 to its owner's, then ds:0x3484 -3 (just loaded) -> -2 without
+    /// the human's pollution penalty, else 10 per polluted square of the world off the human's
+    /// and -2 -> 0.
+    pub fn score_turn_change(&mut self) {
+        for w in 1..=21 {
+            if let Some(c) = self.wonders_built[w].and_then(|c| self.city_opt(c)) {
+                self.score_acc[c.owner as usize & 7] += 25;
+            }
+        }
+        if self.milestone_quiet == -3 {
+            self.milestone_quiet = -2;
+            return;
+        }
+        self.score_acc[self.human_slot as usize] -= 10 * self.polluted_tiles as i32;
+        if self.milestone_quiet == -2 {
+            self.milestone_quiet = 0;
         }
     }
 
@@ -728,6 +742,9 @@ impl Game {
             self.player_mut(slot).gold += t.tax;
         }
         self.city_science(c, t.sci);
+        // the score accumulator: size (after a celebration's growth) + happy - unhappy (0x12dbe)
+        let size = self.city(c).size as i32;
+        self.score_acc[slot as usize & 7] += size + h.happy - h.unhappy;
         // hazards and upkeep, the human's cities only (0x12ddd)
         self.pollution_roll(c);
         self.meltdown_roll(c);
@@ -2755,15 +2772,75 @@ mod tests {
         g.population_milestone();
         assert!(said(&mut g).is_empty());
         assert_eq!(g.pop_milestone, 3);
-        g.milestone_quiet_step();
+        g.score_turn_change();
         g.city_mut(c).size = 9; // 45
         g.population_milestone();
         assert!(said(&mut g).is_empty());
-        g.milestone_quiet_step();
+        g.score_turn_change();
         assert_eq!(g.milestone_quiet, 0);
         g.city_mut(c).size = 10; // 55
         g.population_milestone();
         assert_eq!(said(&mut g), vec!["5".to_string()]);
+    }
+
+    #[test]
+    fn the_score_accumulator_sums_the_cities_then_wonders_and_pollution() {
+        let (mut g, c) = fixture();
+        let me = g.human_slot;
+        g.city_mut(c).size = 5;
+        g.auto_assign(c);
+        g.score_acc = [0; 8];
+        // process_city adds size + happy - unhappy (0x12dd9)
+        let mood = g.process_city(c).unwrap();
+        let sum = g.city(c).size as i32 + mood;
+        assert_eq!(g.score_acc[me as usize], sum);
+        // the turn change: 25 per wonder to its owner, 10 per polluted square off the human's
+        g.wonders_built[1] = Some(c);
+        g.polluted_tiles = 2;
+        g.score_turn_change();
+        assert_eq!(g.score_acc[me as usize], sum + 25 - 20);
+        // just loaded (ds:0x3484 = -3): no penalty at the first turn change (0x2939..0x2946)
+        g.score_acc = [0; 8];
+        g.milestone_quiet = -3;
+        g.score_turn_change();
+        assert_eq!((g.score_acc[me as usize], g.milestone_quiet), (25, -2));
+        g.score_turn_change();
+        assert_eq!((g.score_acc[me as usize], g.milestone_quiet), (30, 0));
+    }
+
+    #[test]
+    fn each_civs_turn_starts_its_score_accumulator_again() {
+        // 0x25f5: every civ 0..7 as its turn comes, in the game or not
+        let (mut g, _) = fixture();
+        g.score_acc = [77; 8];
+        let mut ai = Ai::new(7);
+        let mut r = g.end_turn();
+        loop {
+            match r.step(&mut g, &mut ai) {
+                TurnStep::Done => break,
+                TurnStep::Decision(_) => r.resolve(&mut g, DecisionReply::Choice(0)),
+                _ => {}
+            }
+        }
+        for s in 0..8u8 {
+            if g.cities_of(s).is_empty() {
+                assert_eq!(g.score_acc[s as usize], 0, "civ {s}");
+            }
+        }
+        assert!((1..77).contains(&g.score_acc[g.human_slot as usize]));
+    }
+
+    #[test]
+    fn the_historians_palaces_follow_the_score_accumulator() {
+        let (mut g, _) = fixture();
+        let me = g.human_slot;
+        g.score_acc[me as usize] = 100;
+        g.historian_timer = g.turn;
+        g.historian_check();
+        let Some(GameEvent::HistorianReport { rows, .. }) = g.take_events().into_iter().find(|e| matches!(e, GameEvent::HistorianReport { .. })) else { panic!("no report") };
+        let row = rows.iter().find(|r| r.slot == me).unwrap();
+        assert_eq!(row.palace_level, crate::game::palace::tri5_level(100));
+        assert_eq!(row.palace_level, 5);
     }
 
     #[test]

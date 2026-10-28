@@ -261,6 +261,14 @@ pub struct Game {
     /// changes (0x2939..0x2960); below -1 the milestone moves on without a word. Not saved.
     #[serde(skip)]
     pub milestone_quiet: i16,
+    /// The per-civ score accumulator ds:0xddfe: zeroed as each civ's turn comes in game_turn's
+    /// loop (0x25f5, also for the civs a loaded game skips) and by `civ_init` (o 0x4a47), the
+    /// size + happy - unhappy of each of its cities as process_city counts them (0x12dd9);
+    /// then the turn change adds 25 per wonder and takes the human's pollution penalty
+    /// (0x2907..0x2960). Only the historian's palaces read it (o 0x10e32), before the turn
+    /// change's additions. Not saved by civrs: a load zeroes it (game_turn resumes at the human).
+    #[serde(skip)]
+    pub score_acc: [i32; 8],
     /// The first discoverer of each advance, far 0x26f1:[0x4b0 + 2 * adv] & 7 (0 = none yet):
     /// set by `grant_advance` after turn 0 (0xc743) and kept when that civ is destroyed; stored
     /// after the game body in version-15 saves.
@@ -501,6 +509,7 @@ impl Game {
             warming_counter: 0,
             pop_milestone: 1,
             milestone_quiet: -1,
+            score_acc: [0; 8],
             first_discoverer: vec![0; 72],
             historian_timer: 80 + historian,
             history: replay::History::default(),

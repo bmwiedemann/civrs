@@ -595,6 +595,8 @@ impl Game {
         p.diplo[from as usize] = super::diplomacy::flags::CONTACT | super::diplomacy::flags::VENDETTA;
         self.players[from as usize].diplo[new_slot as usize] |= super::diplomacy::flags::CONTACT;
         self.players[new_slot as usize] = p;
+        // civ_init zeroes the new civ's score accumulator (o 0x4a47)
+        self.score_acc[new_slot as usize] = 0;
         self.push_event(GameEvent::CivilWar { slot: from, new_slot });
 
         // the split
@@ -857,6 +859,7 @@ impl Game {
             self.players[s].diplo[slot as usize] = 0;
         }
         self.players[slot as usize] = p;
+        self.score_acc[slot as usize] = 0;
         // ai_clear_persistent_goals (0x189b9) and the continent strategy table (o5 0x49bb)
         self.ai_memory.persistent[slot as usize] = [super::goals::Goal::FREE; super::goals::PERSISTENT_GOALS];
         self.ai_memory.policies[slot as usize] = None;

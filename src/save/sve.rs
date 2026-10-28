@@ -14,7 +14,7 @@
 //!
 //! Not imported (civrs has no such state or computes it): the per-type production counts
 //! ds:0xd308, the per-civ and per-continent AI statistics (ds:0x6cac, 0x807a, 0x6b96,
-//! 0xdcfe, 0xe16a, 0x8068, 0xd2f8, 0x6e82, 0x803c, 0xddfe, 0xb1ee), the coarse block tables
+//! 0xdcfe, 0xe16a, 0x8068, 0xd2f8, 0x6e82, 0x803c, 0xb1ee), the coarse block tables
 //! (far 0x1f88, ds:0xdb44), the unit type table copy, the kills matrix ds:0xe418, the
 //! historian's scores ds:0x6c9c, the colonist counts ds:0xdeec, the human's view of the tile
 //! improvements, the city trade byte +0xa (recomputed), the unit flag 0x10, the world
@@ -56,6 +56,7 @@ mod off {
     pub const STRENGTH: usize = 0x0718;
     pub const RANKS: usize = 0x0728;
     pub const TAX: usize = 0x0738;
+    pub const SCORE_ACC: usize = 0x0748;
     pub const LAST_CONTACT: usize = 0x0758;
     pub const TRIBE: usize = 0x0778;
     pub const CENSUS: usize = 0x0788;
@@ -585,6 +586,9 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
     g.warming_counter = s.w(off::WARMING_COUNTER).clamp(0, 99) as u16;
     g.global_warming_count = s.w(off::WARMINGS).clamp(0, 255) as u8;
     g.historian_timer = s.w(off::HISTORIAN).max(0) as u32;
+    // the score accumulator ds:0xddfe; the resumed game_turn zeroes it for the civs up to the
+    // human before it skips them (0x25f5), so only the later ones keep the saved sums
+    g.score_acc = std::array::from_fn(|c| if c > human as usize { s.civ_w(off::SCORE_ACC, c) as i32 } else { 0 });
     let o = s.w(off::OPTIONS) as u8;
     let bit = |n: u8| o & (1 << n) != 0;
     g.options = crate::game::Options {
@@ -686,6 +690,10 @@ pub fn state_text(g: &Game) -> String {
         let _ = writeln!(o, "{k}.units_per_type {:?}", &p.unit_counter[..]);
         let _ = writeln!(o, "{k}.cities {}", g.all_cities().filter(|c| c.owner == p.slot).count());
         let _ = writeln!(o, "{k}.diplo {:04x?}", &p.diplo[..]);
+        if p.slot > g.human_slot {
+            // ds:0xddfe of the civs after the human: their last turn's cities and wonders
+            let _ = writeln!(o, "{k}.score_acc {}", g.score_acc[p.slot as usize]);
+        }
     }
     for c in g.all_cities() {
         let k = format!("city{}", c.id);
@@ -907,6 +915,19 @@ mod tests {
         let dir = crate::assets::AssetDir::locate(None).ok()?;
         let path = slot_file(dir.root(), n)?;
         Some((std::fs::read(&path).ok()?, std::fs::read(map_file(&path)).ok()?))
+    }
+
+    #[test]
+    fn imports_the_score_accumulator_of_the_civs_after_the_human() {
+        // ds:0xddfe at 0x748; game_turn zeroes it up to the human as it resumes (0x25f5)
+        let Some((sve, _)) = sample_bytes(0) else { return };
+        let g = sample(0).unwrap();
+        let s = Sve(&sve);
+        for c in 0..8 {
+            let want = if c > g.human_slot as usize { s.civ_w(off::SCORE_ACC, c) as i32 } else { 0 };
+            assert_eq!(g.score_acc[c], want, "civ {c}");
+        }
+        assert!(g.score_acc.iter().any(|v| *v > 0));
     }
 
     #[test]

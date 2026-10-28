@@ -219,7 +219,9 @@ impl Game {
     /// military strength, known advances, size + happy - unhappy or size of their cities — by
     /// historian random(4). Rows go to the best value first (the last civ of equal values),
     /// civs that dropped below 0 are left out; a row is shown when it is the human's, the human
-    /// has an embassy there, or on Chieftain.
+    /// has an embassy there, or on Chieftain. Each row's palace is drawn at the level of the
+    /// civ's score accumulator (`score_acc`, ds:0xddfe, o 0x10e32): its cities as this turn's
+    /// process_city counted them, nothing for the civs a just loaded game skipped.
     pub fn historian_check(&mut self) {
         if self.turn < self.historian_timer {
             return;
@@ -229,11 +231,9 @@ impl Game {
         let historian = self.rng.below(4) as u8;
         let alive = self.alive_slots();
         let mut values = [0i32; 8];
-        let mut acc = [0i32; 8];
         for c in self.all_cities() {
             let o = c.owner as usize & 7;
             let h = self.city_happiness(c.id);
-            acc[o] += c.size as i32 + h.happy - h.unhappy;
             values[o] += match category {
                 3 => c.size as i32 + h.happy - h.unhappy,
                 4 => c.size as i32,
@@ -261,7 +261,7 @@ impl Game {
             values[c as usize] = -1;
             let shown = c == me || self.human().has_embassy(c) || self.setup.difficulty == rules::Difficulty::Chieftain;
             let has_cities = self.all_cities().any(|k| k.owner == c);
-            rows.push(super::events::HistorianRow { slot: c, palace_level: super::palace::tri5_level(acc[c as usize]), has_cities, shown });
+            rows.push(super::events::HistorianRow { slot: c, palace_level: super::palace::tri5_level(self.score_acc[c as usize]), has_cities, shown });
         }
         self.push_event(super::events::GameEvent::HistorianReport { historian, category, rows });
     }
