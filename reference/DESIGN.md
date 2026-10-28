@@ -578,7 +578,10 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   and what a load does for the human (politics, ai_civ_turn, goals and his units' looks,
   0x2503..0x25af, 0x41e3). The looks run unit by unit as CIV.EXE's loop reaches them, so a
   computer's emissary can appear in the middle of the human's actions: scripts keep units of
-  civilizations at war apart.
+  civilizations at war apart. civrs looks the same way (`Game::next_active_unit`, until the first
+  Settlers waits, 0x45c9), and moves goto units and aircraft returning to base when the loop takes
+  them, in record order (`Game::run_auto_unit`); a scripted turn ends with a Space for every unit
+  still waiting, as the harness presses it, so the loop passes them all.
 - dosbox's captured mouse only moves relatively, one 640x400 picture pixel per host pixel, and the
   picture sits letterboxed at y = 40 of the 640x480 window: `dosciv.click` pushes the pointer into
   the top-left corner, where the driver clamps it, and then moves it by (2x + 1, 2y + 1).
