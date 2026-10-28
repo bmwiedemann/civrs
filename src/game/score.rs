@@ -81,8 +81,10 @@ pub fn rating_index(percent: i32) -> usize {
 impl Game {
     pub fn score(&self, slot: Slot) -> ScoreBreakdown {
         let mut s = ScoreBreakdown::default();
+        // civ_score sets the taxes to 6 - science while it counts the citizens (o 0x1c0e0..
+        // 0x1c1f6), so they are scored at 40% luxuries whatever the rates
         for c in self.all_cities().filter(|c| c.owner == slot) {
-            let h = self.city_happiness(c.id);
+            let h = self.city_happiness_lux(c.id, Some(40));
             s.happy += h.happy;
             s.content += h.content + c.specialists.len() as i32;
         }
@@ -313,6 +315,24 @@ mod tests {
         want.reverse();
         assert_eq!(rows.iter().map(|r| r.slot).collect::<Vec<_>>(), want, "richest first");
         assert!(rows.iter().any(|r| r.slot == g.human_slot && r.shown));
+    }
+
+    #[test]
+    fn the_score_counts_citizens_at_forty_percent_luxuries() {
+        // o 0x1c0e0: taxes = 6 - science while the cities are counted
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        let slot = g.human_slot;
+        let settler = g.units_of(slot).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        g.city_mut(c).size = 6;
+        g.auto_assign(c);
+        g.player_mut(slot).tax = 0;
+        g.player_mut(slot).lux = 0;
+        let a = g.score(slot);
+        g.player_mut(slot).lux = 100;
+        assert_eq!(g.score(slot), a, "the rates do not matter");
+        let h = g.city_happiness_lux(c, Some(40));
+        assert_eq!(a.happy, h.happy);
     }
 
     #[test]

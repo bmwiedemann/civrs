@@ -281,6 +281,12 @@ impl Game {
     /// the taxes out of the treasury (0x125f6); the shields still count for the unit support
     /// (0xfd20) and the pollution (0x12de9), and the science is still collected (0x12bde).
     pub fn city_yield_raw(&self, c: CityId) -> CityYield {
+        self.city_yield_lux(c, None)
+    }
+
+    /// `city_yield_raw` with the owner's luxury rate replaced by `lux` (percent), as
+    /// `civ_score` evaluates the cities (o 0x1c0e0).
+    pub fn city_yield_lux(&self, c: CityId, lux: Option<u8>) -> CityYield {
         let city = self.city(c);
         let slot = city.owner;
         let p = self.player(slot);
@@ -317,7 +323,7 @@ impl Game {
         if p.govt == Govt::Anarchy {
             y.lux = net;
         } else {
-            y.lux = ((net * (p.lux / 10) as i32 + 5) / 10).clamp(0, y.trade);
+            y.lux = ((net * (lux.unwrap_or(p.lux) / 10) as i32 + 5) / 10).clamp(0, y.trade);
             y.tax = ((net * (p.tax / 10) as i32 + 5) / 10).clamp(0, (net - y.lux).max(0));
             y.sci = net - y.lux - y.tax;
         }

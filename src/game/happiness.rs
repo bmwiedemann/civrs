@@ -245,6 +245,11 @@ impl Game {
     }
 
     pub fn city_happiness(&self, c: CityId) -> Happiness {
+        self.city_happiness_lux(c, None)
+    }
+
+    /// `city_happiness` at the luxury rate `lux` (percent) instead of the owner's.
+    pub fn city_happiness_lux(&self, c: CityId, lux: Option<u8>) -> Happiness {
         let city = self.city(c);
         let slot = city.owner;
         let p = self.player(slot);
@@ -260,7 +265,7 @@ impl Game {
         steps.push(m.step(HappyRow::Base));
         // luxuries: happy = luxuries / 2, the surplus over the content citizens turning unhappy
         // ones content (0xf543)
-        m.happy = self.city_yield(c).lux / 2;
+        m.happy = self.city_yield_lux(c, lux).lux / 2;
         m.rebalance();
         if m.happy != 0 {
             steps.push(m.step(HappyRow::Luxuries));
