@@ -400,6 +400,12 @@ impl MapView {
     }
 
     fn after_turn(&mut self, ctx: &mut UiContext) {
+        // a civrs extra besides CIV.EXE's 50-turn AutoSave (autosave_slot): with AutoSave on,
+        // every turn is also saved silently to slot 9
+        if ctx.game().options.autosave {
+            let path = crate::save::slot_path(&ctx.save_dir, 9);
+            let _ = crate::save::save_game(&path, ctx.game());
+        }
         self.last_centered = None;
         // the turn's units start again from the first record (move_units 0x4149)
         ctx.game_mut().active_unit = None;
