@@ -743,6 +743,11 @@ impl MapView {
                 let line = format!("Sounds {}", if o.sound { "ON" } else { "OFF" });
                 Transition::Push(Box::new(MenuDialog::new(vec![line], Vec::new()).with_pos(100, 80)))
             }
+            // Alt-R: re-draw the leaders' traits, "Leaders randomized." (0x71d9)
+            Key::Char('r') if mods.alt => {
+                ctx.game_mut().randomize_leaders();
+                Transition::Push(Box::new(MenuDialog::new(vec!["Leaders randomized.".to_string()], Vec::new()).with_pos(100, 80)))
+            }
             _ => return None,
         };
         Some(t)
@@ -1845,9 +1850,10 @@ mod tests {
     #[test]
     fn shifted_letters_are_no_unit_orders() {
         let Some((mut ctx, mut mv, id)) = view() else { return };
-        // 'S' is Save (nothing on turn 0), not Sentry; Alt-R is not a road order
+        // 'S' is Save (nothing on turn 0), not Sentry; Alt-R is not a road order but
+        // "Leaders randomized." (0x71d9)
         assert!(matches!(mv.handle(&key(Key::Char('s'), SHIFT), &mut ctx), Transition::None));
-        assert!(matches!(mv.handle(&key(Key::Char('r'), ALT), &mut ctx), Transition::None));
+        assert!(matches!(mv.handle(&key(Key::Char('r'), ALT), &mut ctx), Transition::Push(_)));
         assert_eq!(ctx.game().unit(id).order, UnitOrder::None);
         ctx.game_mut().set_turn(5);
         assert!(matches!(mv.handle(&key(Key::Char('s'), SHIFT), &mut ctx), Transition::Push(_)));

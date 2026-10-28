@@ -12,11 +12,11 @@ pub struct Civ {
     pub leader: &'static str,
     pub adjective: &'static str,
     pub plural: &'static str,
-    /// AI trait, -1..1.
+    /// AI trait, -1..1 (the shipped value: the game reads `Game::traits`).
     pub aggressive: i8,
-    /// AI trait, -1..1.
+    /// AI trait, -1..1 (the shipped value: the game reads `Game::traits`).
     pub expansionist: i8,
-    /// AI trait, -1..1.
+    /// AI trait, -1..1 (the shipped value: the game reads `Game::traits`).
     pub civilized: i8,
     pub cities: [&'static str; 16],
     /// Leader uses the female government titles.
@@ -44,6 +44,28 @@ const fn civ(
         cities,
         female,
     }
+}
+
+/// A leader's three AI traits, -1..1 each (the words at +0x30/+0x32/+0x34 of the leader record
+/// ds:0x14e2 + 0x3a * civ). The game keeps its own copy (`Game::leader_traits`), which Alt-R
+/// re-draws (CIV.EXE 0x71d9).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct Traits {
+    pub aggressive: i8,
+    pub expansionist: i8,
+    pub civilized: i8,
+}
+
+impl Civ {
+    /// The leader's traits as CIV.EXE ships them.
+    pub const fn traits(&self) -> Traits {
+        Traits { aggressive: self.aggressive, expansionist: self.expansionist, civilized: self.civilized }
+    }
+}
+
+/// The traits of the 16 leaders at the start of a game.
+pub fn initial_traits() -> [Traits; 16] {
+    std::array::from_fn(|c| CIVS[c].traits())
 }
 
 /// The 16 civilization slots.

@@ -834,7 +834,7 @@ impl Game {
         p.govt = Govt::Despotism;
         p.start_civ = old.start_civ;
         p.last_contact = -1;
-        let sci = (p.civ().civilized as i32 + 3).clamp(0, 9);
+        let sci = (self.leader_traits[civ as usize & 15].civilized as i32 + 3).clamp(0, 9);
         p.tax = (10 * (9 - sci)) as u8;
         p.lux = 10;
         for s in 0..8usize {

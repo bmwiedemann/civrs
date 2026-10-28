@@ -21,7 +21,7 @@ pub mod wonders;
 
 pub use advances::{advance_by_name, advance_ids, advance_pedia_key, is_real, Advance, ADVANCES};
 pub use city_names::SPARE_CITY_NAMES;
-pub use civs::{civs_for_slot, slot_for_civ, Civ, SlotColour, CIVS, SLOT_COLOURS};
+pub use civs::{civs_for_slot, initial_traits, slot_for_civ, Civ, SlotColour, Traits, CIVS, SLOT_COLOURS};
 pub use difficulty::{Difficulty, DifficultyInfo, DIFFICULTY};
 pub use governments::{Government, Govt, GOVERNMENTS};
 pub use improvements::{improvement_by_name, improvement_ids, Improvement, IMPROVEMENTS};

@@ -403,7 +403,7 @@ impl Game {
             }
         };
         let military_supported = self.supported_units(c).iter().filter(|u| self.unit(**u).kind < unit_ids::DIPLOMAT).count() as i32;
-        let civilized = p.civ().civilized as i32;
+        let civilized = self.traits(slot).civilized as i32;
         let barracks = city.has_improvement(imp::BARRACKS);
         let mut advice = BuildAdvice::default();
         let candidates = self.available_production(c);

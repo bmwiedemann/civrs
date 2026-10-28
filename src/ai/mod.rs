@@ -77,7 +77,7 @@ pub fn government_sums(g: &mut Game, slot: Slot) -> (i32, i32) {
     use crate::game::city::NO_GARRISON;
     use crate::rules::{improvement_ids as imp, unit_ids, CITY_RADIUS};
     let (mut despot, mut republic) = (0, 0);
-    let civilized = g.player(slot).civ().civilized as i32;
+    let civilized = g.traits(slot).civilized as i32;
     let real = g.player(slot).govt;
     for c in g.cities_of(slot) {
         let city = g.city(c).clone();

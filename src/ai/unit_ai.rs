@@ -1061,7 +1061,7 @@ fn settlers_work(g: &mut Game, c: &Ctx) -> Option<Command> {
     if g.unit(id).goto.is_some() {
         let census = &g.ai_memory.census;
         let ki = continent_index(c.cont);
-        let trait_ = g.player(slot).civ().expansionist as i32;
+        let trait_ = g.traits(slot).expansionist as i32;
         if (trait_ + 1) * census.sites[ki] > 16 * census.cities[slot as usize][ki] {
             return Some(Command::Goto);
         }

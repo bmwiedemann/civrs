@@ -670,7 +670,7 @@ impl Game {
         if self.treaty(a, b) {
             wars += 1;
         }
-        wars -= self.player(a).civ().aggressive as i32;
+        wars -= self.traits(a).aggressive as i32;
         let census = self.census();
         let (ai, bi) = (a as usize, b as usize);
         let (mut cities, mut att, mut den) = (0, 0, 1);
@@ -1145,7 +1145,7 @@ mod tests {
     fn advance_values_follow_the_leader_trait() {
         let g = game();
         // Babylonians are civilized (+1): Monarchy (6, 1) -> 7
-        let s = (1..8u8).find(|s| g.player(*s).civ().civilized == 1).unwrap();
+        let s = (1..8u8).find(|s| g.traits(*s).civilized == 1).unwrap();
         assert_eq!(crate::ai::tech_ai::value(&g, s, crate::rules::advance_ids::MONARCHY), 7);
     }
 }

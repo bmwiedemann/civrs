@@ -254,7 +254,7 @@ fn evaluate(g: &mut Game, ai: Slot, at: (i32, i32), mode: u8) -> Meeting {
             m.crusade = Some(j);
         }
     }
-    busy -= g.player(ai).civ().aggressive as i32;
+    busy -= g.traits(ai).aggressive as i32;
     if str_h < str_ai {
         busy -= 1;
     }

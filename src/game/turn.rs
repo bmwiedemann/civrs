@@ -532,7 +532,7 @@ impl Game {
             lux -= 1;
         }
         let lux = lux.clamp(0, 4);
-        let mut sci = p.civ().civilized as i32 + (10 - lux) / 2;
+        let mut sci = self.traits(slot).civilized as i32 + (10 - lux) / 2;
         if p.gold > turn + 100 {
             sci += 1;
         }
@@ -548,7 +548,7 @@ impl Game {
     /// A computer player's first rates (civ_init o 0x4e0b): science the "civilized" trait + 3
     /// tenths, taxes 9 - science, luxuries 1. (The human starts at 5/0/5, o 0x475b.)
     pub fn ai_initial_rates(&mut self, slot: Slot) {
-        let sci = self.player(slot).civ().civilized as i32 + 3;
+        let sci = self.traits(slot).civilized as i32 + 3;
         let p = self.player_mut(slot);
         p.tax = ((9 - sci) * 10) as u8;
         p.lux = 10;
@@ -1348,7 +1348,7 @@ impl Game {
     /// A government for a reply that names none (CIV.EXE asks again instead).
     pub fn ai_pick_government(&self, slot: Slot) -> Govt {
         let opts = self.governments_available(slot);
-        let civ = self.player(slot).civ();
+        let civ = self.traits(slot);
         let at_war = (1..8u8).any(|o| o != slot && self.player(o).in_game && self.player(slot).at_war(o));
         let order: Vec<Govt> = if at_war {
             vec![Govt::Communism, Govt::Monarchy, Govt::Republic]
@@ -2421,7 +2421,7 @@ mod tests {
         // 0xa699..0xa760 in tenths: lux from the last rates +-1, sci = civilized + (10 - lux) / 2
         let (mut g, _c) = fixture();
         let ai = g.alive_slots().into_iter().find(|s| *s != g.human_slot).unwrap();
-        let civilized = g.player(ai).civ().civilized as i32;
+        let civilized = g.traits(ai).civilized as i32;
         // civ_init (o 0x4e0b): sci civilized + 3, tax 9 - sci, lux 1; the human 5/0/5
         assert_eq!((g.player(ai).tax as i32, g.player(ai).lux), ((6 - civilized) * 10, 10));
         assert_eq!((g.human().tax, g.human().lux), (50, 0));

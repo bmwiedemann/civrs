@@ -275,6 +275,12 @@ pub struct Game {
     /// ds:0x6b92: the riot animation ran this turn. Not saved.
     #[serde(skip)]
     pub riot_shown: bool,
+    /// The traits of the 16 leaders (index = civ id; the leader records ds:0x14e2 + 0x3a * civ,
+    /// +0x30..+0x34), from `rules::CIVS` until Alt-R re-draws them (`randomize_leaders`, 0x71d9).
+    /// Not saved: CIV.EXE's SVE holds no leader record (serialize_game o 0xf75b), so a loaded
+    /// game takes the shipped traits (CIV.EXE keeps a re-draw until it exits).
+    #[serde(skip, default = "rules::initial_traits")]
+    pub leader_traits: [rules::Traits; 16],
 }
 
 /// `wonders_built` entry of a wonder whose city was destroyed: built, owned by no one, listed
@@ -283,6 +289,24 @@ pub const WONDER_LOST: CityId = CityId::MAX;
 
 /// Unit slots per civilization (create_unit CIV.EXE 0x8b62; KING.TXT *UMAX).
 pub const MAX_UNITS: usize = 127;
+
+impl Game {
+    /// The traits of the leader of `slot` (`leader_traits` of its civilization).
+    pub fn traits(&self, slot: Slot) -> rules::Traits {
+        self.leader_traits[self.player(slot).civ as usize & 15]
+    }
+
+    /// Alt-R "Leaders randomized." (CIV.EXE 0x71d9): each of the 16 leaders draws aggression,
+    /// expansion and civilized traits as random(3) - 1, in that order.
+    pub fn randomize_leaders(&mut self) {
+        for c in 0..16 {
+            let aggressive = self.rng.below(3) as i8 - 1;
+            let expansionist = self.rng.below(3) as i8 - 1;
+            let civilized = self.rng.below(3) as i8 - 1;
+            self.leader_traits[c] = rules::Traits { aggressive, expansionist, civilized };
+        }
+    }
+}
 
 fn no_audience() -> i8 {
     -1
@@ -430,6 +454,7 @@ impl Game {
             opening: true,
             unit_limit_shown: false,
             riot_shown: false,
+            leader_traits: rules::initial_traits(),
         };
         game.place_starting_units(&slots, &world, &mut wr);
         game.refresh_all_vision();
@@ -1247,5 +1272,29 @@ mod new_game_tests {
         assert_eq!(g.alive_slots(), vec![1, 2, 3]);
         let g = Game::new(GameSetup { seed: 77, num_civs: 3, human_civ: 14, ..Default::default() }, None);
         assert_eq!(g.alive_slots(), vec![1, 2, 6]);
+    }
+
+    #[test]
+    fn alt_r_redraws_every_leaders_traits() {
+        // 0x71d9: 16 leaders x (aggression, expansion, civilized) = random(3) - 1
+        let mut g = Game::new(GameSetup { seed: 5, ..Default::default() }, None);
+        assert_eq!(g.leader_traits, rules::initial_traits());
+        let s = g.human_slot;
+        assert_eq!(g.traits(s), g.player(s).civ().traits());
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..4 {
+            g.randomize_leaders();
+            for t in g.leader_traits {
+                for v in [t.aggressive, t.expansionist, t.civilized] {
+                    assert!((-1..=1).contains(&v));
+                    seen.insert(v);
+                }
+            }
+        }
+        assert_eq!(seen.len(), 3);
+        assert_eq!(g.traits(s), g.leader_traits[g.player(s).civ as usize]);
+        // not saved: the save body skips the table
+        let back: Game = bincode::deserialize(&bincode::serialize(&g).unwrap()).unwrap();
+        assert_eq!(back.leader_traits, rules::initial_traits());
     }
 }

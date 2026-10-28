@@ -339,7 +339,7 @@ impl Screen for Dossier {
         let mut y = 44;
         line(fb, 16, y, &format!("Leader:\u{8f} {} {}", p.title(), p.leader), 9);
         y += 8;
-        let civ = p.civ();
+        let civ = g.traits(s);
         for (v, pos, neg) in [(civ.aggressive, "Aggressive", "Friendly"), (civ.expansionist, "Expansionistic", "Perfectionist"), (civ.civilized, "Civilized", "Militaristic")] {
             if v != 0 {
                 line(fb, 24, y, if v > 0 { pos } else { neg }, 7);

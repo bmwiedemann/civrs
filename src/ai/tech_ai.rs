@@ -9,7 +9,7 @@ use crate::rules::{self, AdvanceId, Difficulty};
 /// militaristic; leader record ds:0x14e2 + 0x3a * nation, word +0x34).
 pub fn value(g: &Game, slot: Slot, a: AdvanceId) -> i32 {
     let info = &rules::ADVANCES[a as usize];
-    info.ai_interest as i32 + info.ai_lean as i32 * g.player(slot).civ().civilized as i32
+    info.ai_interest as i32 + info.ai_lean as i32 * g.traits(slot).civilized as i32
 }
 
 /// The advances `choose_research` considers: those the civ lacks with both prerequisites
