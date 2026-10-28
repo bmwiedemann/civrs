@@ -60,6 +60,8 @@ pub struct UiContext {
     pub last_slot: Option<usize>,
     /// World seed for new games from the command line (`--seed`), instead of the clock.
     pub seed_override: Option<u64>,
+    /// No mouse: CIV.EXE's setup answer "Keyboard only" (ds:0x1a3c = 0, `--keyboard-only`).
+    pub keyboard_only: bool,
     pic_cache: RefCell<HashMap<String, Rc<Picture>>>,
     /// Game state, once a game is running.
     pub game: Option<crate::game::Game>,
@@ -98,6 +100,7 @@ impl UiContext {
             warp_mouse: None,
             last_slot: None,
             seed_override: None,
+            keyboard_only: false,
             pic_cache: RefCell::new(cache),
             game: None,
             ai: crate::ai::Ai::new(1),

@@ -242,6 +242,8 @@ pub struct MapView {
     advice_turn: Option<u32>,
     /// 't' (CIV.EXE 0x71a7, ds:0xdcfc = 1): the map without units until the next key or click.
     terrain_only: bool,
+    /// The keyboard-only look cursor's square, while it is on (see `look_key`).
+    look: Option<(i32, i32)>,
 }
 
 impl Default for MapView {
@@ -274,6 +276,7 @@ impl MapView {
             queued: Default::default(),
             advice_turn: None,
             terrain_only: false,
+            look: None,
         }
     }
 
@@ -907,6 +910,78 @@ impl MapView {
         }
     }
 
+    /// `tile_on_screen` (0x7d35): (x, y) is in the 15x12 map window.
+    fn on_view(&self, x: i32, y: i32) -> bool {
+        Map::wrap_x(x - self.vx) < VIEW_W && (0..VIEW_H).contains(&(y - self.vy))
+    }
+
+    /// The look cursor of the keyboard-only mode (ds:0x1a3c = 0; `move_units` [bp-0x4], square
+    /// [bp-0xe]/[bp-0x12]). Tab (0x72e0) switches it: on at the active unit when that is in
+    /// the map window, else at the view centre (vx + 7, vy + 6) (0x7326..0x7372); Esc (0x72d3
+    /// -> 0x4b40) switches it off. While it is on, the cursor and keypad keys move it instead
+    /// of the unit (0x4f99: x wraps, y stays in 0..49; off the window the view moves to
+    /// (x - 8, y - 7)), and Enter clicks its square (0x4605 -> 0x4909). `blink_wait` (0x8a43)
+    /// outlines it in white.
+    fn look_key(&mut self, ctx: &mut UiContext, key: Key, mods: crate::platform::Mods) -> Option<Transition> {
+        if mods.alt || mods.ctrl || mods.shift {
+            return None;
+        }
+        match (key, self.look) {
+            (Key::Tab, Some(_)) | (Key::Esc, Some(_)) => self.look = None,
+            (Key::Esc, None) => {}
+            (Key::Tab, None) => {
+                let g = ctx.game();
+                let at = g.active_unit.map(|id| g.unit(id).pos()).filter(|&(x, y)| self.on_view(x, y));
+                self.look = Some(at.unwrap_or((Map::wrap_x(self.vx + 7), self.vy + 6)));
+            }
+            (Key::Enter, Some((x, y))) => return Some(self.left_click_tile(ctx, x, y)),
+            (k, Some((x, y))) => {
+                let (dx, dy) = Self::direction(k)?.delta();
+                let (nx, ny) = (Map::wrap_x(x + dx), (y + dy).clamp(0, MAP_H as i32 - 1));
+                self.look = Some((nx, ny));
+                if !self.on_view(nx, ny) {
+                    self.vx = Map::wrap_x(nx - 8);
+                    self.vy = (ny - 7).clamp(0, MAP_H as i32 - VIEW_H);
+                }
+            }
+            _ => return None,
+        }
+        Some(Transition::None)
+    }
+
+    /// A left click on map square (tx, ty) (0x4909), or Enter on the look cursor (0x4605).
+    fn left_click_tile(&mut self, ctx: &mut UiContext, tx: i32, ty: i32) -> Transition {
+        let g = ctx.game();
+        let me = g.human_slot;
+        if let Mode::Goto { .. } = self.mode {
+            // 0x4913: the target must be explored and suit the unit: land
+            // units no ocean, ships ocean or a city, aircraft anything
+            self.mode = Mode::Normal;
+            let Some(id) = g.active_unit else { return Transition::None };
+            let terrain = g.map.tile(tx, ty).terrain;
+            if g.explored(me, tx, ty) && goto_target_ok(g.unit(id).info().domain, terrain == rules::Terrain::Ocean, g.city_at(tx, ty).is_some()) {
+                return self.confirm_goto(ctx, (tx, ty));
+            }
+            return Transition::None;
+        }
+        if let Some(c) = g.city_at(tx, ty) {
+            if g.city(c).owner == me {
+                self.pending = Pending::Event;
+                return self.open_city(ctx, c);
+            }
+        }
+        // 0x4ac5: one of our units there opens the stack box (0x9dc5), even
+        // for a lone unit; elsewhere the view centres on the square
+        let own: Vec<UnitId> = g.units_at(tx, ty).into_iter().filter(|u| g.unit(*u).owner == me).collect();
+        if !own.is_empty() {
+            let default = g.best_defender(tx, ty, None).filter(|id| own.contains(id)).unwrap_or(own[0]);
+            self.pending = Pending::StackPick;
+            return Transition::Push(Box::new(StackPicker::new(own, default)));
+        }
+        self.center_on(tx, ty);
+        Transition::None
+    }
+
     fn handle_goto_key(&mut self, ctx: &mut UiContext, key: Key) -> Transition {
         let Mode::Goto { cursor } = self.mode else { return Transition::None };
         let d = match key {
@@ -1110,6 +1185,12 @@ impl MapView {
         if let Mode::Goto { cursor } = self.mode {
             let (px, py) = (VIEW_X + Map::wrap_x(cursor.0 - self.vx) * TILE, VIEW_Y + (cursor.1 - self.vy) * TILE);
             tilerender::blit_sprite(fb, &ctx.sp.surf, tilerender::cell(tilerender::sp::CURSOR_GO.0, tilerender::sp::CURSOR_GO.1), px, py);
+        }
+        // the look cursor: draw_outline(x, y, 15, 15, col), a 16x16 frame, white while the
+        // active unit blinks off (0x8a43), black while it shows (0x8aff)
+        if let Some((x, y)) = self.look.filter(|&(x, y)| self.on_view(x, y)) {
+            let (px, py) = (VIEW_X + Map::wrap_x(x - self.vx) * TILE, VIEW_Y + (y - self.vy) * TILE);
+            fb.rect_outline(Rect::new(px, py, 16, 16), if self.blink { 0 } else { 15 });
         }
         fb.set_clip(None);
     }
@@ -1625,6 +1706,11 @@ impl Screen for MapView {
                 if let Mode::Goto { .. } = self.mode {
                     return self.handle_goto_key(ctx, *key);
                 }
+                if ctx.keyboard_only {
+                    if let Some(t) = self.look_key(ctx, *key, *mods) {
+                        return t;
+                    }
+                }
                 if let Some(t) = self.command_key(ctx, *key, *mods) {
                     return t;
                 }
@@ -1685,9 +1771,9 @@ impl Screen for MapView {
                         self.pending = Pending::QuitConfirm;
                         Transition::Push(Box::new(YesNo::new(vec!["Are you sure you".into(), "want to Quit?".into()], "Keep Playing", "Yes, Quit").with_pos(100, 80)))
                     }
-                    Key::Esc => {
-                        self.bar_menu(ctx, 0)
-                    }
+                    // Esc (0x72d3) only ends the look cursor of the keyboard-only mode; with a
+                    // mouse it does nothing
+                    Key::Esc => Transition::None,
                     // other Alt/Ctrl combinations are no unit orders (Alt-R 0x1300 is not 'r')
                     _ if mods.alt || mods.ctrl => Transition::None,
                     // the unit switch (0x4c1d) knows the shifted letters D and P only
@@ -1735,35 +1821,7 @@ impl Screen for MapView {
                         }
                         Transition::None
                     }
-                    MouseButton::Left => {
-                        if let Mode::Goto { .. } = self.mode {
-                            // 0x4913: the target must be explored and suit the unit: land
-                            // units no ocean, ships ocean or a city, aircraft anything
-                            self.mode = Mode::Normal;
-                            let Some(id) = g.active_unit else { return Transition::None };
-                            let terrain = g.map.tile(tx, ty).terrain;
-                            if g.explored(me, tx, ty) && goto_target_ok(g.unit(id).info().domain, terrain == rules::Terrain::Ocean, g.city_at(tx, ty).is_some()) {
-                                return self.confirm_goto(ctx, (tx, ty));
-                            }
-                            return Transition::None;
-                        }
-                        if let Some(c) = g.city_at(tx, ty) {
-                            if g.city(c).owner == me {
-                                self.pending = Pending::Event;
-                                return self.open_city(ctx, c);
-                            }
-                        }
-                        // 0x4ac5: one of our units there opens the stack box (0x9dc5), even
-                        // for a lone unit; elsewhere the view centres on the square
-                        let own: Vec<UnitId> = g.units_at(tx, ty).into_iter().filter(|u| g.unit(*u).owner == me).collect();
-                        if !own.is_empty() {
-                            let default = g.best_defender(tx, ty, None).filter(|id| own.contains(id)).unwrap_or(own[0]);
-                            self.pending = Pending::StackPick;
-                            return Transition::Push(Box::new(StackPicker::new(own, default)));
-                        }
-                        self.center_on(tx, ty);
-                        Transition::None
-                    }
+                    MouseButton::Left => self.left_click_tile(ctx, tx, ty),
                     _ => Transition::None,
                 }
             }
@@ -2072,6 +2130,31 @@ mod tests {
         // plain s still sentries
         mv.handle(&key(Key::Char('s'), NONE), &mut ctx);
         assert_eq!(ctx.game().unit(id).order, UnitOrder::Sentry);
+    }
+
+    #[test]
+    fn keyboard_only_look_cursor() {
+        let Some((mut ctx, mut mv, id)) = view() else { return };
+        // with a mouse Esc does nothing (0x72d3)
+        assert!(matches!(mv.handle(&key(Key::Esc, NONE), &mut ctx), Transition::None));
+        assert_eq!(mv.look, None);
+        ctx.keyboard_only = true;
+        let (ux, uy) = ctx.game().unit(id).pos();
+        mv.center_on(ux, uy);
+        mv.handle(&key(Key::Tab, NONE), &mut ctx);
+        assert_eq!(mv.look, Some((ux, uy)), "starts on the active unit");
+        // the keypad moves the cursor, not the unit
+        mv.handle(&key(Key::Right, NONE), &mut ctx);
+        assert_eq!(mv.look, Some((Map::wrap_x(ux + 1), uy)));
+        assert_eq!(ctx.game().unit(id).pos(), (ux, uy));
+        mv.handle(&key(Key::Esc, NONE), &mut ctx);
+        assert_eq!(mv.look, None);
+        // with the unit off the window it starts at the view centre
+        mv.vx = Map::wrap_x(ux + 40);
+        mv.handle(&key(Key::Tab, NONE), &mut ctx);
+        assert_eq!(mv.look, Some((Map::wrap_x(mv.vx + 7), mv.vy + 6)));
+        mv.handle(&key(Key::Tab, NONE), &mut ctx);
+        assert_eq!(mv.look, None);
     }
 
     #[test]

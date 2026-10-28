@@ -461,16 +461,19 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
 ## Input model
 Keyboard: numpad 1-9/arrows move (Home/PgUp/End/PgDn diagonals); Space skip; w wait; f fortify; s sentry; g goto; r road/rail; i irrigate; m mine;
 F fortress; P pillage; p clean pollution; b build/join city; h home; u unload; D disband; c centre; Enter end turn; Esc cancel/undo; G/O/A/W/C menus;
-F1-F12 reports; Alt-R leaders randomized; Alt-V sound; Ctrl-S/Ctrl-L quick save/load; Ctrl-Q quit prompt. City screen: I H M V R Esc, Shift-M, Shift-A.
+F1-F12 reports; Alt-R leaders randomized; Alt-V sound; Ctrl-S/Ctrl-L quick save/load; Alt-Q (Ctrl-Q) quit prompt; Esc on the map: nothing (keyboard-only: look cursor off). City screen: I H M V R Esc, Shift-M, Shift-A.
 Mouse (320x200 space): LMB menu bar/items; LMB tile: own city -> city screen, own unit -> activate/stack list, else centre; RMB adjacent tile -> move;
 goto LMB = destination; LMB minimap centres; LMB unit box cycles; dialogs LMB choose, RMB cancel; city map LMB toggles worker, citizen click cycles specialist.
 Software cursor TORCH.PIC (hot spot top-left, corner colour transparent) drawn in 320x200 space; hardware cursor hidden.
-No keyboard-only mode: CIV.EXE's setup asks "Mouse and Keyboard / Keyboard only" (o 0x375, ds:0x1a3c).
-Without a mouse, Tab (0x72e0) and Esc (0x72d3 -> 0x4b40) switch a look cursor that starts on the active
-unit (else the view centre, 0x7363), moves with the keypad (0x5870) and on Enter acts as a click on its
-square (0x4605: pointer ds:0xdb3c/0xdb3e, 0x4909); 'g' uses the same cursor (0x4e83). civrs always has a
-pointer, its goto mode already has the keypad cursor, and every other use of the look cursor is a mouse
-click, so the mode is left out. With a mouse CIV.EXE ignores Tab, so civrs does too.
+Keyboard-only mode: CIV.EXE's setup asks "Mouse and Keyboard / Keyboard only" (o 0x375, ds:0x1a3c);
+civrs takes the second answer as `--keyboard-only` (UiContext::keyboard_only). In it Tab (0x72e0) and
+Esc (0x72d3 -> 0x4b40) switch a look cursor that starts on the active unit when that is in the map
+window (else the view centre, 0x7363), moves with the keypad instead of the unit (0x4f99; off the window
+the view jumps to (x - 8, y - 7)), blinks as a 16x16 outline white/black with the unit (0x8a43/0x8aff)
+and on Enter acts as a left click on its square (0x4605 -> 0x4909); `MapView::look_key`. 'g' uses the
+same cursor (0x4e83); civrs's goto mode keeps its own keypad cursor. With a mouse CIV.EXE ignores Tab
+and Esc on the map (checked live in DOSBox), so civrs does too; the only quit question is Alt-Q
+(0x728c, "Are you sure you\nwant to Quit?" / "Keep Playing" / "Yes, Quit" at (100, 80)).
 
 ## Build order, tracks and milestones
 Tracks (parallel subagents after M1/M2 interfaces exist):

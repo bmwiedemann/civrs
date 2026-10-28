@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 fn usage() -> ! {
     eprintln!(
         "civrs - Civilization (1991) reimplementation\n\
-         usage: civrs [--assets DIR] [--scale N] [--fullscreen] [--load-sve CIVILn.SVE]\n\
+         usage: civrs [--assets DIR] [--scale N] [--fullscreen] [--keyboard-only] [--load-sve CIVILn.SVE]\n\
                 civrs --dump TARGET --out FILE.ppm [--assets DIR] [--zoom N] [--load-sve CIVILn.SVE]\n\
          dump targets: pic:NAME | sheet:NAME | fonts | pal:NAME | all-pics:DIR\n\
                        sound:ID[:LEVEL[:SECONDS]] (WAV) | sound-regs:ID[:LEVEL[:TICKS]] (OPL2 register log)\n\
@@ -24,6 +24,8 @@ struct Cli {
     out: Option<PathBuf>,
     zoom: usize,
     skip_intro: bool,
+    /// CIV.EXE's "Keyboard only" answer (ds:0x1a3c = 0): the map's look cursor.
+    keyboard_only: bool,
     seed: Option<u64>,
     /// An original CIVILn.SVE to import (`save::sve`).
     load_sve: Option<PathBuf>,
@@ -32,7 +34,7 @@ struct Cli {
 }
 
 fn parse_cli() -> Cli {
-    let mut cli = Cli { assets: None, scale: None, fullscreen: false, dump: None, out: None, zoom: 1, skip_intro: false, seed: None, load_sve: None, actions: None };
+    let mut cli = Cli { assets: None, scale: None, fullscreen: false, dump: None, out: None, zoom: 1, skip_intro: false, keyboard_only: false, seed: None, load_sve: None, actions: None };
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -42,6 +44,7 @@ fn parse_cli() -> Cli {
             "--dump" => cli.dump = args.next(),
             "--out" => cli.out = args.next().map(PathBuf::from),
             "--skip-intro" => cli.skip_intro = true,
+            "--keyboard-only" => cli.keyboard_only = true,
             "--seed" => cli.seed = args.next().and_then(|s| s.parse().ok()),
             "--load-sve" => cli.load_sve = args.next().map(PathBuf::from),
             "--actions" => cli.actions = args.next().map(PathBuf::from),
@@ -609,7 +612,10 @@ fn main() {
     }
     let save_dir = civrs::save::default_save_dir();
     let mut ctx = match civrs::ui::context::UiContext::new(assets, save_dir) {
-        Ok(c) => c,
+        Ok(mut c) => {
+            c.keyboard_only = cli.keyboard_only;
+            c
+        }
         Err(e) => {
             eprintln!("error loading assets: {e}");
             std::process::exit(1);
