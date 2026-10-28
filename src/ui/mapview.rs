@@ -503,7 +503,7 @@ impl MapView {
     }
 
     /// "We have signed a\npeace treaty with\nthe <Plural>!" Cancel action. / Break treaty. (CIV.EXE
-    /// 0x1a3cf, at (80, 80)).
+    /// 0x1a3cf, at (80, 80), from the Foreign Minister, 0x1a3ff).
     /// The move again after a "Break treaty." or "Attack" answer; the answers hold while the
     /// other question is open, and are dropped once the move is done.
     fn confirmed_move(&mut self, ctx: &mut UiContext, d: Dir8) -> Transition {
@@ -518,7 +518,7 @@ impl MapView {
     fn treaty_question(&mut self, ctx: &mut UiContext, id: UnitId, d: Dir8, o: crate::game::Slot) -> Transition {
         let lines = vec!["We have signed a".into(), "peace treaty with".into(), format!("the {}!", ctx.game().player(o).plural())];
         self.pending = Pending::AttackTreaty(id, d, o);
-        Transition::Push(Box::new(MenuDialog::new(lines, vec!["Cancel action.".into(), "Break treaty.".into()]).with_pos(80, 80)))
+        Transition::Push(Box::new(MenuDialog::new(lines, vec!["Cancel action.".into(), "Break treaty.".into()]).with_pos(80, 80).with_speaker(crate::ui::widgets::SPEAKER_FOREIGN)))
     }
 
     fn foreign_city_menu(&mut self, ctx: &mut UiContext, id: UnitId, c: crate::game::CityId) -> Transition {
@@ -778,7 +778,7 @@ impl MapView {
                     if let Some(o) = active.and_then(|id| ctx.game().pillage_treaty(id)) {
                         let lines = vec!["We have signed a".into(), "peace treaty with".into(), format!("the {}!", ctx.game().player(o).plural())];
                         self.pending = Pending::PillageTreaty(active.unwrap(), o);
-                        return Transition::Push(Box::new(MenuDialog::new(lines, vec!["Cancel action.".into(), "Break treaty.".into()]).with_pos(80, 80)));
+                        return Transition::Push(Box::new(MenuDialog::new(lines, vec!["Cancel action.".into(), "Break treaty.".into()]).with_pos(80, 80).with_speaker(crate::ui::widgets::SPEAKER_FOREIGN)));
                     }
                     self.unit_order(ctx, UnitOrder::Pillage)
                 } else {

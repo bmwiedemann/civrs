@@ -1187,6 +1187,11 @@ impl Game {
                     }
                 }
                 self.push_event(GameEvent::ItemBuilt { city: c, item: prod });
+                // the Foreign Minister reports it, after the "builds" message (0xe960)
+                let h = self.human_slot;
+                if i == imp::PALACE && (owner == h || self.player(h).has_embassy(owner)) {
+                    self.push_event(GameEvent::CapitalMoved { slot: owner, city: c });
+                }
                 self.after_building(c, human);
                 if human {
                     self.push_event(GameEvent::NeedsDecision(Decision::ProductionChoice { city: c, reason: "built".into() }));
@@ -2492,6 +2497,29 @@ mod tests {
         g.city_mut(c).owner = 0;
         g.treasury_warning();
         assert!(!warned(&mut g), "one city left");
+    }
+
+    #[test]
+    fn a_new_palace_is_reported_by_the_foreign_minister() {
+        // 0xe960: for the human, or a civilization the human has an embassy with
+        let (mut g, c) = fixture();
+        let me = g.human_slot;
+        let (x, y) = g.city(c).pos();
+        let s = g.add_unit(me, unit_ids::SETTLERS, x + 3, y);
+        let c2 = g.found_city(s).unwrap();
+        g.take_events();
+        let moved = |g: &mut Game| g.take_events().into_iter().find_map(|e| if let GameEvent::CapitalMoved { slot, city } = e { Some((slot, city)) } else { None });
+        g.complete_production(c2, Production::Improvement(imp::PALACE));
+        assert!(!g.city(c).has_improvement(imp::PALACE) && g.city(c2).has_improvement(imp::PALACE));
+        assert_eq!(moved(&mut g), Some((me, c2)));
+        // a computer's palace: only with an embassy
+        g.city_mut(c).owner = 2;
+        g.complete_production(c, Production::Improvement(imp::PALACE));
+        assert_eq!(moved(&mut g), None);
+        g.raise_flag(me, 2, crate::game::diplomacy::flags::EMBASSY);
+        g.city_mut(c).remove_improvement(imp::PALACE);
+        g.complete_production(c, Production::Improvement(imp::PALACE));
+        assert_eq!(moved(&mut g), Some((2, c)));
     }
 
     #[test]

@@ -245,6 +245,10 @@ pub enum GameEvent {
     /// CIV.EXE 0x3e07..0x3ba3): "CITY (Adjective)\nbuilds WONDER." to the human with the
     /// owner's jingle and the wonder's Civilopedia page.
     WonderGranted { city: CityId, wonder: WonderId, owner: Slot },
+    /// "[Diplomats report:\n]<Adjective> capital\nmoved to <city>." from the Foreign
+    /// Minister: `slot` completed a Palace in `city`, and is the human or has the human's
+    /// embassy (CIV.EXE 0xe960..0xe9fe).
+    CapitalMoved { slot: Slot, city: CityId },
 }
 
 /// A choice the engine needs from the human player before continuing.

@@ -10,7 +10,7 @@ use crate::ui::context::UiContext;
 use crate::ui::eventpics;
 use crate::audio::{Sound, Tune};
 use crate::ui::screen::{DialogResult, Screen, Transition};
-use crate::ui::widgets::{MenuDialog, MessageBox};
+use crate::ui::widgets::{MenuDialog, MessageBox, SPEAKER_DEFENSE, SPEAKER_DIPLOMATS, SPEAKER_FOREIGN, SPEAKER_TRAVELERS};
 
 /// The tune CIV.EXE plays with an event's message, started as the message opens and faded
 /// (`PlayTune(1)`) as it closes. Only these call sites react to game events; everything else
@@ -170,6 +170,8 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
     let me = g.human_slot;
     let msg = |lines: Vec<String>| -> Option<Box<dyn Screen>> { Some(Box::new(MessageBox::new(lines))) };
     let news = |lines: Vec<String>| -> Option<Box<dyn Screen>> { Some(eventpics::travelers_report(lines)) };
+    // popup_menu(text, 100, 80) with a speaker (ds:0x2f9e)
+    let speaker = |s: u8, lines: Vec<String>| -> Option<Box<dyn Screen>> { Some(Box::new(MenuDialog::new(lines, Vec::new()).with_pos(100, 80).with_speaker(s))) };
     // overlay 21, named after `city` (None: the human's city, the -1 argument)
     let paper = |lines: Vec<String>, city: Option<crate::game::CityId>| -> Option<Box<dyn Screen>> { Some(crate::ui::newspaper::newspaper(lines, city)) };
     let city_name = |id| g.city_opt(id).map(|c| c.name.clone()).unwrap_or_default();
@@ -229,14 +231,14 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
                 builds
             }
         }
-        // "CITY (Adjective)\nbuilds WONDER." from the Foreign Minister with an embassy, else
-        // the travelers, then the wonder's Civilopedia page (CIV.EXE 0x3e07..0x3b93; the
-        // speaker's portrait is not drawn)
+        // "CITY (Adjective)\nbuilds WONDER." at (100, 80) from the Foreign Minister with an
+        // embassy, else the Travelers, then the wonder's Civilopedia page (CIV.EXE
+        // 0x3e07..0x3b93)
         GameEvent::WonderGranted { city, wonder, owner } => {
             let lines = vec![format!("{} ({})", city_name(*city), g.player(*owner).adjective()), format!("builds {}.", rules::WONDERS[*wonder as usize].name)];
-            let title = if g.player(me).has_embassy(*owner) { "Foreign Minister:" } else { "Travelers report:" };
+            let who = if g.player(me).has_embassy(*owner) { SPEAKER_FOREIGN } else { SPEAKER_TRAVELERS };
             let page = crate::ui::civilopedia::entry_screen(crate::ui::pedia_data::Entry::Wonder(*wonder), 0);
-            Some(Box::new(Sequence { first: Some(eventpics::news_box(title, lines)), then: Some(page) }))
+            Some(Box::new(Sequence { first: speaker(who, lines), then: Some(page) }))
         }
         // "<adv> cancels\nthe effect of\n<wonder>." (CIV.EXE 0xc796, the human's wonders, a
         // newspaper)
@@ -474,15 +476,23 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
         }
         GameEvent::PalaceAddition(s) if *s == me => Some(crate::ui::palace::palace_addition(ctx)),
         GameEvent::HistorianReport { historian, category, rows } => Some(Box::new(crate::ui::report_world::Historian::new(*historian, *category, rows.clone()))),
-        // the computer players' treaties and wars, for the human with an embassy (CIV.EXE
-        // 0x15247, 0x152f8, 0x14aa4, at (100, 80))
-        GameEvent::PeaceTreaty { a, b } => msg(vec![format!("{} and", civ(*a)), format!("{} sign", civ(*b)), "a peace treaty.".into()]),
-        GameEvent::WarDeclared { a, b } => msg(vec![format!("{} and", civ(*a)), format!("{} declare", civ(*b)), "war on each other.".into()]),
-        GameEvent::TreatyCancelled { a, b } => msg(vec![format!("{} and", civ(*a)), format!("{} cancel", civ(*b)), "peace treaty.".into()]),
-        GameEvent::WarEnded { a, b } => msg(vec!["The war between".into(), format!("the {} and the", civ(*a)), format!("{} has ended.", civ(*b))]),
-        // fights (CIV.EXE 0x19e98, 0x19f2c)
-        GameEvent::SneakAttack { by, .. } => msg(vec!["Sneak attack by".into(), format!("{} forces!", g.player(*by).adjective())]),
-        GameEvent::TreatyBroken { by, victim } => msg(vec![format!("{} cancel", civ(*victim)), "peace treaty".into(), format!("with {}.", civ(*by))]),
+        // the computer players' treaties and wars, for the human with an embassy, from the
+        // Diplomats (CIV.EXE 0x15247, 0x152f8, 0x14aa4, at (100, 80), ds:0x2f9e = 1)
+        GameEvent::PeaceTreaty { a, b } => speaker(SPEAKER_DIPLOMATS, vec![format!("{} and", civ(*a)), format!("{} sign", civ(*b)), "a peace treaty.".into()]),
+        GameEvent::WarDeclared { a, b } => speaker(SPEAKER_DIPLOMATS, vec![format!("{} and", civ(*a)), format!("{} declare", civ(*b)), "war on each other.".into()]),
+        GameEvent::TreatyCancelled { a, b } => speaker(SPEAKER_DIPLOMATS, vec![format!("{} and", civ(*a)), format!("{} cancel", civ(*b)), "peace treaty.".into()]),
+        GameEvent::WarEnded { a, b } => speaker(SPEAKER_DIPLOMATS, vec!["The war between".into(), format!("the {} and the", civ(*a)), format!("{} has ended.", civ(*b))]),
+        // fights, from the Defense and the Foreign Minister (CIV.EXE 0x19e98, 0x19f2c, at (100, 80))
+        GameEvent::SneakAttack { by, .. } => speaker(SPEAKER_DEFENSE, vec!["Sneak attack by".into(), format!("{} forces!", g.player(*by).adjective())]),
+        // "Diplomats report:" only for another civilization, then from the Foreign Minister
+        // at (80, 80) (CIV.EXE 0xe984..0xe9fe; the speaker 1 set for the line is overwritten)
+        GameEvent::CapitalMoved { slot, city } => {
+            let mut lines = if *slot == me { Vec::new() } else { vec!["Diplomats report:".to_string()] };
+            lines.push(format!("{} capital", g.player(*slot).adjective()));
+            lines.push(format!("moved to {}.", city_name(*city)));
+            Some(Box::new(MenuDialog::new(lines, Vec::new()).with_pos(80, 80).with_speaker(SPEAKER_FOREIGN)))
+        }
+        GameEvent::TreatyBroken { by, victim } => speaker(SPEAKER_FOREIGN, vec![format!("{} cancel", civ(*victim)), "peace treaty".into(), format!("with {}.", civ(*by))]),
         GameEvent::Schism(s) => note(ctx, "SCHISM", &Vars { them: civ(*s).to_string(), ..Default::default() }),
         GameEvent::EmbassyEstablished { slot, with } if *slot == me => news(vec!["Embassy established".into(), format!("with the {}.", civ(*with))]),
         GameEvent::ContactMade { .. } => None,
