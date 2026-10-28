@@ -88,7 +88,9 @@ pub struct Player {
     pub in_game: bool,
     pub alive: bool,
     pub govt: Govt,
-    /// Turns of anarchy remaining before a government can be chosen.
+    /// Non-zero: the human's revolution flag ds:0xe498[civ][0] & 4, set when its Democracy
+    /// collapsed (0x12820); the next turn with `turn & 3 == 0` only clears it
+    /// (`Game::anarchy_check`). (Saves before this held a countdown here: read as the flag.)
     pub anarchy_turns: u8,
     pub gold: i32,
     /// Tax rate in percent (multiple of 10). Science = 100 - tax - lux.

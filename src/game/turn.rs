@@ -339,14 +339,6 @@ impl Game {
         if !self.player(slot).human {
             crate::ai::city_ai::set_rates(self, slot, balanced, rioting);
         }
-        // Democracy: two consecutive turns of disorder anywhere bring down the government
-        if self.player(slot).govt == Govt::Democracy && self.all_cities().any(|c| c.owner == slot && c.disorder_turns >= 2) {
-            for c in self.cities_of(slot) {
-                self.city_mut(c).disorder_turns = 0;
-            }
-            self.player_mut(slot).senate_blocks = self.player(slot).senate_blocks.saturating_add(1);
-            self.revolution(slot);
-        }
         self.process_unit_hazards(slot);
         // the treasury holds at most 30000 gold, capped after the civ's cities (0x2515)
         if self.player(slot).gold > 30000 {
@@ -364,19 +356,7 @@ impl Game {
             return;
         }
         self.apollo_reveal(slot);
-        if self.player(slot).anarchy_turns > 0 {
-            self.player_mut(slot).anarchy_turns -= 1;
-            if self.player(slot).anarchy_turns == 0 {
-                self.push_event(GameEvent::AnarchyEnded { slot });
-                self.offer_government(slot);
-            }
-        } else if self.player(slot).govt == Govt::Anarchy {
-            // anarchy without a countdown (the Pyramids' revolution) ends at the civ's next turn
-            // processing, as CIV.EXE does for an owner of the Pyramids (0x149a2); this also
-            // frees games saved while the government choice was being lost
-            self.push_event(GameEvent::AnarchyEnded { slot });
-            self.offer_government(slot);
-        }
+        self.anarchy_check(slot);
         // the peaceful turns ds:0xd808 (one count for the world): one more at the human's turn
         // from 1 AD on (0x259a); any fight between two civilizations resets them
         // (`Game::fight_diplomacy`)
@@ -587,6 +567,12 @@ impl Game {
                 let next = self.ai_production(c);
                 self.city_mut(c).production = next;
             }
+        }
+        // a Democracy falls in the city loop (0x127ba), so the cities after this one work
+        // under Anarchy
+        if self.city(c).disorder_turns >= 2 && self.player(slot).govt == Govt::Democracy {
+            self.player_mut(slot).senate_blocks = self.player(slot).senate_blocks.saturating_add(1);
+            self.government_collapse(slot, c);
         }
         if h.celebration && !was_celebrating {
             self.push_event(GameEvent::Celebration(c));
@@ -1104,41 +1090,66 @@ impl Game {
         Govt::ALL.iter().copied().filter(|g| *g != Govt::Anarchy && (all || rules::GOVERNMENTS[*g as usize].prereq.map(|a| p.knows(a)).unwrap_or(true))).collect()
     }
 
-    /// Start a revolution: Anarchy for 1-4 turns (none with the Pyramids), then a new government.
+    /// The human's revolution (CIV.EXE 0x6f50, after *REV): the government is Anarchy at once,
+    /// written directly (no `set_government`, so nothing is logged and the vendettas stay until
+    /// the new government); `anarchy_check` ends it, the Pyramids included, at a later turn.
     pub fn revolution(&mut self, slot: Slot) {
         if self.player(slot).govt == Govt::Anarchy {
             return;
         }
-        let turns = if self.owner_has_wonder(slot, won::PYRAMIDS) { 0 } else { 1 + self.rng.below(4) as u8 };
-        // set_government(civ, 0) forgets the vendettas (0x15079) and logs the change
-        self.forget_vendettas(slot);
-        self.replay_log(super::replay::kind::GOVERNMENT, &[slot, Govt::Anarchy as u8]);
-        {
-            let p = self.player_mut(slot);
-            p.govt = Govt::Anarchy;
-            p.anarchy_turns = turns;
-        }
+        self.player_mut(slot).govt = Govt::Anarchy;
         for c in self.cities_of(slot) {
             self.city_mut(c).celebrating = false;
         }
         self.push_event(GameEvent::Revolution { slot });
-        if turns == 0 {
+    }
+
+    /// A Democracy's city in disorder for a second turn in a row (CIV.EXE 0x127ba, inside the
+    /// city loop): "Discontented citizens of CITY revolt: Government Collapses!" (the human's
+    /// newspaper), and `set_government(civ, 0)` logs Anarchy and forgets the vendettas. The
+    /// human's revolution flag ([civ][0] & 4, 0x12820, kept in `anarchy_turns`) makes the
+    /// anarchy last past one more turn with `turn & 3 == 0`.
+    pub fn government_collapse(&mut self, slot: Slot, city: CityId) {
+        self.push_event(GameEvent::GovernmentCollapsed { slot, city });
+        self.choose_government(slot, Govt::Anarchy);
+        if self.player(slot).human {
+            self.player_mut(slot).anarchy_turns = 1;
+        }
+    }
+
+    /// The anarchy part of `civ_turn_politics` (CIV.EXE 0x1495a), at the start of the civ's
+    /// turn: on turns with `turn & 3 == 0` the human's anarchy ends (or, with the revolution
+    /// flag set, only the flag is cleared); otherwise, and for computer players, it ends on
+    /// those turns or at once for an owner of the Pyramids. `set_government(civ, 1)` then asks
+    /// the human and gives a computer player Despotism.
+    pub fn anarchy_check(&mut self, slot: Slot) {
+        if self.player(slot).govt != Govt::Anarchy {
+            return;
+        }
+        let fourth = self.turn & 3 == 0;
+        if self.player(slot).human && fourth && self.player(slot).anarchy_turns != 0 {
+            self.player_mut(slot).anarchy_turns = 0;
+            return;
+        }
+        if fourth || self.owner_has_wonder(slot, won::PYRAMIDS) {
+            self.player_mut(slot).anarchy_turns = 0;
+            self.push_event(GameEvent::AnarchyEnded { slot });
             self.offer_government(slot);
         }
     }
 
-    /// Anarchy is over: the human picks a government, the AI chooses one.
+    /// Anarchy is over (`set_government(civ, 1)`, 0x14df7): the human picks a government, a
+    /// computer player gets Despotism.
     fn offer_government(&mut self, slot: Slot) {
         let options = self.governments_available(slot);
         if self.player(slot).human {
             self.push_event(GameEvent::NeedsDecision(Decision::ChooseGovernment { slot, options }));
         } else {
-            let g = self.ai_pick_government(slot);
-            self.choose_government(slot, g);
+            self.choose_government(slot, Govt::Despotism);
         }
     }
 
-    /// Simple government preference for computer players.
+    /// A government for a reply that names none (CIV.EXE asks again instead).
     pub fn ai_pick_government(&self, slot: Slot) -> Govt {
         let opts = self.governments_available(slot);
         let civ = self.player(slot).civ();
@@ -2042,14 +2053,59 @@ mod tests {
     }
 
     #[test]
-    fn anarchy_without_countdown_ends_at_the_next_turn() {
-        let (mut g, _c) = fixture();
+    fn anarchy_ends_on_every_fourth_turn_or_with_the_pyramids() {
+        // 0x1495a: turn & 3 == 0, or the Pyramids; a computer player gets Despotism
+        let (mut g, c) = fixture();
         let slot = g.human_slot;
+        let asked = |g: &mut Game| g.take_events().iter().any(|e| matches!(e, GameEvent::NeedsDecision(Decision::ChooseGovernment { .. })));
         g.player_mut(slot).govt = Govt::Anarchy;
-        g.player_mut(slot).anarchy_turns = 0;
         g.take_events();
-        g.process_player_turn_start(slot);
-        assert!(g.take_events().iter().any(|e| matches!(e, GameEvent::NeedsDecision(Decision::ChooseGovernment { .. }))));
+        g.set_turn(13);
+        g.anarchy_check(slot);
+        assert!(!asked(&mut g));
+        g.set_turn(16);
+        g.anarchy_check(slot);
+        assert!(asked(&mut g));
+        // the collapse flag holds the human for one more such turn
+        g.player_mut(slot).anarchy_turns = 1;
+        g.anarchy_check(slot);
+        assert!(!asked(&mut g));
+        assert_eq!(g.player(slot).anarchy_turns, 0);
+        g.anarchy_check(slot);
+        assert!(asked(&mut g));
+        // the Pyramids end it at the next turn, not at the revolution
+        g.city_mut(c).add_wonder(won::PYRAMIDS);
+        g.wonders_built[won::PYRAMIDS as usize] = Some(c);
+        g.player_mut(slot).govt = Govt::Monarchy;
+        g.set_turn(17);
+        g.revolution(slot);
+        assert!(!asked(&mut g));
+        g.set_turn(18);
+        g.anarchy_check(slot);
+        assert!(asked(&mut g));
+        let ai = g.alive_slots().into_iter().find(|s| *s != slot).unwrap();
+        g.player_mut(ai).govt = Govt::Anarchy;
+        g.set_turn(20);
+        g.anarchy_check(ai);
+        assert_eq!(g.player(ai).govt, Govt::Despotism);
+    }
+
+    #[test]
+    fn democracy_falls_in_the_city_loop() {
+        // 0x127ba: the second turn of disorder; the human's flag is set (0x12820)
+        let (mut g, c) = fixture();
+        let slot = g.human_slot;
+        g.player_mut(slot).govt = Govt::Democracy;
+        g.city_mut(c).disorder_turns = 1;
+        g.city_mut(c).size = 8;
+        g.player_mut(slot).lux = 0;
+        g.player_mut(slot).tax = 0;
+        g.take_events();
+        g.process_city(c);
+        assert!(g.city(c).disorder);
+        assert_eq!(g.player(slot).govt, Govt::Anarchy);
+        assert_eq!(g.player(slot).anarchy_turns, 1);
+        assert!(g.take_events().contains(&GameEvent::GovernmentCollapsed { slot, city: c }));
     }
 
     #[test]
@@ -2057,11 +2113,11 @@ mod tests {
         let (mut g, _c) = fixture();
         let slot = g.human_slot;
         g.player_mut(slot).learn(adv::MONARCHY);
+        g.set_turn(10);
         g.revolution(slot);
         assert_eq!(g.player(slot).govt, Govt::Anarchy);
-        let turns = g.player(slot).anarchy_turns;
-        assert!((1..=4).contains(&turns));
-        for _ in 0..turns {
+        for t in 11..=12 {
+            g.set_turn(t);
             g.process_player_turn_start(slot);
         }
         let ev = g.take_events();

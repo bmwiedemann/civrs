@@ -241,6 +241,7 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             msg(vec![format!("Residents of {}", city_name(*city)), format!("admire the prosperity of {}.", city_name(*admired))])
         }
         GameEvent::Revolution { slot } if *slot == me => msg(vec!["Revolution!".into(), "Your government falls into anarchy.".into()]),
+        GameEvent::GovernmentCollapsed { slot, city } if *slot == me => msg(vec!["Discontented citizens of".into(), format!("{} revolt:", city_name(*city)), "Government Collapses!".into()]),
         GameEvent::AnarchyEnded { slot } if *slot == me => None,
         GameEvent::GovernmentChanged { slot, govt } if *slot == me => Some(crate::ui::govtscreen::govt_screen(ctx, *govt)),
         GameEvent::LowFunds { slot } if *slot == me => {

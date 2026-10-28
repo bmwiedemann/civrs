@@ -216,6 +216,9 @@ pub enum GameEvent {
     /// "SDI protects <city>." at (80,100), for everyone (`nuclear_attack` CIV.EXE 0x1a51f):
     /// the city's units survive a nuclear blast.
     SdiProtects { city: CityId },
+    /// "Discontented citizens of\nCITY revolt:\nGovernment Collapses!" (CIV.EXE 0x127d6, the
+    /// human's newspaper): a Democracy's city stayed in disorder for a second turn.
+    GovernmentCollapsed { slot: Slot, city: CityId },
 }
 
 /// A choice the engine needs from the human player before continuing.
