@@ -2,7 +2,7 @@
 
 use crate::game::turn::{TurnRunner, TurnStep};
 use crate::game::{tile_flags, AutoStop, Decision, Dir8, Map, MoveOutcome, UnitId, UnitOrder};
-use crate::gfx::text::{draw_text, draw_text_centered};
+use crate::gfx::text::draw_text;
 use crate::gfx::{Rect, Surface, TextStyle};
 use crate::platform::{Event, Key, MouseButton};
 use crate::rules::{self, UnitTypeId, MAP_H, SLOT_COLOURS};
@@ -1152,21 +1152,27 @@ impl MapView {
                 }
             }
         }
-        // city names
-        for ty in 0..VIEW_H {
+        // city names, as draw_map_view (0x1a7b8..0x1a824) draws the labels draw_tile queued
+        // for the cities it showed: none in the bottom row (y >= 184), the name fitted to
+        // 327 - x pixels, in 11 at (max(x - 8, 80), y + 16)
+        fb.set_clip(None);
+        for ty in 0..VIEW_H - 1 {
             for tx in 0..VIEW_W {
                 let (x, y) = (Map::wrap_x(self.vx + tx), self.vy + ty);
                 if !g.explored(me, x, y) {
                     continue;
                 }
-                if let Some(c) = g.city_at(x, y) {
-                    let city = g.city(c);
+                if let Some(c) = g.city_at(x, y).filter(|c| g.city_size_shown(*c).is_some()) {
                     let (px, py) = (VIEW_X + tx * TILE, VIEW_Y + ty * TILE);
-                    let st = TextStyle::shadowed(0, theme::CYAN, theme::BLACK);
-                    draw_text_centered(fb, &ctx.fonts, &st, px + 8, py + 16, &city.name);
+                    let name = crate::ui::reports::fit_text(ctx, &g.city(c).name, 327 - px);
+                    // draw_text_shadow (0x18a6): black one row down, then the colour
+                    let lx = (px - 8).max(VIEW_X);
+                    draw_text(fb, &ctx.fonts, &TextStyle::new(0, theme::BLACK), lx, py + 17, &name);
+                    draw_text(fb, &ctx.fonts, &TextStyle::new(0, theme::CYAN), lx, py + 16, &name);
                 }
             }
         }
+        fb.set_clip(Some(Rect::new(VIEW_X, VIEW_Y, VIEW_W * TILE, VIEW_H * TILE)));
         // the look cursor: draw_outline(x, y, 15, 15, col), a 16x16 frame, white while the
         // active unit blinks off (0x8a43), black while it shows (0x8aff)
         if let Some((x, y)) = self.look.filter(|&(x, y)| self.on_view(x, y)) {
@@ -1372,7 +1378,10 @@ impl Screen for MapView {
         if g.active_unit.is_none() {
             g.active_unit = g.next_active_unit();
         }
-        if let Some(id) = g.active_unit {
+        if let Some((vx, vy)) = g.view {
+            // the game's view, e.g. a loaded original game's (`sve::import`)
+            (self.vx, self.vy) = (vx, vy);
+        } else if let Some(id) = g.active_unit {
             let (x, y) = g.unit(id).pos();
             self.center_on(x, y);
         } else if let Some(c) = g.cities_of(g.human_slot).first().copied() {
@@ -1845,12 +1854,27 @@ impl Screen for MapView {
     }
 
     fn palette(&self, ctx: &UiContext) -> crate::assets::Palette {
-        ctx.game_palette()
+        water_cycles(ctx.game_palette(), ctx.frame)
     }
 
     fn draws_parent(&self) -> bool {
         false
     }
+}
+
+/// The map's water animation: setup_palette_cycling (0x1da03) defines the colour rings
+/// 0x60..0x67, 0x68..0x6f and 0x70..0x7f, each turned by cycle_step (0:0x44a) every 15 ticks;
+/// after k steps colour `first + i` shows the ring's colour `i - k`.
+pub fn water_cycles(mut pal: crate::assets::Palette, tick: u64) -> crate::assets::Palette {
+    let k = (tick / 15) as usize;
+    for (first, last) in [(0x60usize, 0x67usize), (0x68, 0x6f), (0x70, 0x7f)] {
+        let n = last - first + 1;
+        let ring: Vec<[u8; 3]> = pal.0[first..=last].to_vec();
+        for i in 0..n {
+            pal.0[first + i] = ring[(i + n - k % n) % n];
+        }
+    }
+    pal
 }
 
 impl MapView {
@@ -2142,6 +2166,20 @@ mod tests {
         mv.vx = 20;
         mv.vy = 20;
         Some((ctx, mv, id))
+    }
+
+    #[test]
+    fn the_water_colours_turn_every_15_ticks() {
+        let mut pal = crate::assets::Palette::default();
+        for i in 0..256 {
+            pal.0[i] = [i as u8, 0, 0];
+        }
+        assert_eq!(water_cycles(pal, 14).0, pal.0);
+        let one = water_cycles(pal, 15);
+        // colour first + i shows the ring's i - 1
+        assert_eq!((one.0[0x60][0], one.0[0x61][0], one.0[0x67][0]), (0x67, 0x60, 0x66));
+        assert_eq!((one.0[0x70][0], one.0[0x7f][0], one.0[0x5f][0], one.0[0x80][0]), (0x7f, 0x7e, 0x5f, 0x80));
+        assert_eq!(water_cycles(pal, 8 * 15).0[0x60], [0x60, 0, 0]);
     }
 
     #[test]

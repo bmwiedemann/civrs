@@ -58,6 +58,7 @@ mod off {
     pub const TAX: usize = 0x0738;
     pub const SCORE_ACC: usize = 0x0748;
     pub const LAST_CONTACT: usize = 0x0758;
+    pub const CAPITAL_X: usize = 0x0768;
     pub const TRIBE: usize = 0x0778;
     pub const CENSUS: usize = 0x0788;
     pub const POWER: usize = 0x0ba8;
@@ -660,6 +661,9 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
     g.derive_pop_milestone();
     g.milestone_quiet = -3;
     g.reset_goals(human);
+    // a loaded game starts with the view at column ds:0xdcec[human] - 7 (the capital's x),
+    // row 19 (0x1bd4..0x1bea), so the first unit is taken from that view
+    g.view = Some((Map::wrap_x(s.civ_w(off::CAPITAL_X, human as usize) as i32 - 7), 19));
     g.active_unit = None;
     g.reset_unit_loop();
     g.active_unit = g.next_active_unit();
