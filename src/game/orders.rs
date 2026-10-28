@@ -353,15 +353,94 @@ impl Game {
         u.order = UnitOrder::Goto;
     }
 
-    pub fn set_home(&mut self, id: UnitId) -> Result<(), RuleError> {
+    /// One press of 'h' (CIV.EXE 0x4f28) by the human, by hand or by the unit loop for an
+    /// aircraft in return-to-base mode (0x4528..0x4556 press it again on every move): a unit
+    /// on the square of the nearest city (0x1d43:0xf8, any owner) makes it its home; an
+    /// aircraft elsewhere gets bit 0x02 (`UnitOrder::Home`, 0x4f94) and the direction to its
+    /// nearest base (`dir_to_base`), to be moved as a direction key moves it (0x4f99); with
+    /// no base the bit goes (0x5040) and the unit stays as it is. Any other unit, nothing (no
+    /// message). The computer's 'h' is `Command::Home`.
+    pub fn press_home(&mut self, id: UnitId) -> Option<super::Dir8> {
         let u = self.unit(id).clone();
-        match self.city_at(u.x, u.y) {
-            Some(c) if self.city(c).owner == u.owner => {
-                self.unit_mut(id).home = Some(c);
-                Ok(())
-            }
-            _ => Err(RuleError::Other("The unit must be in one of your cities.")),
+        let (near, d) = self.nearest_city_exe(u.x, u.y);
+        if d == 0 {
+            self.unit_mut(id).home = near;
+            return None;
         }
+        if !u.is_air() {
+            return None;
+        }
+        let k = self.dir_to_base(id);
+        let um = self.unit_mut(id);
+        if k == 0 {
+            if um.order == UnitOrder::Home {
+                um.order = UnitOrder::None;
+            }
+            return None;
+        }
+        um.order = UnitOrder::Home;
+        Some(super::Dir8::ALL[k - 1])
+    }
+
+    /// The human's aircraft in return-to-base mode flies on while it has moves: the unit loop
+    /// presses 'h' for it again after every step (0x4556) until it lands (0x6c96, 0x6cea),
+    /// runs out of moves or has no base left. The map view does this in `run_goto`.
+    pub fn fly_home(&mut self, id: UnitId) {
+        for _ in 0..40 {
+            let Some(u) = self.unit_opt(id) else { break };
+            if u.order != UnitOrder::Home || u.moves_left == 0 {
+                break;
+            }
+            let Some(d) = self.press_home(id) else { break };
+            if !matches!(self.try_move(id, d), Ok(super::MoveOutcome::Moved) | Ok(super::MoveOutcome::EnteredHut)) {
+                break;
+            }
+        }
+    }
+
+    /// `dir_to_nearest_base` 0xa0c9: the direction (1..8, `goto::DX`/`DY`) that brings an
+    /// aircraft nearest (2 x max + min, wrapped) to the nearest own city or, if nearer, own
+    /// Carrier; 0 for none.
+    pub fn dir_to_base(&self, id: UnitId) -> usize {
+        use super::goto::{DX, DY};
+        let u = self.unit(id);
+        let cheb = |a: (i32, i32), b: (i32, i32)| Map::delta_x(a.0, b.0).abs().max((a.1 - b.1).abs());
+        let mut base: Option<((i32, i32), i32)> = None;
+        for p in self.all_cities().filter(|c| c.owner == u.owner).map(|c| c.pos()).chain(self.all_units().filter(|o| o.owner == u.owner && o.kind == unit_ids::CARRIER).map(|o| o.pos())) {
+            let d = cheb(u.pos(), p);
+            if base.map(|b| d < b.1).unwrap_or(true) {
+                base = Some((p, d));
+            }
+        }
+        let Some((b, _)) = base else { return 0 };
+        let metric2 = |dx: i32, dy: i32| {
+            let (a, c) = (Map::delta_x(0, dx).abs(), dy.abs());
+            if a > c {
+                2 * a + c
+            } else {
+                2 * c + a
+            }
+        };
+        let mut best = metric2(u.x - b.0, u.y - b.1);
+        let mut pick = 0;
+        for k in 1..=8 {
+            let (nx, ny) = (Map::wrap_x(u.x + DX[k]), u.y + DY[k]);
+            if !Map::in_bounds(nx, ny) {
+                continue;
+            }
+            if self.unit_owner_at(nx, ny).map(|o| o != u.owner).unwrap_or(false) {
+                continue;
+            }
+            if self.city_at(nx, ny).is_some() && self.last_occupant(nx, ny) != u.owner {
+                continue;
+            }
+            let d = metric2(nx - b.0, ny - b.1);
+            if d < best {
+                best = d;
+                pick = k;
+            }
+        }
+        pick
     }
 
     /// 'u' (CIV.EXE 0x4dfc), for the human and the computer alike: a ship that carries units
@@ -572,6 +651,30 @@ mod tests {
         g.give_order(s, UnitOrder::Mine).unwrap();
         g.place_unit(s, 31, 20, 0);
         assert_eq!((g.unit(s).order, g.unit(s).order_turns), (UnitOrder::None, 0));
+    }
+
+    #[test]
+    fn h_sends_the_human_s_aircraft_home_until_it_lands() {
+        // 0x4f28: no message; a unit in a city is rehomed, an aircraft elsewhere gets bit 0x02
+        // and steps toward its base, the unit loop pressing 'h' again until it lands (0x6c96)
+        let (mut g, s) = settlers_on(Terrain::Plains);
+        let slot = g.human_slot;
+        let f = g.add_unit(slot, unit_ids::FIGHTER, 33, 20);
+        // with no base the human's bit is just cleared (0x5040)
+        g.unit_mut(f).order = UnitOrder::Home;
+        assert_eq!(g.press_home(f), None);
+        assert_eq!((g.unit(f).order, g.unit(f).pos()), (UnitOrder::None, (33, 20)));
+        let c = g.found_city(s).unwrap();
+        let m = g.add_unit(slot, unit_ids::MILITIA, 31, 20);
+        assert_eq!(g.press_home(m), None);
+        assert_eq!(g.unit(m).order, UnitOrder::None);
+        assert!(g.press_home(f).is_some());
+        assert_eq!(g.unit(f).order, UnitOrder::Home);
+        g.fly_home(f);
+        assert_eq!((g.unit(f).pos(), g.unit(f).order, g.unit(f).moves_left), ((30, 20), UnitOrder::None, 0));
+        g.unit_mut(f).home = None;
+        g.press_home(f);
+        assert_eq!(g.unit(f).home, Some(c));
     }
 
     #[test]

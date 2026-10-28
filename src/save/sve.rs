@@ -180,7 +180,11 @@ fn slot_of(sve: &Path) -> Option<u8> {
 /// The order a unit's flag byte (+0) and goto (+6) stand for (the order keys of `move_units`
 /// 0x403e: 0x01 sentry, 0x04 fortify ('f' 0x5160), 0x08 fortified (0x4239), the Settlers jobs
 /// in bits 0xc2: 0x02 road, 0x40 irrigation, 0x80 mine, 0xc0 fortress, 0x82 pollution).
-fn unit_order(flags: u8, goto: bool) -> UnitOrder {
+fn unit_order(flags: u8, goto: bool, air: bool) -> UnitOrder {
+    // bit 0x02 on an aircraft is its return to base ('h', 0x4f94), shown with no letter
+    if air && flags & 0x02 != 0 {
+        return UnitOrder::Home;
+    }
     match flags & 0xc2 {
         0x02 => return UnitOrder::Road,
         0x40 => return UnitOrder::Irrigate,
@@ -493,7 +497,7 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
             u.moves_left = r[4];
             u.veteran = r[0] & 0x20 != 0;
             u.goto = (r[6] != 0xff).then_some((r[6] as i32, r[7] as i32));
-            u.order = unit_order(r[0], u.goto.is_some());
+            u.order = unit_order(r[0], u.goto.is_some(), u.is_air());
             // +5: the turns of fuel left of an aircraft, else the Settlers' work counter; the turn
             // end refuels to the range and counts the turn at once (0x7597, 0x75ab), so a full
             // tank is saved as range - 1 and civrs's turns flown are range - 1 - fuel
@@ -740,6 +744,13 @@ mod tests {
     use super::*;
     use crate::game::turn::TurnStep;
     use crate::game::DecisionReply;
+
+    #[test]
+    fn bit_2_is_an_aircraft_s_return_to_base_and_a_settlers_road() {
+        assert_eq!(unit_order(0x02, false, true), UnitOrder::Home);
+        assert_eq!(unit_order(0x02, false, false), UnitOrder::Road);
+        assert_eq!(unit_order(0x00, true, true), UnitOrder::Goto);
+    }
 
     fn sample(n: u8) -> Option<Game> {
         let dir = crate::assets::AssetDir::locate(None).ok()?;

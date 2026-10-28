@@ -260,7 +260,15 @@ fn unit_key(g: &mut Game, id: crate::game::UnitId, k: &str) -> Result<(), String
             activate_next(g);
             Ok(())
         }
-        "h" => g.set_home(id).map_err(|e| e.message().to_string()),
+        "h" => {
+            if g.press_home(id).is_some() {
+                g.fly_home(id);
+            }
+            if g.unit_opt(id).map(|u| u.moves_left == 0 || u.order != UnitOrder::None).unwrap_or(true) {
+                activate_next(g);
+            }
+            Ok(())
+        }
         "u" => {
             if let Some(next) = g.unload(id) {
                 g.active_unit = g.next_active_unit_at(next);

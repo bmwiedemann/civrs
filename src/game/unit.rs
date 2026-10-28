@@ -18,6 +18,11 @@ pub enum UnitOrder {
     Pillage,
     /// Skipped for this turn (space).
     Skip,
+    /// An aircraft returning to the nearest base (unit +0 bit 0x02 on an air unit, set by
+    /// 'h' at 0x4f94): the human's unit loop presses 'h' for it on every move (0x4556) until
+    /// it lands (0x6c96, 0x6cea). No status letter (draw_unit 0x1b735 skips aircraft).
+    /// (Appended last: bincode numbers the variants, so older saves still load.)
+    Home,
 }
 
 impl UnitOrder {

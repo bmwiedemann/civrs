@@ -805,12 +805,12 @@ impl MapView {
             }
             Key::Char('h') => {
                 let Some(id) = active else { return Transition::None };
-                // the unit stays active with its moves (CIV.EXE 0x4f28 ends without a move)
-                let r = ctx.game_mut().set_home(id);
-                match r {
-                    Ok(()) => Transition::None,
-                    Err(e) => self.error(ctx, &e),
+                // a unit in a city is rehomed and stays active with its moves (CIV.EXE 0x4f28
+                // ends without a move); an aircraft elsewhere flies back to base (0x4f94)
+                if ctx.game_mut().press_home(id).is_some() {
+                    return self.run_goto(ctx, id);
                 }
+                Transition::None
             }
             Key::Char('u') => {
                 // the loop goes on from the stack's first passenger (0x4e64); a ship without
@@ -1027,15 +1027,25 @@ impl MapView {
         self.run_goto(ctx, id)
     }
 
-    /// Move a unit along its goto path as far as its moves allow.
+    /// Move a unit along its goto path as far as its moves allow; an aircraft returning to
+    /// base flies on the same way, the unit loop pressing 'h' for it before every step
+    /// (CIV.EXE 0x4528..0x4556, `Game::press_home`).
     fn run_goto(&mut self, ctx: &mut UiContext, id: UnitId) -> Transition {
         for _ in 0..40 {
             let g = ctx.game();
             let Some(u) = g.unit_opt(id) else { break };
-            if u.order != UnitOrder::Goto || u.moves_left == 0 {
+            if !matches!(u.order, UnitOrder::Goto | UnitOrder::Home) || u.moves_left == 0 {
                 break;
             }
             let dest = u.goto;
+            if u.order == UnitOrder::Home {
+                let Some(dir) = ctx.game_mut().press_home(id) else { break };
+                // a step that fails keeps the mode (bit 0x02 stays) for the next turn
+                if !matches!(ctx.game_mut().try_move(id, dir), Ok(MoveOutcome::Moved) | Ok(MoveOutcome::EnteredHut)) {
+                    break;
+                }
+                continue;
+            }
             let Some(dir) = ctx.game_mut().next_goto_step(id) else {
                 let g = ctx.game_mut();
                 g.unit_mut(id).order = UnitOrder::None;
@@ -1114,9 +1124,9 @@ impl MapView {
         Transition::None
     }
 
-    /// Continue goto orders of all units at the start of the human turn.
+    /// Continue goto orders and returns to base of all units at the start of the human turn.
     fn continue_gotos(&mut self, ctx: &mut UiContext) -> Transition {
-        let ids: Vec<UnitId> = ctx.game().all_units().filter(|u| u.owner == ctx.game().human_slot && u.order == UnitOrder::Goto && u.moves_left > 0).map(|u| u.id).collect();
+        let ids: Vec<UnitId> = ctx.game().all_units().filter(|u| u.owner == ctx.game().human_slot && matches!(u.order, UnitOrder::Goto | UnitOrder::Home) && u.moves_left > 0).map(|u| u.id).collect();
         for id in ids {
             let t = self.run_goto(ctx, id);
             if !matches!(t, Transition::None) {

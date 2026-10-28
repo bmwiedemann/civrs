@@ -1401,49 +1401,6 @@ fn score_direction(g: &mut Game, c: &Ctx, k: usize, peaceful: bool) -> Option<(i
 
 // ---- carrying the commands out ----------------------------------------------------------
 
-/// `dir_to_nearest_base` 0xa0c9: the direction that brings an aircraft nearest (2 x max +
-/// min, wrapped) to the nearest own city or, if nearer, own Carrier; 0 for none.
-fn dir_to_base(g: &Game, id: UnitId) -> usize {
-    let u = g.unit(id);
-    let cheb = |a: (i32, i32), b: (i32, i32)| Map::delta_x(a.0, b.0).abs().max((a.1 - b.1).abs());
-    let mut base: Option<((i32, i32), i32)> = None;
-    for p in g.all_cities().filter(|c| c.owner == u.owner).map(|c| c.pos()).chain(g.all_units().filter(|o| o.owner == u.owner && o.kind == unit_ids::CARRIER).map(|o| o.pos())) {
-        let d = cheb(u.pos(), p);
-        if base.map(|b| d < b.1).unwrap_or(true) {
-            base = Some((p, d));
-        }
-    }
-    let Some((b, _)) = base else { return 0 };
-    let metric2 = |dx: i32, dy: i32| {
-        let (a, c) = (Map::delta_x(0, dx).abs(), dy.abs());
-        if a > c {
-            2 * a + c
-        } else {
-            2 * c + a
-        }
-    };
-    let mut best = metric2(u.x - b.0, u.y - b.1);
-    let mut pick = 0;
-    for k in 1..=8 {
-        let (nx, ny) = (Map::wrap_x(u.x + DX[k]), u.y + DY[k]);
-        if !Map::in_bounds(nx, ny) {
-            continue;
-        }
-        if g.unit_owner_at(nx, ny).map(|o| o != u.owner).unwrap_or(false) {
-            continue;
-        }
-        if g.city_at(nx, ny).is_some() && g.last_occupant(nx, ny) != u.owner {
-            continue;
-        }
-        let d = metric2(nx - b.0, ny - b.1);
-        if d < best {
-            best = d;
-            pick = k;
-        }
-    }
-    pick
-}
-
 /// A move key (0x5946 for the computer): a step back against the heading (heading ^ 4) by a
 /// unit with at most one other unit beside it ends its turn and its goto (0x63cc); a land unit
 /// (or an aircraft with fuel) does not join an own stack of four or more outside a city
@@ -1551,7 +1508,7 @@ fn execute(g: &mut Game, id: UnitId, cmd: Command, sink: &mut dyn FnMut(TurnStep
             if d == 0 {
                 g.unit_mut(id).home = near;
             } else if u.is_air() {
-                let k = dir_to_base(g, id);
+                let k = g.dir_to_base(id);
                 if k != 0 {
                     do_step(g, id, Dir8::ALL[k - 1], sink);
                 } else {

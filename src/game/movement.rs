@@ -343,13 +343,16 @@ impl Game {
                 }
             }
         }
-        // aircraft landing in a city / carrier refuels; landing ends the aircraft's turn and its
-        // goto (CIV.EXE 0x6c71..0x6d00)
+        // aircraft landing in a city / carrier refuels; landing ends the aircraft's turn, its
+        // goto and its return to base (bit 0x02, CIV.EXE 0x6c71..0x6d00)
         if u.is_air() {
             let lands = self.city_at(tx, ty).is_some() || self.units_at(tx, ty).into_iter().any(|s| s != id && self.unit(s).kind == unit_ids::CARRIER && self.unit(s).owner == slot);
             if lands {
                 self.unit_mut(id).moves_left = 0;
                 self.clear_goto(id);
+                if self.unit(id).order == UnitOrder::Home {
+                    self.unit_mut(id).order = UnitOrder::None;
+                }
             }
             // a Carrier takes up to 8 air units, Nuclear included
             let carrier = self.units_at(tx, ty).into_iter().find(|s| {
