@@ -56,20 +56,26 @@ pub struct CityScreen {
     /// 'a' (CIV.EXE 0x118fb..0x11b11): the blinking selection among the units in the city,
     /// moved with the cursor keys; Enter or Space wakes the selected unit, Esc ends it.
     unit_cursor: Option<usize>,
+    /// 's' (CIV.EXE 0x11b14..0x11c31): the blinking row among the improvements of the listed
+    /// page (wonders excluded), moved with Up/Down; Enter or Space asks to sell it.
+    sell_cursor: Option<usize>,
+    /// 'p' (0x11cce..0x11f42): the white square on the city map, (dx, dy) from the centre,
+    /// moved with the cursor keys; Enter or Space acts as a click on it, Esc ends it.
+    tile_cursor: Option<(i32, i32)>,
 }
 
 pub fn city_screen(c: CityId) -> Box<dyn Screen> {
-    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0, view_only: false, unit_cursor: None })
+    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0, view_only: false, unit_cursor: None, sell_cursor: None, tile_cursor: None })
 }
 
 /// City screen that opens on a tab or dialog: "happy", "map", "view", "change", "buy", "rename", "sell".
 pub fn city_screen_at(c: CityId, start: &str) -> Box<dyn Screen> {
-    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: Some(start.to_string()), imp_start: 0, view_only: false, unit_cursor: None })
+    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: Some(start.to_string()), imp_start: 0, view_only: false, unit_cursor: None, sell_cursor: None, tile_cursor: None })
 }
 
 /// City screen of a foreign city investigated by a Diplomat (CIV.EXE o 0x1d6a2).
 pub fn city_screen_view(c: CityId) -> Box<dyn Screen> {
-    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0, view_only: true, unit_cursor: None })
+    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0, view_only: true, unit_cursor: None, sell_cursor: None, tile_cursor: None })
 }
 
 // ---- layout (coordinates include the 1-px borders) ---------------------------------------
@@ -187,17 +193,80 @@ impl CityScreen {
             }
             return Transition::None;
         }
+        if let Some(sel) = self.sell_cursor {
+            let Event::Key { key, down: true, .. } = ev else { return Transition::None };
+            let rows = self.sell_rows(ctx);
+            match key {
+                Key::Up | Key::Kp(8) => self.sell_cursor = Some(sel.saturating_sub(1)),
+                Key::Down | Key::Kp(2) => self.sell_cursor = Some((sel + 1).min(rows.len().saturating_sub(1))),
+                Key::Enter | Key::Space => {
+                    self.sell_cursor = None;
+                    if let Some(&(_, id)) = rows.get(sel) {
+                        return self.sell(id);
+                    }
+                }
+                // Esc goes on through the key tests and so leaves the city screen (0x11c34)
+                Key::Esc => return Transition::Pop(DialogResult::Done),
+                _ => {}
+            }
+            return Transition::None;
+        }
+        if let Some((dx, dy)) = self.tile_cursor {
+            let Event::Key { key, down: true, .. } = ev else { return Transition::None };
+            let (mx, my) = match key {
+                Key::Left | Key::Kp(4) => (-1, 0),
+                Key::Home | Key::Kp(7) => (-1, -1),
+                Key::Up | Key::Kp(8) => (0, -1),
+                Key::PageUp | Key::Kp(9) => (1, -1),
+                Key::Right | Key::Kp(6) => (1, 0),
+                Key::End | Key::Kp(1) => (-1, 1),
+                Key::Down | Key::Kp(2) => (0, 1),
+                Key::PageDown | Key::Kp(3) => (1, 1),
+                _ => (0, 0),
+            };
+            // the square must lie in the city radius and be known to the player (0x11e70)
+            let (nx, ny) = (dx + mx, dy + my);
+            let g = ctx.game();
+            let c = g.city(self.city);
+            if nx.abs() <= 2 && ny.abs() <= 2 && nx.abs() + ny.abs() < 4 && g.explored(g.human_slot, crate::game::Map::wrap_x(c.x as i32 + nx), c.y as i32 + ny) {
+                self.tile_cursor = Some((nx, ny));
+            }
+            match key {
+                Key::Enter | Key::Space => {
+                    let (dx, dy) = self.tile_cursor.unwrap_or((0, 0));
+                    self.map_square(ctx, dx, dy);
+                }
+                Key::Esc => self.tile_cursor = None,
+                _ => {}
+            }
+            return Transition::None;
+        }
         match ev {
+            // any key the loop does not know leaves the city screen (0x11fd5 -> 0x125c0)
             Event::Key { key, mods, down: true, .. } => match key {
-                Key::Esc | Key::Enter => Transition::Pop(DialogResult::Done),
-                Key::Char('x') => Transition::Pop(DialogResult::Done),
-                Key::Char('i') => self.tab_click(0),
-                Key::Char('h') => self.tab_click(1),
-                Key::Char('m') => self.tab_click(2),
-                Key::Char('v') => self.view(),
-                Key::Char('c') => self.change(ctx),
-                Key::Char('b') => self.buy(ctx),
-                Key::Char('r') => self.rename(ctx),
+                Key::Unknown => Transition::None,
+                Key::Char('i') if !mods.shift => self.tab_click(0),
+                Key::Char('h') if !mods.shift => self.tab_click(1),
+                Key::Char('m') if !mods.shift => self.tab_click(2),
+                Key::Char('v') if !mods.shift => self.view(),
+                Key::Char('c') if !mods.shift => self.change(ctx),
+                Key::Char('b') if !mods.shift => self.buy(ctx),
+                Key::Char('r') if !mods.shift => self.rename(ctx),
+                // 's' only while nothing was sold this turn (city flag +6 bit 7), else it
+                // leaves the screen like other keys
+                Key::Char('s') if !mods.shift && !self.sold_this_turn(ctx) && !self.sell_rows(ctx).is_empty() => {
+                    self.sell_cursor = Some(0);
+                    Transition::None
+                }
+                Key::Char('p') if !mods.shift => {
+                    self.tile_cursor = Some((0, 0));
+                    Transition::None
+                }
+                // 'M' is MORE when the list has a second page (0x11f45, local flag bit 1)
+                Key::Char('m') if mods.shift && self.has_more(ctx) => {
+                    self.toggle_more(ctx);
+                    Transition::None
+                }
                 Key::Char('a') if !mods.shift => {
                     // starts on the first unit without orders (flags & 0xcf), else the first
                     let g = ctx.game();
@@ -207,7 +276,7 @@ impl CityScreen {
                     }
                     Transition::None
                 }
-                Key::Char(d @ '1'..='9') => self.cycle_specialist(ctx, (*d as u8 - b'1') as usize),
+                Key::Char(d @ '1'..='9') if !mods.shift => self.cycle_specialist(ctx, (*d as u8 - b'1') as usize),
                 Key::Char('a') if mods.shift => {
                     // AUTO on asks the production advisor at once; with nothing worth it the
                     // flag stays until the city finishes its item (CIV.EXE 0x113d7..0x11411)
@@ -221,7 +290,7 @@ impl CityScreen {
                     }
                     Transition::None
                 }
-                _ => Transition::None,
+                _ => Transition::Pop(DialogResult::Done),
             },
             Event::MouseButton { button: MouseButton::Left, x, y, down: true } => self.click(ctx, *x, *y),
             _ => Transition::None,
@@ -266,6 +335,26 @@ impl CityScreen {
             v.push(Production::Improvement(id));
         }
         (v, None)
+    }
+
+    /// The list has a second page (the MORE button, local flag bit 1 at 0x104d9).
+    fn has_more(&self, ctx: &UiContext) -> bool {
+        self.imp_start > 0 || self.listed(ctx).1.is_some()
+    }
+
+    fn toggle_more(&mut self, ctx: &UiContext) {
+        self.imp_start = self.listed(ctx).1.unwrap_or(0);
+    }
+
+    /// The improvements of the listed page with their list rows: what 's' steps through.
+    fn sell_rows(&self, ctx: &UiContext) -> Vec<(usize, u8)> {
+        let (list, _) = self.listed(ctx);
+        list.iter().enumerate().filter_map(|(row, p)| if let Production::Improvement(id) = p { Some((row, *id)) } else { None }).collect()
+    }
+
+    fn sold_this_turn(&self, ctx: &UiContext) -> bool {
+        let g = ctx.game();
+        g.player(g.city(self.city).owner).sold_cities.contains(&self.city)
     }
 
     fn citizen_pitch(n: usize) -> i32 {
@@ -406,6 +495,11 @@ impl CityScreen {
     fn map_click(&mut self, ctx: &mut UiContext, mx: i32, my: i32) {
         let dx = (mx - MAP_ORIGIN.0).div_euclid(16) - 2;
         let dy = (my - MAP_ORIGIN.1).div_euclid(16) - 2;
+        self.map_square(ctx, dx, dy);
+    }
+
+    /// A click on the city map square (dx, dy) from the centre (CIV.EXE 0x123ac).
+    fn map_square(&mut self, ctx: &mut UiContext, dx: i32, dy: i32) {
         // the city square only recomputes the city (CIV.EXE 0x123ca)
         if dx == 0 && dy == 0 {
             ctx.game_mut().fix_workers(self.city);
@@ -493,9 +587,9 @@ impl CityScreen {
             return Transition::None;
         }
         // MORE flips to the overflow page and back (CIV.EXE 0x11fd8)
-        let (list, more) = self.listed(ctx);
-        if (more.is_some() || self.imp_start > 0) && x >= 288 && y > 88 && y < 96 {
-            self.imp_start = more.unwrap_or(0);
+        let (list, _) = self.listed(ctx);
+        if self.has_more(ctx) && x >= 288 && y > 88 && y < 96 {
+            self.toggle_more(ctx);
             return Transition::None;
         }
         // sell dots (0x1201f)
@@ -503,7 +597,7 @@ impl CityScreen {
             let row = ((y - 2) / 6) as usize;
             // the Palace too; nothing once the city has sold this turn (city flag 0x80)
             if let Some(Production::Improvement(id)) = list.get(row).copied() {
-                if !ctx.game().player(ctx.game().city(self.city).owner).sold_cities.contains(&self.city) {
+                if !self.sold_this_turn(ctx) {
                     return self.sell(id);
                 }
             }
@@ -698,6 +792,14 @@ impl CityScreen {
         fb.hline(231, 250, 1, 1);
         if more.is_some() || self.imp_start > 0 {
             button(fb, ctx, B_MORE, "MORE", ButtonStyle::Plain);
+        }
+        // the 's' row blinks: colour 9 -> 1, 10 ticks, 1 -> 9, 10 ticks (0x11b36)
+        if let Some(sel) = self.sell_cursor {
+            if let Some(&(row, _)) = self.sell_rows(ctx).get(sel) {
+                if (ctx.frame / 16) % 2 == 0 {
+                    recolour(fb, Rect::new(252, 6 * row as i32 + 3, 56, 7), 1, 9);
+                }
+            }
         }
     }
 
@@ -1013,6 +1115,12 @@ impl Screen for CityScreen {
         self.draw_resources(fb, ctx);
         self.draw_support(fb, ctx);
         self.draw_map(fb, ctx);
+        // the 'p' square blinks in a white outline (0x11d2b: outline(x, y, 15, 15, 15))
+        if let Some((dx, dy)) = self.tile_cursor {
+            if (ctx.frame / 16) % 2 == 0 {
+                fb.rect_outline(Rect::new(MAP_ORIGIN.0 + (dx + 2) * 16, MAP_ORIGIN.1 + (dy + 2) * 16, 16, 16), 15);
+            }
+        }
         self.draw_improvements(fb, ctx);
         self.draw_food(fb, ctx);
         self.draw_tabs(fb, ctx);
@@ -1028,5 +1136,78 @@ impl Screen for CityScreen {
 
     fn draws_parent(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::{Game, GameSetup};
+    use crate::platform::Mods;
+
+    fn key(k: Key) -> Event {
+        Event::Key { key: k, mods: Mods::default(), down: true, repeat: false }
+    }
+
+    /// A context with a new human city and its screen.
+    fn screen() -> Option<(UiContext, CityScreen)> {
+        let dir = crate::assets::AssetDir::locate(None).ok()?;
+        let mut ctx = UiContext::new(dir, std::env::temp_dir().join(format!("civrs-citykeys-{}", std::process::id()))).ok()?;
+        let mut g = Game::new(GameSetup { seed: 3, ..Default::default() }, None);
+        let settlers = g.units_of(g.human_slot).into_iter().find(|u| g.unit(*u).kind == rules::unit_ids::SETTLERS)?;
+        let c = g.found_city(settlers).ok()?;
+        let _ = g.take_events();
+        ctx.game = Some(g);
+        Some((ctx, CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0, view_only: false, unit_cursor: None, sell_cursor: None, tile_cursor: None }))
+    }
+
+    #[test]
+    fn p_moves_a_square_over_the_city_map_and_enter_works_it() {
+        let Some((mut ctx, mut cs)) = screen() else { return };
+        let idx = rules::CITY_RADIUS.iter().position(|&(x, y)| (x, y) == (1, 0)).unwrap() as u8;
+        let mut expected = ctx.game().clone();
+        expected.toggle_tile(cs.city, idx);
+        cs.handle_event(&key(Key::Char('p')), &mut ctx);
+        assert_eq!(cs.tile_cursor, Some((0, 0)));
+        cs.handle_event(&key(Key::Right), &mut ctx);
+        assert_eq!(cs.tile_cursor, Some((1, 0)));
+        assert!(matches!(cs.handle_event(&key(Key::Enter), &mut ctx), Transition::None));
+        assert_eq!(ctx.game().city(cs.city).worked, expected.city(cs.city).worked);
+        assert_eq!(cs.tile_cursor, Some((1, 0)), "the square stays for the next one");
+        // the corners of the 5x5 square are outside the radius
+        let g = ctx.game_mut();
+        let (x, y) = (g.city(cs.city).x as i32, g.city(cs.city).y as i32);
+        let slot = g.human_slot;
+        g.map.explore(slot, x, y, 2);
+        for _ in 0..3 {
+            cs.handle_event(&key(Key::PageUp), &mut ctx);
+        }
+        assert_eq!(cs.tile_cursor, Some((2, -1)));
+        cs.handle_event(&key(Key::Esc), &mut ctx);
+        assert_eq!(cs.tile_cursor, None);
+        assert!(ctx.game().city_opt(cs.city).is_some());
+    }
+
+    #[test]
+    fn s_selects_an_improvement_and_other_keys_leave() {
+        let Some((mut ctx, mut cs)) = screen() else { return };
+        assert!(matches!(cs.handle_event(&key(Key::Char('z')), &mut ctx), Transition::Pop(_)));
+        assert!(matches!(cs.handle_event(&key(Key::Unknown), &mut ctx), Transition::None));
+        // the capital's Palace and a Barracks: Down moves to the second, Enter asks
+        ctx.game_mut().city_mut(cs.city).add_improvement(improvement_ids::BARRACKS);
+        let rows = cs.sell_rows(&ctx);
+        assert_eq!(rows.len(), 2);
+        assert!(matches!(cs.handle_event(&key(Key::Char('s')), &mut ctx), Transition::None));
+        assert_eq!(cs.sell_cursor, Some(0));
+        cs.handle_event(&key(Key::Down), &mut ctx);
+        cs.handle_event(&key(Key::Down), &mut ctx);
+        assert_eq!(cs.sell_cursor, Some(1));
+        assert!(matches!(cs.handle_event(&key(Key::Enter), &mut ctx), Transition::Push(_)));
+        assert!(matches!(cs.pending, Pending::Sell(id) if id == rows[1].1));
+        // once the city has sold this turn 's' leaves the screen
+        cs.pending = Pending::None;
+        let owner = ctx.game().city(cs.city).owner;
+        ctx.game_mut().player_mut(owner).sold_cities.push(cs.city);
+        assert!(matches!(cs.handle_event(&key(Key::Char('s')), &mut ctx), Transition::Pop(_)));
     }
 }

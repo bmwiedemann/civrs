@@ -576,6 +576,14 @@ impl MenuDialog {
         }
     }
 
+    /// menu_select's letter keys (o 0x1cc33..0x1cc16): the next item after the highlighted one
+    /// whose hotkey (the line's second character, ds:0xdc4a) matches the key in its low five
+    /// bits, so either case; only the highlight moves, and the search stops at the last item.
+    fn letter_target(&self, c: char) -> Option<usize> {
+        let k = c as u32 & 0x1f;
+        (self.sel + 1..self.items.len().min(32)).find(|&i| Self::item_line(&self.items[i]).chars().nth(1).is_some_and(|h| h as u32 & 0x1f == k))
+    }
+
     fn move_sel(&mut self, delta: i32) {
         let n = self.items.len() as i32;
         if n == 0 {
@@ -606,8 +614,14 @@ impl Screen for MenuDialog {
         }
     }
 
-    fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
+    fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
         match ev {
+            // Alt-V flips the sound option in any menu (o 0x1cbd0)
+            Event::Key { key: Key::Char('v'), mods, down: true, .. } if mods.alt => {
+                if let Some(g) = ctx.game.as_mut() {
+                    g.options.sound = !g.options.sound;
+                }
+            }
             Event::Key { key, down: true, .. } => match key {
                 Key::Up | Key::Kp(8) => self.move_sel(-1),
                 Key::Down | Key::Kp(2) => self.move_sel(1),
@@ -634,6 +648,8 @@ impl Screen for MenuDialog {
                                 return Transition::Pop(DialogResult::Choice(i));
                             }
                         }
+                    } else if let Some(i) = self.letter_target(*c) {
+                        self.sel = i;
                     }
                 }
                 _ => {}
@@ -1075,5 +1091,24 @@ impl Screen for TextBox {
         }
         let body = Rect::new(self.rect.x + 8, y, self.rect.w - 16, self.rect.bottom() - y - 4);
         draw_paragraph(fb, &ctx.fonts, &TextStyle::new(self.font, cols.text), body, &self.paras, 0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn letters_move_the_highlight_to_the_next_matching_item() {
+        let mut m = MenuDialog::new(vec![], vec!["Keep Playing".into(), "Yes, Quit".into(), "Keep going".into()]);
+        assert_eq!(m.letter_target('y'), Some(1));
+        // the search starts after the highlighted item and does not wrap
+        assert_eq!(m.letter_target('k'), Some(2));
+        m.sel = 2;
+        assert_eq!(m.letter_target('k'), None);
+        assert_eq!(m.letter_target('y'), None);
+        // upper and lower case match alike (low five bits)
+        m.sel = 0;
+        assert_eq!(m.letter_target('Y'), Some(1));
     }
 }
