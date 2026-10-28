@@ -115,9 +115,6 @@ impl Game {
         {
             tr += 1;
         }
-        if is_centre && s < 1 {
-            s = 1;
-        }
         // Colossus: +1 trade on every square of its city that has trade, before the government
         // rules (CIV.EXE 0x134dc)
         if tr > 0 {
@@ -1450,6 +1447,18 @@ mod tests {
         g.add_city(slot, "Hilltop".into(), x, y);
         let t = g.map.tile(x, y);
         assert!(!t.has(tile_flags::FORTRESS) && !t.has(tile_flags::MINE) && t.has(tile_flags::ROAD));
+    }
+
+    #[test]
+    fn a_city_square_gets_no_shield_its_terrain_lacks() {
+        // tile_yield 0x133c2 has no minimum for the city square: Hills give 0 shields
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        let (x, y) = (g.city(c).x + 6, g.city(c).y);
+        g.map.get_mut(x, y).unwrap().terrain = Terrain::Hills;
+        g.map.get_mut(x, y).unwrap().special = false;
+        let hill = g.add_city(slot, "Hilltop".into(), x, y);
+        assert_eq!(g.tile_yield(slot, x, y, Some(hill)).1, 0);
     }
 
     #[test]
