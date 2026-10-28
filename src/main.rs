@@ -471,8 +471,10 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&P
             // a message box with speaker N (ds:0x2f9e), e.g. screen:speaker:5
             "speaker" => {
                 let s = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(5u8);
-                let lines = vec!["Babylonian capital".into(), "moved to Ur.".into()];
-                civrs::ui::eventpics::over_map(Box::new(civrs::ui::widgets::MenuDialog::new(lines, Vec::new()).with_pos(80, 80).with_speaker(s)))
+                // the treaty question of 0x1a3cf
+                let lines = vec!["We have signed a".into(), "peace treaty with".into(), "the Germans!".into()];
+                let items = vec!["Cancel action.".into(), "Break treaty.".into()];
+                civrs::ui::eventpics::over_map(Box::new(civrs::ui::widgets::MenuDialog::new(lines, items).with_pos(80, 80).with_speaker(s)))
             }
             "rednote" => civrs::ui::eventpics::over_map(civrs::ui::dialogs::error_screen(&ctx, &civrs::game::RuleError::Settlers).ok_or("no ERROR.TXT section")?),
             "nuke" => civrs::ui::eventpics::over_map(civrs::ui::eventpics::nuke_animation(200, 104)),
