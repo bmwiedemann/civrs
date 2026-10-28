@@ -118,10 +118,7 @@ fn flush_events(g: &mut Game, sink: &mut dyn FnMut(TurnStep)) {
 /// The stack of `first`'s square as CIV.EXE's stack walk (0x92a7) visits it from `first`: the
 /// owner's units there, at most ten, in unit order round from `first`.
 fn stack(g: &Game, first: UnitId) -> Vec<UnitId> {
-    let u = g.unit(first);
-    let here: Vec<UnitId> = g.units_at(u.x, u.y).into_iter().filter(|o| g.unit(*o).owner == u.owner).collect();
-    let i = here.iter().position(|o| *o == first).unwrap_or(0);
-    here.iter().cycle().skip(i).take(here.len().min(10)).copied().collect()
+    g.stack_from(first)
 }
 
 fn stack_count(g: &Game, first: UnitId) -> i32 {
@@ -1517,9 +1514,10 @@ fn caravan_arrived(g: &mut Game, id: UnitId, slot: Slot) {
     g.remove_unit(id);
 }
 
-/// Carry out one command (the handlers of 0x4bbe). Returns true for 'u' that woke passengers.
-fn execute(g: &mut Game, id: UnitId, cmd: Command, sink: &mut dyn FnMut(TurnStep)) -> bool {
-    let Some(u) = g.unit_opt(id).cloned() else { return false };
+/// Carry out one command (the handlers of 0x4bbe). Returns for 'u' the unit the loop goes on
+/// with (`Game::unload`).
+fn execute(g: &mut Game, id: UnitId, cmd: Command, sink: &mut dyn FnMut(TurnStep)) -> Option<UnitId> {
+    let Some(u) = g.unit_opt(id).cloned() else { return None };
     match cmd {
         Command::Goto | Command::Invalid => {}
         Command::Step(d) => {
@@ -1599,17 +1597,12 @@ fn execute(g: &mut Game, id: UnitId, cmd: Command, sink: &mut dyn FnMut(TurnStep
             }
         }
         Command::Unload => {
-            // 0x4dfc: a ship with room for units wakes its stack and its passengers move next
-            if u.info().capacity > 0 {
-                let woken: Vec<UnitId> = g.cargo_of(id);
-                for c in &woken {
-                    g.unit_mut(*c).order = UnitOrder::None;
-                }
-                return !woken.is_empty();
-            }
+            // 0x4dfc: a ship with room for units wakes its stack with full moves and the loop
+            // goes on from its first passenger
+            return g.unload(id);
         }
     }
-    false
+    None
 }
 
 /// The computer's units move (0x403e for a computer civ): in unit order, skipping sentried
@@ -1617,23 +1610,26 @@ fn execute(g: &mut Game, id: UnitId, cmd: Command, sink: &mut dyn FnMut(TurnStep
 /// five times at most, the fifth answer being ' ' (0x4464, dropping goto and heading). Any
 /// command but 0 drops the goto first; with a goto the key comes from `goto_direction` (an
 /// unreachable goto is dropped there), without one the heading is forgotten before the key is
-/// carried out. After 'u' the woken passengers move at once and the units are gone through
-/// again.
+/// carried out. After 'u' the loop goes on in record order from the ship's first passenger
+/// (`Game::unload`, 0x4e64), and once through the units are gone through again (0x4e5a; civrs
+/// stops after three rounds).
 pub fn move_units(g: &mut Game, slot: Slot, sink: &mut dyn FnMut(TurnStep)) {
     g.ai_memory.moving = Some(slot);
     let mut passes = 0;
     loop {
         passes += 1;
         let mut again = false;
-        let mut queue: std::collections::VecDeque<UnitId> = g.units_of(slot).into();
-        while let Some(id) = queue.pop_front() {
+        let ids = g.units_of(slot);
+        let mut i = 0;
+        while i < ids.len() {
+            let id = ids[i];
+            i += 1;
             if g.unit_opt(id).map(|u| u.owner != slot).unwrap_or(true) {
                 continue;
             }
-            if let Some(cargo) = run_unit(g, slot, id, sink) {
-                // the passengers next (0x4e64), then everything again (0x4e5a)
-                for c in cargo.into_iter().rev() {
-                    queue.push_front(c);
+            if let Some(next) = run_unit(g, slot, id, sink) {
+                if let Some(k) = ids.iter().position(|o| *o == next) {
+                    i = k;
                 }
                 again = true;
             }
@@ -1651,8 +1647,8 @@ fn trace() -> bool {
     *T.get_or_init(|| std::env::var("CIVRS_AI_TRACE").is_ok())
 }
 
-/// One unit's turn in `move_units`; returns the passengers a 'u' woke.
-fn run_unit(g: &mut Game, slot: Slot, id: UnitId, sink: &mut dyn FnMut(TurnStep)) -> Option<Vec<UnitId>> {
+/// One unit's turn in `move_units`; returns the unit to go on with after a 'u'.
+fn run_unit(g: &mut Game, slot: Slot, id: UnitId, sink: &mut dyn FnMut(TurnStep)) -> Option<UnitId> {
     let u = g.unit(id);
     // sentried (0x01) and fortified (0x08) units are passed over (0x41fb), as are those that
     // fortify (0x04 becomes 0x08 with no moves, 0x4239) and, in civrs, those at work
@@ -1687,8 +1683,8 @@ fn run_unit(g: &mut Game, slot: Slot, id: UnitId, sink: &mut dyn FnMut(TurnStep)
         } else {
             g.set_heading(id, 0xff);
         }
-        if execute(g, id, cmd, sink) {
-            return Some(g.cargo_of(id));
+        if let Some(next) = execute(g, id, cmd, sink) {
+            return Some(next);
         }
     }
     None
@@ -1703,14 +1699,32 @@ pub fn act(g: &mut Game, id: UnitId, sink: &mut dyn FnMut(TurnStep)) {
     g.ai_memory.moving = None;
 }
 
-/// Move the barbarians as CIV.EXE's `move_units` (0x403e) does for civ 0: units in index
+/// Move the barbarians as CIV.EXE's `move_units` (0x403e) does for civ 0: units in record
 /// order, sentried and fortified ones skipped, each asked for orders by the barbarian routine
 /// (`Game::barbarian_command`, 0x18dc3) while it has moves, at most five times (0x4464).
+/// After 'u' the loop goes on from the ship's first passenger and the units are gone through
+/// again, as in `move_units`.
 pub fn play_barbarians(g: &mut Game, sink: &mut dyn FnMut(TurnStep)) {
+    for _ in 0..3 {
+        if !barbarian_pass(g, sink) {
+            break;
+        }
+    }
+    g.refresh_vision(0);
+}
+
+/// One round of `play_barbarians`; true when a 'u' asks for another.
+fn barbarian_pass(g: &mut Game, sink: &mut dyn FnMut(TurnStep)) -> bool {
     use crate::game::barbarians::BarbarianCommand as Cmd;
-    let mut ids = g.units_of(0);
-    ids.sort_unstable();
-    for id in ids {
+    let ids = g.units_of(0);
+    let mut again = false;
+    let mut i = 0;
+    'units: while i < ids.len() {
+        let id = ids[i];
+        i += 1;
+        if g.unit_opt(id).map(|u| u.owner != 0).unwrap_or(true) {
+            continue;
+        }
         for _ in 0..5 {
             let Some(u) = g.unit_opt(id) else { break };
             if u.moves_left == 0 || matches!(u.order, UnitOrder::Sentry | UnitOrder::Fortified) {
@@ -1741,10 +1755,14 @@ pub fn play_barbarians(g: &mut Game, sink: &mut dyn FnMut(TurnStep)) {
                     um.moves_left = 0;
                     break;
                 }
-                // the passengers wake up; those after the ship in unit order move this turn
+                // the passengers wake up with full moves and move next (0x4dfc)
                 Cmd::Unload => {
-                    for c in g.cargo_of(id) {
-                        g.unit_mut(c).order = UnitOrder::None;
+                    if let Some(next) = g.unload(id) {
+                        if let Some(k) = ids.iter().position(|o| *o == next) {
+                            i = k;
+                        }
+                        again = true;
+                        continue 'units;
                     }
                     break;
                 }
@@ -1752,7 +1770,7 @@ pub fn play_barbarians(g: &mut Game, sink: &mut dyn FnMut(TurnStep)) {
             }
         }
     }
-    g.refresh_vision(0);
+    again
 }
 
 #[cfg(test)]

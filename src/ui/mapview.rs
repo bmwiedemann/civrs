@@ -304,11 +304,20 @@ impl MapView {
     }
 
     fn activate_next(&mut self, ctx: &mut UiContext) {
+        self.activate_with(ctx, |g| g.next_active_unit());
+    }
+
+    /// `activate_next` from unit `from` itself (after 'u').
+    fn activate_from(&mut self, ctx: &mut UiContext, from: UnitId) {
+        self.activate_with(ctx, |g| g.next_active_unit_at(from));
+    }
+
+    fn activate_with(&mut self, ctx: &mut UiContext, next: impl FnOnce(&mut crate::game::Game) -> Option<UnitId>) {
         // the choice prefers the units in the view and centres the view on any other
         // (Game::next_active_unit, move_units 0x434f..0x43c9)
         let g = ctx.game_mut();
         g.view = Some((self.vx, self.vy));
-        g.active_unit = g.next_active_unit();
+        g.active_unit = next(g);
         if let Some((vx, vy)) = g.view {
             self.vx = vx;
             self.vy = vy;
@@ -801,9 +810,10 @@ impl MapView {
                 }
             }
             Key::Char('u') => {
-                if let Some(id) = active {
-                    ctx.game_mut().unload(id);
-                    self.activate_next(ctx);
+                // the loop goes on from the stack's first passenger (0x4e64); a ship without
+                // passengers stays active (0x4e27)
+                if let Some(next) = active.and_then(|id| ctx.game_mut().unload(id)) {
+                    self.activate_from(ctx, next);
                 }
                 Transition::None
             }

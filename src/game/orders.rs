@@ -47,9 +47,16 @@ impl Game {
                 um.moves_left = 0;
                 Ok(())
             }
-            // 's' (0x4ddf) also zeroes the moves; civrs leaves them, as the computer players'
-            // ship loading (ai/naval_ai.rs) sentries units it still moves
-            UnitOrder::None | UnitOrder::Skip | UnitOrder::Sentry => {
+            // 's' (0x4ddf) sets the sentry bit and ends the unit's turn (moves = 0); 'u' gives
+            // the moves back (`unload`)
+            UnitOrder::Sentry => {
+                let um = self.unit_mut(id);
+                um.order = o;
+                um.goto = None;
+                um.moves_left = 0;
+                Ok(())
+            }
+            UnitOrder::None | UnitOrder::Skip => {
                 self.unit_mut(id).order = o;
                 self.unit_mut(id).goto = None;
                 Ok(())
@@ -357,12 +364,46 @@ impl Game {
         }
     }
 
-    /// Wake up all units carried by this ship (so they can be ordered off).
-    pub fn unload(&mut self, id: UnitId) {
-        for c in self.cargo_of(id) {
+    /// 'u' (CIV.EXE 0x4dfc), for the human and the computer alike: a ship that carries units
+    /// (a Carrier included) and does not stand alone wakes the sentried units of its stack
+    /// (`for_each_in_stack` 0x92a7 with `wake_cb` 0x9352): the sentry bit goes, the moves are
+    /// full again (3 x the type's moves), aircraft get their fuel back and the goto and
+    /// heading are forgotten. Returns the unit the order loop goes on with
+    /// (`next_unit_in_stack` 0x7d8f): of the stack's units but ships, the first after the
+    /// ship in record order (round the table), else the ship itself; `None` when the key does
+    /// nothing.
+    pub fn unload(&mut self, id: UnitId) -> Option<UnitId> {
+        if self.unit(id).info().capacity == 0 {
+            return None;
+        }
+        let stack = self.stack_from(id);
+        if stack.len() < 2 {
+            return None;
+        }
+        for &c in &stack {
+            if self.unit(c).order != UnitOrder::Sentry {
+                continue;
+            }
             let cu = self.unit_mut(c);
             cu.order = UnitOrder::None;
+            cu.moves_left = cu.full_moves();
+            if cu.info().range > 0 {
+                cu.fuel = 0;
+            }
+            self.clear_goto(c);
+            self.set_heading(c, 0xff);
         }
+        let rec = self.unit(id).record as i32;
+        // 0x7d8f follows the ring for 16 units at most
+        let next = self
+            .stack_ring(id, 17)
+            .iter()
+            .skip(1)
+            .filter(|o| !self.unit(**o).is_sea())
+            .map(|o| (((self.unit(*o).record as i32 - rec) + 0x80) % 0x80, *o))
+            .min_by_key(|(d, _)| *d)
+            .map(|(_, o)| o);
+        Some(next.unwrap_or(id))
     }
 
     pub fn wait_unit(&mut self, id: UnitId) {
@@ -609,6 +650,42 @@ mod tests {
         let ship = g.add_unit(slot, unit_ids::TRIREME, 30, 20);
         assert!(g.give_order(ship, UnitOrder::Fortify).is_err());
         let _ = s;
+    }
+
+    #[test]
+    fn sentry_ends_the_turn_and_unload_wakes_the_stack_with_full_moves() {
+        // 's' 0x4ddf zeroes the moves; 'u' 0x4dfc / wake_cb 0x9352 gives them back to every
+        // sentried unit of the ship's stack and goes on with the passenger after the ship
+        let mut g = Game::new(GameSetup { seed: 7, ..Default::default() }, None);
+        let slot = g.human_slot;
+        let (x, y) = (30, 20);
+        g.map.get_mut(x, y).unwrap().terrain = Terrain::Ocean;
+        for u in g.units_of(slot) {
+            g.unit_mut(u).moves_left = 0;
+        }
+        let a = g.add_unit(slot, unit_ids::MILITIA, x, y);
+        let ship = g.add_unit(slot, unit_ids::SAIL, x, y);
+        let b = g.add_unit(slot, unit_ids::MILITIA, x, y);
+        assert!(g.unit(a).record < g.unit(ship).record && g.unit(ship).record < g.unit(b).record);
+        for p in [a, b] {
+            g.unit_mut(p).carried_by = Some(ship);
+            g.give_order(p, UnitOrder::Sentry).unwrap();
+            assert_eq!((g.unit(p).order, g.unit(p).moves_left), (UnitOrder::Sentry, 0));
+        }
+        assert_eq!(g.unload(ship), Some(b));
+        for p in [a, b] {
+            assert_eq!((g.unit(p).order, g.unit(p).moves_left), (UnitOrder::None, 3));
+        }
+        // the passengers at sea want orders: the loop goes on from b, then a
+        g.active_unit = Some(ship);
+        g.unit_mut(ship).moves_left = 0;
+        assert_eq!(g.next_active_unit_at(b), Some(b));
+        g.unit_mut(b).moves_left = 0;
+        assert_eq!(g.next_active_unit_at(b), Some(a));
+        // a ship alone and a unit that carries nobody do nothing
+        let lone = g.add_unit(slot, unit_ids::SAIL, x + 2, y);
+        assert_eq!(g.unload(lone), None);
+        assert_eq!(g.unload(a), None);
     }
 
     #[test]

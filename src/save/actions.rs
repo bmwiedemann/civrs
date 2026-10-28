@@ -262,8 +262,9 @@ fn unit_key(g: &mut Game, id: crate::game::UnitId, k: &str) -> Result<(), String
         }
         "h" => g.set_home(id).map_err(|e| e.message().to_string()),
         "u" => {
-            g.unload(id);
-            activate_next(g);
+            if let Some(next) = g.unload(id) {
+                g.active_unit = g.next_active_unit_at(next);
+            }
             Ok(())
         }
         _ => Err(format!("unknown unit key {k}")),

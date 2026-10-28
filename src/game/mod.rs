@@ -1015,13 +1015,26 @@ impl Game {
     /// CIV.EXE compares the columns without the east-west wrap, so near x = 0 it takes
     /// visible units for hidden ones; civrs wraps.
     pub fn next_active_unit(&mut self) -> Option<UnitId> {
+        let after = self.active_unit;
+        self.next_active_unit_from(after, 1)
+    }
+
+    /// `next_active_unit` going on from unit `from` itself, as the loop does after 'u'
+    /// (0x4e64 sets the loop's unit to the one before `next_unit_in_stack`).
+    pub fn next_active_unit_at(&mut self, from: UnitId) -> Option<UnitId> {
+        self.next_active_unit_from(Some(from), 0)
+    }
+
+    /// The loop looks at every unit with moves and without the sentry or fortified bits
+    /// (0x41fb), passengers at sea included.
+    fn next_active_unit_from(&mut self, from: Option<UnitId>, skip: usize) -> Option<UnitId> {
         let slot = self.human_slot;
         let ids = self.units_of(slot);
         if ids.is_empty() {
             return None;
         }
-        let start = self.active_unit.and_then(|a| ids.iter().position(|id| *id == a)).map(|i| i + 1).unwrap_or(0);
-        let wants = |u: &Unit| u.moves_left > 0 && u.order == UnitOrder::None && u.carried_by.map(|c| self.unit_opt(c).is_none()).unwrap_or(true);
+        let start = from.and_then(|a| ids.iter().position(|id| *id == a)).map(|i| i + skip).unwrap_or(0);
+        let wants = |u: &Unit| u.moves_left > 0 && u.order == UnitOrder::None;
         let shown = |u: &Unit| self.view.is_some_and(|(vx, vy)| (1..=14).contains(&Map::wrap_x(u.x - vx)) && (1..=9).contains(&(u.y - vy)));
         let order = (0..ids.len()).map(|k| self.unit(ids[(start + k) % ids.len()]));
         let pick = order.clone().find(|u| wants(u) && shown(u)).or_else(|| order.clone().find(|u| wants(u))).map(|u| (u.id, shown(u), u.pos()));

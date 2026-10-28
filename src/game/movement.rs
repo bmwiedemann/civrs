@@ -302,7 +302,11 @@ impl Game {
             for o in waiting.into_iter().take(room) {
                 let ou = self.unit_mut(o);
                 ou.carried_by = Some(id);
-                ou.order = UnitOrder::Sentry;
+                // the sentry bit comes with a ship whose table capacity is not 0, so not
+                // with the Carrier (0x69d6)
+                if !air {
+                    ou.order = UnitOrder::Sentry;
+                }
                 self.ai_memory.heading.remove(&o);
             }
         }
@@ -533,6 +537,20 @@ impl Game {
 
     pub fn cargo_of(&self, ship: UnitId) -> Vec<UnitId> {
         self.all_units().filter(|u| u.carried_by == Some(ship)).map(|u| u.id).collect()
+    }
+
+    /// The stack of `first`'s square as CIV.EXE's stack walk (`for_each_in_stack` 0x92a7)
+    /// visits it from `first`: the owner's units there, at most ten, round from `first`.
+    pub fn stack_from(&self, first: UnitId) -> Vec<UnitId> {
+        self.stack_ring(first, 10)
+    }
+
+    /// The first `n` units of `first`'s stack ring, `first` included.
+    pub fn stack_ring(&self, first: UnitId, n: usize) -> Vec<UnitId> {
+        let u = self.unit(first);
+        let here: Vec<UnitId> = self.units_at(u.x, u.y).into_iter().filter(|o| self.unit(*o).owner == u.owner).collect();
+        let i = here.iter().position(|o| *o == first).unwrap_or(0);
+        here.iter().cycle().skip(i).take(here.len().min(n)).copied().collect()
     }
 
     /// Can the unit (by rules of terrain only) enter the tile? Used by pathfinding.
@@ -838,6 +856,23 @@ mod tests {
         assert_eq!(g.unit(sentried).pos(), (x + 1, y));
         assert_eq!(g.unit(sentried).carried_by, Some(ship));
         assert_eq!(g.unit(idle).pos(), (x, y));
+    }
+
+    #[test]
+    fn a_computer_carrier_takes_its_aircraft_along_awake() {
+        // 0x69d6: only a ship with a table capacity (not the Carrier) sentries what it takes
+        use crate::game::UnitOrder;
+        let mut g = Game::new(GameSetup { seed: 1, ..Default::default() }, None);
+        let ai = g.civ_slots().into_iter().find(|s| *s != g.human_slot).unwrap();
+        let (x, y) = (40, 25);
+        g.map.get_mut(x, y).unwrap().terrain = Terrain::Grassland;
+        g.map.get_mut(x + 1, y).unwrap().terrain = Terrain::Ocean;
+        g.add_city(ai, "Port".into(), x, y);
+        let carrier = g.add_unit(ai, unit_ids::CARRIER, x, y);
+        let fighter = g.add_unit(ai, unit_ids::FIGHTER, x, y);
+        assert_eq!(g.try_move(carrier, Dir8::E), Ok(MoveOutcome::Moved));
+        assert_eq!((g.unit(fighter).pos(), g.unit(fighter).carried_by), ((x + 1, y), Some(carrier)));
+        assert_eq!(g.unit(fighter).order, UnitOrder::None);
     }
 
     #[test]
