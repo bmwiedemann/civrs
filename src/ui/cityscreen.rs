@@ -240,6 +240,8 @@ impl CityScreen {
     // ---- actions ---------------------------------------------------------------------------
 
     fn change(&mut self, ctx: &mut UiContext) -> Transition {
+        // CHANGE (the "AUTO." button too) turns AUTO off before the menu opens (CIV.EXE 0x117ae)
+        ctx.game_mut().city_mut(self.city).auto_build = false;
         self.change_page(ctx, ChangePage::All)
     }
 
@@ -375,19 +377,25 @@ impl CityScreen {
         }
     }
 
-    fn citizen_click(&mut self, ctx: &mut UiContext, mx: i32) {
+    fn citizen_click(&mut self, ctx: &mut UiContext, mx: i32) -> Transition {
         let g = ctx.game();
         let c = g.city(self.city);
         let n = c.size as usize;
         let workers = n - c.specialists.len();
         let pitch = Self::citizen_pitch(n);
+        // below size 5 a click on the citizens only brings the message (CIV.EXE 0x121c7, message 0x13d54)
+        if c.size < 5 {
+            self.pending = Pending::Ignore;
+            let lines = ["A City must have five", "population units to support", "taxmen or scientists."];
+            return Transition::Push(Box::new(MessageBox::new(lines.iter().map(|l| l.to_string()).collect()).with_pos(32, 32)));
+        }
         if mx < CITIZEN_X {
-            return;
+            return Transition::None;
         }
         let i = ((mx - CITIZEN_X) / pitch) as usize;
         let i = if i >= workers { (mx - CITIZEN_X - 4).max(0) as usize / pitch as usize } else { i };
         if i < workers || i >= n {
-            return;
+            return Transition::None;
         }
         let si = i - workers;
         let next = match c.specialists[si] {
@@ -396,6 +404,7 @@ impl CityScreen {
             Specialist::Scientist => Specialist::Entertainer,
         };
         ctx.game_mut().set_specialist(self.city, si, next);
+        Transition::None
     }
 
     fn click(&mut self, ctx: &mut UiContext, x: i32, y: i32) -> Transition {
@@ -447,7 +456,7 @@ impl CityScreen {
             return Transition::None;
         }
         if P_TITLE.inset(1).contains(x, y) && y >= CITIZEN_Y {
-            self.citizen_click(ctx, x);
+            return self.citizen_click(ctx, x);
         }
         Transition::None
     }

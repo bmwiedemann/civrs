@@ -49,20 +49,18 @@ pub fn sell_price(id: ImprovementId) -> i32 {
     rules::IMPROVEMENTS[id as usize].cost as i32 * 10
 }
 
-/// Gold needed to complete `remaining` shields of a production item (Civ1 formulas).
+/// Gold needed to complete `remaining` shields of a production item (CIV.EXE 0x1150f..0x115e5):
+/// remaining clamped to 0..999; units 2r + r²/20, improvements 2r, doubled for spaceship parts
+/// and wonders (improvement number > 21), and everything doubled again from an empty store.
 pub fn buy_price(prod: Production, remaining: i32, nothing_yet: bool) -> i32 {
-    let r = remaining.max(0);
-    if r == 0 {
-        return 0;
-    }
-    match prod {
-        Production::Unit(_) => {
-            let base = 2 * r + r * r / 20;
-            if nothing_yet { base * 2 } else { base }
-        }
+    let r = remaining.clamp(0, 999);
+    let price = match prod {
+        Production::Unit(_) => 2 * r + r * r / 20,
+        Production::Improvement(i) if i > imp::NUCLEAR_PLANT => 4 * r,
         Production::Improvement(_) => 2 * r,
         Production::Wonder(_) => 4 * r,
-    }
+    };
+    if nothing_yet { price * 2 } else { price }
 }
 
 impl Game {
@@ -736,14 +734,13 @@ impl Game {
         buy_price(city.production, remaining, city.shields <= 0)
     }
 
-    /// Pay gold to complete the current production (delivered at the end of the turn).
+    /// Pay gold to complete the current production (delivered at the end of the turn). CIV.EXE
+    /// (0x116cc..0x1177e) refuses only a unit in a city in disorder, and has no once-per-turn
+    /// limit: the store is simply set to the full cost.
     pub fn buy(&mut self, c: CityId) -> Result<(), RuleError> {
         let city = self.city(c);
-        if city.bought {
-            return Err(RuleError::Other("Already purchased this turn."));
-        }
-        if city.disorder {
-            return Err(RuleError::Other("Cannot buy during civil disorder."));
+        if city.disorder && matches!(city.production, Production::Unit(_)) {
+            return Err(RuleError::Other("Cannot buy units during civil disorder."));
         }
         if let Production::Wonder(w) = city.production {
             if self.wonders_built[w as usize].is_some() {
@@ -771,15 +768,12 @@ impl Game {
         Ok(())
     }
 
-    /// Change what the city builds. Switching between unit / improvement / wonder loses half
-    /// of the accumulated shields (once per turn).
+    /// Change what the city builds, keeping the whole store, also right after a purchase
+    /// (CIV.EXE 0x117e8).
     pub fn set_production(&mut self, c: CityId, prod: Production) -> Result<(), RuleError> {
         let city = self.city(c);
         if city.production == prod {
             return Ok(());
-        }
-        if city.bought {
-            return Err(RuleError::Other("Production cannot be changed after a purchase."));
         }
         if !self.available_production(c).contains(&prod) {
             return Err(RuleError::Other("That cannot be built here."));
@@ -1091,7 +1085,32 @@ mod tests {
         assert_eq!(g.player(slot).gold, 50);
         assert_eq!(g.city(c).shields, 10);
         assert!(g.city(c).bought);
-        assert!(g.set_production(c, Production::Improvement(imp::BARRACKS)).is_err());
+        // the store is kept on a change after the purchase (0x117e8)
+        assert!(g.set_production(c, Production::Improvement(imp::BARRACKS)).is_ok());
+        assert_eq!(g.city(c).shields, 10);
+    }
+
+    #[test]
+    fn buy_price_doubles_from_an_empty_store_and_for_wonders() {
+        // 0x1150f..0x115e5: improvements 2r, spaceship parts and wonders 4r, x2 from nothing
+        assert_eq!(buy_price(Production::Improvement(imp::BARRACKS), 40, false), 80);
+        assert_eq!(buy_price(Production::Improvement(imp::BARRACKS), 40, true), 160);
+        assert_eq!(buy_price(Production::Improvement(imp::SS_STRUCTURAL), 80, false), 320);
+        assert_eq!(buy_price(Production::Wonder(won::PYRAMIDS), 100, true), 800);
+        assert_eq!(buy_price(Production::Unit(unit_ids::MILITIA), 5, false), 11);
+        // remaining shields are clamped to 999
+        assert_eq!(buy_price(Production::Improvement(imp::BARRACKS), 1500, false), 1998);
+    }
+
+    #[test]
+    fn disorder_blocks_only_unit_purchases() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        g.player_mut(slot).gold = 1000;
+        g.city_mut(c).disorder = true;
+        assert!(g.buy(c).is_err());
+        g.set_production(c, Production::Improvement(imp::BARRACKS)).unwrap();
+        assert!(g.buy(c).is_ok());
     }
 
     #[test]

@@ -68,7 +68,8 @@ pub struct City {
     pub disorder: bool,
     pub disorder_turns: u8,
     pub celebrating: bool,
-    /// Something was bought this turn (no further changes allowed).
+    /// Something was bought this turn. Informational only: CIV.EXE allows further purchases and
+    /// changes after a purchase (0x1176c, 0x117e8).
     pub bought: bool,
     /// A Diplomat stole an advance here; no other can (CIV.EXE city status bit 0x20).
     pub tech_stolen: bool,
