@@ -317,6 +317,14 @@ to PNG and viewing them (Read tool on image) before the UI tracks depend on them
 - Sound: AdLib driver re-implementation (`Audio::play(Sound)`, `national_theme(civ, long)`),
   OPL2 emulation, SDL3 audio stream; MT-32/Tandy/PC-speaker drivers not reproduced.
 - Not reproduced: copy-protection QUIZ, DOS launcher, EGA/Tandy assets (SPRITES.PIC, KINK*, SP299).
+  The quiz (overlay 16, from game_turn 0x2783): on every 50th turn while the year is BC and
+  ds:0x4cd8 bit 0 (quiz passed, saved at SVE 0x9172, cleared by every load o 0xf0ce) is clear,
+  "CIVILIZATION QUIZ" asks for the two prerequisites of a random advance (two tries, *QUIZ /
+  *QUIZ2); a right answer sets the bit, a second wrong one (*INCORRECT) deletes every unit of
+  the human (0x7e6:0xf0c with ds:0x20f4 = 1). civrs plays as if it were always answered right:
+  the bit has no other reader, so nothing else changes. The hardware setup menu (overlay 1,
+  INTRO.TXT: graphics, sound, mouse or keyboard) is replaced by the command line
+  (`--keyboard-only`, sound on).
 - Headless/CI: `HeadlessBackend` + `--dump TARGET --out FILE.ppm` and `--ai-only --turns N`.
   Visual checks are done by converting PPM to PNG (python3 PIL) and viewing with the Read tool,
   or by running under Xvfb (`Xvfb :99` exists on host).
