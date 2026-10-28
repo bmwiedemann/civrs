@@ -1,0 +1,5 @@
+# CIVIL1 (Romans, turn 37, slot 1: the saved moves stay): Caesarea builds Settlers instead
+# of its Granary, the lone Militia far in the north-west fortifies where it stands
+turn 37
+city Caesarea 9,25 change 0 Settlers
+unit 3,18 f

@@ -61,12 +61,17 @@ def rows(n):
 
 
 def unit_keys(k):
+    if k == 'ret':
+        return ['Return', 'sleep2']
     if k[0] == 'k':
-        return [KEYPAD[k[1]], 'sleep1']
+        # kN:ROW: the move opens a menu (a caravan's "Will you?"), answered with its row
+        if ':' in k:
+            return [KEYPAD[k[1]], 'sleep2'] + rows(k.split(':')[1]) + ['Return', 'sleep2']
+        return [KEYPAD[k[1]], 'sleep2']
     if k == 'b':
         # the name prompt takes the proposed name, then the founding animation and city view
         return ['b', 'sleep2', 'Return', 'sleep8', 'Escape', 'sleep2']
-    return [{'F': 'shift+f', 'P': 'shift+p'}.get(k, k), 'sleep1']
+    return [{'P': 'shift+p', 'D': 'shift+d'}.get(k, k), 'sleep2']
 
 
 def steps_to(dx, dy):
@@ -82,6 +87,8 @@ def steps_to(dx, dy):
 def act(w, k, click, shot):
     """Perform one script action in CIV.EXE (the keys of the map view and the city screen)."""
     if w[0] == 'unit':
+        # the map view may still be scrolling to the unit the last key made active
+        k(['sleep1'])
         for key in w[2:]:
             k(unit_keys(key))
     elif w[0] == 'select':

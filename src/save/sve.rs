@@ -667,6 +667,7 @@ pub fn state_text(g: &Game) -> String {
         }
         let _ = writeln!(o, "{k}.units_per_type {:?}", &p.unit_counter[..]);
         let _ = writeln!(o, "{k}.cities {}", g.all_cities().filter(|c| c.owner == p.slot).count());
+        let _ = writeln!(o, "{k}.diplo {:04x?}", &p.diplo[..]);
     }
     for c in g.all_cities() {
         let k = format!("city{}", c.id);
@@ -675,6 +676,7 @@ pub fn state_text(g: &Game) -> String {
         let _ = writeln!(o, "{k}.size {}\n{k}.food {}\n{k}.shields {}\n{k}.production {:?}", c.size, c.food, c.shields, c.production);
         let _ = writeln!(o, "{k}.improvements {:08x} wonders {:08x}", c.improvements, c.wonders);
         let _ = writeln!(o, "{k}.worked {:08x} specialists {:?}", c.worked, c.specialists);
+        let _ = writeln!(o, "{k}.routes {:?}", c.trade_routes);
         let sold = g.player(c.owner).sold_cities.contains(&c.id);
         let _ = writeln!(o, "{k}.flags disorder {} celebrating {} known_size {} auto {} sold {sold}", c.disorder, c.celebrating, c.known_size, c.auto_build);
         let _ = writeln!(o, "{k}.yield food {}-{} shields {}-{} trade {}-{} tax {} lux {} sci {}", y.food, y.food_upkeep, y.shields, y.shield_upkeep, y.trade, y.corruption, y.tax, y.lux, y.sci);

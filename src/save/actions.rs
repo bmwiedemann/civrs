@@ -8,8 +8,13 @@
 //! ```text
 //! turn 36                  the actions below run at the start of the human's turn 36
 //! unit 10,25 r             keys for the active unit, which must stand at 10,25: k1..k9
-//!                          keypad moves, r i m f F(fortress) s p P(pillage) b(found, default
-//!                          name) w space h u
+//!                          keypad moves, r i m f (Settlers: fortress) s p P(pillage) b(found,
+//!                          default name) w space h u D(disband); ret is a Return for a
+//!                          message box in CIV.EXE (nothing in civrs)
+//! unit 12,28 k2:2          a move that opens a menu (a caravan at one of the human's cities:
+//!                          0 keep moving, 1 trade route, 2 help build the wonder) and its row;
+//!                          a caravan entering a foreign city sets up its route, a move onto a
+//!                          foreign unit attacks
 //! select 7,23 Caesarea 9,25   FindCity, a click on the square and Return: its one unit
 //!                          of the human's becomes the active unit
 //! tax +1 / lux -2          the rate menus ('+' / '-'): rows down from the current rate
@@ -25,7 +30,8 @@
 //! An action that civrs cannot perform as written (another active unit, a different menu
 //! item) is an error: the script and the two games disagree before any state is compared.
 
-use crate::game::{Dir8, Game, Specialist, UnitOrder};
+use crate::game::turn::CaravanAction;
+use crate::game::{Dir8, Game, MoveOutcome, Specialist, UnitOrder};
 use crate::rules;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -114,6 +120,10 @@ pub fn apply(g: &mut Game, a: &Action) -> Result<(), String> {
                 return Err(format!("the active unit stands at {:?}, not {at:?}", g.unit(id).pos()));
             }
             for k in keys {
+                // a Return for a message box in CIV.EXE (a trade route, a fight's report)
+                if k == "ret" {
+                    continue;
+                }
                 let id = g.active_unit.ok_or_else(|| format!("no active unit for key {k}"))?;
                 unit_key(g, id, k)?;
             }
@@ -220,10 +230,32 @@ fn unit_key(g: &mut Game, id: crate::game::UnitId, k: &str) -> Result<(), String
         Ok(())
     };
     if let Some(n) = k.strip_prefix('k') {
+        // kN:ROW answers the menu the move opens with its row
+        let (n, row) = match n.split_once(':') {
+            Some((n, r)) => (n, Some(r.parse::<usize>().map_err(|_| format!("bad menu row in {k}"))?)),
+            None => (n, None),
+        };
         let d = n.parse().ok().and_then(Dir8::from_keypad).ok_or_else(|| format!("bad key {k}"))?;
-        let out = g.try_move(id, d).map_err(|e| e.message().to_string())?;
-        if !matches!(out, crate::game::MoveOutcome::Moved) {
-            return Err(format!("move {k}: {out:?}"));
+        let caravan = g.unit(id).kind == rules::unit_ids::CARAVAN;
+        match g.try_move(id, d).map_err(|e| e.message().to_string())? {
+            MoveOutcome::Moved | MoveOutcome::Attacked { .. } if row.is_none() => {}
+            // a caravan in a foreign city sets up the route at once (0x5d15)
+            MoveOutcome::EnteredForeignCity(c) if caravan && row.is_none() => g.caravan_action(id, CaravanAction::TradeRoute(c)).map_err(|e| e.message().to_string())?,
+            // "Will you?" (0x5cbe): Keep moving, Establish trade route (greyed for a wonder
+            // city within 10 squares of home, ds:0xb276 = 2), Help build WONDER.
+            MoveOutcome::CaravanArrived(c) => {
+                let wonder = matches!(g.city(c).production, crate::game::Production::Wonder(_));
+                let near = g.unit(id).home.and_then(|h| g.city_opt(h)).is_some_and(|h| crate::game::Map::dist(h.pos(), g.city(c).pos()) < 10);
+                match row {
+                    Some(0) => {
+                        g.move_on(id, d).map_err(|e| e.message().to_string())?;
+                    }
+                    Some(1) if !(wonder && near) => g.caravan_action(id, CaravanAction::TradeRoute(c)).map_err(|e| e.message().to_string())?,
+                    Some(2) if wonder => g.caravan_action(id, CaravanAction::HelpWonder(c)).map_err(|e| e.message().to_string())?,
+                    _ => return Err(format!("move {k}: no caravan menu row {row:?}")),
+                }
+            }
+            out => return Err(format!("move {k}: {out:?}")),
         }
         // the map view follows the unit (scroll_to 0x9505, MapView::ensure_visible)
         if let (Some(u), Some(view)) = (g.unit_opt(id), g.view) {
@@ -248,7 +280,6 @@ fn unit_key(g: &mut Game, id: crate::game::UnitId, k: &str) -> Result<(), String
             Ok(())
         }
         "f" => order(g, UnitOrder::Fortify),
-        "F" => order(g, UnitOrder::Fortress),
         "s" => order(g, UnitOrder::Sentry),
         "r" => order(g, UnitOrder::Road),
         "i" => order(g, UnitOrder::Irrigate),
@@ -267,6 +298,12 @@ fn unit_key(g: &mut Game, id: crate::game::UnitId, k: &str) -> Result<(), String
             if g.unit_opt(id).map(|u| u.moves_left == 0 || u.order != UnitOrder::None).unwrap_or(true) {
                 activate_next(g);
             }
+            Ok(())
+        }
+        // 'D' deletes the unit at once (0x4c5a)
+        "D" => {
+            g.disband(id);
+            activate_next(g);
             Ok(())
         }
         "u" => {
