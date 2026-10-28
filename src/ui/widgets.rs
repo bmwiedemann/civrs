@@ -216,6 +216,8 @@ impl LineEdit {
                 self.buf.insert(self.cursor, ' ');
                 self.buf.truncate(self.max);
             }
+            // CIV.EXE (o 0x1ef53) also blanks the character that moves under the cursor, so
+            // Del removes two; civrs removes one
             Some(Key::Delete) => {
                 self.buf.remove(self.cursor);
                 self.buf.push(' ');
@@ -947,7 +949,10 @@ impl Screen for YesNo {
 
 /// `ask_city_name` (overlay 23 +0x0, 0x1e975), for founding and renaming: a colour 15 box at
 /// (80, 80) 160x32 outlined in 11, "City Name..." at (88, 82) and edit_line(88, 96, 12) on the
-/// current name; Enter with an empty name edits again. Pops `Text` on Enter, `Cancelled` on Esc.
+/// current name; Enter with an empty name edits again. Pops `Text` on Enter, `Cancelled` on Esc,
+/// which keeps the name whatever was typed (o 0x1ea0f). CIV.EXE's loop on an empty name
+/// (o 0x1ea06) never repeats, since edit_line keeps the first character, so it takes a blank
+/// name as " "; civrs edits again instead.
 pub struct CityNamePrompt {
     edit: LineEdit,
     /// Frames to ignore input for (the key that opened the prompt also arrives as text).
@@ -972,7 +977,7 @@ impl Screen for CityNamePrompt {
         }
         let text = self.edit.text().trim().to_string();
         match self.edit.handle(ev) {
-            Some(_) if text.is_empty() => Transition::None,
+            Some(LineEnd::Enter) if text.is_empty() => Transition::None,
             Some(LineEnd::Enter) => Transition::Pop(DialogResult::Text(text)),
             Some(LineEnd::Esc) => Transition::Pop(DialogResult::Cancelled),
             None => Transition::None,

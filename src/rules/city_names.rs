@@ -72,6 +72,12 @@ pub static MONGOL: [&str; 16] = [
     "Ormuz", "Basra", "Khanbalyk", "Khorasan", "Shangtu", "Kazan", "Quinsay", "Kerman",
 ];
 
+/// CIV.EXE's 256-name table (far 0x3583, 13 bytes a name): 16 names per tribe 1..7, 9..15,
+/// then the 32 spare ones.
+pub fn name_table() -> Vec<&'static str> {
+    (1..16).filter(|t| *t != 8).flat_map(|t| crate::rules::CIVS[t].cities.iter().copied()).chain(SPARE_CITY_NAMES.iter().copied()).collect()
+}
+
 /// Spare pool of 32 names used once a civilization's own list is exhausted
 /// (and by the Barbarians / unused civ slot).
 #[rustfmt::skip]

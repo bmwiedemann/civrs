@@ -785,7 +785,7 @@ impl Game {
         let mut used: Vec<String> = self.all_cities().map(|c| c.name.clone()).collect();
         used.extend(self.history.names.iter().cloned());
         let list = &rules::CIVS[civ].cities;
-        let table: Vec<&str> = (1..16).filter(|t| *t != 8).flat_map(|t| rules::CIVS[t].cities.iter().copied()).chain(rules::SPARE_CITY_NAMES.iter().copied()).collect();
+        let table = rules::city_names::name_table();
         let own = if civ == 0 || civ == 8 { 224 } else { 16 * (if civ > 7 { civ - 2 } else { civ - 1 }) };
         for i in (own..own + 16).chain(224..256).chain(0..256) {
             if !used.iter().any(|u| u == table[i]) {

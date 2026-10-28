@@ -516,19 +516,28 @@ impl FindCity {
         FindCity { edit: crate::ui::widgets::LineEdit::new(66, 89, 16, FONT, ""), unknown: false }
     }
 
-    /// The typed name against the city names, case-insensitively up to its length (strnicmp).
+    /// The typed name against the city names (prompt_city_name o 0x1ecf4..0x1ed6b): the first
+    /// name of the 256-name table, in table order, that starts with the typed text, ignoring
+    /// case (strnicmp over its length), and that a city has; then the map centres on that city
+    /// if the human has seen its square, else "Unknown city." (o 0x1ec00). A renamed city's
+    /// name is not in civrs's table: CIV.EXE writes it over the city's own entry, civrs puts
+    /// it after the table, in city order.
     fn lookup(&self, ctx: &UiContext) -> Option<(i32, i32)> {
         let g = ctx.game();
-        let q = self.edit.text().trim().to_ascii_lowercase();
-        if q.is_empty() {
-            return None;
-        }
-        let known = |c: &crate::game::City| c.owner == g.human_slot || g.explored(g.human_slot, c.x, c.y);
-        if let Some(c) = g.all_cities().filter(|c| known(c)).find(|c| c.name.to_ascii_lowercase() == q) {
-            return Some((c.x, c.y));
-        }
-        g.all_cities().filter(|c| known(c)).find(|c| c.name.to_ascii_lowercase().starts_with(&q)).map(|c| (c.x, c.y))
+        let c = find_city_by_name(g, &self.edit.text())?;
+        let c = g.city(c);
+        g.explored(g.human_slot, c.x, c.y).then_some((c.x, c.y))
     }
+}
+
+/// The city Find City picks for `typed` (o 0x1ecf4): see `FindCity::lookup`.
+fn find_city_by_name(g: &crate::game::Game, typed: &str) -> Option<crate::game::CityId> {
+    let q = typed.to_ascii_lowercase();
+    let table = crate::rules::city_names::name_table();
+    let order = |name: &str| table.iter().position(|t| *t == name).unwrap_or(table.len());
+    let mut cities: Vec<(usize, crate::game::CityId, &str)> = g.all_cities().map(|c| (order(&c.name), c.id, c.name.as_str())).collect();
+    cities.sort_unstable();
+    cities.into_iter().find(|(_, _, name)| name.to_ascii_lowercase().starts_with(&q)).map(|(_, id, _)| id)
 }
 
 impl Screen for FindCity {
@@ -570,5 +579,23 @@ impl Screen for FindCity {
     }
     fn wants_cursor(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::game::{Game, GameSetup};
+
+    #[test]
+    fn find_city_takes_the_first_matching_name_in_table_order() {
+        let mut g = Game::new(GameSetup { seed: 3, ..Default::default() }, None);
+        let berlin = g.add_city(1, "Berlin".into(), 10, 10);
+        let babylon = g.add_city(2, "Babylon".into(), 20, 10);
+        let renamed = g.add_city(2, "Bigtown".into(), 30, 10);
+        assert_eq!(super::find_city_by_name(&g, "b"), Some(babylon), "Babylonian names come before German ones");
+        assert_eq!(super::find_city_by_name(&g, "BER"), Some(berlin));
+        assert_eq!(super::find_city_by_name(&g, "big"), Some(renamed));
+        assert_eq!(super::find_city_by_name(&g, "Berlins"), None);
+        assert_eq!(super::find_city_by_name(&g, " "), None);
     }
 }
