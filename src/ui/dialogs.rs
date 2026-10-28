@@ -536,7 +536,10 @@ pub fn screen_for_decision(ctx: &mut UiContext, d: &Decision) -> Box<dyn Screen>
                 .collect();
             let who = if p.knows(rules::advance_ids::INVENTION) { "scientists" } else { "wise men" };
             let head = vec!["Which discovery should our".into(), format!("{who} be pursuing, sire?"), "Pick one...".into()];
-            Box::new(MenuDialog::new(head, items).with_pos(80, 64).with_help().no_cancel())
+            // a right-button (or Alt-H) choice shows the advance's Civilopedia page and asks
+            // again (0xc266)
+            let pages = options.iter().map(|a| (*a != rules::advance_ids::FUTURE_TECH).then_some(crate::ui::pedia_data::Entry::Advance(*a))).collect();
+            Box::new(MenuDialog::new(head, items).with_pos(80, 64).with_help_entries(pages).no_cancel())
         }
         Decision::ChooseGovernment { options, .. } => {
             let items: Vec<String> = options.iter().map(|gv| rules::GOVERNMENTS[*gv as usize].name.to_string()).collect();

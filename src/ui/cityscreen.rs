@@ -9,6 +9,7 @@ use crate::platform::{Event, Key, MouseButton};
 use crate::rules::{self, improvement_ids};
 use crate::ui::city_draw::*;
 use crate::ui::context::UiContext;
+use crate::ui::pedia_data::Entry;
 use crate::ui::screen::{DialogResult, Screen, Transition};
 use crate::ui::tilerender::{draw_city, draw_fog_edges, draw_terrain};
 use crate::ui::widgets::{CityNamePrompt, MenuDialog, MessageBox, YesNo};
@@ -277,22 +278,10 @@ impl CityScreen {
                     Transition::None
                 }
                 Key::Char(d @ '1'..='9') if !mods.shift => self.cycle_specialist(ctx, (*d as u8 - b'1') as usize),
-                Key::Char('a') if mods.shift => {
-                    // AUTO on asks the production advisor at once; with nothing worth it the
-                    // flag stays until the city finishes its item (CIV.EXE 0x113d7..0x11411)
-                    let g = ctx.game_mut();
-                    let c = g.city_mut(self.city);
-                    c.auto_build = !c.auto_build;
-                    if c.auto_build {
-                        if let Some(p) = g.auto_production(self.city) {
-                            g.city_mut(self.city).production = p;
-                        }
-                    }
-                    Transition::None
-                }
+                Key::Char('a') if mods.shift => self.toggle_auto(ctx),
                 _ => Transition::Pop(DialogResult::Done),
             },
-            Event::MouseButton { button: MouseButton::Left, x, y, down: true } => self.click(ctx, *x, *y),
+            Event::MouseButton { button, x, y, down: true } => self.click(ctx, *button, *x, *y),
             _ => Transition::None,
         }
     }
@@ -434,9 +423,19 @@ impl CityScreen {
         let title = format!("What shall we build in {}?", c.name);
         // the small font (CIV.EXE's font 2) from 21 lines on and on either page (0xb9fe)
         let small = 1 + all.len() > 20 || page != ChangePage::All;
-        self.pending = Pending::Change(list, next);
         // popup_menu3 at (80, 8) with Civilopedia help (ds:0x2fa0, 0xba14)
-        let menu = MenuDialog::new(vec![title], items).with_pos(80, 8).with_selection(sel).with_help();
+        // a right-button (or Alt-H) choice shows the item's Civilopedia page and asks again (0xba5b)
+        let pages = list
+            .iter()
+            .map(|p| match p {
+                Some(Production::Unit(k)) => Some(Entry::Unit(*k)),
+                Some(Production::Improvement(i)) => Some(Entry::Improvement(*i)),
+                Some(Production::Wonder(w)) => Some(Entry::Wonder(*w)),
+                None => None,
+            })
+            .collect();
+        self.pending = Pending::Change(list, next);
+        let menu = MenuDialog::new(vec![title], items).with_pos(80, 8).with_selection(sel).with_help_entries(pages);
         Transition::Push(Box::new(if small { menu.with_font(1) } else { menu }))
     }
 
@@ -510,25 +509,20 @@ impl CityScreen {
         }
     }
 
+    /// A click on the citizens row (CIV.EXE 0x121c7): below size 5 only the message; else the
+    /// specialist (x - 16) / pitch - workers (C division) changes its kind.
     fn citizen_click(&mut self, ctx: &mut UiContext, mx: i32) -> Transition {
-        let g = ctx.game();
-        let c = g.city(self.city);
-        let n = c.size as usize;
-        let workers = n - c.specialists.len();
-        let pitch = Self::citizen_pitch(n);
-        // below size 5 a click on the citizens only brings the message (CIV.EXE 0x121c7)
+        let c = ctx.game().city(self.city);
         if c.size < 5 {
             return self.specialists_need_size_5();
         }
-        if mx < CITIZEN_X {
+        let n = c.size as usize;
+        let workers = (n - c.specialists.len()) as i32;
+        let i = (mx - 16) / Self::citizen_pitch(n) - workers;
+        if i < 0 {
             return Transition::None;
         }
-        let i = ((mx - CITIZEN_X) / pitch) as usize;
-        let i = if i >= workers { (mx - CITIZEN_X - 4).max(0) as usize / pitch as usize } else { i };
-        if i < workers || i >= n {
-            return Transition::None;
-        }
-        self.cycle_specialist(ctx, i - workers)
+        self.cycle_specialist(ctx, i as usize)
     }
 
     /// The 0x13d54 message: specialists other than entertainers need size 5.
@@ -555,26 +549,58 @@ impl CityScreen {
         Transition::None
     }
 
-    fn click(&mut self, ctx: &mut UiContext, x: i32, y: i32) -> Transition {
-        if B_EXIT.contains(x, y) {
+    /// A mouse press on the city screen, tested in the order of the input loop (CIV.EXE
+    /// 0x11391..0x125c0). Whatever no test takes leaves the screen (0x125c0), the right button
+    /// everywhere but on CHANGE, where it flips AUTO.
+    fn click(&mut self, ctx: &mut UiContext, button: MouseButton, x: i32, y: i32) -> Transition {
+        let band = (106..=116).contains(&y);
+        if button == MouseButton::Right {
+            // 0x1139b: a right click on CHANGE acts as Shift-A
+            if band && (230..270).contains(&x) {
+                return self.toggle_auto(ctx);
+            }
             return Transition::Pop(DialogResult::Done);
         }
-        if B_RENAME.contains(x, y) {
-            return self.rename(ctx);
-        }
-        if B_CHANGE.contains(x, y) {
-            return self.change(ctx);
-        }
-        if B_BUY.contains(x, y) {
-            return self.buy(ctx);
-        }
-        for (i, r) in TAB_RECTS.iter().enumerate() {
-            if r.contains(x, y) {
-                return self.tab_click(i);
+        if band {
+            // 0x114e8, 0x11786, 0x11889: BUY from x 296, CHANGE at 230..269, the tabs 32 px
+            // wide from x 96
+            if x >= 296 {
+                return self.buy(ctx);
+            }
+            if (230..270).contains(&x) {
+                return self.change(ctx);
+            }
+            if (96..224).contains(&x) {
+                return self.tab_click(((x - 96) / 32) as usize);
             }
         }
+        // 0x11f8b: RENAME
+        if (231..270).contains(&x) && y > 190 {
+            return self.rename(ctx);
+        }
+        // MORE flips to the overflow page and back (CIV.EXE 0x11fd8)
+        if self.has_more(ctx) && x >= 288 && y > 88 && y < 96 {
+            self.toggle_more(ctx);
+            return Transition::None;
+        }
+        // sell dots (0x1201f): row (y - 2) / 6, truncated as in C
+        if x >= 300 && y < 94 {
+            let (list, _) = self.listed(ctx);
+            // the Palace too; nothing once the city has sold this turn (city flag 0x80)
+            if let Some(Production::Improvement(id)) = list.get(((y - 2) / 6) as usize).copied() {
+                if !self.sold_this_turn(ctx) {
+                    return self.sell(id);
+                }
+            }
+        }
+        // 0x121b2: the citizens row
+        if x < 200 && y < 20 {
+            return self.citizen_click(ctx, x);
+        }
         // a click on one of the city's units on the INFO tab wakes it (0x12271; the original
-        // finds the unit with a 16 px column pitch although they are drawn 18 px apart)
+        // finds the unit with a 16 px column pitch although they are drawn 18 px apart, and
+        // its right bound 0x2580 lets columns 7..13 wake units of later rows: civrs takes the
+        // columns up to the drawn units' right edge only)
         if matches!(self.tab, Tab::Info) && (100..211).contains(&x) && y >= 116 {
             let i = ((y - 116) / 16 * 6 + (x - 100) / 16) as usize;
             if let Some(&id) = self.info_units(ctx).get(i) {
@@ -582,29 +608,24 @@ impl CityScreen {
                 return Transition::None;
             }
         }
-        if P_MAP.inset(1).contains(x, y) {
+        // 0x12366: rows 24..103 are the city map, squares outside the radius do nothing
+        if (24..104).contains(&y) {
             self.map_click(ctx, x, y);
             return Transition::None;
         }
-        // MORE flips to the overflow page and back (CIV.EXE 0x11fd8)
-        let (list, _) = self.listed(ctx);
-        if self.has_more(ctx) && x >= 288 && y > 88 && y < 96 {
-            self.toggle_more(ctx);
-            return Transition::None;
-        }
-        // sell dots (0x1201f)
-        if x >= 300 && y < 94 && y >= 2 {
-            let row = ((y - 2) / 6) as usize;
-            // the Palace too; nothing once the city has sold this turn (city flag 0x80)
-            if let Some(Production::Improvement(id)) = list.get(row).copied() {
-                if !self.sold_this_turn(ctx) {
-                    return self.sell(id);
-                }
+        Transition::Pop(DialogResult::Done)
+    }
+
+    /// Shift-A or a right click on CHANGE: AUTO on asks the production advisor at once; with
+    /// nothing worth it the flag stays until the city finishes its item (CIV.EXE 0x113d7..0x11411).
+    fn toggle_auto(&mut self, ctx: &mut UiContext) -> Transition {
+        let g = ctx.game_mut();
+        let c = g.city_mut(self.city);
+        c.auto_build = !c.auto_build;
+        if c.auto_build {
+            if let Some(p) = g.auto_production(self.city) {
+                g.city_mut(self.city).production = p;
             }
-            return Transition::None;
-        }
-        if P_TITLE.inset(1).contains(x, y) && y >= CITIZEN_Y {
-            return self.citizen_click(ctx, x);
         }
         Transition::None
     }
@@ -1147,6 +1168,41 @@ mod tests {
 
     fn key(k: Key) -> Event {
         Event::Key { key: k, mods: Mods::default(), down: true, repeat: false }
+    }
+
+    fn press(button: MouseButton, x: i32, y: i32) -> Event {
+        Event::MouseButton { button, x, y, down: true }
+    }
+
+    #[test]
+    fn clicks_nobody_takes_leave_the_city_screen() {
+        let Some((mut ctx, mut cs)) = screen() else { return };
+        // the food box and a right click off CHANGE end the screen (0x125c0)
+        assert!(matches!(cs.handle_event(&press(MouseButton::Left, 40, 150), &mut ctx), Transition::Pop(_)));
+        assert!(matches!(cs.handle_event(&press(MouseButton::Right, 150, 60), &mut ctx), Transition::Pop(_)));
+        // the city map rows never leave, even outside the radius
+        assert!(matches!(cs.handle_event(&press(MouseButton::Left, 20, 60), &mut ctx), Transition::None));
+    }
+
+    #[test]
+    fn a_right_click_on_change_flips_auto() {
+        let Some((mut ctx, mut cs)) = screen() else { return };
+        assert!(!ctx.game().city(cs.city).auto_build);
+        assert!(matches!(cs.handle_event(&press(MouseButton::Right, 240, 110), &mut ctx), Transition::None));
+        assert!(ctx.game().city(cs.city).auto_build);
+    }
+
+    #[test]
+    fn button_band_regions() {
+        let Some((mut ctx, mut cs)) = screen() else { return };
+        // the tabs are 32 px wide from x 96 (0x1189e)
+        cs.handle_event(&press(MouseButton::Left, 128, 116), &mut ctx);
+        assert!(matches!(cs.tab, Tab::Happy));
+        cs.handle_event(&press(MouseButton::Left, 191, 106), &mut ctx);
+        assert!(matches!(cs.tab, Tab::Map));
+        assert!(matches!(cs.handle_event(&press(MouseButton::Left, 95, 110), &mut ctx), Transition::Pop(_)), "x 95 is no tab");
+        // BUY reaches to the right edge (x >= 296)
+        assert!(matches!(cs.handle_event(&press(MouseButton::Left, 316, 116), &mut ctx), Transition::Push(_)));
     }
 
     /// A context with a new human city and its screen.

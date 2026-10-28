@@ -331,9 +331,16 @@ pub struct MenuDialog {
     /// Font of title and items (`FONT` unless `with_font`), and its row pitch.
     pub font: usize,
     line_h: i32,
-    hover: Option<usize>,
+    /// menu_select's mouse loop (o 0x1c995..0x1ca0f): the button pressed in this menu, if
+    /// any, and the row the pointer highlighted while a button was held.
+    pressed: Option<MouseButton>,
+    mouse_sel: Option<usize>,
     /// ds:0x2fa0: "(HELP AVAILABLE)" under the lines (Civilopedia help on the items).
     help: bool,
+    /// The Civilopedia page of each item, for the callers that test ds:0x2f9c after the menu
+    /// (production 0xba5b, research 0xc266): an item chosen with the right button shows its
+    /// page and the menu is asked again.
+    help_entries: Vec<Option<crate::ui::pedia_data::Entry>>,
     /// ds:0xd7f2: items whose leading blank menu_draw turns into a check mark as it draws
     /// them, after measuring (o 0x1d16f), so the box is as wide as without the marks.
     pub checked: Vec<bool>,
@@ -359,8 +366,10 @@ impl MenuDialog {
             title_colour: None,
             font: FONT,
             line_h: LINE_H,
-            hover: None,
+            pressed: None,
+            mouse_sel: None,
             help: false,
+            help_entries: Vec::new(),
             checked: Vec::new(),
         }
     }
@@ -369,6 +378,13 @@ impl MenuDialog {
     /// the small font, colour 10, at (right - 74, bottom - 4) (o 0x1cf91).
     pub fn with_help(mut self) -> Self {
         self.help = true;
+        self
+    }
+
+    /// `with_help` plus the Civilopedia page of each item for a right-button choice.
+    pub fn with_help_entries(mut self, entries: Vec<Option<crate::ui::pedia_data::Entry>>) -> Self {
+        self.help = true;
+        self.help_entries = entries;
         self
     }
 
@@ -624,6 +640,10 @@ impl Screen for MenuDialog {
                     g.options.sound = !g.options.sound;
                 }
             }
+            // Alt-H (0x2300) asks for help on the highlighted item (o 0x1cbbc)
+            Event::Key { key: Key::Char('h'), mods, down: true, .. } if mods.alt && self.help_entries.get(self.sel).is_some_and(Option::is_some) => {
+                return Transition::Push(crate::ui::civilopedia::entry_screen(self.help_entries[self.sel].unwrap(), 0));
+            }
             Event::Key { key, down: true, .. } => match key {
                 Key::Up | Key::Kp(8) => self.move_sel(-1),
                 Key::Down | Key::Kp(2) => self.move_sel(1),
@@ -656,27 +676,44 @@ impl Screen for MenuDialog {
                 }
                 _ => {}
             },
-            Event::MouseMove { x, y } => {
-                self.hover = self.item_at(*x, *y);
-                if let Some(i) = self.hover {
-                    if !self.disabled[i] {
-                        self.sel = i;
-                    }
-                }
-            }
-            Event::MouseButton { button: MouseButton::Left, x, y, down: true } => {
+            // while a button is held the highlight follows the pointer (a greyed row keeps
+            // the last one) and the release picks the row under it, or -1 outside the menu;
+            // the right button also asks for help (ds:0x2f9c). The press may come from the
+            // opener (a press on the menu bar dragged onto an item); a release that neither
+            // started here nor passed over a row is ignored.
+            Event::MouseMove { x, y } if ctx.mouse_down || self.pressed.is_some() => {
                 if let Some(i) = self.item_at(*x, *y) {
                     if !self.disabled[i] {
-                        return Transition::Pop(DialogResult::Choice(i));
+                        self.sel = i;
+                        self.mouse_sel = Some(i);
                     }
-                } else if !self.rect.contains(*x, *y) && self.cancel_ok {
-                    return Transition::Pop(DialogResult::Cancelled);
                 }
             }
-            Event::MouseButton { button: MouseButton::Right, down: true, .. } => {
-                if self.cancel_ok {
-                    return Transition::Pop(DialogResult::Cancelled);
+            Event::MouseButton { button, x, y, down: true } => {
+                self.pressed = Some(*button);
+                if let Some(i) = self.item_at(*x, *y).filter(|&i| !self.disabled[i]) {
+                    self.sel = i;
+                    self.mouse_sel = Some(i);
                 }
+            }
+            Event::MouseButton { button, x, y, down: false } => {
+                let ours = self.pressed.take().is_some();
+                if !ours && self.mouse_sel.is_none() {
+                    return Transition::None;
+                }
+                let row = match self.item_at(*x, *y) {
+                    Some(i) if self.disabled[i] => self.mouse_sel,
+                    r => r,
+                };
+                self.mouse_sel = None;
+                return match row {
+                    Some(i) if *button == MouseButton::Right && self.help_entries.get(i).is_some_and(Option::is_some) => {
+                        Transition::Push(crate::ui::civilopedia::entry_screen(self.help_entries[i].unwrap(), 0))
+                    }
+                    Some(i) => Transition::Pop(DialogResult::Choice(i)),
+                    None if self.cancel_ok => Transition::Pop(DialogResult::Cancelled),
+                    None => Transition::None,
+                };
             }
             _ => {}
         }
@@ -1102,6 +1139,63 @@ impl Screen for TextBox {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ctx() -> Option<UiContext> {
+        let dir = crate::assets::AssetDir::locate(None).ok()?;
+        UiContext::new(dir, std::env::temp_dir().join(format!("civrs-menumouse-{}", std::process::id()))).ok()
+    }
+
+    fn button(button: MouseButton, x: i32, y: i32, down: bool) -> Event {
+        Event::MouseButton { button, x, y, down }
+    }
+
+    fn menu(ctx: &mut UiContext) -> MenuDialog {
+        let mut m = MenuDialog::new(vec!["Title".into()], vec!["One".into(), "Two".into(), "Three".into()]).with_pos(80, 40);
+        m.on_enter(ctx);
+        m
+    }
+
+    #[test]
+    fn a_menu_choice_is_made_on_release() {
+        let Some(mut ctx) = ctx() else { return };
+        let mut m = menu(&mut ctx);
+        let (x, y1, y2) = (m.rect.x + 10, m.row_y(1) + 2, m.row_y(2) + 2);
+        // pressed on one row, released on another: the second (menu_select 0x1ca03)
+        assert!(matches!(m.handle(&button(MouseButton::Left, x, y1, true), &mut ctx), Transition::None));
+        assert!(matches!(m.handle(&button(MouseButton::Left, x, y2, false), &mut ctx), Transition::Pop(DialogResult::Choice(2))));
+        // released outside: -1
+        let mut m = menu(&mut ctx);
+        m.handle(&button(MouseButton::Left, x, y1, true), &mut ctx);
+        assert!(matches!(m.handle(&button(MouseButton::Left, 2, 2, false), &mut ctx), Transition::Pop(DialogResult::Cancelled)));
+        // the right button chooses too (and only asks for help in menus with pages)
+        let mut m = menu(&mut ctx);
+        m.handle(&button(MouseButton::Right, x, y1, true), &mut ctx);
+        assert!(matches!(m.handle(&button(MouseButton::Right, x, y1, false), &mut ctx), Transition::Pop(DialogResult::Choice(1))));
+    }
+
+    #[test]
+    fn a_press_from_the_menu_bar_can_be_dragged_onto_an_item() {
+        let Some(mut ctx) = ctx() else { return };
+        let mut m = menu(&mut ctx);
+        let (x, y1) = (m.rect.x + 10, m.row_y(1) + 2);
+        ctx.mouse_down = true;
+        // a release where the press began (the bar) leaves the menu open
+        assert!(matches!(m.handle(&button(MouseButton::Left, 20, 3, false), &mut ctx), Transition::None));
+        m.handle(&Event::MouseMove { x, y: y1 }, &mut ctx);
+        assert!(matches!(m.handle(&button(MouseButton::Left, x, y1, false), &mut ctx), Transition::Pop(DialogResult::Choice(1))));
+    }
+
+    #[test]
+    fn a_right_choice_in_a_help_menu_shows_the_page_and_stays() {
+        let Some(mut ctx) = ctx() else { return };
+        let mut m = MenuDialog::new(vec!["Title".into()], vec!["One".into(), "Two".into()]).with_pos(80, 40).with_help_entries(vec![Some(crate::ui::pedia_data::Entry::Advance(1)), None]);
+        m.on_enter(&mut ctx);
+        let (x, y0, y1) = (m.rect.x + 10, m.row_y(0) + 2, m.row_y(1) + 2);
+        m.handle(&button(MouseButton::Right, x, y0, true), &mut ctx);
+        assert!(matches!(m.handle(&button(MouseButton::Right, x, y0, false), &mut ctx), Transition::Push(_)));
+        m.handle(&button(MouseButton::Right, x, y1, true), &mut ctx);
+        assert!(matches!(m.handle(&button(MouseButton::Right, x, y1, false), &mut ctx), Transition::Pop(DialogResult::Choice(1))));
+    }
 
     #[test]
     fn letters_move_the_highlight_to_the_next_matching_item() {
