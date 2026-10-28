@@ -7,7 +7,7 @@ use crate::gfx::{Rect, Surface};
 use crate::platform::{Event, Key};
 use crate::rules::{self, Terraform, Terrain};
 use crate::ui::context::UiContext;
-use crate::ui::pedia_data::{advance_icon, improvement_picture, terrain_picture, unit_picture, Entry, CONCEPTS};
+use crate::ui::pedia_data::{advance_icon, improvement_picture, terrain_picture, unit_picture, Entry};
 use crate::ui::screen::{DialogResult, Screen, Transition};
 use crate::ui::tilerender::sp;
 
@@ -266,15 +266,8 @@ impl EntryScreen {
                 items.push(text(x, y, BLACK, format!("Movement Rate: {}", ut.moves)));
             }
             Entry::Terrain(t) => self.terrain_stats(t, items),
-            Entry::Concept(c) => {
-                // governments: their enabling advance
-                let name = CONCEPTS[c].name;
-                if let Some(g) = rules::GOVERNMENTS.iter().find(|g| g.name == name) {
-                    if g.prereq.is_some() {
-                        items.push(text(BODY_X, y0, LIGHT_BLUE, format!("Requires {}", advance_name(g.prereq))));
-                    }
-                }
-            }
+            // a game concept has its texts only, governments too (o 0xc5ca)
+            Entry::Concept(_) => {}
         }
     }
 
