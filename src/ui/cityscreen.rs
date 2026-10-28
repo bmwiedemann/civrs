@@ -389,15 +389,10 @@ impl CityScreen {
         if page != ChangePage::All {
             list.push(None);
         }
-        let mut sel = 0;
         let items: Vec<String> = list
             .iter()
-            .enumerate()
-            .map(|(i, p)| {
+            .map(|p| {
                 let Some(p) = p else { return "more...".to_string() };
-                if *p == c.production {
-                    sel = i;
-                }
                 // append_turns_to_build (0xbab3): the store counts against every item
                 let turns = ((p.cost() - c.shields - 1) / surplus + 1).clamp(1, 999);
                 let turns = format!("{turns} turn{}", if turns == 1 { "" } else { "s" });
@@ -423,7 +418,8 @@ impl CityScreen {
         let title = format!("What shall we build in {}?", c.name);
         // the small font (CIV.EXE's font 2) from 21 lines on and on either page (0xb9fe)
         let small = 1 + all.len() > 20 || page != ChangePage::All;
-        // popup_menu3 at (80, 8) with Civilopedia help (ds:0x2fa0, 0xba14)
+        // popup_menu3 at (80, 8) with Civilopedia help (ds:0x2fa0, 0xba14); choose_production
+        // sets no row (ds:0x2f9a), so the cursor starts on the first item, not the current one
         // a right-button (or Alt-H) choice shows the item's Civilopedia page and asks again (0xba5b)
         let pages = list
             .iter()
@@ -435,7 +431,7 @@ impl CityScreen {
             })
             .collect();
         self.pending = Pending::Change(list, next);
-        let menu = MenuDialog::new(vec![title], items).with_pos(80, 8).with_selection(sel).with_help_entries(pages);
+        let menu = MenuDialog::new(vec![title], items).with_pos(80, 8).with_help_entries(pages);
         Transition::Push(Box::new(if small { menu.with_font(1) } else { menu }))
     }
 
@@ -1242,6 +1238,20 @@ mod tests {
         cs.handle_event(&key(Key::Esc), &mut ctx);
         assert_eq!(cs.tile_cursor, None);
         assert!(ctx.game().city_opt(cs.city).is_some());
+    }
+
+    #[test]
+    fn the_change_menu_starts_on_the_first_item() {
+        // choose_production sets no menu row (ds:0x2f9a): Enter at once takes the first item,
+        // whatever the city builds
+        let Some((mut ctx, mut cs)) = screen() else { return };
+        let list = ctx.game().available_production(cs.city);
+        ctx.game_mut().city_mut(cs.city).production = *list.last().unwrap();
+        let Transition::Push(mut menu) = cs.handle_event(&key(Key::Char('c')), &mut ctx) else { panic!("no menu") };
+        menu.on_enter(&mut ctx);
+        let Transition::Pop(r) = menu.handle(&key(Key::Enter), &mut ctx) else { panic!("Enter does not choose") };
+        cs.resume(r, &mut ctx);
+        assert_eq!(ctx.game().city(cs.city).production, list[0]);
     }
 
     #[test]
