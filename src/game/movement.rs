@@ -537,7 +537,9 @@ impl Game {
             }
             u.moves_left = m;
             if u.order == UnitOrder::Fortify {
+                // the fortification completes with the turn's moves spent (CIV.EXE 0x4239)
                 u.order = UnitOrder::Fortified;
+                u.moves_left = 0;
                 fortified.push(u.id);
             }
             if u.order == UnitOrder::Skip {
@@ -600,6 +602,19 @@ mod tests {
             assert_eq!(g.try_move(id, Dir8::E), Ok(MoveOutcome::Moved), "seed {seed}");
             assert_eq!(g.unit(id).moves_left, 0);
         }
+    }
+
+    #[test]
+    fn fortifying_completes_with_the_next_turns_moves_spent() {
+        // CIV.EXE 0x4239: flag 0x04 becomes 0x08 and the moves go to 0
+        let (mut g, id) = militia_before_mountains(1, 3);
+        let slot = g.unit(id).owner;
+        g.unit_mut(id).order = crate::game::UnitOrder::Fortify;
+        g.reset_moves(slot);
+        assert_eq!(g.unit(id).order, crate::game::UnitOrder::Fortified);
+        assert_eq!(g.unit(id).moves_left, 0);
+        g.reset_moves(slot);
+        assert_eq!(g.unit(id).moves_left, 3);
     }
 
     #[test]
