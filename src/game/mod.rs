@@ -191,8 +191,9 @@ pub struct Game {
     pub apollo_built: bool,
     /// Units on this tile are being observed by the human (for "enemy moves" animation).
     pub last_combat: Option<((i32, i32), (i32, i32), bool)>,
-    /// Instant-advice hints already shown (bit = index in `hints::HINTS`); stored after the
-    /// game body in version-2 saves.
+    /// Once a mask of the instant-advice notes already shown; CIV.EXE keeps no such memory,
+    /// so only `u32::MAX` means something now: it mutes the notes (`Game::hint`, used by the
+    /// headless previews). Stored after the game body in version-2 saves.
     #[serde(skip)]
     pub hints_shown: u32,
     /// The calendar year ds:0xb220, advanced with the turn by `advance_calendar`; stored after

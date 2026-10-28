@@ -581,7 +581,8 @@ fn run(g: &mut Game, mut m: Meeting) -> Option<DiplomacyState> {
 /// The end of the audience (o 0x7957..0x7a1b; `schism` false for the early end o 0x6bc0
 /// that skips the bookkeeping): a leader held back by a treaty means to break it (`BREAK`),
 /// the fighting is forgotten, and with advice on the human may read the SCHISM note about a
-/// large and powerful civilization ranked at least two places above him.
+/// large and powerful civilization ranked at least two places above him (civ_note o 0x3a48
+/// speaks only in BC years).
 fn finish(g: &mut Game, m: Meeting, schism: bool) -> Option<DiplomacyState> {
     let h = human(g);
     let ai = m.ai;
@@ -591,7 +592,7 @@ fn finish(g: &mut Game, m: Meeting, schism: bool) -> Option<DiplomacyState> {
         }
         g.drop_flag(ai, h, FOUGHT);
         g.drop_flag(h, ai, FOUGHT);
-        if g.diplo_latch != -1 && g.cities_of(ai).len() > 4 && g.power_rank(h) + 1 < g.power_rank(ai) && !g.treaty(h, ai) && g.options.instant_advice {
+        if g.diplo_latch != -1 && g.cities_of(ai).len() > 4 && g.power_rank(h) + 1 < g.power_rank(ai) && !g.treaty(h, ai) && g.options.instant_advice && g.year() < 0 {
             g.push_event(GameEvent::Schism(ai));
         }
     }

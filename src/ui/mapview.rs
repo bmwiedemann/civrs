@@ -121,8 +121,9 @@ pub struct MapView {
     auto_end: u32,
     /// Events taken from the game but not yet shown (one dialog at a time).
     queued: std::collections::VecDeque<crate::game::GameEvent>,
-    /// Active unit and tile last checked for Settlers advice.
-    hint_checked: Option<(UnitId, (i32, i32))>,
+    /// The turn whose unit loop has used up its advice latch (`move_units` [bp-0x8]: set by
+    /// FIRSTMOVE on turn 0 and by the first Settlers that becomes active).
+    advice_turn: Option<u32>,
 }
 
 impl Default for MapView {
@@ -153,7 +154,7 @@ impl MapView {
             tutorial_shown: false,
             auto_end: 0,
             queued: Default::default(),
-            hint_checked: None,
+            advice_turn: None,
         }
     }
 
@@ -1133,8 +1134,9 @@ impl Screen for MapView {
         }
         if self.first_turn_hint && self.mode != Mode::Processing {
             self.first_turn_hint = false;
-            // the start tile gets no BUILDCITY note on top of this one
-            self.hint_checked = ctx.game().active_unit.map(|id| (id, ctx.game().unit(id).pos()));
+            // the first unit of turn 0 gets FIRSTMOVE (0x456b), and no Settlers advice follows
+            // that turn
+            self.advice_turn = Some(ctx.game().turn);
             if let Some(s) = ctx.game_mut().hint("FIRSTMOVE").and_then(|e| dialogs::screen_for_event(ctx, &e)) {
                 self.pending = Pending::Event;
                 return Transition::Push(s);
@@ -1259,7 +1261,6 @@ impl Screen for MapView {
                                     _ => None,
                                 });
                                 self.activate_next(ctx);
-                                self.hint_checked = ctx.game().active_unit.map(|id| (id, ctx.game().unit(id).pos()));
                                 if let Some(n) = note {
                                     self.pending = Pending::CityFounded(c);
                                     return Transition::Push(n);
@@ -1448,6 +1449,12 @@ impl Screen for MapView {
                     Key::Char('a') if mods.alt || mods.ctrl => self.bar_menu(ctx, 2),
                     Key::Char('w') if mods.alt || mods.ctrl => self.bar_menu(ctx, 3),
                     Key::Char('c') if mods.alt || mods.ctrl => self.bar_menu(ctx, 4),
+                    // Alt-H: both GENERAL PRINCIPLES notes (key 0x2300, 0x58c4 -> 0x7274)
+                    Key::Char('h') if mods.alt => {
+                        let notes: Vec<_> = ["HELP1", "HELP2"].iter().filter_map(|s| ctx.game_mut().hint(s)).collect();
+                        self.queued.extend(notes);
+                        self.show_events(ctx)
+                    }
                     Key::F(n) => Transition::Push(crate::ui::reports::advisor(ctx, *n)),
                     Key::Char('s') if mods.ctrl => {
                         let path = crate::save::slot_path(&ctx.save_dir, 0);
@@ -1603,25 +1610,27 @@ impl MapView {
         None
     }
 
-    /// MINING / IRRIGATE / ROAD / BUILDCITY note when an idle Settlers reaches a new tile.
+    /// The advice of `move_units` when a unit becomes active (CIV.EXE 0x456b..0x45c9): on
+    /// turn 0 FIRSTMOVE, later the Settlers advice for the first Settlers of the turn; either
+    /// uses up the turn's latch, whether or not a note comes.
     fn settler_advice(&mut self, ctx: &mut UiContext) -> Option<Box<dyn Screen>> {
         if self.mode != Mode::Normal || !matches!(self.pending, Pending::None) || self.runner.is_some() {
             return None;
         }
         let id = ctx.game().active_unit?;
-        let at = (id, ctx.game().unit_opt(id)?.pos());
-        if self.hint_checked == Some(at) {
+        let turn = ctx.game().turn;
+        if self.advice_turn == Some(turn) {
             return None;
         }
-        self.hint_checked = Some(at);
-        // a new game opens with FIRSTMOVE; the start tile gets no BUILDCITY on top of it
-        if ctx.game().turn == 0 {
-            if let Some(e) = ctx.game_mut().hint("FIRSTMOVE") {
-                return dialogs::screen_for_event(ctx, &e);
-            }
-        }
-        let e = ctx.game_mut().settler_hint(id)?;
-        dialogs::screen_for_event(ctx, &e)
+        let e = if turn == 0 {
+            ctx.game_mut().hint("FIRSTMOVE")
+        } else if ctx.game().unit_opt(id)?.kind == crate::rules::unit_ids::SETTLERS {
+            ctx.game_mut().settler_hint(id)
+        } else {
+            return None;
+        };
+        self.advice_turn = Some(turn);
+        dialogs::screen_for_event(ctx, &e?)
     }
 
     fn event_screen(&mut self, ctx: &mut UiContext, e: &crate::game::GameEvent) -> Option<Box<dyn Screen>> {

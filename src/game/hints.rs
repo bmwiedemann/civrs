@@ -1,31 +1,31 @@
-//! "Instant advice": the green CIVILIZATION NOTE hints from HELP.TXT. Each hint is shown at
-//! most once per game; `Game::hints_shown` remembers which ones the player has seen.
+//! "Instant advice": the green CIVILIZATION NOTE hints from HELP.TXT (`civ_note`, CIV.EXE
+//! o 0x3a48). CIV.EXE keeps no memory of the notes it has shown: each caller has its own
+//! condition (a turn, a count, a latch of the unit loop), and civ_note itself speaks only with
+//! Instant Advice on (checked when the note is shown) and in BC years.
 
 use super::events::{Decision, GameEvent};
-use super::map::{tile_flags, Map};
+use super::map::tile_flags;
 use super::{Game, Production, UnitId};
-use crate::rules::{self, advance_ids, unit_ids, Govt, Terrain};
-
-/// HELP.TXT sections used as in-game hints; the index is the bit in `Game::hints_shown`.
-pub const HINTS: [&str; 11] =
-    ["FIRSTMOVE", "BUILDCITY", "FIRSTPRODUCT", "FIRSTCIV", "FIRSTUNIT1", "FIRSTUNIT2", "MINING", "IRRIGATE", "ROAD", "MONARCHY", "DISORDER"];
-
-/// Minimum `site_score` for the BUILDCITY hint (the AI's own threshold for a city site).
-const GOOD_SITE: i32 = 80;
+use crate::rules::{advance_ids, unit_ids, Terrain};
 
 impl Game {
-    /// Mark `section` as shown; true when it had not been shown before.
-    fn claim_hint(&mut self, section: &str) -> bool {
-        let Some(bit) = HINTS.iter().position(|h| *h == section) else { return false };
-        let fresh = self.hints_shown & (1 << bit) == 0;
-        self.hints_shown |= 1 << bit;
-        fresh
+    /// The note `section` for the human, or nothing: civ_note (CIV.EXE o 0x3a48) only speaks
+    /// in BC years. `hints_shown == u32::MAX` mutes the notes (the headless previews).
+    pub fn hint(&mut self, section: &str) -> Option<GameEvent> {
+        (self.player(self.human_slot).human && self.year() < 0 && self.hints_shown != u32::MAX).then(|| GameEvent::Hint(section.into()))
     }
 
-    /// The hint for `section` unless it was already shown (or there is no human player).
-    /// `civ_note` (CIV.EXE o 0x3a48) only speaks in BC years.
-    pub fn hint(&mut self, section: &str) -> Option<GameEvent> {
-        (self.player(self.human_slot).human && self.year() < 0 && self.claim_hint(section)).then(|| GameEvent::Hint(section.into()))
+    /// The GENERAL PRINCIPLES notes at the start of the human's unit phase: HELP1 on turns 20
+    /// and 60, HELP2 on turns 40 and 80 (`move_units` CIV.EXE 0x4070..0x40a0).
+    pub fn principles_hints(&mut self) {
+        let section = match self.turn {
+            20 | 60 => "HELP1",
+            40 | 80 => "HELP2",
+            _ => return,
+        };
+        if let Some(e) = self.hint(section) {
+            self.events.push_back(e);
+        }
     }
 
     /// Hints that belong in front of (`before`) or after an event about to be queued.
@@ -34,20 +34,32 @@ impl Game {
         let mut before = Vec::new();
         let mut after = Vec::new();
         match e {
-            // "Use the following menu to direct their studies:"
-            GameEvent::NeedsDecision(Decision::ChooseResearch { slot, .. }) if *slot == me => before.extend(self.hint("FIRSTCIV")),
+            // "Use the following menu to direct their studies:" while the human knows at most
+            // one advance (ds:0xe898 <= 1, CIV.EXE 0xbf9f)
+            GameEvent::NeedsDecision(Decision::ChooseResearch { slot, .. }) if *slot == me && self.player(me).research_count <= 1 => {
+                before.extend(self.hint("FIRSTCIV"))
+            }
+            // found_city (o 0x1b5d5): the human's only city
             GameEvent::CityFounded { city } if self.city(*city).owner == me && self.cities_of(me).len() == 1 => {
                 after.extend(self.hint("FIRSTPRODUCT"))
             }
-            GameEvent::ItemBuilt { city, item: Production::Unit(k) } if self.city(*city).owner == me => {
-                let info = &rules::UNITS[*k as usize];
-                if info.att > 0 && *k != unit_ids::SETTLERS && *k != unit_ids::CARAVAN && *k != unit_ids::DIPLOMAT {
-                    after.extend(self.hint("FIRSTUNIT1"));
-                    after.extend(self.hint("FIRSTUNIT2"));
+            // create_unit (CIV.EXE 0x8cd9): any unit of the human after turn 0, FIRSTUNIT1 while
+            // its unit count ds:0x6b76 is 0, FIRSTUNIT2 while it is 1. That count is the census
+            // of ai_civ_turn (0x15810, Nuclear units left out); civrs counts the units the human
+            // has besides the new one.
+            GameEvent::ItemBuilt { city, item: Production::Unit(_) } if self.city(*city).owner == me && self.turn != 0 => {
+                let others = self.all_units().filter(|u| u.owner == me && u.kind != unit_ids::NUCLEAR).count().saturating_sub(1);
+                match others {
+                    0 => after.extend(self.hint("FIRSTUNIT1")),
+                    1 => after.extend(self.hint("FIRSTUNIT2")),
+                    _ => {}
                 }
             }
-            GameEvent::AdvanceDiscovered { slot, adv } | GameEvent::AdvanceAcquired { slot, adv, .. }
-                if *slot == me && *adv == advance_ids::MONARCHY && matches!(self.player(me).govt, Govt::Despotism | Govt::Anarchy) =>
+            // grant_advance (CIV.EXE 0xc605): Monarchy for the human, unless it came in a
+            // diplomatic audience (ds:0x3934 != -1)
+            GameEvent::AdvanceDiscovered { slot, adv } if *slot == me && *adv == advance_ids::MONARCHY => after.extend(self.hint("MONARCHY")),
+            GameEvent::AdvanceAcquired { slot, adv, source }
+                if *slot == me && *adv == advance_ids::MONARCHY && !matches!(source.as_str(), "exchange" | "tribute" | "treaty") =>
             {
                 after.extend(self.hint("MONARCHY"))
             }
@@ -57,15 +69,16 @@ impl Game {
         (before, after)
     }
 
-    /// Advice for the human's active Settlers on its current tile (`settler_advice`, CIV.EXE
+    /// Advice for the human's Settlers on its current tile (`settler_advice`, CIV.EXE
     /// o 0x3824): BUILDCITY on a good site, any time; else, next to one of the human's cities
     /// (the nearest city at distance 1), MINING on Hills, IRRIGATE on Plains with water, ROAD
     /// on a square of move cost 1 other than River while the human has fewer than two Settlers
-    /// (ds:0xb3be); none without improvements there. CIV.EXE shows the notes at the first
-    /// Settlers of each turn, civrs each once a game.
+    /// (ds:0xb3be); none without improvements there. `move_units` asks for it for the first
+    /// Settlers that becomes active each turn (the latch [bp-0x8], 0x45ae); the caller keeps
+    /// that latch.
     pub fn settler_hint(&mut self, id: UnitId) -> Option<GameEvent> {
         let u = self.unit_opt(id)?;
-        if u.kind != unit_ids::SETTLERS || u.owner != self.human_slot || !self.player(u.owner).human || self.year() >= 0 {
+        if u.kind != unit_ids::SETTLERS || u.owner != self.human_slot || !self.player(u.owner).human {
             return None;
         }
         let (x, y) = u.pos();
@@ -89,42 +102,34 @@ impl Game {
         } else {
             return None;
         };
-        if !self.claim_hint(section) {
-            return None;
-        }
-        Some(GameEvent::HintAt { section: section.into(), city })
+        let GameEvent::Hint(section) = self.hint(section)? else { return None };
+        Some(GameEvent::HintAt { section, city })
     }
 
-    /// BUILDCITY's test (CIV.EXE o 0x3824): the square yields at least 2 food and shields,
-    /// it is a good site and no neighbour is a better one, and no city works it (the original
-    /// reads its site value from a map layer that founding a city overwrites over the radius).
+    /// BUILDCITY's test (CIV.EXE o 0x3824): the terrain yields at least 2 food and shields,
+    /// the square's byte of map layer (x+80, y) is above 9 and no neighbour's is higher. The
+    /// layer holds the generator's site values (8..15) where no city has claimed the square
+    /// and owner numbers (or 8) where one has, so no note comes inside a city's radius.
     fn good_city_site(&self, x: i32, y: i32) -> bool {
         let info = self.map.tile(x, y).terrain.info();
-        if info.food + info.shields < 2 {
-            return false;
-        }
-        let in_radius = self.all_cities().any(|c| rules::CITY_RADIUS.iter().any(|&(dx, dy)| (Map::wrap_x(c.x + dx as i32), c.y + dy as i32) == (Map::wrap_x(x), y)));
-        if in_radius {
-            return false;
-        }
-        let score = super::mapgen::site_score(&self.map, x, y);
-        if score < GOOD_SITE {
-            return false;
-        }
-        super::Dir8::ALL.iter().all(|d| {
-            let (dx, dy) = d.delta();
-            let (nx, ny) = (x + dx, y + dy);
-            !Map::in_bounds(nx, ny) || super::mapgen::site_score(&self.map, nx, ny) <= score
-        })
+        let value = self.site_layer(x, y);
+        info.food + info.shields >= 2
+            && value > 9
+            && super::Dir8::ALL.iter().all(|d| {
+                let (dx, dy) = d.delta();
+                self.site_layer(x + dx, y + dy) <= value
+            })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::GameSetup;
+    use crate::game::{GameSetup, Map};
+    use crate::rules;
 
-    /// A game with the human's units removed and a plains arena around (20,20).
+    /// A game with the human's units removed and a plains arena around (20,20) whose site
+    /// layer is 8 everywhere.
     fn arena() -> Game {
         let mut g = Game::new(GameSetup { seed: 3, ..Default::default() }, None);
         let me = g.human_slot;
@@ -139,19 +144,31 @@ mod tests {
                 t.special = false;
             }
         }
+        g.map.site = vec![8; rules::MAP_W * rules::MAP_H];
         g.take_events();
         g
     }
 
     #[test]
-    fn each_hint_is_shown_once() {
+    fn notes_repeat_and_end_with_the_bc_years() {
         let mut g = arena();
+        // civ_note keeps no memory of what it has shown
         assert_eq!(g.hint("FIRSTCIV"), Some(GameEvent::Hint("FIRSTCIV".into())));
-        assert_eq!(g.hint("FIRSTCIV"), None);
-        assert_eq!(g.hint("NOSUCHHINT"), None);
+        assert_eq!(g.hint("FIRSTCIV"), Some(GameEvent::Hint("FIRSTCIV".into())));
         // civ_note (o 0x3a48) is silent from 1 AD
         g.set_turn(250);
         assert_eq!(g.hint("MONARCHY"), None);
+    }
+
+    #[test]
+    fn general_principles_on_turns_20_40_60_80() {
+        let mut g = arena();
+        for (turn, want) in [(19, None), (20, Some("HELP1")), (40, Some("HELP2")), (60, Some("HELP1")), (80, Some("HELP2")), (100, None)] {
+            g.set_turn(turn);
+            g.principles_hints();
+            let ev = g.take_events();
+            assert_eq!(ev, want.map(|s| GameEvent::Hint(s.into())).into_iter().collect::<Vec<_>>(), "turn {turn}");
+        }
     }
 
     #[test]
@@ -169,9 +186,58 @@ mod tests {
     }
 
     #[test]
+    fn first_units_by_unit_count() {
+        let mut g = arena();
+        let me = g.human_slot;
+        g.set_turn(5);
+        let s = g.add_unit(me, unit_ids::SETTLERS, 20, 20);
+        let c = g.found_city(s).unwrap();
+        g.take_events();
+        let built = |g: &mut Game, k| {
+            g.add_unit(me, k, 20, 20);
+            g.push_event(GameEvent::ItemBuilt { city: c, item: Production::Unit(k) });
+            g.take_events().into_iter().filter_map(|e| if let GameEvent::Hint(s) = e { Some(s) } else { None }).collect::<Vec<_>>()
+        };
+        // any unit counts, Settlers too (create_unit 0x8cd9)
+        assert_eq!(built(&mut g, unit_ids::SETTLERS), vec!["FIRSTUNIT1".to_string()]);
+        assert_eq!(built(&mut g, unit_ids::MILITIA), vec!["FIRSTUNIT2".to_string()]);
+        assert!(built(&mut g, unit_ids::MILITIA).is_empty());
+    }
+
+    #[test]
+    fn monarchy_note_unless_from_an_audience() {
+        let mut g = arena();
+        let me = g.human_slot;
+        g.player_mut(me).govt = crate::rules::Govt::Monarchy;
+        g.push_event(GameEvent::AdvanceDiscovered { slot: me, adv: advance_ids::MONARCHY });
+        assert!(g.take_events().contains(&GameEvent::Hint("MONARCHY".into())));
+        g.push_event(GameEvent::AdvanceAcquired { slot: me, adv: advance_ids::MONARCHY, source: "exchange".into() });
+        assert!(!g.take_events().contains(&GameEvent::Hint("MONARCHY".into())));
+        g.push_event(GameEvent::AdvanceAcquired { slot: me, adv: advance_ids::MONARCHY, source: "conquest".into() });
+        assert!(g.take_events().contains(&GameEvent::Hint("MONARCHY".into())));
+    }
+
+    #[test]
+    fn buildcity_on_the_best_site_layer_square() {
+        let mut g = arena();
+        let me = g.human_slot;
+        g.map.site[Map::idx(20, 20)] = 12;
+        g.map.site[Map::idx(21, 20)] = 11;
+        assert!(g.good_city_site(20, 20));
+        assert!(!g.good_city_site(21, 20), "a better neighbour");
+        g.map.site[Map::idx(22, 22)] = 9;
+        assert!(!g.good_city_site(22, 22), "a value of 9 is not enough");
+        let s = g.add_unit(me, unit_ids::SETTLERS, 20, 20);
+        assert_eq!(g.settler_hint(s), Some(GameEvent::Hint("BUILDCITY".into())));
+    }
+
+    #[test]
     fn no_buildcity_hint_inside_another_city_radius() {
         let mut g = arena();
         let me = g.human_slot;
+        for (x, y) in [(22, 21), (21, 22), (20, 18)] {
+            g.map.site[Map::idx(x, y)] = 14;
+        }
         let other = (0..8u8).find(|s| *s != me && *s != 0 && g.player(*s).alive).unwrap();
         let s = g.add_unit(other, unit_ids::SETTLERS, 20, 20);
         g.found_city(s).unwrap();
@@ -188,10 +254,16 @@ mod tests {
         let mut g = arena();
         let me = g.human_slot;
         g.player_mut(me).researching = None;
+        g.player_mut(me).research_count = 1;
         assert!(g.pick_research(me));
         let ev = g.take_events();
         assert_eq!(ev[0], GameEvent::Hint("FIRSTCIV".into()));
         assert!(matches!(ev[1], GameEvent::NeedsDecision(Decision::ChooseResearch { .. })));
+        // not once the human knows two advances (ds:0xe898 > 1, 0xbf9f)
+        g.player_mut(me).researching = None;
+        g.player_mut(me).research_count = 2;
+        assert!(g.pick_research(me));
+        assert!(!g.take_events().iter().any(|e| matches!(e, GameEvent::Hint(_))));
     }
 
     #[test]
@@ -205,7 +277,6 @@ mod tests {
         g.map.get_mut(21, 20).unwrap().terrain = Terrain::Hills;
         let s = g.add_unit(me, unit_ids::SETTLERS, 21, 20);
         assert_eq!(g.settler_hint(s), Some(GameEvent::HintAt { section: "MINING".into(), city: c }));
-        assert_eq!(g.settler_hint(s), None);
         // two squares away: nothing (only next to the city, distance 1)
         let s2 = g.add_unit(me, unit_ids::SETTLERS, 22, 21);
         assert_eq!(g.settler_hint(s2), None);
@@ -215,25 +286,7 @@ mod tests {
         g.remove_unit(s);
         let s = g.add_unit(me, unit_ids::SETTLERS, 19, 19);
         assert_eq!(g.settler_hint(s), Some(GameEvent::HintAt { section: "ROAD".into(), city: c }));
-        g.hints_shown = 0;
         g.add_unit(me, unit_ids::SETTLERS, 26, 26);
         assert_eq!(g.settler_hint(s), None);
-    }
-
-    #[test]
-    fn hints_survive_save_and_old_saves_load() {
-        let mut g = arena();
-        g.hint("MONARCHY");
-        let dir = std::env::temp_dir().join(format!("civrs-hints-{}", std::process::id()));
-        let path = dir.join("h.sav");
-        crate::save::save_game(&path, &g).unwrap();
-        assert_eq!(crate::save::load_game(&path).unwrap().hints_shown, g.hints_shown);
-        // version 1: no trailer
-        let mut v1 = b"CIVR".to_vec();
-        v1.extend_from_slice(&1u16.to_le_bytes());
-        v1.extend_from_slice(&bincode::serialize(&g).unwrap());
-        std::fs::write(&path, v1).unwrap();
-        assert_eq!(crate::save::load_game(&path).unwrap().hints_shown, 0);
-        let _ = std::fs::remove_dir_all(dir);
     }
 }

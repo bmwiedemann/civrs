@@ -238,6 +238,8 @@ impl TurnRunner {
                     // which his AUTO cities and the computer players read
                     crate::ai::unit_ai::civ_turn(g, slot);
                     g.reset_goals(slot);
+                    // move_units (0x4046): the GENERAL PRINCIPLES notes, then the moves
+                    g.principles_hints();
                     g.reset_moves(slot);
                     g.progress_work(slot);
                     g.refresh_all_vision();
