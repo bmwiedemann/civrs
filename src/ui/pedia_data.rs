@@ -148,8 +148,14 @@ fn mark_missing_obsolescence(w: WonderId, text: Vec<String>) -> Vec<String> {
     text.into_iter().map(|p| p.replacen("until the development", "not implemented: until the development", 1)).collect()
 }
 
+/// The index order of pedia_index (o 0xafdb): each next name is the smallest one
+/// above the last, ignoring case (stricmp), so of equal names only the first in category
+/// order (advances, improvements and wonders, units, terrain, concepts) is listed: the
+/// Complete list has the advances Monarchy, Communism, Democracy and University but not the
+/// concepts and the improvement of those names.
 fn sort_entries(mut v: Vec<Entry>) -> Vec<Entry> {
     v.sort_by_key(|e| e.name().to_ascii_lowercase());
+    v.dedup_by_key(|e| e.name().to_ascii_lowercase());
     v
 }
 
@@ -395,5 +401,18 @@ mod tests {
         );
         let page2 = vec!["No corruption. Civil disorder leads to Anarchy.".to_string()];
         assert_eq!(correct(democracy, page2), vec!["No corruption. Two turns of civil disorder lead to Anarchy.".to_string()]);
+    }
+
+    #[test]
+    fn the_complete_list_names_each_name_once() {
+        use crate::rules::{advance_ids as adv, improvement_ids as imp};
+        let all = entries(CAT_COMPLETE);
+        let count = |name: &str| all.iter().filter(|e| e.name().eq_ignore_ascii_case(name)).count();
+        for name in ["Monarchy", "Communism", "Democracy", "University"] {
+            assert_eq!(count(name), 1, "{name}");
+        }
+        assert!(all.contains(&Entry::Advance(adv::UNIVERSITY)) && !all.contains(&Entry::Improvement(imp::UNIVERSITY)));
+        assert!(entries(CAT_IMPROVEMENTS).contains(&Entry::Improvement(imp::UNIVERSITY)));
+        assert_eq!(entries(CAT_MISC).len(), 21);
     }
 }

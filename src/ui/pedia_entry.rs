@@ -186,8 +186,10 @@ impl EntryScreen {
     fn build(&mut self, ctx: &UiContext) {
         let fonts = &ctx.fonts;
         let mut pages: Vec<Vec<Item>> = Vec::new();
-        // history text, BODY_LINES lines per page
-        let body = Self::wrap_paragraphs(fonts, &self.entry.blurb(ctx), BODY_W);
+        // history text, BODY_LINES lines per page, only with the Civilopedia Text option
+        // (ds:0x19c0 bit 0x40, o 0xb7bb); the notes and stats page comes either way
+        let history = ctx.game.as_ref().is_none_or(|g| g.options.civilopedia_text);
+        let body = if history { Self::wrap_paragraphs(fonts, &self.entry.blurb(ctx), BODY_W) } else { Vec::new() };
         for chunk in body.chunks(BODY_LINES) {
             let mut items = Vec::new();
             for (i, l) in chunk.iter().enumerate() {

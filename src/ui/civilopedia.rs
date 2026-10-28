@@ -25,7 +25,6 @@ const SPACING: i32 = 1;
 const ROWS: usize = 26;
 const ROW_Y0: i32 = 16;
 const ROW_PITCH: i32 = 7;
-const EXIT_RECT: Rect = Rect::new(284, 2, 30, 10);
 /// "MORE" (only on multi-page lists) sits at the left of the band, mirroring EXIT.
 const MORE_RECT: Rect = Rect::new(8, 2, 32, 10);
 
@@ -98,13 +97,16 @@ impl ListScreen {
         (self.col_x(k / ROWS), ROW_Y0 + (k % ROWS) as i32 * ROW_PITCH)
     }
 
+    /// The entry under a click below the title band (o 0xb39b): column (x - 10) / width and
+    /// row (y - 16) / 7. CIV.EXE lets the row run to 26 at the bottom edge, which picks the
+    /// first entry of the next column; civrs ignores that strip.
     fn entry_at(&self, mx: i32, my: i32) -> Option<usize> {
-        let start = self.page * self.per_page();
-        let end = (start + self.per_page()).min(self.entries.len());
-        (start..end).find(|&i| {
-            let (x, y) = self.pos(i);
-            mx >= x - 2 && mx < x + self.col_w() && my >= y - 1 && my < y + ROW_PITCH - 1
-        })
+        let (col, row) = ((mx - 10) / self.col_w(), (my - ROW_Y0) / ROW_PITCH);
+        if !(0..ROWS as i32).contains(&row) || col < 0 {
+            return None;
+        }
+        let i = self.page * self.per_page() + col as usize * ROWS + row as usize;
+        (i < ((self.page + 1) * self.per_page()).min(self.entries.len())).then_some(i)
     }
 
     fn move_sel(&mut self, delta: i32) {
@@ -164,10 +166,11 @@ impl Screen for ListScreen {
                 _ => {}
             },
             Event::MouseButton { button: MouseButton::Left, x, y, down: true } => {
-                if EXIT_RECT.contains(*x, *y) {
-                    return Transition::Pop(DialogResult::Done);
-                }
-                if self.pages() > 1 && MORE_RECT.contains(*x, *y) {
+                // a click on the title band is MORE in the first column, else EXIT (o 0xb3aa)
+                if *y < ROW_Y0 {
+                    if (*x - 10) / self.col_w() != 0 {
+                        return Transition::Pop(DialogResult::Done);
+                    }
                     self.page = (self.page + 1) % self.pages();
                     self.sel = None;
                 } else if let Some(i) = self.entry_at(*x, *y) {
@@ -212,5 +215,22 @@ impl Screen for ListScreen {
 
     fn draws_parent(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_clicks_pick_column_and_row_as_civ_exe() {
+        let l = ListScreen::new(pedia_data::CAT_COMPLETE);
+        assert_eq!(l.entry_at(10, 16), Some(0));
+        assert_eq!(l.entry_at(5, 23), Some(1), "left of the first column still counts as column 0");
+        assert_eq!(l.entry_at(110, 16), Some(26));
+        assert_eq!(l.entry_at(315, 20), None);
+        assert_eq!(l.entry_at(20, 199), None);
+        let t = ListScreen::new(pedia_data::CAT_TERRAIN);
+        assert_eq!((t.entry_at(10, 16 + 7 * 11), t.entry_at(10, 16 + 7 * 12), t.entry_at(170, 16)), (Some(11), None, None));
     }
 }
