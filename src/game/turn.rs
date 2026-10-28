@@ -1653,13 +1653,14 @@ impl Game {
         for other in self.cities.iter_mut().flatten() {
             other.trade_routes.retain(|r| *r != c);
         }
+        let unrest = self.captured_in_disorder(to);
         {
             let cm = self.city_mut(c);
             cm.owner = to;
             cm.size = if size > 1 { size - 1 } else { size };
-            cm.disorder = false;
+            cm.disorder = unrest;
             cm.celebrating = false;
-            cm.disorder_turns = 0;
+            cm.disorder_turns = unrest as u8;
             cm.auto_build = false;
             cm.garrison_out = false;
             cm.trade_routes.clear();

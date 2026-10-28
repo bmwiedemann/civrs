@@ -331,6 +331,13 @@ impl Game {
         }
     }
 
+    /// A city the human takes under a government below the Republic starts out flagged as in
+    /// disorder (CIV.EXE 0x142b1: status bit 0), so its first turn raises no new-disorder
+    /// notice; the flag of any other captor is cleared (0x13ef0).
+    pub fn captured_in_disorder(&self, by: Slot) -> bool {
+        by == self.human_slot && (self.player(by).govt as u8) < Govt::Republic as u8
+    }
+
     /// Ground unit `id` enters undefended enemy city `c`.
     pub fn capture_city(&mut self, id: UnitId, c: CityId) -> MoveOutcome {
         // the captor next to the city has let its garrison out (unit_look 0x828f), so a
@@ -389,12 +396,13 @@ impl Game {
         // the replay records the city as taken (0x13f97)
         self.replay_city(super::replay::kind::CAPTURE, by, c);
         let adv = self.capture_steal(by, from);
+        let unrest = self.captured_in_disorder(by);
         {
             let cm = self.city_mut(c);
             cm.owner = by;
             cm.size -= 1;
-            cm.disorder = false;
-            cm.disorder_turns = 0;
+            cm.disorder = unrest;
+            cm.disorder_turns = unrest as u8;
             cm.celebrating = false;
             // CIV.EXE 0x13ef0/0x13fb7 clear (among others) the AUTO and garrison-out bits
             cm.auto_build = false;
@@ -968,6 +976,9 @@ mod tests {
         let odd = kept.first().is_some_and(|i| i % 2 == 1);
         let expect: Vec<u8> = (1..=16).filter(|i| (i % 2 == 1) == odd && ![imp::PALACE, imp::TEMPLE, imp::COURTHOUSE, imp::CATHEDRAL].contains(i)).collect();
         assert_eq!(kept, expect);
+        // 0x142b1: taken by the human under Despotism, flagged as in disorder
+        assert_eq!(g.player(1).govt, Govt::Despotism);
+        assert!(g.human_slot == 1 && city.disorder);
         // CIV.EXE 0x143fd: gold * size / (citizens + 1) = 300 * 3 / (3 + 1 + 1)
         assert_eq!(g.player(1).gold - before, 180);
         assert_eq!(g.player(2).gold, 120);
