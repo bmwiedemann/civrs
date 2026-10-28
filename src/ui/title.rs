@@ -86,6 +86,22 @@ pub struct TitleScreen {
     /// Main-menu choice picked with N/L/E/C during the scroll (o 0x154c).
     shortcut: Option<usize>,
     reveal: Option<Reveal>,
+    /// The menu choice waiting for the music's phrase boundary, with the SoundTimer last seen.
+    chosen: Option<(usize, u16)>,
+}
+
+/// SoundTimer tick from which `main_menu` waits for a phrase of the theme to end (0x1f4a).
+const PHRASE_START: i32 = 0x1495;
+/// Length of a phrase in ticks (0x1f53).
+const PHRASE_TICKS: i32 = 0x120;
+
+/// `main_menu` fades the intro theme only at a phrase boundary (0x1f42..0x1f61): at once up to
+/// tick 5269, after it when `t - 5269` is a multiple of 288. Polled once a frame, so a boundary
+/// passed since the last look at `prev` counts too.
+fn phrase_boundary(t: u16, prev: u16) -> bool {
+    let (t, prev) = (t as i32, prev as i32);
+    let phrase = |x: i32| (x - PHRASE_START).div_euclid(PHRASE_TICKS);
+    t <= PHRASE_START || (t - PHRASE_START) % PHRASE_TICKS == 0 || (prev < t && phrase(t) > phrase(prev.max(PHRASE_START)))
 }
 
 impl Default for TitleScreen {
@@ -96,7 +112,7 @@ impl Default for TitleScreen {
 
 impl TitleScreen {
     pub fn new() -> TitleScreen {
-        TitleScreen { phase: Phase::Scroll, t: 0, phase_t: 0, col: -1, next_line: 0, wipe_t: None, cycles_stopped: None, line: String::new(), key_pending: false, menu_up: false, shortcut: None, reveal: None }
+        TitleScreen { phase: Phase::Scroll, t: 0, phase_t: 0, col: -1, next_line: 0, wipe_t: None, cycles_stopped: None, line: String::new(), key_pending: false, menu_up: false, shortcut: None, reveal: None, chosen: None }
     }
 
     pub fn at_menu() -> TitleScreen {
@@ -215,13 +231,29 @@ impl Screen for TitleScreen {
                 if self.reveal.as_ref().is_none_or(|r| r.done()) {
                     self.reveal = None;
                     if let Some(s) = self.shortcut.take() {
+                        // the shortcut is the menu's choice (0x1f3b): it waits for the phrase too
                         self.phase = Phase::Menu;
-                        return Transition::Push(crate::ui::setup::start_flow(s));
+                        self.menu_up = true;
+                        self.chosen = Some((s, ctx.audio.timer()));
+                        return Transition::None;
                     }
                     return self.open_menu();
                 }
             }
             Phase::Menu => {
+                if let Some((choice, prev)) = self.chosen {
+                    let t = ctx.audio.timer();
+                    if !phrase_boundary(t, prev) {
+                        self.chosen = Some((choice, t));
+                        return Transition::None;
+                    }
+                    self.chosen = None;
+                    ctx.audio.fade_out();
+                    return match choice {
+                        4 => Transition::Push(crate::ui::halloffame::hall_of_fame()),
+                        i => Transition::Push(crate::ui::setup::start_flow(i)),
+                    };
+                }
                 if !self.menu_up {
                     return self.open_menu();
                 }
@@ -259,15 +291,13 @@ impl Screen for TitleScreen {
     }
 
     fn resume(&mut self, result: DialogResult, ctx: &mut UiContext) -> Transition {
-        self.menu_up = false;
-        if matches!(result, DialogResult::Choice(_)) {
-            ctx.audio.fade_out();
+        let from_menu = std::mem::take(&mut self.menu_up);
+        if let (true, DialogResult::Choice(i)) = (from_menu, result) {
+            // acted on once the music reaches its phrase boundary (update)
+            self.menu_up = true;
+            self.chosen = Some((i, ctx.audio.timer()));
         }
-        match result {
-            DialogResult::Choice(4) => Transition::Push(crate::ui::halloffame::hall_of_fame()),
-            DialogResult::Choice(i) => Transition::Push(crate::ui::setup::start_flow(i)),
-            _ => Transition::None,
-        }
+        Transition::None
     }
 
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
@@ -314,5 +344,22 @@ pub struct Splash;
 impl Splash {
     pub fn new() -> TitleScreen {
         TitleScreen::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::phrase_boundary;
+
+    #[test]
+    fn the_menu_fades_the_theme_at_a_phrase_boundary() {
+        assert!(phrase_boundary(100, 100));
+        assert!(phrase_boundary(5269, 5269));
+        assert!(!phrase_boundary(5270, 5270));
+        assert!(!phrase_boundary(5556, 5555));
+        assert!(phrase_boundary(5557, 5556));
+        // a frame that skipped the boundary tick still counts it
+        assert!(phrase_boundary(5558, 5556));
+        assert!(!phrase_boundary(5559, 5558));
     }
 }
