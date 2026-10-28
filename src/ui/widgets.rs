@@ -344,6 +344,38 @@ pub struct MenuDialog {
     /// ds:0xd7f2: items whose leading blank menu_draw turns into a check mark as it draws
     /// them, after measuring (o 0x1d16f), so the box is as wide as without the marks.
     pub checked: Vec<bool>,
+    /// ds:0x2fa4 forced to 8: menu_select/menu_draw use a pitch of 8 whatever the font while
+    /// a leader's portrait is up (ds:0x3936 != -1, o 0x1c8de).
+    pitch: Option<i32>,
+    /// ds:0x2f9e: who speaks (0 Spies, 1 Diplomats, 2 Travelers, 3 Defense Minister, 4 Domestic
+    /// Advisor, 5 Foreign Minister, 6 Science Advisor); menu_draw widens the frame for the
+    /// speaker's picture and name (o 0x1ce49..0x1cf8e).
+    speaker: Option<u8>,
+}
+
+/// The speakers of menu_draw (ds:0x2fa6); the first three get " report:".
+pub const SPEAKERS: [&str; 7] = ["Spies", "Diplomats", "Travelers", "Defense Minister:", "Domestic Advisor:", "Foreign Minister:", "Science Advisor:"];
+pub const SPEAKER_SPIES: u8 = 0;
+pub const SPEAKER_DIPLOMATS: u8 = 1;
+pub const SPEAKER_TRAVELERS: u8 = 2;
+pub const SPEAKER_DEFENSE: u8 = 3;
+pub const SPEAKER_DOMESTIC: u8 = 4;
+pub const SPEAKER_FOREIGN: u8 = 5;
+pub const SPEAKER_SCIENCE: u8 = 6;
+
+/// The y that `leader_dialog` (o 0x8892) passes: menu_select keeps the background colour 7
+/// instead of reading it and recolours 8 (not the stone's 0x16) to 3 in the highlight
+/// (o 0x1c8f5..0x1c90c); menu_draw only tests bit 0, so no frame is drawn (o 0x1ce1a).
+pub const LEADER_DIALOG_Y: i32 = 0x8b;
+
+/// The name line of speaker `s` (o 0x1ce49..0x1ce73).
+pub fn speaker_name(s: u8) -> String {
+    let n = SPEAKERS[s as usize % 7];
+    if s <= 2 {
+        format!("{n} report:")
+    } else {
+        n.to_string()
+    }
 }
 
 impl MenuDialog {
@@ -371,7 +403,21 @@ impl MenuDialog {
             help: false,
             help_entries: Vec::new(),
             checked: Vec::new(),
+            pitch: None,
+            speaker: None,
         }
+    }
+
+    /// Rows `p` apart whatever the font (ds:0x2fa4 = 8 with a leader on the screen).
+    pub fn with_pitch(mut self, p: i32) -> Self {
+        self.pitch = Some(p);
+        self
+    }
+
+    /// The box of speaker `s` (ds:0x2f9e, see `SPEAKERS`).
+    pub fn with_speaker(mut self, s: u8) -> Self {
+        self.speaker = Some(s);
+        self
     }
 
     /// menu_draw with ds:0x2fa0 set: the box grows by 2 and "(HELP AVAILABLE)" is written in
@@ -468,12 +514,17 @@ impl MenuDialog {
             self.top_pad = 5;
             // menu_select o 0x1c8c3: the font's row count (0:0x7c3), 8 instead of 9
             let rows = ctx.fonts.get(self.font).line_height();
-            self.line_h = if rows == 9 { 8 } else { rows };
+            self.line_h = self.pitch.unwrap_or(if rows == 9 { 8 } else { rows });
         } else if self.font != FONT {
             self.line_h = ctx.fonts.get(self.font).line_height();
         }
         let (w, h) = if self.is_popup() {
             let (_, w, h) = self.popup_size(ctx);
+            // a speaker's name widens the box (ds:0xde0e, o 0x1ce85..0x1ce93)
+            let w = match self.speaker {
+                Some(s) => w.max(text_width(&ctx.fonts, self.font, &speaker_name(s)) + 8),
+                None => w,
+            };
             (w + 3, h + 3)
         } else {
             let mut w = self.min_width;
@@ -487,9 +538,11 @@ impl MenuDialog {
             Some(p) => p,
             None => (80 + (240 - w) / 2, 8 + (192 - h) / 2),
         };
-        // a menu larger than the screen is kept at the top left rather than failing
+        // a menu larger than the screen is kept at the top left rather than failing; the
+        // leader's dialog stays where it is and loses its rows past y 192 (menu_draw clamps the
+        // line count to (192 - y) / pitch, o 0x1cdb3)
         let x = x.clamp(0, (320 - w).max(0));
-        let y = y.clamp(0, (200 - h).max(0));
+        let y = if y == LEADER_DIALOG_Y && self.is_popup() { y } else { y.clamp(0, (200 - h).max(0)) };
         self.rect = Rect::new(x, y, w, h);
     }
 
@@ -528,8 +581,17 @@ impl MenuDialog {
         for it in &self.items {
             widest = widest.max(coded_width(ctx, font, &Self::item_line(it)));
         }
-        let rows = (self.title.len() + self.items.len() + self.gaps.len()) as i32;
+        let rows = ((self.title.len() + self.items.len() + self.gaps.len()) as i32).min(self.max_rows());
         (widest, widest + 8, rows * self.line_h + 6 + if self.help { 2 } else { 0 })
+    }
+
+    /// menu_draw's line limit (192 - y) / pitch (o 0x1cdb3); only the leader's dialog, which
+    /// is not moved up, reaches it.
+    fn max_rows(&self) -> i32 {
+        match self.pos {
+            Some((_, y)) if y == LEADER_DIALOG_Y => ((192 - y) / self.line_h.max(1)).max(0),
+            _ => i32::MAX,
+        }
     }
 
     /// `popup_menu3` as menu_draw/menu_select draw it (see `PanelStyle::Bare` and `Framed`): a
@@ -542,14 +604,23 @@ impl MenuDialog {
         let (widest, w, h) = self.popup_size(ctx);
         let stone = ctx.game.is_some();
         let framed = self.style != PanelStyle::Bare && y % 2 == 0;
-        let bg = if framed {
+        let leader = y == LEADER_DIALOG_Y && self.style != PanelStyle::Bare;
+        let frame = |fb: &mut Surface, fx: i32, fy: i32, fw: i32, fh: i32| {
             if stone {
-                fill_texture(fb, ctx, Rect::new(x + 1, y + 1, w, h));
+                fill_texture(fb, ctx, Rect::new(fx + 1, fy + 1, fw, fh));
             } else {
-                fb.fill_rect(Rect::new(x + 1, y + 1, w, h), 7);
+                fb.fill_rect(Rect::new(fx + 1, fy + 1, fw, fh), 7);
             }
-            bevel(fb, x + 1, y + 1, w, h, 15, 8);
-            fb.rect_outline(Rect::new(x, y, w + 3, h + 3), 0);
+            bevel(fb, fx + 1, fy + 1, fw, fh, 15, 8);
+            fb.rect_outline(Rect::new(fx, fy, fw + 3, fh + 3), 0);
+        };
+        let bg = if framed {
+            match self.speaker {
+                Some(s) => self.draw_speaker(fb, ctx, s, w, h, frame),
+                None => frame(fb, x, y, w, h),
+            }
+            7
+        } else if leader {
             7
         } else {
             fb.get(x, y)
@@ -558,7 +629,8 @@ impl MenuDialog {
         let title_colour = self.title_colour.unwrap_or(if bg == 15 { 3 } else { cols.title });
         // the lines are drawn as the menu text holds them, each ended by a line break, so no
         // glyph is the last of its string and all are cut to their advance (see draw_glyph_run)
-        for (i, t) in self.title.iter().enumerate() {
+        let max_rows = self.max_rows();
+        for (i, t) in self.title.iter().enumerate().take(max_rows.max(0) as usize) {
             let ty = y + 5 + i as i32 * self.line_h;
             if self.line_h > 9 {
                 draw_coded(fb, ctx, font, x + 5, ty + 1, &format!("{t} "), 0);
@@ -566,6 +638,9 @@ impl MenuDialog {
             draw_coded(fb, ctx, font, x + 5, ty, &format!("{t} "), title_colour);
         }
         for (i, it) in self.items.iter().enumerate() {
+            if (self.row_y(i) - self.items_top()) / self.line_h.max(1) + self.title.len() as i32 >= max_rows {
+                break;
+            }
             let colour = if self.disabled[i] { cols.disabled } else { cols.text };
             let mut line = Self::item_line(it);
             if self.checked.get(i) == Some(&true) {
@@ -580,7 +655,13 @@ impl MenuDialog {
         // descenders keep their colours; on the stone also its second colour 0x16 -> 3
         if let Some(i) = Some(self.sel).filter(|&i| i < self.items.len() && !self.disabled[i]) {
             let r = Rect::new(x + 3, self.row_y(i) - 1, widest + BARE_BAR_EXTRA, self.line_h);
-            let second = if framed && stone { Some(0x16) } else { None };
+            let second = if leader {
+                Some(8)
+            } else if framed && stone {
+                Some(0x16)
+            } else {
+                None
+            };
             for py in r.y..r.bottom() {
                 for px in r.x..r.right() {
                     let v = fb.get(px, py);
@@ -592,6 +673,36 @@ impl MenuDialog {
                 }
             }
         }
+    }
+
+    /// menu_draw's speaker box (o 0x1ce49..0x1cf8e): the frame starts 42 px left and 8 px above
+    /// the menu, at least 61 high (box height + 8, clamp(.., 61, 999)), as wide as the menu or
+    /// the speaker's name + 8. The picture goes 40 px left of the menu: the Spies' / Diplomats'
+    /// / Travelers' card (ds:0xdf62, cut from SP299 at (160 + 42 i, 142), 41x58, o5 0x5626) at
+    /// y - 5, an advisor's portrait (page 2 (40 s + 40, 140), the GOVT sheet's top strip) at the
+    /// bottom of the frame, y - 6 + max(h - 53, 0). The name is drawn at (x + 5, y - 4) in 15
+    /// and underlined in 11 at y + 3. Returns nothing: the box's background is 7.
+    fn draw_speaker(&self, fb: &mut Surface, ctx: &UiContext, s: u8, w: i32, h: i32, frame: impl Fn(&mut Surface, i32, i32, i32, i32)) {
+        let (x, y) = (self.rect.x, self.rect.y);
+        let name = speaker_name(s);
+        let name_w = text_width(&ctx.fonts, self.font, &name);
+        let w = w.max(name_w + 8);
+        frame(fb, x - 0x2a, y - 8, w + 0x2a, (h + 8).clamp(0x3d, 999));
+        if s <= 2 {
+            let sp = ctx.pic("SP299");
+            let src_pal = ctx.pic_pal("SP299");
+            let mut map = [0u8; 256];
+            for (i, m) in map.iter_mut().enumerate() {
+                *m = ctx.palette.nearest(src_pal.rgb(i as u8));
+            }
+            fb.blit_remap(&sp.surf, Rect::new(160 + 42 * s as i32, 142, 41, 58), x - 0x28, y - 5, None, &map);
+        } else if ctx.game.is_some() {
+            let pic = ctx.pic(&crate::ui::reports::advisor_pic_name(ctx));
+            let off = if h - 0x34 > 0 { h - 0x34 - 1 } else { 0 };
+            fb.blit_part(&pic.surf, Rect::new(40 * (s as i32 - 3), 0, 40, 60), x - 0x28, y - 6 + off, None);
+        }
+        draw_text(fb, &ctx.fonts, &TextStyle::new(self.font, 15), x + 5, y - 4, &name);
+        fb.hline(x + 5, x + 5 + name_w, y + 3, 11);
     }
 
     /// menu_select's letter keys (o 0x1cc33..0x1cc16): the next item after the highlighted one

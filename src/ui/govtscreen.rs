@@ -1,9 +1,8 @@
 //! The government change (`government_changed`, CIV.EXE o 0x5d17): the top half of a
 //! newspaper "ADJ government\nchanged to GOVT!" over a white lower half with "New Cabinet:"
 //! and the four small advisor portraits of the new government's GOVTgX.PIC. The GOVT/BACK
-//! sheet helpers are shared with the diplomacy screen's throne room.
+//! sheet names are shared with the diplomacy screen's throne room.
 
-use crate::assets::Palette;
 use crate::gfx::text::draw_text_centered;
 use crate::gfx::{Rect, Surface, TextStyle};
 use crate::platform::Event;
@@ -36,31 +35,6 @@ pub fn back_sheet(g: Govt, modern: bool) -> String {
     let grp = govt_group(g);
     let era = if modern && grp != 3 { 'M' } else { 'A' };
     format!("BACK{grp}{era}")
-}
-
-/// Large advisor figure `i` (0..4) in a GOVT sheet (lower half, 79x99 cells).
-pub fn advisor_rect(i: usize) -> Rect {
-    Rect::new(i as i32 * 80 + 1, 101, 79, 99)
-}
-
-/// Text box of the throne-room backgrounds (inner area).
-pub const THRONE_BOX: Rect = Rect::new(33, 138, 254, 58);
-
-/// Draw advisor figures standing on the throne-room floor (feet at `floor_y`), outermost
-/// first so the king can be drawn over the inner ones.
-pub fn draw_advisors(fb: &mut Surface, ctx: &UiContext, sheet: &str, count: usize, floor_y: i32) {
-    let pic = ctx.pic(sheet);
-    const XS: [i32; 4] = [2, 239, 58, 183];
-    for (i, x) in XS.iter().enumerate().take(count.min(4)) {
-        let r = advisor_rect(i);
-        let key = pic.surf.get(r.x, r.y);
-        fb.blit_part(&pic.surf, r, *x, floor_y - r.h, Some(key));
-    }
-}
-
-/// Throne-room palette: background with the advisor colours (16..63) of the GOVT sheet.
-pub fn throne_palette(ctx: &UiContext, back: &str, govt_sheet: &str) -> Palette {
-    ctx.pic_pal(back).merged(&ctx.pic_pal(govt_sheet), 16..=63)
 }
 
 /// Government names of the headline (ds:0x1966).

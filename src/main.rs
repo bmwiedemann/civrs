@@ -316,7 +316,9 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&P
                 // a Diplomat's audience (mode 1) opens with the leader's greeting; an
                 // EXCHANGE screen when the leader has nothing to say
                 let at = g.cities_of(2).first().map(|c| g.city(*c).pos()).unwrap_or((-1, -1));
-                let st = civrs::ai::diplo_ai::human_audience(g, 2, at).unwrap_or_else(|| {
+                // screen:diplomacy:SEED:TURNS:x shows the EXCHANGE screen
+                let audience = if parts.get(3).is_some() { None } else { civrs::ai::diplo_ai::human_audience(g, 2, at) };
+                let st = audience.unwrap_or_else(|| {
                     let mut st = DiplomacyState::new(2, human, Proposal::Exchange);
                     st.rplc1 = "Bronze Working".into();
                     st.advance = Some(civrs::rules::advance_ids::BRONZE_WORKING);
@@ -456,6 +458,12 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&P
                 }
             }
             "news" => civrs::ui::eventpics::over_map(civrs::ui::eventpics::travelers_report(vec!["Babylonian civilization".into(), "destroyed by Romans!".into()])),
+            // a message box with speaker N (ds:0x2f9e), e.g. screen:speaker:5
+            "speaker" => {
+                let s = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(5u8);
+                let lines = vec!["Babylonian capital".into(), "moved to Ur.".into()];
+                civrs::ui::eventpics::over_map(Box::new(civrs::ui::widgets::MenuDialog::new(lines, Vec::new()).with_pos(80, 80).with_speaker(s)))
+            }
             "rednote" => civrs::ui::eventpics::over_map(civrs::ui::dialogs::error_screen(&ctx, &civrs::game::RuleError::Settlers).ok_or("no ERROR.TXT section")?),
             "nuke" => civrs::ui::eventpics::over_map(civrs::ui::eventpics::nuke_animation(200, 104)),
             "f1" | "f2" | "f3" | "f4" | "f5" | "f6" | "f7" | "f8" | "f9" | "f10" | "f11" | "f12" => {

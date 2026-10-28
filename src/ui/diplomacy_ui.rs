@@ -1,7 +1,8 @@
-//! Audience with a rival leader: throne room of the leader's government (BACKgX.PIC),
-//! advisors from GOVTgX.PIC behind the king (count = size rank), the leader's bust from
-//! KINGnn.PIC (palette merged on 64..143) and the KING.TXT text with `$` substitution in the
-//! box at the bottom; `_` lines of the section become a menu.
+//! Audience with a rival leader (CIV.EXE overlay 6): the throne room of the leader's
+//! government (BACKgX.PIC), advisors from GOVTgX.PIC behind the king (as many as his power
+//! rank earns), the leader's bust from KINGnn.PIC and the KING.TXT texts in `leader_dialog`
+//! (o 0x8892): the shared pop-up menu (`MenuDialog`) at (36, 0x8b) in the leader's font, rows
+//! 8 apart, without a frame on the picture's own text box.
 //!
 //! The screen runs a whole audience (`diplo_ai`, CIV.EXE overlay 6): it shows each screen of
 //! it, passes the answer to `diplo_ai::respond` and shows what follows, until the audience is
@@ -10,21 +11,19 @@
 //! from the engine (`Decision::Diplomacy`) ends with `DialogResult::Done`, which `reply_for`
 //! turns into `DecisionReply::Cancel`: the engine has nothing left to do.
 
-use crate::assets::text::{split_menu, substitute, Vars};
+use crate::assets::text::{substitute_line, wrap_text, Vars};
 use crate::assets::Palette;
-use crate::game::diplomacy::{DiplomacyState, Proposal};
+use crate::game::diplomacy::{Await, DiplomacyState, Proposal};
 use crate::game::Slot;
-use crate::gfx::text::{draw_text, wrap};
-use crate::gfx::{Rect, Surface, TextStyle};
-use crate::platform::{Event, Key, MouseButton};
+use crate::gfx::{Rect, Surface};
+use crate::platform::Event;
 use crate::rules::advance_ids as adv;
 use crate::ui::context::UiContext;
-use crate::ui::eventpics::Dismiss;
-use crate::ui::govtscreen::{back_sheet, draw_advisors, govt_sheet, throne_palette, THRONE_BOX};
+use crate::ui::govtscreen::{back_sheet, govt_sheet};
 use crate::ui::screen::{DialogResult, Screen, Transition};
-use crate::ui::widgets::{MenuDialog, MessageBox};
+use crate::ui::widgets::{MenuDialog, LEADER_DIALOG_Y};
 
-/// KINGnn.PIC index of a civilisation's leader (identified on the sheets).
+/// KINGnn.PIC index of a civilisation's leader (ds:0x3938, by leader).
 pub fn king_index(civ: u8) -> u8 {
     match civ {
         1 => 10,  // Caesar
@@ -45,8 +44,10 @@ pub fn king_index(civ: u8) -> u8 {
     }
 }
 
-/// Leader bust in a KING sheet (bottom-right box).
-pub const KING_BUST: Rect = Rect::new(181, 65, 139, 135);
+/// Leader bust in a KING sheet: `load_leader_portrait` cuts (181, 67) 139x133 (o 0x8205) and
+/// `draw_leader_background` puts it at (90, 0) (o 0x85b3).
+pub const KING_BUST: Rect = Rect::new(181, 67, 139, 133);
+const KING_AT: (i32, i32) = (90, 0);
 
 /// Small portrait `i` (same numbering as KINGnn) in the SLAM2 face strip.
 pub fn face_rect(i: u8) -> Rect {
@@ -55,17 +56,62 @@ pub fn face_rect(i: u8) -> Rect {
     Rect::new(c * 28 + 1, r * 34, 27, 33)
 }
 
-/// Number of advisors behind a leader: by size rank among living civilisations (largest 4).
-pub fn advisor_count(g: &crate::game::Game, slot: Slot) -> usize {
-    let mut sizes: Vec<(usize, Slot)> = g.alive_slots().into_iter().filter(|s| *s != 0).map(|s| (g.cities_of(s).len(), s)).collect();
-    sizes.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-    let rank = sizes.iter().position(|(_, s)| *s == slot).unwrap_or(3);
-    (4 - rank.min(3)).max(1)
+/// Advisor figure `i` (0..4) of a GOVT sheet: (80 i + 1, 101), 78x99 (o 0x8167).
+fn advisor_rect(i: usize) -> Rect {
+    Rect::new(i as i32 * 80 + 1, 101, 78, 99)
 }
+
+/// Where the advisors stand (ds:0x3afe), their tops at y 34 (o 0x857b).
+const ADVISOR_X: [i32; 4] = [41, 199, 1, 239];
+
+/// Number of advisors behind a leader: (power rank + 1) / 2, the rank ds:0x803c being 7 for
+/// the strongest civilization (o 0x85a6).
+pub fn advisor_count(g: &crate::game::Game, slot: Slot) -> usize {
+    ((g.power_rank(slot) + 1) / 2).clamp(0, 4) as usize
+}
+
+/// The leader's font for the whole audience: a byte per leader in the far table at segment
+/// 0x2679 plus 8, 10 meaning 3 (o 0x7b84..0x7ba8; CIV.EXE font n is civrs font n - 1).
+pub fn leader_font(civ: u8) -> usize {
+    const STYLE: [u8; 16] = [0, 0, 1, 2, 1, 2, 0, 1, 0, 2, 0, 2, 1, 0, 2, 1];
+    let f = STYLE[civ as usize & 15] + 8;
+    if f == 10 {
+        2
+    } else {
+        f as usize - 1
+    }
+}
+
+/// leader_dialog (o 0x8892): popup_menu3(text, 0x14, 0x8b), the x 0x14 made 0x24.
+const LEADER_DIALOG_X: i32 = 0x24;
 
 /// How the current screen is shown.
 fn over_map(st: &DiplomacyState) -> bool {
     st.plain || matches!(st.proposal, Proposal::Emissary | Proposal::Intelligence)
+}
+
+/// The text of a KING.TXT section as `load_king_text` (0x1f105) leaves it in ds:0xba06: the
+/// entry's lines (load_text_entry), the variables substituted, wrapped at 80 columns; the
+/// declarations of war are wrapped again at 40 (o 0x6e98, 0x6f6b). One string per line.
+pub fn king_lines(ctx: &UiContext, st: &DiplomacyState) -> Vec<String> {
+    let Some(g) = ctx.game.as_ref() else { return Vec::new() };
+    let v = Vars { rplc1: st.rplc1.clone(), rplc2: st.rplc2.clone(), us: st.us(g), them: st.them(g), bucks: st.bucks };
+    let raw = ctx.texts.king.entry_text(st.proposal.section()).unwrap_or_default();
+    let mut text = wrap_text(&substitute_line(&raw, &v), 80);
+    if matches!(st.proposal, Proposal::Provoke | Proposal::Reject | Proposal::Rid) {
+        text = wrap_text(&text, 40);
+    }
+    let mut lines: Vec<String> = text.split('\n').map(str::to_string).collect();
+    if lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+    lines
+}
+
+/// menu_draw's lines: one starting with ' ' or '_' is an item, the others are text.
+fn split_items(lines: Vec<String>) -> (Vec<String>, Vec<String>) {
+    let (items, text): (Vec<String>, Vec<String>) = lines.into_iter().partition(|l| l.starts_with([' ', '_']));
+    (text, items)
 }
 
 pub struct AudienceScreen {
@@ -73,35 +119,17 @@ pub struct AudienceScreen {
     ai: Slot,
     /// A Diplomat's audience to open on entering (`diplo_ai::human_audience`).
     start: Option<(i32, i32)>,
-    /// The dialog over the map for the current screen was pushed.
+    /// The dialog of the current screen was pushed.
     sub_shown: bool,
+    /// The dialog has menu lines: Esc answers -1, a text without them is acknowledged.
+    has_items: bool,
     /// The leader's anthem is playing (the throne room is up).
     anthem: bool,
-    header: String,
-    body: Vec<String>,
-    choices: Vec<String>,
-    disabled: Vec<bool>,
-    font: usize,
-    sel: usize,
-    dismiss: Dismiss,
 }
 
 impl AudienceScreen {
     fn empty(ai: Slot) -> AudienceScreen {
-        AudienceScreen {
-            state: None,
-            ai,
-            start: None,
-            sub_shown: false,
-            anthem: false,
-            header: String::new(),
-            body: Vec::new(),
-            choices: Vec::new(),
-            disabled: Vec::new(),
-            font: 0,
-            sel: 0,
-            dismiss: Dismiss::new(),
-        }
+        AudienceScreen { state: None, ai, start: None, sub_shown: false, has_items: false, anthem: false }
     }
 }
 
@@ -119,76 +147,34 @@ pub fn human_audience(ai_slot: u8, at: (i32, i32)) -> Box<dyn Screen> {
     Box::new(s)
 }
 
+/// The pop-up of a screen of the audience: `leader_dialog` in the throne room, popup_menu
+/// over the map for the emissary (100, 80, o 0x7b15) and for a refused emissary's declaration
+/// (40, 100, o 0x6f83).
+pub fn audience_dialog(ctx: &UiContext, st: &DiplomacyState) -> MenuDialog {
+    let (text, items) = match st.proposal {
+        Proposal::Message | Proposal::Emissary => (st.text.clone(), st.menu.clone()),
+        _ => split_items(king_lines(ctx, st)),
+    };
+    let n = items.len();
+    let mut d = MenuDialog::new(text, items);
+    if st.disabled.iter().any(|b| *b) {
+        d = d.with_disabled((0..n).map(|i| st.disabled.get(i).copied().unwrap_or(false)).collect());
+    }
+    if st.proposal == Proposal::Emissary {
+        return d.with_pos(100, 80);
+    }
+    if st.plain {
+        return d.with_pos(40, 100);
+    }
+    // "Select one..." is asked again after an Esc (0x1457b)
+    if matches!(st.meeting.as_deref().map(|m| &m.awaiting), Some(Await::Pick(_))) {
+        d = d.no_cancel();
+    }
+    let civ = ctx.game.as_ref().map(|g| g.player(st.ai).civ).unwrap_or(1);
+    d.with_pos(LEADER_DIALOG_X, LEADER_DIALOG_Y).with_font(leader_font(civ)).with_pitch(8)
+}
+
 impl AudienceScreen {
-    /// The text and menu of the current screen.
-    fn layout(&mut self, ctx: &UiContext) {
-        let Some(st) = &self.state else { return };
-        let Some(g) = ctx.game.as_ref() else { return };
-        let lines = if st.proposal == Proposal::Message {
-            st.text.iter().map(|l| format!("{l}^")).collect()
-        } else {
-            ctx.texts.king.section(st.proposal.section()).map(|l| l.to_vec()).unwrap_or_default()
-        };
-        let v = Vars { rplc1: st.rplc1.clone(), rplc2: st.rplc2.clone(), us: st.us(g), them: st.them(g), bucks: st.bucks };
-        let m = split_menu(&substitute(&lines, &v));
-        let p = g.player(st.ai);
-        self.header = format!("{} {} of the {}:", p.title(), p.leader, g.civ_name(st.ai));
-        self.choices = if st.menu.is_empty() { m.choices } else { st.menu.clone() };
-        self.disabled = (0..self.choices.len()).map(|i| st.disabled.get(i).copied().unwrap_or(false)).collect();
-        self.sel = (0..self.choices.len()).find(|i| !self.disabled[*i]).unwrap_or(0);
-        // pick the font so that everything fits in the box
-        let width = THRONE_BOX.w - 16;
-        for font in [0usize, 1] {
-            let lh = ctx.fonts.get(font).line_height();
-            let mut body = Vec::new();
-            for l in &m.body {
-                if l.is_empty() {
-                    body.push(String::new());
-                } else {
-                    body.extend(wrap(&ctx.fonts, font, width, l));
-                }
-            }
-            let rows = 1 + body.len() + self.choices.len();
-            self.font = font;
-            self.body = body;
-            if rows as i32 * lh <= THRONE_BOX.h - 6 {
-                break;
-            }
-        }
-    }
-
-    /// The text of the current screen as plain lines (for the boxes over the map).
-    fn plain_lines(&self, ctx: &UiContext) -> Vec<String> {
-        let Some(st) = &self.state else { return Vec::new() };
-        if st.proposal == Proposal::Message || st.proposal == Proposal::Emissary {
-            return st.text.clone();
-        }
-        let Some(g) = ctx.game.as_ref() else { return Vec::new() };
-        let lines = ctx.texts.king.section(st.proposal.section()).map(|l| l.to_vec()).unwrap_or_default();
-        let v = Vars { rplc1: st.rplc1.clone(), rplc2: st.rplc2.clone(), us: st.us(g), them: st.them(g), bucks: st.bucks };
-        split_menu(&substitute(&lines, &v)).body
-    }
-
-    fn line_h(&self, ctx: &UiContext) -> i32 {
-        ctx.fonts.get(self.font).line_height()
-    }
-
-    fn choice_y(&self, ctx: &UiContext, i: usize) -> i32 {
-        let lh = self.line_h(ctx);
-        THRONE_BOX.y + 3 + (1 + self.body.len() as i32 + i as i32) * lh
-    }
-
-    fn choice_at(&self, ctx: &UiContext, mx: i32, my: i32) -> Option<usize> {
-        if mx < THRONE_BOX.x || mx >= THRONE_BOX.right() {
-            return None;
-        }
-        let lh = self.line_h(ctx);
-        (0..self.choices.len()).find(|&i| {
-            let y = self.choice_y(ctx, i);
-            my >= y && my < y + lh && !self.disabled[i]
-        })
-    }
-
     /// Show `st` (music, text).
     fn enter_state(&mut self, ctx: &mut UiContext, st: DiplomacyState) {
         let civ = ctx.game().player(st.ai).civ;
@@ -206,8 +192,6 @@ impl AudienceScreen {
         }
         self.state = Some(st);
         self.sub_shown = false;
-        self.dismiss = Dismiss::new();
-        self.layout(ctx);
     }
 
     /// The human answered (or acknowledged) the current screen.
@@ -231,17 +215,6 @@ impl AudienceScreen {
         let (govt, civ) = ctx.game.as_ref().map(|g| (g.player(self.ai).govt, g.player(self.ai).civ)).unwrap_or((crate::rules::Govt::Despotism, 1));
         (back_sheet(govt, modern), govt_sheet(govt, modern), format!("KING{:02}", king_index(civ)))
     }
-
-    fn step_sel(&mut self, delta: isize) {
-        let n = self.choices.len();
-        for k in 1..=n {
-            let i = (self.sel as isize + delta * k as isize).rem_euclid(n as isize) as usize;
-            if !self.disabled[i] {
-                self.sel = i;
-                return;
-            }
-        }
-    }
 }
 
 impl Screen for AudienceScreen {
@@ -262,71 +235,40 @@ impl Screen for AudienceScreen {
     }
 
     fn update(&mut self, ctx: &mut UiContext) -> Transition {
-        self.dismiss.tick();
         let Some(st) = self.state.clone() else { return Transition::Pop(DialogResult::Done) };
-        if !over_map(&st) || self.sub_shown {
+        if self.sub_shown {
             return Transition::None;
         }
         self.sub_shown = true;
         if st.proposal == Proposal::Intelligence {
             return Transition::Push(Box::new(crate::ui::report_advisors::Dossier::new(st.ai)));
         }
-        let lines = self.plain_lines(ctx);
-        if st.proposal == Proposal::Emissary {
-            return Transition::Push(Box::new(MenuDialog::new(lines, st.menu.clone()).with_pos(100, 80)));
-        }
-        // a refused emissary: the declaration in a plain box (o 0x6f83 at (40, 100))
-        Transition::Push(Box::new(MessageBox::new(lines).with_pos(40, 100)))
+        let d = audience_dialog(ctx, &st);
+        self.has_items = !d.items.is_empty();
+        Transition::Push(Box::new(d))
     }
 
     fn resume(&mut self, result: DialogResult, ctx: &mut UiContext) -> Transition {
         let Some(st) = self.state.as_ref() else { return Transition::Pop(DialogResult::Done) };
-        if !over_map(st) {
-            return Transition::None;
-        }
         let choice = match (st.proposal, result) {
-            (Proposal::Emissary, DialogResult::Choice(i)) => i,
-            // Escape: "No."
+            (_, DialogResult::Choice(i)) => i,
+            // Esc to the emissary: "No." (CIV.EXE negates the answer into ds:0x3934, o 0x7b1d,
+            // so its -1 becomes 1 and the emissary is received; civrs keeps Esc a refusal)
             (Proposal::Emissary, _) => 1,
+            // Esc answers -1 to a menu; a text is acknowledged
+            _ if self.has_items => usize::MAX,
             _ => 0,
         };
         self.answer(ctx, choice)
     }
 
-    fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
-        let Some(st) = &self.state else { return Transition::None };
-        if over_map(st) {
-            return Transition::None;
-        }
-        if self.choices.is_empty() {
-            return if self.dismiss.closes(ev) { self.answer(ctx, 0) } else { Transition::None };
-        }
-        match ev {
-            Event::Key { key, down: true, .. } => match key {
-                Key::Up | Key::Kp(8) => self.step_sel(-1),
-                Key::Down | Key::Kp(2) => self.step_sel(1),
-                Key::Enter | Key::Space => {
-                    let s = self.sel;
-                    return self.answer(ctx, s);
-                }
-                Key::Esc => return self.answer(ctx, usize::MAX),
-                _ => {}
-            },
-            Event::MouseMove { x, y } => {
-                if let Some(i) = self.choice_at(ctx, *x, *y) {
-                    self.sel = i;
-                }
-            }
-            Event::MouseButton { button: MouseButton::Left, x, y, down: true } => {
-                if let Some(i) = self.choice_at(ctx, *x, *y) {
-                    return self.answer(ctx, i);
-                }
-            }
-            _ => {}
-        }
+    fn handle(&mut self, _ev: &Event, _ctx: &mut UiContext) -> Transition {
         Transition::None
     }
 
+    /// draw_leader_background (o 0x8521): the throne room BACKgX, the first (rank + 1) / 2
+    /// advisors of the GOVT sheet at x 41, 199, 1, 239 (y 34), advisor (i + civ) & 3 at place
+    /// i, then the leader's bust at (90, 0).
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
         if self.state.as_ref().map(over_map).unwrap_or(true) {
             return;
@@ -335,44 +277,48 @@ impl Screen for AudienceScreen {
         let bg = ctx.pic(&back);
         fb.blit(&bg.surf, 0, 0);
         let count = ctx.game.as_ref().map(|g| advisor_count(g, self.ai)).unwrap_or(1);
-        draw_advisors(fb, ctx, &govt, count, THRONE_BOX.y);
+        let sheet = ctx.pic(&govt);
+        for (i, x) in ADVISOR_X.iter().enumerate().take(count) {
+            let r = advisor_rect((i + self.ai as usize) & 3);
+            let key = sheet.surf.get(r.x, r.y);
+            fb.blit_part(&sheet.surf, r, *x, 34, Some(key));
+        }
         let kp = ctx.pic(&king);
         let key = kp.surf.get(KING_BUST.x, KING_BUST.y);
-        fb.blit_part(&kp.surf, KING_BUST, (320 - KING_BUST.w) / 2, THRONE_BOX.y - KING_BUST.h, Some(key));
-        // text
-        let pal = self.palette(ctx);
-        let ink = pal.nearest([0, 0, 0]);
-        let grey = pal.nearest([96, 96, 96]);
-        let title = pal.nearest([130, 32, 20]);
-        let hilite = pal.nearest([255, 255, 255]);
-        let lh = self.line_h(ctx);
-        let x = THRONE_BOX.x + 8;
-        let mut y = THRONE_BOX.y + 3;
-        draw_text(fb, &ctx.fonts, &TextStyle::new(self.font, title), x, y, &self.header);
-        y += lh;
-        for l in &self.body {
-            draw_text(fb, &ctx.fonts, &TextStyle::new(self.font, ink), x, y, l);
-            y += lh;
-        }
-        for (i, c) in self.choices.iter().enumerate() {
-            let cy = self.choice_y(ctx, i);
-            if i == self.sel {
-                fb.fill_rect(Rect::new(x - 4, cy - 1, THRONE_BOX.w - 8, lh), hilite);
-            }
-            let colour = if self.disabled[i] { grey } else { ink };
-            draw_text(fb, &ctx.fonts, &TextStyle::new(self.font, colour), x + 2, cy, c);
-        }
+        fb.blit_part(&kp.surf, KING_BUST, KING_AT.0, KING_AT.1, Some(key));
     }
 
+    /// BACKgX.PAL with the leader's colours 64..143 from KINGnn.PAL (o 0x85f3..0x8637); the
+    /// pictures themselves are loaded without their palettes.
     fn palette(&self, ctx: &UiContext) -> Palette {
         if self.state.as_ref().map(over_map).unwrap_or(true) {
             return ctx.palette;
         }
-        let (back, govt, king) = self.sheets(ctx);
-        throne_palette(ctx, &back, &govt).merged(&ctx.pic_pal(&king), 64..=143)
+        let (back, _, king) = self.sheets(ctx);
+        ctx.pic_pal(&back).merged(&ctx.pic_pal(&king), 64..=143)
     }
 
     fn draws_parent(&self) -> bool {
         self.state.as_ref().map(over_map).unwrap_or(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn leader_fonts_and_advisor_places() {
+        // the table of segment 0x2679: Caesar 0 -> font 8, Hammurabi 1 -> 9, Frederick 2 -> 3
+        assert_eq!((leader_font(1), leader_font(2), leader_font(3)), (7, 8, 2));
+        assert_eq!(advisor_rect(3), Rect::new(241, 101, 78, 99));
+    }
+
+    #[test]
+    fn king_text_lines_split_into_text_and_items() {
+        let lines = vec!["'We note that your primitive civil- ".to_string(), "_'No, we do not need X.' ".into(), "_'OK, let's exchange knowledge.' ".into()];
+        let (text, items) = split_items(lines);
+        assert_eq!(text.len(), 1);
+        assert_eq!(items[1], "_'OK, let's exchange knowledge.' ");
     }
 }
