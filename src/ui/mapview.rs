@@ -60,7 +60,6 @@ pub(crate) enum Pending {
     Event,
     /// Player answered a menu-bar menu: which bar menu.
     BarMenu(usize),
-    EndTurnConfirm,
     CityPick(i32, i32),
     DisbandConfirm(UnitId),
     FoundCityConfirm(UnitId),
@@ -124,6 +123,8 @@ pub struct MapView {
     /// The turn whose unit loop has used up its advice latch (`move_units` [bp-0x8]: set by
     /// FIRSTMOVE on turn 0 and by the first Settlers that becomes active).
     advice_turn: Option<u32>,
+    /// 't' (CIV.EXE 0x71a7, ds:0xdcfc = 1): the map without units until the next key or click.
+    terrain_only: bool,
 }
 
 impl Default for MapView {
@@ -155,6 +156,7 @@ impl MapView {
             auto_end: 0,
             queued: Default::default(),
             advice_turn: None,
+            terrain_only: false,
         }
     }
 
@@ -701,6 +703,67 @@ impl MapView {
         }
     }
 
+    /// The keys of `move_units`' second switch (CIV.EXE 0x58c1) that are no unit orders and
+    /// that the map view does not handle elsewhere. None leaves the key to the caller.
+    fn command_key(&mut self, ctx: &mut UiContext, key: Key, mods: crate::platform::Mods) -> Option<Transition> {
+        let plain = !mods.alt && !mods.ctrl;
+        // Shift+keypad (the keypad's digits, 0x4737..0x5133) scrolls the view 4 squares
+        // (0x6ec4: draw_map_view(human, vx + 4dx, vy + 4dy), which wraps x and clamps y)
+        if mods.shift && plain {
+            if let Some(d) = Self::direction(key) {
+                let (dx, dy) = d.delta();
+                self.vx = Map::wrap_x(self.vx + 4 * dx);
+                self.vy = (self.vy + 4 * dy).clamp(0, MAP_H as i32 - VIEW_H);
+                return Some(Transition::None);
+            }
+        }
+        let t = match key {
+            // '+' / '=' and '-' / '_': the tax and luxuries menus (0x6fd9, 0x70bf)
+            Key::Plus if plain => Transition::Push(crate::ui::reports::rate_dialog(ctx, false)),
+            Key::Minus if plain => Transition::Push(crate::ui::reports::rate_dialog(ctx, true)),
+            // '?' / '/': FindCity (o 0x1ebd0)
+            Key::Char('/') if plain => Transition::Push(crate::ui::reports::find_city_dialog(ctx)),
+            // 'S' saves, except on turn 0 (0x6f3a)
+            Key::Char('s') if mods.shift && plain => {
+                if ctx.game().turn == 0 {
+                    Transition::None
+                } else {
+                    Transition::Push(crate::ui::reports::save_dialog(ctx))
+                }
+            }
+            // 't': the map without units until a key or click (0x71a7)
+            Key::Char('t') if plain && !mods.shift => {
+                self.terrain_only = true;
+                Transition::None
+            }
+            // Alt-V: "Sounds ON" / "Sounds OFF" (0x722f flips option bit 0x10)
+            Key::Char('v') if mods.alt => {
+                let o = &mut ctx.game_mut().options;
+                o.sound = !o.sound;
+                let line = format!("Sounds {}", if o.sound { "ON" } else { "OFF" });
+                Transition::Push(Box::new(MenuDialog::new(vec![line], Vec::new()).with_pos(100, 80)))
+            }
+            _ => return None,
+        };
+        Some(t)
+    }
+
+    /// The direction of a cursor or keypad key.
+    fn direction(key: Key) -> Option<Dir8> {
+        match key {
+            Key::Up => Some(Dir8::N),
+            Key::Down => Some(Dir8::S),
+            Key::Left => Some(Dir8::W),
+            Key::Right => Some(Dir8::E),
+            Key::Home => Some(Dir8::NW),
+            Key::PageUp => Some(Dir8::NE),
+            Key::End => Some(Dir8::SW),
+            Key::PageDown => Some(Dir8::SE),
+            Key::Kp(n) => Dir8::from_keypad(n),
+            _ => None,
+        }
+    }
+
     fn handle_goto_key(&mut self, ctx: &mut UiContext, key: Key) -> Transition {
         let Mode::Goto { cursor } = self.mode else { return Transition::None };
         let d = match key {
@@ -869,6 +932,10 @@ impl MapView {
                 // the active unit blinks: hide it on the off phase
                 let hide = if !self.blink { active.filter(|a| g.unit_opt(*a).map(|u| u.pos() == (x, y)).unwrap_or(false)) } else { None };
                 // draw the active unit on top of its stack
+                if self.terrain_only {
+                    tilerender::draw_tile_without_units(fb, ctx, g, me, x, y, px, py);
+                    continue;
+                }
                 draw_tile(fb, ctx, g, me, x, y, px, py, hide);
                 if self.blink {
                     if let Some(a) = active {
@@ -1218,12 +1285,6 @@ impl Screen for MapView {
                 DialogResult::Choice(c) => self.bar_menu_choice(ctx, i, c),
                 _ => Transition::None,
             },
-            Pending::EndTurnConfirm => {
-                if result == DialogResult::Yes {
-                    self.start_end_turn(ctx);
-                }
-                Transition::None
-            }
             Pending::CityPick(x, y) => {
                 if let DialogResult::Choice(i) = result {
                     let units = ctx.game().units_at(x, y);
@@ -1408,10 +1469,20 @@ impl Screen for MapView {
         if self.mode == Mode::Processing {
             return Transition::None;
         }
+        // 't' waits for any key or click (0x13d7:0x91e) and then draws the units again
+        if self.terrain_only {
+            if matches!(ev, Event::Key { down: true, key, .. } if *key != Key::Unknown) || matches!(ev, Event::MouseButton { down: true, .. }) {
+                self.terrain_only = false;
+            }
+            return Transition::None;
+        }
         match ev {
             Event::Key { key, mods, down: true, .. } => {
                 if let Mode::Goto { .. } = self.mode {
                     return self.handle_goto_key(ctx, *key);
+                }
+                if let Some(t) = self.command_key(ctx, *key, *mods) {
+                    return t;
                 }
                 // movement
                 let dir = match key {
@@ -1437,17 +1508,13 @@ impl Screen for MapView {
                     return Transition::None;
                 }
                 match key {
-                    Key::Enter => {
-                        if ctx.game().active_unit.is_none() || self.mode == Mode::EndOfTurn {
-                            self.start_end_turn(ctx);
-                        } else if ctx.game().options.end_turn_confirm {
-                            self.pending = Pending::EndTurnConfirm;
-                            return Transition::Push(Box::new(YesNo::new(vec!["End turn now?".into()], "Yes", "No")));
-                        } else {
-                            self.start_end_turn(ctx);
-                        }
+                    // Enter and Space end the turn only when no unit is left to move (0x6f25:
+                    // unit index 0x80); with an active unit Enter does nothing
+                    Key::Enter | Key::Space if ctx.game().active_unit.is_none() || self.mode == Mode::EndOfTurn => {
+                        self.start_end_turn(ctx);
                         Transition::None
                     }
+                    Key::Enter => Transition::None,
                     Key::Char('g') if mods.alt || mods.ctrl => self.bar_menu(ctx, 0),
                     Key::Char('o') if mods.alt || mods.ctrl => self.bar_menu(ctx, 1),
                     Key::Char('a') if mods.alt || mods.ctrl => self.bar_menu(ctx, 2),
@@ -1469,13 +1536,17 @@ impl Screen for MapView {
                             Err(e) => format!("Save failed: {e}"),
                         })))
                     }
-                    Key::Char('q') if mods.ctrl => {
+                    Key::Char('q') if mods.ctrl || mods.alt => {
                         self.pending = Pending::QuitConfirm;
                         Transition::Push(Box::new(YesNo::new(vec!["Are you sure you".into(), "want to Quit?".into()], "Keep Playing", "Yes, Quit").with_pos(100, 80)))
                     }
                     Key::Esc => {
                         self.bar_menu(ctx, 0)
                     }
+                    // other Alt/Ctrl combinations are no unit orders (Alt-R 0x1300 is not 'r')
+                    _ if mods.alt || mods.ctrl => Transition::None,
+                    // the unit switch (0x4c1d) knows the shifted letters D and P only
+                    Key::Char(c) if mods.shift && !matches!(c, 'd' | 'p' | 'f') => Transition::None,
                     k => self.key_order(ctx, *k, *mods),
                 }
             }
@@ -1738,5 +1809,77 @@ impl Screen for LayoutTutorial {
     }
     fn wants_cursor(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::{Game, GameSetup};
+    use crate::platform::Mods;
+
+    fn key(k: Key, mods: Mods) -> Event {
+        Event::Key { key: k, mods, down: true, repeat: false }
+    }
+
+    const SHIFT: Mods = Mods { shift: true, ctrl: false, alt: false };
+    const ALT: Mods = Mods { shift: false, ctrl: false, alt: true };
+    const NONE: Mods = Mods { shift: false, ctrl: false, alt: false };
+
+    /// A map view over a new game whose first human unit is active.
+    fn view() -> Option<(UiContext, MapView, UnitId)> {
+        let dir = crate::assets::AssetDir::locate(None).ok()?;
+        let mut ctx = UiContext::new(dir, std::env::temp_dir().join(format!("civrs-mapkeys-{}", std::process::id()))).ok()?;
+        let mut g = Game::new(GameSetup { seed: 3, ..Default::default() }, None);
+        let _ = g.take_events();
+        let id = g.units_of(g.human_slot)[0];
+        g.active_unit = Some(id);
+        ctx.game = Some(g);
+        let mut mv = MapView::new();
+        mv.vx = 20;
+        mv.vy = 20;
+        Some((ctx, mv, id))
+    }
+
+    #[test]
+    fn shifted_letters_are_no_unit_orders() {
+        let Some((mut ctx, mut mv, id)) = view() else { return };
+        // 'S' is Save (nothing on turn 0), not Sentry; Alt-R is not a road order
+        assert!(matches!(mv.handle(&key(Key::Char('s'), SHIFT), &mut ctx), Transition::None));
+        assert!(matches!(mv.handle(&key(Key::Char('r'), ALT), &mut ctx), Transition::None));
+        assert_eq!(ctx.game().unit(id).order, UnitOrder::None);
+        ctx.game_mut().set_turn(5);
+        assert!(matches!(mv.handle(&key(Key::Char('s'), SHIFT), &mut ctx), Transition::Push(_)));
+        assert_eq!(ctx.game().unit(id).order, UnitOrder::None);
+        // plain s still sentries
+        mv.handle(&key(Key::Char('s'), NONE), &mut ctx);
+        assert_eq!(ctx.game().unit(id).order, UnitOrder::Sentry);
+    }
+
+    #[test]
+    fn command_keys_open_their_menus() {
+        let Some((mut ctx, mut mv, _)) = view() else { return };
+        for k in [Key::Plus, Key::Minus, Key::Char('/')] {
+            assert!(matches!(mv.handle(&key(k, NONE), &mut ctx), Transition::Push(_)), "{k:?}");
+        }
+        // Enter with a unit to move does not end the turn (0x6f25)
+        mv.handle(&key(Key::Enter, NONE), &mut ctx);
+        assert!(mv.runner.is_none());
+        assert!(ctx.game().active_unit.is_some());
+    }
+
+    #[test]
+    fn shift_keypad_scrolls_four_squares_and_t_hides_units() {
+        let Some((mut ctx, mut mv, id)) = view() else { return };
+        let pos = ctx.game().unit(id).pos();
+        mv.handle(&key(Key::Kp(9), SHIFT), &mut ctx);
+        assert_eq!((mv.vx, mv.vy), (24, 16));
+        assert_eq!(ctx.game().unit(id).pos(), pos, "the unit stays");
+        mv.handle(&key(Key::Char('t'), NONE), &mut ctx);
+        assert!(mv.terrain_only);
+        // the next key only ends the view
+        mv.handle(&key(Key::Char('s'), NONE), &mut ctx);
+        assert!(!mv.terrain_only);
+        assert_eq!(ctx.game().unit(id).order, UnitOrder::None);
     }
 }

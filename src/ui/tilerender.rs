@@ -311,14 +311,8 @@ pub fn draw_unit(fb: &mut Surface, ctx: &UiContext, game: &Game, id: crate::game
 
 /// Draw everything on map tile (x,y) for the viewing slot: terrain, city, units; black if unexplored.
 pub fn draw_tile(fb: &mut Surface, ctx: &UiContext, game: &Game, slot: Slot, x: i32, y: i32, px: i32, py: i32, hide_unit: Option<crate::game::UnitId>) {
-    if !Map::in_bounds(x, y) || !game.explored(slot, x, y) {
-        fb.fill_rect(Rect::new(px, py, 16, 16), 0);
+    if !draw_tile_without_units(fb, ctx, game, slot, x, y, px, py) {
         return;
-    }
-    draw_terrain(fb, ctx, game, x, y, px, py);
-    draw_fog_edges(fb, ctx, game, slot, x, y, px, py);
-    if let Some(c) = game.city_at(x, y) {
-        draw_city(fb, ctx, game, c, px, py);
     }
     // the active unit's off phase shows the bare square, not the next unit of its stack
     let blinking = hide_unit.is_some_and(|h| game.unit_opt(h).is_some_and(|u| u.pos() == (x, y)));
@@ -333,6 +327,21 @@ pub fn draw_tile(fb: &mut Surface, ctx: &UiContext, game: &Game, slot: Slot, x: 
             }
         }
     }
+}
+
+/// The square without its units (`draw_tile` 0x1aa40; the map's 't' view draws only this,
+/// ds:0xdcfc). Returns false for an unexplored square, which is black.
+pub fn draw_tile_without_units(fb: &mut Surface, ctx: &UiContext, game: &Game, slot: Slot, x: i32, y: i32, px: i32, py: i32) -> bool {
+    if !Map::in_bounds(x, y) || !game.explored(slot, x, y) {
+        fb.fill_rect(Rect::new(px, py, 16, 16), 0);
+        return false;
+    }
+    draw_terrain(fb, ctx, game, x, y, px, py);
+    draw_fog_edges(fb, ctx, game, slot, x, y, px, py);
+    if let Some(c) = game.city_at(x, y) {
+        draw_city(fb, ctx, game, c, px, py);
+    }
+    true
 }
 
 /// Fringe the sides of explored tile (x,y) that border unexplored tiles (off-map counts as
