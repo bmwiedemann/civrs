@@ -494,9 +494,11 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
             u.veteran = r[0] & 0x20 != 0;
             u.goto = (r[6] != 0xff).then_some((r[6] as i32, r[7] as i32));
             u.order = unit_order(r[0], u.goto.is_some());
-            // +5: the fuel left of an aircraft (0x75ab), else the Settlers' work counter
+            // +5: the turns of fuel left of an aircraft, else the Settlers' work counter; the turn
+            // end refuels to the range and counts the turn at once (0x7597, 0x75ab), so a full
+            // tank is saved as range - 1 and civrs's turns flown are range - 1 - fuel
             if u.is_air() {
-                u.fuel = u.info().range.saturating_sub(r[5]);
+                u.fuel = u.info().range.saturating_sub(1).saturating_sub(r[5]);
             } else {
                 u.order_turns = r[5];
             }
@@ -810,6 +812,24 @@ mod tests {
             }
         }
         assert!(seen[0] + seen[1] == 0 || seen.iter().all(|n| *n > 0), "both kinds among the samples: {seen:?}");
+    }
+
+    #[test]
+    fn a_full_aircraft_is_saved_with_range_minus_one_turns_of_fuel() {
+        // the turn end sets +5 to the range and counts the turn at once (0x7597, 0x75ab): a
+        // Bomber saved with 1 has flown no turn, one saved with 0 has flown one
+        let Ok(dir) = crate::assets::AssetDir::locate(None) else { return };
+        let Some(path) = slot_file(dir.root(), 0) else { return };
+        let (mut data, map) = (std::fs::read(&path).unwrap(), std::fs::read(map_file(&path)).unwrap());
+        let (c, i) = (0..8).flat_map(|c| (0..128).map(move |i| (c, i))).find(|(c, i)| data[off::UNITS + 0x600 * c + 12 * i + 3] != 0xff).unwrap();
+        let at = off::UNITS + 0x600 * c + 12 * i;
+        data[at + 3] = rules::unit_ids::BOMBER;
+        for (saved, flown) in [(1u8, 0u8), (0, 1)] {
+            data[at + 5] = saved;
+            let g = import_bytes(&data, &map).unwrap();
+            let u = g.all_units().find(|u| u.owner as usize == c && u.record as usize == i).unwrap();
+            assert_eq!((u.kind, u.fuel), (rules::unit_ids::BOMBER, flown));
+        }
     }
 
     #[test]
