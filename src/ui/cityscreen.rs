@@ -101,7 +101,9 @@ const ITEM_FRAME: (i32, i32) = (264, 100);
 const B_RENAME: Rect = Rect::new(231, 190, 42, 9);
 const B_EXIT: Rect = Rect::new(284, 190, 33, 9);
 const MAP_ORIGIN: (i32, i32) = (128, 24);
-const CITIZEN_X: i32 = 10;
+/// The citizens row: draw_citizens(city, 8, 8, specialists, 192) (CIV.EXE 0x10ed0).
+const CITIZEN_X: i32 = 8;
+const CITIZEN_W: i32 = 192;
 const CITIZEN_Y: i32 = 8;
 const MINIMAP: Rect = Rect::new(101, 116, 120, 76);
 const B_MORE: Rect = Rect::new(287, 88, 29, 9);
@@ -346,12 +348,9 @@ impl CityScreen {
         g.player(g.city(self.city).owner).sold_cities.contains(&self.city)
     }
 
+    /// The step of the citizens row, which the click test reuses (0x121e0).
     fn citizen_pitch(n: usize) -> i32 {
-        if n == 0 {
-            7
-        } else {
-            (186 / n as i32).clamp(2, 7)
-        }
+        citizen_step(n as i32, CITIZEN_W)
     }
 
     // ---- actions ---------------------------------------------------------------------------
@@ -637,29 +636,8 @@ impl CityScreen {
         // the citizens row is refilled before the figures (0x10ea6)
         fill_stipple(fb, ctx, Rect::new(8, 8, 200, 13));
         let h = g.city_happiness(self.city);
-        let n = c.size as usize;
-        let pitch = Self::citizen_pitch(n);
-        let mut x = CITIZEN_X;
-        let mut pos = 0usize;
-        for (count, kind) in [(h.happy, 0), (h.content, 1), (h.unhappy, 2)] {
-            for i in 0..count.max(0) {
-                let idx = citizen_index(kind == 0, kind == 1, kind == 2, pos);
-                citizen(fb, ctx, idx, x, CITIZEN_Y);
-                // extra unhappiness beyond the size (ds:0x6542, CIV.EXE 0xc91:0x6eca)
-                if kind == 2 && i < h.extra {
-                    recolour(fb, Rect::new(x, CITIZEN_Y, 12, 14), 5, 12);
-                }
-                x += pitch;
-                pos += 1;
-            }
-        }
-        if !c.specialists.is_empty() {
-            x += 4;
-            for s in &c.specialists {
-                citizen(fb, ctx, specialist_index(*s), x, CITIZEN_Y);
-                x += pitch;
-            }
-        }
+        let row = CitizenRow { size: c.size as i32, happy: h.happy, content: h.content, unhappy: h.unhappy, extra: h.extra, specialists: &c.specialists };
+        row.draw(fb, ctx, CITIZEN_X, CITIZEN_Y, CITIZEN_W);
     }
 
     fn draw_resources(&self, fb: &mut Surface, ctx: &UiContext) {
@@ -904,37 +882,11 @@ impl CityScreen {
         let g = ctx.game();
         let c = g.city(self.city);
         let h = g.city_happiness(self.city);
-        // draw_citizens(city, 100, y, specialists, 92) (0xc91:0x6eca): 7 px apart, or
-        // 92 / size when that does not fit
-        let n = c.size as i32;
-        let pitch = if 7 * n > 92 { 92 / n.max(1) } else { 7 };
+        // draw_citizens(city, 100, y, specialists, 92) (0xf51b)
         for (r, step) in h.steps.iter().enumerate().take(5) {
             let y = 116 + 16 * r as i32;
-            let mut x = 102;
-            let mut pos = 0usize;
-            for (count, kind) in [(step.happy, 0), (step.content, 1), (step.unhappy, 2)] {
-                for i in 0..count.max(0) {
-                    citizen(fb, ctx, citizen_index(kind == 0, kind == 1, kind == 2, pos), x, y);
-                    // the first ds:0x6542 unhappy figures: recolour(x, y, 12, 14, 5 -> 12)
-                    if kind == 2 && i < step.extra {
-                        recolour(fb, Rect::new(x, y, 12, 14), 5, 12);
-                    }
-                    x += pitch;
-                    pos += 1;
-                }
-                // 2 px after the content group when it is not empty; the gap after the happy
-                // group tests a local the original never sets [approx: taken as "any happy"]
-                if count > 0 && kind < 2 {
-                    x += 2;
-                }
-            }
-            if !c.specialists.is_empty() {
-                x += 4;
-                for s in &c.specialists {
-                    citizen(fb, ctx, specialist_index(*s), x, y);
-                    x += pitch;
-                }
-            }
+            let row = CitizenRow { size: c.size as i32, happy: step.happy, content: step.content, unhappy: step.unhappy, extra: step.extra, specialists: &c.specialists };
+            row.draw(fb, ctx, 100, y, 92);
             match &step.row {
                 HappyRow::Base => {}
                 HappyRow::Luxuries => icon(fb, ctx, ICON_LUX, 208, y + 4, None),
@@ -1038,34 +990,90 @@ impl CityScreen {
     }
 }
 
+/// The step of `draw_citizens` (0xc91:0x6eca, 0x137ef): 7 px, or width / size when seven
+/// per citizen would be wider than `width` (C division).
+pub fn citizen_step(size: i32, width: i32) -> i32 {
+    if 7 * size > width {
+        width / size
+    } else {
+        7
+    }
+}
+
+/// What `draw_citizens` draws: `size` sets the step, then the groups and the specialists.
+struct CitizenRow<'a> {
+    size: i32,
+    happy: i32,
+    content: i32,
+    unhappy: i32,
+    /// The first unhappy figures shown in red (ds:0x6542).
+    extra: i32,
+    specialists: &'a [Specialist],
+}
+
+/// The x of each figure in a citizens row from `x` with step `step`: the happy citizens, 2 px,
+/// the content ones, 2 px more when there were any, the unhappy ones, 4 px, the specialists
+/// (0x13816..0x13942). The first 2-px gap tests a local the original never sets (0x13845
+/// `[bp-2]`); the city screen captures show it taken (content figures from x + 2 with no
+/// happy ones), so it is always taken here.
+fn citizen_xs(x: i32, step: i32, happy: i32, content: i32, unhappy: i32, specialists: i32) -> Vec<i32> {
+    let mut out = Vec::new();
+    let mut x = x;
+    for _ in 0..happy.max(0) {
+        out.push(x);
+        x += step;
+    }
+    x += 2;
+    for _ in 0..content.max(0) {
+        out.push(x);
+        x += step;
+    }
+    if content > 0 {
+        x += 2;
+    }
+    for _ in 0..unhappy.max(0) {
+        out.push(x);
+        x += step;
+    }
+    x += 4;
+    for _ in 0..specialists.max(0) {
+        out.push(x);
+        x += step;
+    }
+    out
+}
+
+impl CitizenRow<'_> {
+    /// Figures alternate male / female within each group (index & 1, 0x13819), the extra
+    /// unhappy ones get recolour(x, y, 12, 14, 5 -> 12) (0x138eb), specialists show their
+    /// kind's figure (ds:0x6ea0[type]).
+    fn draw(&self, fb: &mut Surface, ctx: &UiContext, x: i32, y: i32, width: i32) {
+        let step = citizen_step(self.size.max(1), width);
+        let xs = citizen_xs(x, step, self.happy, self.content, self.unhappy, self.specialists.len() as i32);
+        let mut xs = xs.into_iter();
+        for (count, kind) in [(self.happy, 0), (self.content, 1), (self.unhappy, 2)] {
+            for i in 0..count.max(0) {
+                let Some(x) = xs.next() else { return };
+                citizen(fb, ctx, citizen_index(kind == 0, kind == 1, kind == 2, i as usize), x, y);
+                if kind == 2 && i < self.extra {
+                    recolour(fb, Rect::new(x, y, 12, 14), 5, 12);
+                }
+            }
+        }
+        for (s, x) in self.specialists.iter().zip(xs) {
+            citizen(fb, ctx, specialist_index(*s), x, y);
+        }
+    }
+}
+
 /// `draw_citizens(city, x, y, .., width)` (0xc91:0x6eca): the city's happy, content and
-/// unhappy citizens 7 px apart (width / size when that does not fit), the extra unhappy ones
-/// recoloured, then its specialists after a 4-px gap.
+/// unhappy citizens and its specialists as [`citizen_xs`] places them.
 pub fn draw_citizens(fb: &mut Surface, ctx: &UiContext, city: crate::game::CityId, x: i32, y: i32, width: i32) {
     let g = ctx.game();
     let c = g.city(city);
     let h = g.city_happiness(city);
-    let n = c.size as i32;
-    let pitch = if n > 0 && 7 * n > width { (width / n).max(1) } else { 7 };
-    let mut x = x;
-    let mut pos = 0usize;
-    for (count, kind) in [(h.happy, 0), (h.content, 1), (h.unhappy, 2)] {
-        for i in 0..count.max(0) {
-            citizen(fb, ctx, citizen_index(kind == 0, kind == 1, kind == 2, pos), x, y);
-            if kind == 2 && i < h.extra {
-                recolour(fb, Rect::new(x, y, 12, 14), 5, 12);
-            }
-            x += pitch;
-            pos += 1;
-        }
-    }
-    if !c.specialists.is_empty() {
-        x += 4;
-        for sp in &c.specialists {
-            citizen(fb, ctx, specialist_index(*sp), x, y);
-            x += pitch;
-        }
-    }
+    let row = CitizenRow { size: c.size as i32, happy: h.happy, content: h.content, unhappy: h.unhappy, extra: h.extra, specialists: &c.specialists };
+    row.draw(fb, ctx, x, y, width);
 }
 
 impl Screen for CityScreen {
@@ -1161,6 +1169,21 @@ mod tests {
     use super::*;
     use crate::game::{Game, GameSetup};
     use crate::platform::Mods;
+
+    #[test]
+    fn citizens_row_follows_draw_citizens() {
+        // 7 px until 7 * size passes the width, then width / size
+        assert_eq!(citizen_step(27, 192), 7);
+        assert_eq!(citizen_step(28, 192), 6);
+        assert_eq!(citizen_step(14, 92), 6);
+        assert_eq!(citizen_step(13, 92), 7);
+        // content only: 2 px in (the unset local's gap), as the captures show
+        assert_eq!(citizen_xs(8, 7, 0, 1, 0, 0), vec![10]);
+        // 2 happy, 2 content, 1 unhappy, 1 specialist
+        assert_eq!(citizen_xs(8, 7, 2, 2, 1, 1), vec![8, 15, 24, 31, 40, 51]);
+        // no content: no second gap
+        assert_eq!(citizen_xs(100, 7, 1, 0, 1, 0), vec![100, 109]);
+    }
 
     fn key(k: Key) -> Event {
         Event::Key { key: k, mods: Mods::default(), down: true, repeat: false }
