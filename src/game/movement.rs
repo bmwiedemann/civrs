@@ -636,6 +636,37 @@ mod tests {
     }
 
     #[test]
+    fn new_units_take_the_lowest_free_record_and_wait_in_record_order() {
+        // create_unit 0x8b51 fills the first free record of the owner's table; move_units
+        // offers the units by record, so a new unit in a freed record comes first
+        let mut g = Game::new(GameSetup { seed: 5, ..Default::default() }, None);
+        let slot = g.human_slot;
+        let first = g.units_of(slot)[0];
+        let (x, y) = g.unit(first).pos();
+        let a = g.add_unit(slot, unit_ids::MILITIA, x, y);
+        let b = g.add_unit(slot, unit_ids::MILITIA, x, y);
+        let records: Vec<u8> = g.units_of(slot).iter().map(|u| g.unit(*u).record).collect();
+        assert_eq!(records, (0..records.len() as u8).collect::<Vec<_>>());
+        let ra = g.unit(a).record;
+        g.remove_unit(a);
+        // another civ's unit takes no record of the human's
+        let other = (1..8).find(|s| *s != slot && g.player(*s).alive).unwrap();
+        g.add_unit(other, unit_ids::MILITIA, x, y);
+        let c = g.add_unit(slot, unit_ids::SETTLERS, x, y);
+        assert_eq!(g.unit(c).record, ra);
+        assert!(c > b, "a later id");
+        let order = g.units_of(slot);
+        assert!(order.iter().position(|u| *u == c) < order.iter().position(|u| *u == b));
+        for u in g.units_of(slot) {
+            g.unit_mut(u).moves_left = 0;
+        }
+        g.unit_mut(b).moves_left = 3;
+        g.unit_mut(c).moves_left = 3;
+        g.active_unit = None;
+        assert_eq!(g.next_active_unit(), Some(c));
+    }
+
+    #[test]
     fn one_full_move_point_always_enters_mountains() {
         for seed in 0..20 {
             let (mut g, id) = militia_before_mountains(seed, 3);

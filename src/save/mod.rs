@@ -55,7 +55,9 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// 23: then by the number of city slots (u32 LE) and each slot's `City::name_index` byte (0xff
 /// for an empty slot); older saves take the table entry of the city's name, none for a renamed
 /// city.
-pub const VERSION: u16 = 23;
+/// 24: then by the number of unit slots (u32 LE) and each slot's `Unit::record` byte (0 for an
+/// empty slot); older saves number each civ's units in slot order.
+pub const VERSION: u16 = 24;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -162,6 +164,8 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     data.extend(g.cities.iter().map(|c| c.as_ref().map(|c| c.hydro_site as u8).unwrap_or(0)));
     data.extend_from_slice(&(g.cities.len() as u32).to_le_bytes());
     data.extend(g.cities.iter().map(|c| c.as_ref().map_or(crate::game::city::NO_NAME_INDEX, |c| c.name_index)));
+    data.extend_from_slice(&(g.units.len() as u32).to_le_bytes());
+    data.extend(g.units.iter().map(|u| u.as_ref().map(|u| u.record).unwrap_or(0)));
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -271,6 +275,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     let mut coastal: Option<Vec<u8>> = None;
     let mut hydro: Option<Vec<u8>> = None;
     let mut name_index: Option<Vec<u8>> = None;
+    let mut records: Option<Vec<u8>> = None;
     // version 14: the tribe names, after the counters
     if ver >= 14 {
         let mut at = counters + 112 * g.players.len();
@@ -331,6 +336,11 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
                         if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 23) {
                             let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
                             name_index = rest.get(at + 4..at + 4 + n).map(|b| b.to_vec());
+                            at += 4 + n;
+                            if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 24) {
+                                let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
+                                records = rest.get(at + 4..at + 4 + n).map(|b| b.to_vec());
+                            }
                         }
                     }
                 }
@@ -358,6 +368,16 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
                 u.seen_by = 1 << u.owner | here;
             }
         }
+    }
+    match records {
+        Some(b) => {
+            for (u, r) in g.units.iter_mut().zip(b) {
+                if let Some(u) = u {
+                    u.record = r;
+                }
+            }
+        }
+        None => g.number_unit_records(),
     }
     // older saves keep a ship's cargo aboard in port; there it belongs to the city's stack
     let ports: Vec<bool> = g.units.iter().map(|u| u.as_ref().is_some_and(|u| u.carried_by.is_some() && g.map.is_land(u.x, u.y))).collect();

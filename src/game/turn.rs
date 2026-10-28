@@ -1852,6 +1852,10 @@ impl Game {
         // only deleted (o 0x1e393)
         let mut room = super::MAX_UNITS.saturating_sub(self.all_units().filter(|u| u.owner == to).count());
         let mut full = false;
+        let mut used = [false; 256];
+        for u in self.all_units().filter(|u| u.owner == to) {
+            used[u.record as usize] = true;
+        }
         for u in self.units.iter_mut().flatten().filter(|u| u.owner == from) {
             if Map::dist((u.x, u.y), pos) <= 1 && !self.map.is_ocean(u.x, u.y) {
                 if room == 0 {
@@ -1867,7 +1871,9 @@ impl Game {
                 // orders or goto), seen by the old owner and homed to the city (o 0x1e3af,
                 // 0x1e3b6); its moves are left alone
                 let fresh = super::Unit::new(u.id, to, u.kind, u.x, u.y, self.turn);
-                *u = super::Unit { moves_left: u.moves_left, home: Some(c), seen_by: 1 << to | 1 << from, ..fresh };
+                let record = used.iter().position(|b| !b).unwrap_or(255);
+                used[record] = true;
+                *u = super::Unit { moves_left: u.moves_left, home: Some(c), seen_by: 1 << to | 1 << from, record: record as u8, ..fresh };
                 gone_heading.push(u.id);
             } else if u.home == Some(c) {
                 gone.push(u.id);

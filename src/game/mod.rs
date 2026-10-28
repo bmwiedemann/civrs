@@ -599,8 +599,31 @@ impl Game {
         self.cities.iter().filter_map(|c| c.as_ref())
     }
 
+    /// The units of `slot` in the order of their records (`Unit::record`), as CIV.EXE's
+    /// per-civ loops visit them.
     pub fn units_of(&self, slot: Slot) -> Vec<UnitId> {
-        self.all_units().filter(|u| u.owner == slot).map(|u| u.id).collect()
+        let mut v: Vec<(u8, UnitId)> = self.all_units().filter(|u| u.owner == slot).map(|u| (u.record, u.id)).collect();
+        v.sort_unstable();
+        v.into_iter().map(|(_, id)| id).collect()
+    }
+
+    /// The lowest record of `slot`'s unit table no unit holds (create_unit 0x8b5f..0x8b80).
+    pub fn free_record(&self, slot: Slot) -> u8 {
+        let mut used = [false; 256];
+        for u in self.all_units().filter(|u| u.owner == slot) {
+            used[u.record as usize] = true;
+        }
+        used.iter().position(|b| !b).unwrap_or(255) as u8
+    }
+
+    /// Give every unit a record of its owner's table in id order (saves before version 24).
+    pub fn number_unit_records(&mut self) {
+        let mut next = [0u8; 8];
+        for u in self.units.iter_mut().flatten() {
+            let n = &mut next[u.owner as usize & 7];
+            u.record = *n;
+            *n = n.saturating_add(1);
+        }
     }
 
     pub fn cities_of(&self, slot: Slot) -> Vec<CityId> {
@@ -721,6 +744,7 @@ impl Game {
     pub fn add_unit(&mut self, owner: Slot, kind: UnitTypeId, x: i32, y: i32) -> UnitId {
         let id = self.units.iter().position(|u| u.is_none()).unwrap_or(self.units.len()) as UnitId;
         let mut u = Unit::new(id, owner, kind, x, y, self.turn);
+        u.record = self.free_record(owner);
         // create_unit (CIV.EXE 0x8b51) homes the unit to the nearest city when that city is
         // the owner's (0x8c0c), else to none
         u.home = self.nearest_city_exe(x, y).0.filter(|c| self.city(*c).owner == owner);
@@ -978,20 +1002,19 @@ impl Game {
         self.cities[id as usize] = None;
     }
 
-    /// Cycle to the next unit of the human player that wants orders.
+    /// Cycle to the next unit of the human player that wants orders: the records after the
+    /// active unit's, then from the first (move_units 0x4144, record order).
     pub fn next_active_unit(&mut self) -> Option<UnitId> {
         let slot = self.human_slot;
-        let n = self.units.len();
-        if n == 0 {
+        let ids = self.units_of(slot);
+        if ids.is_empty() {
             return None;
         }
-        let start = self.active_unit.map(|a| a as usize + 1).unwrap_or(0);
-        for k in 0..n {
-            let i = (start + k) % n;
-            if let Some(u) = &self.units[i] {
-                if u.owner == slot && u.moves_left > 0 && u.order == UnitOrder::None && u.carried_by.map(|c| self.unit_opt(c).is_none()).unwrap_or(true) {
-                    return Some(u.id);
-                }
+        let start = self.active_unit.and_then(|a| ids.iter().position(|id| *id == a)).map(|i| i + 1).unwrap_or(0);
+        for k in 0..ids.len() {
+            let u = self.unit(ids[(start + k) % ids.len()]);
+            if u.moves_left > 0 && u.order == UnitOrder::None && u.carried_by.map(|c| self.unit_opt(c).is_none()).unwrap_or(true) {
+                return Some(u.id);
             }
         }
         None

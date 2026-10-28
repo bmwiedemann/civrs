@@ -74,6 +74,12 @@ pub struct Unit {
     /// to the civilizations whose bit it has. Saved in the version-12 trailer.
     #[serde(skip)]
     pub seen_by: u8,
+    /// The unit's record in its owner's table (CIV.EXE ds:0x81d4 + 0x600 civ + 12 record):
+    /// create_unit (0x8b51) takes the lowest free one, and every per-civ unit loop, the
+    /// human's choice of the next unit among them (move_units 0x4149), runs in this order.
+    /// Saved in the version-23 trailer.
+    #[serde(skip)]
+    pub record: u8,
 }
 
 impl Unit {
@@ -96,6 +102,7 @@ impl Unit {
             leader: false,
             created_turn: turn,
             seen_by: 1 << owner,
+            record: 0,
         }
     }
 

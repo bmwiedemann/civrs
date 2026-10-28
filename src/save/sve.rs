@@ -469,6 +469,7 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
             }
             let id = units.len() as u16;
             let mut u = Unit::new(id, c as u8, kind, r[1] as i32, r[2] as i32, turn);
+            u.record = i as u8;
             u.moves_left = r[4];
             u.veteran = r[0] & 0x20 != 0;
             u.goto = (r[6] != 0xff).then_some((r[6] as i32, r[7] as i32));
