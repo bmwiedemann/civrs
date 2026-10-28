@@ -266,8 +266,24 @@ impl Game {
         self.boosted_shields(c, shields)
     }
 
-    /// Full resource accounting for a city.
+    /// Full resource accounting for a city, as the city screen shows it: a city in civil
+    /// disorder makes no shields, taxes or science. (The city turn works from
+    /// [`Game::city_yield_raw`].)
     pub fn city_yield(&self, c: CityId) -> CityYield {
+        let mut y = self.city_yield_raw(c);
+        if self.city(c).disorder {
+            y.shields = 0;
+            y.tax = 0;
+            y.sci = 0;
+        }
+        y
+    }
+
+    /// The city's resources whatever its disorder flag, as CIV.EXE's city routine computes
+    /// them (ds:0x70da..0x70e6): disorder only keeps the shields out of the store (0xde1e) and
+    /// the taxes out of the treasury (0x125f6); the shields still count for the unit support
+    /// (0xfd20) and the pollution (0x12de9), and the science is still collected (0x12bde).
+    pub fn city_yield_raw(&self, c: CityId) -> CityYield {
         let city = self.city(c);
         let slot = city.owner;
         let p = self.player(slot);
@@ -318,12 +334,6 @@ impl Game {
         }
         self.trade_boosts(c, &mut y);
         y.gold_upkeep = self.city_upkeep(c);
-        // civil disorder: no production, taxes or science (food and luxuries continue)
-        if city.disorder {
-            y.shields = 0;
-            y.tax = 0;
-            y.sci = 0;
-        }
         y
     }
 

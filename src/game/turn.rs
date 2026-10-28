@@ -441,15 +441,91 @@ impl Game {
 
     // ---- cities -----------------------------------------------------------------------------
 
-    /// Process one city for one turn (happiness, growth, production, upkeep, hazards).
+    /// Process one city for one turn, in the order of CIV.EXE's city routine (process_city
+    /// 0xc94b, mode 0): the food store of the turns before first (famine 0xd007, growth
+    /// 0xd187), then the workers (0xd454), food and shields into the stores (0xddd9), the
+    /// production (0xde46..0xeb15) and a computer city's purchases (0xec0d); with this turn's
+    /// buildings and units the trade split and the happiness (0xf084, 0xf3f8), the units the
+    /// shields cannot support (0xfd20), disorder and celebration (0x125eb), taxes and science
+    /// (0x12955, 0x12bde), and for the human pollution, meltdown and upkeep (0x12de9..0x131d2).
+    /// The disorder and celebration flags the city has during its turn are those of its last
+    /// turn: they keep this turn's shields out of the store and decide the tile yields.
     pub fn process_city(&mut self, c: CityId) {
         let slot = self.city(c).owner;
-        self.assign_workers(c, true);
-        // happiness state for this turn (computed with the city as it is now)
-        let h = self.city_happiness(c);
+        // a store out of 0..=999 (a shortage leaves it negative) starts again from 0 (0xc977)
         {
-            let was_disorder = self.city(c).disorder;
-            let was_celebrating = self.city(c).celebrating;
+            let cm = self.city_mut(c);
+            if !(0..=999).contains(&cm.shields) {
+                cm.shields = 0;
+            }
+        }
+        if !self.process_food(c) {
+            return;
+        }
+        self.assign_workers(c, true);
+        let y = self.city_yield_raw(c);
+        let was_disorder = self.city(c).disorder;
+        {
+            // the store takes shields less support, even when that is negative; nothing while
+            // the city was in disorder (0xde1e)
+            let cm = self.city_mut(c);
+            cm.food += y.food_surplus();
+            if !was_disorder {
+                cm.shields += y.shield_surplus();
+            }
+        }
+        // production
+        let prod = self.city(c).production;
+        if self.city(c).shields >= self.production_cost(c, prod) {
+            self.complete_production(c, prod);
+        }
+        if self.city_opt(c).is_none() {
+            return;
+        }
+        // a computer city's purchases and alert (CIV.EXE 0xec0d..0xef79), before its taxes
+        if !self.player(slot).human {
+            let net = if was_disorder { 0 } else { y.shield_surplus() };
+            crate::ai::city_ai::city_turn_purchase(self, c, net);
+        }
+        // trade split and happiness with the buildings and units of this turn, counted before
+        // the units the city cannot support go (0xfbe6 follows 0xf3f8)
+        let h = self.city_happiness(c);
+        self.disband_unsupported(c, y.shields);
+        self.city_moods(c, &h, y.food - (y.food_upkeep - 2 * self.city(c).size as i32));
+        // gold & science (0x12955: no taxes in disorder or under Anarchy, none for the
+        // barbarians, 0x125e1; 0x12bde: science whatever the disorder, none under Anarchy)
+        let t = self.city_yield_raw(c);
+        if slot != 0 && !h.disorder && self.player(slot).govt != Govt::Anarchy {
+            self.player_mut(slot).gold += t.tax;
+        }
+        self.city_science(c, t.sci);
+        // hazards and upkeep, the human's cities only (0x12ddd)
+        self.pollution_roll(c);
+        self.meltdown_roll(c);
+        self.pay_upkeep(c);
+        if let Some(cm) = self.cities[c as usize].as_mut() {
+            cm.bought = false;
+        }
+        self.restash_garrison(c);
+    }
+
+    /// Disorder and celebration after the city's turn (CIV.EXE 0x125eb..0x12bd1; not for the
+    /// barbarians, 0x125e1). Fewer happy than unhappy citizens: disorder (a computer city that
+    /// falls into it, or comes out of it, asks its advisor for production again, 0x1275a /
+    /// 0x128f8). A celebration (no unhappy citizen, size 3 or more, half happy, not Anarchy)
+    /// that goes on from the turn before makes a city of the Republic or Democracy grow by one
+    /// while it has a food surplus, above size 9 only with an Aqueduct (0x12ab2..0x12b12).
+    /// `food_after_settlers` is the food of the worked squares less what the city's Settlers
+    /// eat (ds:0x70da − food * ds:0xe3c6), which must beat twice the size.
+    fn city_moods(&mut self, c: CityId, h: &super::happiness::Happiness, food_after_settlers: i32) {
+        let slot = self.city(c).owner;
+        if slot == 0 {
+            return;
+        }
+        let human = self.player(slot).human;
+        let was_disorder = self.city(c).disorder;
+        let was_celebrating = self.city(c).celebrating;
+        {
             let cm = self.city_mut(c);
             cm.disorder = h.disorder;
             cm.celebrating = h.celebration;
@@ -458,102 +534,123 @@ impl Game {
             } else {
                 cm.disorder_turns = 0;
             }
-            if h.disorder && !was_disorder {
-                self.push_event(GameEvent::Disorder(c));
-            } else if !h.disorder && was_disorder {
-                self.push_event(GameEvent::DisorderEnded(c));
-            }
-            if h.celebration && !was_celebrating {
-                self.push_event(GameEvent::Celebration(c));
-            } else if !h.celebration && was_celebrating {
-                self.push_event(GameEvent::CelebrationEnded(c));
+        }
+        if h.disorder != was_disorder {
+            self.push_event(if h.disorder { GameEvent::Disorder(c) } else { GameEvent::DisorderEnded(c) });
+            if !human {
+                let next = self.ai_production(c);
+                self.city_mut(c).production = next;
             }
         }
-        let mut y = self.city_yield(c);
-        // shield shortage: disband supported units (farthest first) until upkeep is covered
-        while y.shield_surplus() < 0 {
-            let Some(victim) = self.farthest_supported_unit(c) else { break };
+        if h.celebration && !was_celebrating {
+            self.push_event(GameEvent::Celebration(c));
+        } else if !h.celebration && was_celebrating {
+            self.push_event(GameEvent::CelebrationEnded(c));
+        }
+        if h.celebration && was_celebrating && self.player(slot).govt as u8 >= Govt::Republic as u8 {
+            let city = self.city(c);
+            let size = city.size as i32;
+            if 2 * size < food_after_settlers && (size < 10 || city.has_improvement(imp::AQUEDUCT)) {
+                self.city_mut(c).size += 1;
+                self.fix_workers(c);
+                self.push_event(GameEvent::CityGrew(c));
+            }
+        }
+    }
+
+    /// Units the city's shields cannot support go, the farthest from the city first (CIV.EXE
+    /// 0xfbe6..0xff75): while the support of the units homed here, counted again with those
+    /// built this turn, exceeds `shields` (ds:0x70dc, the shields of the worked squares after
+    /// Factory and power, disorder or not, from before the production), the unit with the
+    /// longest travel distance (0x1d43:0x27f) from it is disbanded, the first in unit order on
+    /// a tie ("CITY can't support UNIT. Unit Disbanded." for the human).
+    fn disband_unsupported(&mut self, c: CityId, shields: i32) {
+        loop {
+            let upkeep = self.shield_costs(c).iter().filter(|(_, cost)| *cost).count() as i32 + self.garrison_upkeep(c);
+            if upkeep <= shields {
+                return;
+            }
+            let Some(victim) = self.farthest_supported_unit(c) else { return };
             let kind = self.unit(victim).kind;
             self.remove_unit(victim);
             self.push_event(GameEvent::UnitDisbanded { unit_kind: kind, city: c, reason: "shortage of shields".into() });
-            y = self.city_yield(c);
         }
-        // food
-        self.process_food(c, y.food_surplus());
-        if self.city_opt(c).is_none() {
-            return;
-        }
-        // production
-        if !self.city(c).disorder {
-            self.city_mut(c).shields += y.shield_surplus().max(0);
-            let prod = self.city(c).production;
-            if self.city(c).shields >= self.production_cost(c, prod) {
-                self.complete_production(c, prod);
-            }
-        }
-        if self.city_opt(c).is_none() {
-            return;
-        }
-        // a computer city's purchases and alert (CIV.EXE 0xec0d..0xef79), before its taxes
-        if !self.player(slot).human {
-            let net = if self.city(c).disorder { 0 } else { y.shield_surplus() };
-            crate::ai::city_ai::city_turn_purchase(self, c, net);
-        }
-        // gold & science
-        self.player_mut(slot).gold += y.tax;
-        self.city_science(c, y.sci);
-        self.pay_upkeep(c);
-        // hazards
-        self.pollution_roll(c);
-        self.meltdown_roll(c);
-        if let Some(cm) = self.cities[c as usize].as_mut() {
-            cm.bought = false;
-        }
-        self.restash_garrison(c);
     }
 
-    /// Supported unit farthest from its home city (disbanded first on shortages); Diplomats
-    /// and Caravans cost no shields and are never chosen (CIV.EXE 0xfdd9).
+    /// Supported unit farthest from its home city (disbanded first on shortages): the longest
+    /// travel distance, the first in unit order on a tie; Diplomats and Caravans cost no
+    /// shields and are never chosen (CIV.EXE 0xfdd9..0xfe42).
     fn farthest_supported_unit(&self, c: CityId) -> Option<UnitId> {
         let city = self.city(c);
-        self.supported_units(c).into_iter().filter(|id| !matches!(self.unit(*id).kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN)).max_by_key(|id| {
-            let u = self.unit(*id);
-            (Map::dist((u.x, u.y), (city.x, city.y)), *id)
-        })
+        let mut best: Option<(UnitId, i32)> = None;
+        for id in self.supported_units(c) {
+            let u = self.unit(id);
+            if matches!(u.kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN) {
+                continue;
+            }
+            let d = Map::civ_distance((u.x, u.y), (city.x, city.y));
+            if best.map(|b| d > b.1).unwrap_or(true) {
+                best = Some((id, d));
+            }
+        }
+        best.map(|b| b.0)
     }
 
-    /// Apply the food surplus: growth, starvation (Settlers first), Aqueduct and Granary rules.
-    fn process_food(&mut self, c: CityId, surplus: i32) {
-        self.city_mut(c).food += surplus;
+    /// The city's food store as the turns before left it (CIV.EXE 0xd007..0xd26b), at the start
+    /// of its turn. Below zero, famine: "Food storage exhausted in CITY!" and a Settlers unit
+    /// homed here is disbanded ("Settlers lost."), or else the city shrinks ("Famine feared."),
+    /// a city of size 1 starving to death (destroy_city 0xa76a); the store is emptied. Full
+    /// ((size + 1) * cost factor): the city grows and a Granary refills the store with 5 * the
+    /// new size + 5 (0xd1c7); a city that so passes size 10 without an Aqueduct shrinks back
+    /// at once, the store as refilled ("CITY requires an AQUEDUCT for further growth.").
+    /// Returns false when the city is gone.
+    fn process_food(&mut self, c: CityId) -> bool {
+        let owner = self.city(c).owner;
         if self.city(c).food < 0 {
-            self.city_mut(c).food = 0;
-            // starving: supported Settlers are disbanded before the city shrinks
+            // the first Settlers in unit order (0xd037)
             let settler = self.supported_units(c).into_iter().find(|id| self.unit(*id).kind == unit_ids::SETTLERS);
+            let name = self.city(c).name.clone();
+            self.push_event(GameEvent::FoodExhausted { city: c, name, owner, settlers_lost: settler.is_some() });
             if let Some(id) = settler {
                 self.remove_unit(id);
-                self.push_event(GameEvent::UnitDisbanded { unit_kind: unit_ids::SETTLERS, city: c, reason: "famine".into() });
-            } else if self.city(c).size > 1 {
+            } else {
                 self.city_mut(c).size -= 1;
-                self.fix_workers(c);
-                self.push_event(GameEvent::Famine(c));
+                if self.city(c).size == 0 {
+                    self.city_wiped_out(c);
+                    return false;
+                }
+                self.push_event(GameEvent::CityShrank(c));
             }
-            return;
+            self.city_mut(c).food = 0;
         }
-        let full = self.food_box(c);
-        if self.city(c).food >= full {
-            let aqueduct = self.city(c).has_improvement(imp::AQUEDUCT);
-            if self.city(c).size >= 10 && !aqueduct {
-                self.city_mut(c).food = full;
-                return;
-            }
+        if self.city(c).food >= self.food_box(c) {
             let granary = self.city(c).has_improvement(imp::GRANARY);
+            let aqueduct = self.city(c).has_improvement(imp::AQUEDUCT);
             let cm = self.city_mut(c);
             cm.size += 1;
-            // a Granary refills 5 * new size + 5, whatever the cost factor (CIV.EXE 0xd1c7)
             cm.food = if granary { 5 * cm.size as i32 + 5 } else { 0 };
-            self.fix_workers(c);
-            self.push_event(GameEvent::CityGrew(c));
+            if cm.size > 10 && !aqueduct {
+                cm.size -= 1;
+                self.push_event(GameEvent::AqueductNeeded(c));
+            } else {
+                self.push_event(GameEvent::CityGrew(c));
+            }
         }
+        true
+    }
+
+    /// A city emptied by famine or by its last citizen leaving as Settlers goes as CIV.EXE's
+    /// destroy_city (0xa76a) takes it: the units it supports are disbanded, so are the
+    /// non-land units in its square (0x7e6:0x1447 with 0x7e6:0x163f), and its owner may be
+    /// out of the game (0xd159, 0xe041).
+    fn city_wiped_out(&mut self, c: CityId) {
+        let (owner, pos) = (self.city(c).owner, self.city(c).pos());
+        let doomed: Vec<UnitId> = self.all_units().filter(|u| u.home == Some(c) || (u.pos() == pos && !u.is_land())).map(|u| u.id).collect();
+        for id in doomed {
+            self.remove_unit(id);
+        }
+        self.remove_city(c);
+        self.city_lost_check(owner, 0);
     }
 
     /// Pay the city's buildings one by one, in improvement order; one the treasury cannot pay
@@ -768,7 +865,9 @@ impl Game {
         }
     }
 
-    /// Finish building `prod` in city `c`.
+    /// Finish building `prod` in city `c`. The human's store is emptied after anything it
+    /// completes, a computer city's after a wonder; otherwise the shields beyond the cost stay
+    /// (CIV.EXE 0xe3c4, 0xe6f9).
     pub fn complete_production(&mut self, c: CityId, prod: Production) {
         let (x, y, owner) = {
             let city = self.city(c);
@@ -777,7 +876,8 @@ impl Game {
         let human = self.is_human(owner);
         match prod {
             Production::Unit(k) => {
-                if k == unit_ids::SETTLERS && self.city(c).size <= 1 {
+                // Settlers need a second citizen only on Chieftain (0xde78)
+                if k == unit_ids::SETTLERS && self.city(c).size <= 1 && self.setup.difficulty == rules::Difficulty::Chieftain {
                     self.push_event(GameEvent::ProductionBlocked { city: c, item: prod });
                     return;
                 }
@@ -785,7 +885,10 @@ impl Game {
                 self.replay_unit_built(owner, k);
                 // a computer Diplomat starts out next to a human city, heading for it; with no
                 // such city the shields are given back and nothing is built (CIV.EXE 0xded6,
-                // 0xe124..0xe379); either way the city re-chooses, as after every unit (0xe3b1)
+                // 0xe124..0xe379); either way the city re-chooses, as after every unit (0xe3b1).
+                // (In CIV.EXE that code cannot run: 0xded6 does not create the computer's
+                // Diplomat, so 0xe05d sends it to 0xe3bc, which empties the store and builds
+                // nothing; civrs does what the code meant.)
                 if k == unit_ids::DIPLOMAT && !human {
                     if let Some(((dx, dy), target)) = self.ai_diplomat_site(owner) {
                         let id = self.add_unit(owner, k, dx, dy);
@@ -807,11 +910,21 @@ impl Game {
                 if self.city(c).has_improvement(imp::BARRACKS) {
                     self.unit_mut(id).veteran = true;
                 }
-                if k == unit_ids::SETTLERS {
+                let cost = self.production_cost(c, prod);
+                self.city_mut(c).shields = if human { 0 } else { self.city(c).shields - cost };
+                // Settlers take a citizen, unless it is the last one of the civilization's only
+                // city; the last citizen of a city leaves it empty: the city is destroyed and
+                // the Settlers start anew on its square, without a home (0xdfa7..0xe04e)
+                if k == unit_ids::SETTLERS && (self.city(c).size > 1 || self.cities_of(owner).len() > 1) {
                     self.city_mut(c).size -= 1;
+                    if self.city(c).size == 0 {
+                        self.city_wiped_out(c);
+                        self.add_unit(owner, k, x, y);
+                        self.refresh_vision(owner);
+                        return;
+                    }
                     self.fix_workers(c);
                 }
-                self.city_mut(c).shields -= self.production_cost(c, prod);
                 self.refresh_vision(owner);
                 self.push_event(GameEvent::ItemBuilt { city: c, item: prod });
                 // a computer city re-chooses after every unit (city_rechoose_production 0x18c4c,
@@ -828,7 +941,8 @@ impl Game {
                     self.after_building(c, human);
                     return;
                 }
-                self.city_mut(c).shields -= self.production_cost(c, prod);
+                let cost = self.production_cost(c, prod);
+                self.city_mut(c).shields = if human { 0 } else { self.city(c).shields - cost };
                 if matches!(i, imp::SS_STRUCTURAL | imp::SS_COMPONENT | imp::SS_MODULE) {
                     // the part goes on the ship after an AI city re-chose its production
                     // (CIV.EXE 0xe719 before 0xe766)
@@ -864,10 +978,10 @@ impl Game {
                 }
                 self.wonders_built[w as usize] = Some(c);
                 self.replay_log(super::replay::kind::WONDER, &[owner, w + 1]);
-                let cost = self.production_cost(c, prod);
                 let cm = self.city_mut(c);
                 cm.add_wonder(w);
-                cm.shields -= cost;
+                // the store is emptied after a wonder, whoever built it (0xe6f9)
+                cm.shields = 0;
                 cm.caravan_shields = 0;
                 self.push_event(GameEvent::WonderBuilt { city: c, wonder: w, owner });
                 self.on_wonder_built(owner, w);
@@ -1534,11 +1648,200 @@ mod tests {
         g.city_mut(c).food = g.food_box(c) - 1;
         let y = g.city_yield(c);
         assert!(y.food_surplus() >= 1, "{y:?}");
+        // the store fills this turn; the city grows at the start of its next one (0xd187)
+        g.process_city(c);
+        assert_eq!(g.city(c).size, 1);
+        assert!(g.city(c).food >= g.food_box(c));
         g.process_city(c);
         assert_eq!(g.city(c).size, 2);
         assert!(g.take_events().iter().any(|e| matches!(e, GameEvent::CityGrew(_))));
         let city = g.city(c);
         assert_eq!(city.workers() as usize + city.specialists.len(), 2);
+    }
+
+    #[test]
+    fn famine_takes_settlers_then_citizens_and_a_last_citizen_starves() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        let (x, y) = g.city(c).pos();
+        for id in g.units_of(slot) {
+            g.remove_unit(id);
+        }
+        let settlers = g.add_unit(slot, unit_ids::SETTLERS, x + 1, y);
+        g.unit_mut(settlers).home = Some(c);
+        g.city_mut(c).size = 2;
+        g.city_mut(c).food = -1;
+        assert!(g.process_food(c));
+        assert!(g.unit_opt(settlers).is_none());
+        assert_eq!((g.city(c).size, g.city(c).food), (2, 0));
+        assert!(g.take_events().iter().any(|e| matches!(e, GameEvent::FoodExhausted { settlers_lost: true, .. })));
+        g.city_mut(c).food = -1;
+        assert!(g.process_food(c));
+        assert_eq!((g.city(c).size, g.city(c).food), (1, 0));
+        assert!(g.take_events().iter().any(|e| matches!(e, GameEvent::FoodExhausted { settlers_lost: false, .. })));
+        // size 1: destroy_city (0xd149), the units it supports with it
+        let militia = g.add_unit(slot, unit_ids::MILITIA, x, y);
+        g.unit_mut(militia).home = Some(c);
+        g.city_mut(c).food = -1;
+        assert!(!g.process_food(c));
+        assert!(g.city_opt(c).is_none());
+        assert!(g.unit_opt(militia).is_none());
+    }
+
+    #[test]
+    fn a_city_without_aqueduct_grows_past_10_and_shrinks_back() {
+        let (mut g, c) = fixture();
+        g.city_mut(c).size = 10;
+        g.city_mut(c).food = g.food_box(c);
+        assert!(g.process_food(c));
+        assert_eq!((g.city(c).size, g.city(c).food), (10, 0));
+        assert!(g.take_events().contains(&GameEvent::AqueductNeeded(c)));
+        // the Granary refills for the size it reached for a moment: 5 * 11 + 5
+        g.city_mut(c).add_improvement(imp::GRANARY);
+        g.city_mut(c).food = g.food_box(c);
+        assert!(g.process_food(c));
+        assert_eq!((g.city(c).size, g.city(c).food), (10, 60));
+        g.city_mut(c).add_improvement(imp::AQUEDUCT);
+        g.city_mut(c).food = g.food_box(c);
+        assert!(g.process_food(c));
+        assert_eq!(g.city(c).size, 11);
+    }
+
+    #[test]
+    fn settlers_from_a_size_1_city_above_chieftain() {
+        let mut g = Game::new(GameSetup { seed: 42, difficulty: Difficulty::Prince, ..Default::default() }, None);
+        let slot = g.human_slot;
+        let settler = g.units_of(slot).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        let (x, y) = g.city(c).pos();
+        let count = |g: &Game| g.units_of(slot).into_iter().filter(|id| g.unit(*id).kind == unit_ids::SETTLERS).count();
+        let before = count(&g);
+        // the only city keeps its citizen (0xdfcb)
+        g.city_mut(c).shields = 30;
+        g.complete_production(c, Production::Unit(unit_ids::SETTLERS));
+        assert_eq!(g.city(c).size, 1);
+        assert_eq!(count(&g), before + 1);
+        // with a second city the last citizen leaves and the city is gone (0xdfec)
+        let other = g.add_city(slot, "Other".into(), x + 6, y);
+        g.city_mut(c).shields = 30;
+        g.complete_production(c, Production::Unit(unit_ids::SETTLERS));
+        assert!(g.city_opt(c).is_none());
+        assert!(g.city_opt(other).is_some());
+        let new = g.units_at(x, y).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
+        assert_eq!(g.unit(new).home, None);
+    }
+
+    #[test]
+    fn the_humans_store_empties_on_completion_the_computers_keeps_the_rest() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        g.set_production(c, Production::Unit(unit_ids::MILITIA)).unwrap();
+        g.city_mut(c).shields = 17;
+        g.complete_production(c, Production::Unit(unit_ids::MILITIA));
+        assert_eq!(g.city(c).shields, 0);
+        let (x, y) = g.city(c).pos();
+        let ai = (1..8).find(|s| *s != slot && g.player(*s).in_game).unwrap();
+        let theirs = g.add_city(ai, "Theirs".into(), x + 6, y);
+        let cost = g.production_cost(theirs, Production::Unit(unit_ids::MILITIA));
+        g.city_mut(theirs).shields = cost + 3;
+        g.complete_production(theirs, Production::Unit(unit_ids::MILITIA));
+        assert_eq!(g.city(theirs).shields, 3);
+        // a wonder empties the computer's store too (0xe6f9)
+        let wonder = Production::Wonder(won::COLOSSUS);
+        g.city_mut(theirs).shields = g.production_cost(theirs, wonder) + 3;
+        g.complete_production(theirs, wonder);
+        assert_eq!(g.city(theirs).shields, 0);
+    }
+
+    #[test]
+    fn disorder_keeps_shields_and_taxes_out_but_not_science() {
+        let mut g = Game::new(GameSetup { seed: 42, difficulty: Difficulty::Emperor, ..Default::default() }, None);
+        let slot = g.human_slot;
+        let settler = g.units_of(slot).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        let (x, y) = g.city(c).pos();
+        for id in g.units_of(slot) {
+            g.remove_unit(id);
+        }
+        g.player_mut(slot).tax = 50;
+        g.player_mut(slot).lux = 0;
+        g.player_mut(slot).researching = Some(adv::ALPHABET);
+        g.city_mut(c).size = 6;
+        g.fix_workers(c);
+        // a taxman and a scientist bring 2 gold and 2 beakers whatever the trade
+        let worked: Vec<u8> = (1..21u8).filter(|i| g.city(c).works(*i)).take(2).collect();
+        for i in worked {
+            g.toggle_tile(c, i);
+        }
+        g.set_specialist(c, 0, crate::game::Specialist::Taxman);
+        g.set_specialist(c, 1, crate::game::Specialist::Scientist);
+        g.set_production(c, Production::Improvement(imp::BARRACKS)).unwrap();
+        // a unit beyond the free ones: the shields of a city in disorder still support it
+        for _ in 0..7 {
+            let id = g.add_unit(slot, unit_ids::SETTLERS, x, y);
+            g.unit_mut(id).home = Some(c);
+        }
+        g.city_mut(c).food = 50;
+        let t = g.city_yield_raw(c);
+        assert!(g.city_happiness(c).disorder && t.sci > 0 && t.tax > 0 && t.shields >= 1, "{t:?}");
+        g.city_mut(c).disorder = true;
+        let (gold, beakers, units) = (g.player(slot).gold, g.player(slot).beakers, g.units_of(slot).len());
+        g.process_city(c);
+        assert_eq!(g.city(c).shields, 0);
+        assert_eq!(g.player(slot).gold, gold);
+        assert!(g.player(slot).beakers >= beakers + t.sci);
+        assert_eq!(g.units_of(slot).len(), units);
+        assert!(g.city(c).disorder);
+    }
+
+    #[test]
+    fn a_celebrating_republic_grows_each_turn() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        g.player_mut(slot).govt = Govt::Republic;
+        g.player_mut(slot).tax = 0;
+        g.player_mut(slot).lux = 100;
+        g.city_mut(c).size = 4;
+        g.city_mut(c).food = 0;
+        g.fix_workers(c);
+        g.city_mut(c).add_wonder(won::SHAKESPEARES_THEATRE);
+        g.wonders_built[won::SHAKESPEARES_THEATRE as usize] = Some(c);
+        g.city_mut(c).add_wonder(won::HANGING_GARDENS);
+        g.wonders_built[won::HANGING_GARDENS as usize] = Some(c);
+        let h = g.city_happiness(c);
+        let y = g.city_yield_raw(c);
+        assert!(h.celebration && y.food_surplus() > 0, "{h:?} {y:?}");
+        // the first turn of the celebration only starts it
+        g.process_city(c);
+        assert_eq!(g.city(c).size, 4);
+        assert!(g.city(c).celebrating);
+        g.city_mut(c).food = 0;
+        g.process_city(c);
+        assert_eq!(g.city(c).size, 5);
+    }
+
+    #[test]
+    fn the_farthest_unit_goes_first_on_a_shortage() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        let (x, y) = g.city(c).pos();
+        g.player_mut(slot).govt = Govt::Monarchy;
+        for id in g.units_of(slot) {
+            g.remove_unit(id);
+        }
+        // travel distance (0x1d43:0x27f): 3 + 1 / 2 = 3 for both; the first one goes
+        let a = g.add_unit(slot, unit_ids::MILITIA, x + 3, y + 1);
+        let b = g.add_unit(slot, unit_ids::MILITIA, x + 3, y);
+        let near = g.add_unit(slot, unit_ids::MILITIA, x, y);
+        for id in [a, b, near] {
+            g.unit_mut(id).home = Some(c);
+        }
+        assert_eq!(g.farthest_supported_unit(c), Some(a));
+        let shields = g.city_yield_raw(c).shields;
+        g.disband_unsupported(c, shields);
+        let left = [a, b, near].iter().filter(|id| g.unit_opt(**id).is_some()).count() as i32;
+        assert_eq!(left, shields.min(3));
+        assert!(g.unit_opt(near).is_some() || shields == 0);
     }
 
     #[test]

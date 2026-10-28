@@ -20,6 +20,7 @@ pub fn sound_for_event(ctx: &UiContext, ev: &GameEvent) {
     let mine = |c: &crate::game::CityId| g.city_opt(*c).map(|c| c.owner == me).unwrap_or(false);
     match ev {
         GameEvent::Famine(c) | GameEvent::Disorder(c) if mine(c) => a.play(Sound::Disorder),
+        GameEvent::FoodExhausted { owner, .. } if *owner == me => a.play(Sound::Disorder),
         GameEvent::Celebration(c) if mine(c) => a.play(Sound::Win),
         GameEvent::CelebrationEnded(c) if mine(c) => a.play(Sound::Lose),
         // completed production has no sound of its own: only the city view plays tune 44 as
@@ -107,7 +108,19 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
     };
     match ev {
         GameEvent::CityGrew(_) | GameEvent::CityShrank(_) | GameEvent::TurnStarted(_) | GameEvent::UnitVeteran(_) => None,
-        GameEvent::Famine(c) if g.city(*c).owner == me => msg(vec![format!("Famine in {}!", city_name(*c)), "Population decreases.".into()]),
+        GameEvent::Famine(c) if g.city_opt(*c).map(|c| c.owner == me).unwrap_or(false) => msg(vec![format!("Famine in {}!", city_name(*c)), "Population decreases.".into()]),
+        // CIV.EXE 0xd0a4..0xd0ff
+        GameEvent::FoodExhausted { name, owner, settlers_lost, .. } if *owner == me => {
+            msg(vec!["Food storage exhausted".into(), format!("in {name}!"), if *settlers_lost { "Settlers lost." } else { "Famine feared." }.into()])
+        }
+        // CIV.EXE 0xd221..0xd258
+        GameEvent::AqueductNeeded(c) if g.city_opt(*c).map(|c| c.owner == me).unwrap_or(false) => {
+            msg(vec![format!("{} requires an AQUEDUCT", city_name(*c)), "for further growth.".into()])
+        }
+        // "CITY can't support\nUNIT.\n Unit Disbanded." (CIV.EXE 0xfef3)
+        GameEvent::UnitDisbanded { unit_kind, city, reason } if reason == "shortage of shields" && g.city_opt(*city).map(|c| c.owner == me).unwrap_or(false) => {
+            msg(vec![format!("{} can't support", city_name(*city)), format!("{}.", rules::UNITS[*unit_kind as usize].name), " Unit Disbanded.".into()])
+        }
         GameEvent::UnitDisbanded { unit_kind, city, reason } if g.city_opt(*city).map(|c| c.owner == me).unwrap_or(false) => {
             msg(vec![format!("{} in {} disbanded", rules::UNITS[*unit_kind as usize].name, city_name(*city)), format!("({reason})")])
         }

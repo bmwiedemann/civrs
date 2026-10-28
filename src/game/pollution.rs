@@ -38,7 +38,8 @@ impl Game {
         } else {
             [adv::INDUSTRIALIZATION, adv::AUTOMOBILE, adv::MASS_PRODUCTION, adv::PLASTICS].iter().filter(|a| p.knows(**a)).count() as i32
         };
-        self.city_yield(c).shields / self.pollution_divisor(c) - 20 + city.size as i32 * techs / 4
+        // the city's shields ds:0x70dc, which civil disorder does not touch
+        self.city_yield_raw(c).shields / self.pollution_divisor(c) - 20 + city.size as i32 * techs / 4
     }
 
     /// Roll for pollution in a city (CIV.EXE 0x12de9): polluted when twice the points beat

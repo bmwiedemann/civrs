@@ -84,6 +84,8 @@ pub struct HistorianRow {
 pub enum GameEvent {
     CityGrew(CityId),
     CityShrank(CityId),
+    /// No longer produced by the city turn (see `FoodExhausted`); kept so that older saves
+    /// load.
     Famine(CityId),
     /// A unit was disbanded for lack of food/shields.
     UnitDisbanded { unit_kind: UnitTypeId, city: CityId, reason: String },
@@ -205,6 +207,13 @@ pub enum GameEvent {
     /// The game ends again after the human kept playing (ds:0x4cd8 bit 0x100): the ending
     /// without `end_game_scores` (0x2bc1).
     GameEndedAgain(EndReason),
+    /// "Food storage exhausted\nin CITY!\nSettlers lost." / "...\nFamine feared." (CIV.EXE
+    /// 0xd0a4, ds:0x24f5 / 0x2510 / 0x2522), shown to the human owner: the city's store was
+    /// negative at its turn. `name` because a city of size 1 starves to death.
+    FoodExhausted { city: CityId, name: String, owner: Slot, settlers_lost: bool },
+    /// "CITY requires an AQUEDUCT\nfor further growth." (CIV.EXE 0xd221, ds:0x2534): the city
+    /// grew past size 10 without one and shrank back.
+    AqueductNeeded(CityId),
 }
 
 /// A choice the engine needs from the human player before continuing.
