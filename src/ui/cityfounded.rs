@@ -72,7 +72,10 @@ impl Screen for CityFounded {
     }
     fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
         match ev {
-            Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } if self.t > 10 => self.finish(true),
+            // a key or a click stops the wagons; only a waiting key skips the city view
+            // (kbhit at o 0x1e67e, the click flag ds:0xdb3a only ends the loop, o 0x1e637)
+            Event::Key { down: true, .. } if self.t > 10 => self.finish(true),
+            Event::MouseButton { down: true, .. } if self.t > 10 => self.finish(false),
             _ => Transition::None,
         }
     }
