@@ -46,6 +46,7 @@ impl AiDriver for Ai {
             return;
         }
         g.reset_goals(slot);
+        // the rates are set after the cities (`Game::ai_tax_rates`, 0xa699)
         for c in g.cities_of(slot) {
             if g.city_opt(c).is_some() {
                 city_ai::manage(g, c);

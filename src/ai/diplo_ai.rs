@@ -299,7 +299,7 @@ fn set_monarchy(g: &mut Game, ai: Slot) {
     }
     g.player_mut(ai).govt = Govt::Monarchy;
     g.player_mut(ai).anarchy_turns = 0;
-    g.clamp_rates(ai);
+    g.ai_government_rates(ai);
     g.forget_vendettas(ai);
     g.push_event(GameEvent::GovernmentChanged { slot: ai, govt: Govt::Monarchy });
 }

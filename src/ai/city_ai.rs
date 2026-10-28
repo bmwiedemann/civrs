@@ -2,7 +2,7 @@
 //! and entertainers are the city turn's business (`Game::assign_workers`), as in CIV.EXE.
 
 use crate::game::{CityId, Game, Map, Production, Slot};
-use crate::rules::{self, improvement_ids as imp, unit_ids, Govt, Terrain};
+use crate::rules::{self, improvement_ids as imp, unit_ids, Terrain};
 
 /// What the city should build next: CIV.EXE's production advisor (0xa5e:0x41d), see
 /// `game::production`. The computer asks it when a city is founded, after every unit,
@@ -126,74 +126,10 @@ fn exe_status(g: &Game, c: CityId) -> u8 {
     bits.iter().enumerate().fold(0, |s, (i, b)| s | ((*b as u8) << i))
 }
 
-/// A computer civilization's rates after its cities' turn (update_civ_tax_rates CIV.EXE
-/// 0xa5e2, in tenths): luxuries are what tax and science leave, one more when some city is in
-/// disorder (`rioting`) and they leave less than 4, one less every fourth turn when no city
-/// is in disorder or `balanced` (above size 5 with as many happy as unhappy citizens) and they
-/// leave more than 2, kept to 0..4; taxes are the leader's "civilized" trait (ds:0x1516) plus
-/// half the rest, one more with more gold than the turn number + 100, none once Robotics is
-/// known; science gets the remainder. No government maximum applies. (Anarchy keeps civrs's
-/// 0/100/0.)
-pub fn set_rates(g: &mut Game, slot: Slot, balanced: bool, rioting: bool) {
-    let p = g.player(slot);
-    if p.govt == Govt::Anarchy {
-        let _ = g.set_rates(slot, 0, 100);
-        return;
-    }
-    let (tax, sci) = (p.tax as i32 / 10, (100 - p.tax as i32 - p.lux as i32) / 10);
-    let mut lux = 10 - (tax + sci);
-    if rioting && tax + sci > 6 {
-        lux += 1;
-    }
-    if g.turn & 3 == 0 && !balanced && !rioting && tax + sci < 8 {
-        lux -= 1;
-    }
-    let lux = lux.clamp(0, 4);
-    let mut tax = p.civ().civilized as i32 + (10 - lux) / 2;
-    if p.gold > g.turn as i32 + 100 {
-        tax += 1;
-    }
-    if p.knows(rules::advance_ids::ROBOTICS) {
-        tax = 0;
-    }
-    let _ = g.set_rates(slot, (tax * 10) as u8, (lux * 10) as u8);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::game::GameSetup;
-
-    #[test]
-    fn computer_rates_as_update_civ_tax_rates() {
-        let mut g = Game::new(GameSetup { seed: 5, ..Default::default() }, None);
-        let slot = 2;
-        g.player_mut(slot).govt = Govt::Anarchy;
-        set_rates(&mut g, slot, false, false);
-        assert_eq!((g.player(slot).tax, g.player(slot).lux), (0, 100));
-        // leaving Anarchy: luxuries 10 - 0 kept to 4, taxes "civilized" + 3
-        g.player_mut(slot).govt = Govt::Monarchy;
-        g.player_mut(slot).gold = 0;
-        g.turn = 1;
-        let civilized = g.player(slot).civ().civilized as i32;
-        set_rates(&mut g, slot, false, false);
-        assert_eq!((g.player(slot).tax as i32, g.player(slot).lux), ((3 + civilized) * 10, 40));
-        // every fourth turn with no city in disorder or balanced the luxuries go down by one
-        g.turn = 4;
-        set_rates(&mut g, slot, false, false);
-        assert_eq!(g.player(slot).lux, 30);
-        set_rates(&mut g, slot, true, false);
-        assert_eq!(g.player(slot).lux, 30);
-        // a riot brings one back; rich: one more tax; Robotics: none
-        set_rates(&mut g, slot, false, true);
-        assert_eq!(g.player(slot).lux, 40);
-        g.player_mut(slot).gold = 200;
-        set_rates(&mut g, slot, false, true);
-        assert_eq!(g.player(slot).tax as i32, (4 + civilized) * 10);
-        g.player_mut(slot).learn(rules::advance_ids::ROBOTICS);
-        set_rates(&mut g, slot, false, false);
-        assert_eq!(g.player(slot).tax, 0);
-    }
 
     /// A new computer city building Militia with 4 shields stored and nobody inside.
     fn empty_ai_city() -> (Game, CityId) {

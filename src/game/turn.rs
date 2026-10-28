@@ -323,21 +323,24 @@ impl Game {
 
     /// City growth, production, science and gold for one player (end of its turn).
     pub fn process_player_turn_end(&mut self, slot: Slot) {
-        // update_civ_tax_rates 0xa5e2: the cities, then a computer civ's rates from what
-        // they showed: a city above size 5 with as many happy as unhappy citizens, a city in
-        // disorder
-        let (mut balanced, mut rioting) = (false, false);
+        // update_civ_tax_rates (0xa5e2) notes a city above size 5 with as many unhappy as
+        // happy citizens (bit 0) and a city in disorder (bit 1)
+        let mut flags = 0u8;
         for c in self.cities_of(slot) {
             if self.city_opt(c).is_some() {
-                let mood = self.process_city(c);
+                let balance = self.process_city(c);
                 if let Some(city) = self.city_opt(c) {
-                    balanced |= mood == Some(0) && city.size > 5;
-                    rioting |= city.disorder;
+                    if balance == Some(0) && city.size > 5 {
+                        flags |= 1;
+                    }
+                    if city.disorder {
+                        flags |= 2;
+                    }
                 }
             }
         }
-        if !self.player(slot).human {
-            crate::ai::city_ai::set_rates(self, slot, balanced, rioting);
+        if !self.player(slot).human && slot != 0 {
+            self.ai_tax_rates(slot, flags);
         }
         self.process_unit_hazards(slot);
         // the treasury holds at most 30000 gold, capped after the civ's cities (0x2515)
@@ -428,6 +431,49 @@ impl Game {
                 self.push_event(GameEvent::NeedsDecision(Decision::KeepPlaying { reason }));
             }
         }
+    }
+
+    /// A computer player's rates for its next turn, set after its cities (update_civ_tax_rates
+    /// 0xa699..0xa760), in tenths: luxuries start from the last ones (10 - sci - tax), one more
+    /// when a city is in disorder (`flags` bit 1) and science + taxes exceed 6, one less every
+    /// fourth turn when no city is in disorder or balanced (`flags` 0) and science + taxes are
+    /// below 8, within 0..4; science is the leader's "civilized" trait + (10 - luxuries) / 2, one
+    /// more with more gold than turn + 100, none at all once Robotics is known; taxes get the
+    /// rest. No government limit applies.
+    pub fn ai_tax_rates(&mut self, slot: Slot, flags: u8) {
+        let p = self.player(slot);
+        let (sci, tax) = ((100 - p.tax as i32 - p.lux as i32) / 10, p.tax as i32 / 10);
+        let mut lux = 10 - (sci + tax);
+        if flags & 2 != 0 && sci + tax > 6 {
+            lux += 1;
+        }
+        if self.turn & 3 == 0 && flags == 0 && sci + tax < 8 {
+            lux -= 1;
+        }
+        let lux = lux.clamp(0, 4);
+        let mut sci = p.civ().civilized as i32 + (10 - lux) / 2;
+        if p.gold > self.turn as i32 + 100 {
+            sci += 1;
+        }
+        if p.knows(adv::ROBOTICS) {
+            sci = 0;
+        }
+        let tax = 10 - (sci + lux);
+        let p = self.player_mut(slot);
+        p.tax = (tax * 10) as u8;
+        p.lux = (lux * 10) as u8;
+    }
+
+    /// `set_government` (CIV.EXE 0x15031) gives a computer player taxes of 4 - government / 2
+    /// tenths; its science stays and luxuries take the rest (none when the two exceed 10, which
+    /// civrs cannot hold: then science gets the rest).
+    pub fn ai_government_rates(&mut self, slot: Slot) {
+        let p = self.player(slot);
+        let sci = (100 - p.tax as i32 - p.lux as i32) / 10;
+        let tax = 4 - p.govt as i32 / 2;
+        let p = self.player_mut(slot);
+        p.tax = (tax * 10) as u8;
+        p.lux = ((10 - sci - tax).max(0) * 10) as u8;
     }
 
     /// The *TAXES warning (CIV.EXE 0x268a): while the game goes on, a human with more than one
@@ -1178,7 +1224,11 @@ impl Game {
             p.govt = g;
             p.anarchy_turns = 0;
         }
-        self.clamp_rates(slot);
+        if self.player(slot).human {
+            self.clamp_rates(slot);
+        } else {
+            self.ai_government_rates(slot);
+        }
         self.push_event(GameEvent::GovernmentChanged { slot, govt: g });
     }
 
@@ -1997,6 +2047,39 @@ mod tests {
         g.player_mut(me).gold = 31000;
         g.process_player_turn_end(me);
         assert_eq!(g.player(me).gold, 30000);
+    }
+
+    #[test]
+    fn computer_rates_follow_the_civilized_trait_and_the_cities() {
+        // 0xa699..0xa760 in tenths: lux from the last rates +-1, sci = civilized + (10 - lux) / 2
+        let (mut g, _c) = fixture();
+        let ai = g.alive_slots().into_iter().find(|s| *s != g.human_slot).unwrap();
+        let civilized = g.player(ai).civ().civilized as i32;
+        g.set_turn(5);
+        g.player_mut(ai).gold = 0;
+        g.player_mut(ai).forget(adv::ROBOTICS);
+        g.player_mut(ai).tax = 40;
+        g.player_mut(ai).lux = 20;
+        // a riot: lux 2 + 1
+        g.ai_tax_rates(ai, 2);
+        let sci = civilized + (10 - 3) / 2;
+        assert_eq!((g.player(ai).lux, g.player(ai).tax as i32), (30, (10 - sci - 3) * 10));
+        // every fourth turn without trouble, while sci + tax < 8: one less
+        g.set_turn(8);
+        g.ai_tax_rates(ai, 0);
+        assert_eq!(g.player(ai).lux, 20);
+        // rich: one more for science; Robotics: none
+        g.player_mut(ai).gold = 500;
+        g.set_turn(9);
+        g.ai_tax_rates(ai, 1);
+        assert_eq!(100 - g.player(ai).tax as i32 - g.player(ai).lux as i32, (civilized + 4 + 1) * 10);
+        g.player_mut(ai).learn(adv::ROBOTICS);
+        g.ai_tax_rates(ai, 1);
+        assert_eq!(g.player(ai).tax + g.player(ai).lux, 100);
+        // set_government (0x15031): taxes 4 - government / 2
+        g.player_mut(ai).learn(adv::MONARCHY);
+        g.choose_government(ai, Govt::Monarchy);
+        assert_eq!(g.player(ai).tax, 30);
     }
 
     #[test]
