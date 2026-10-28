@@ -172,7 +172,7 @@ fn best_defender(g: &Game, first: UnitId) -> Option<UnitId> {
 
 /// The policy of continent number `cont` in `slot`'s last AI turn (ds:0xe698).
 fn policy(g: &Game, slot: Slot, cont: u8) -> u8 {
-    g.ai_memory.policies[slot as usize].map(|p| p[continent_index(cont)]).unwrap_or(POLICY_NONE)
+    g.stored_policy(slot, continent_index(cont))
 }
 
 /// ds:0xe498[a][b] & 0x102 == 2: a peace treaty `a` does not mean to break.
@@ -201,8 +201,8 @@ fn peace(g: &Game, a: Slot, b: Slot) -> bool {
 /// - A civilization without Settlers and cities is destroyed (overlay 5 +0xe6c).
 /// - Unit tasking (0x16057), see `task_units`.
 pub fn civ_turn(g: &mut Game, slot: Slot) {
+    g.take_census(slot);
     let census = g.census();
-    g.ai_memory.census = census.clone();
     census_units(g, slot);
     let reserve = (g.units_of(slot).iter().filter(|id| g.unit(**id).kind != unit_ids::NUCLEAR && g.unit(**id).kind != unit_ids::SETTLERS).count() as i32 / 8).clamp(3, 99);
     city_goals(g, slot);
@@ -214,6 +214,7 @@ pub fn civ_turn(g: &mut Game, slot: Slot) {
     if !g.player(slot).alive {
         return;
     }
+    super::govern(g, slot);
     task_units(g, slot, reserve);
 }
 

@@ -1549,6 +1549,8 @@ mod tests {
         // the human strongest from 1 AD on: 2 less
         g.year = 1;
         g.player_mut(human).gold = 30_000;
+        assert_eq!(g.cost_factor(ai), 8, "the ranking of the last turn holds");
+        g.rank_powers();
         assert_eq!(g.cost_factor(ai), 6);
         g.setup.difficulty = Difficulty::Warlord;
         assert_eq!(g.cost_factor(ai), 14, "not at Warlord");

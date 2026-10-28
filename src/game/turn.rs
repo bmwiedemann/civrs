@@ -126,6 +126,8 @@ impl TurnRunner {
                     g.process_city(c);
                 }
             }
+            // ai_civ_turn(0) (0x2536): the barbarians' census, goals and policies
+            crate::ai::unit_ai::civ_turn(g, 0);
             self.run_ai(g, ai, 0);
             g.process_unit_hazards(0);
             self.drain_events(g);
@@ -230,6 +232,9 @@ impl TurnRunner {
                     g.process_player_cities(slot);
                     self.drain_events(g);
                     g.process_player_turn_start(slot);
+                    // ai_civ_turn for the human (0x2536): his census and continent policies,
+                    // which his AUTO cities and the computer players read
+                    crate::ai::unit_ai::civ_turn(g, slot);
                     g.reset_moves(slot);
                     g.progress_work(slot);
                     g.refresh_all_vision();
@@ -466,6 +471,7 @@ impl Game {
         self.disaster_check();
         // the power ranking (0x3121): the power history, then the world against a leading human
         self.record_power();
+        self.rank_powers();
         self.gang_up_on_leader();
         self.treasury_warning();
         self.spaceship_arrivals();

@@ -485,17 +485,10 @@ impl Game {
         false
     }
 
-    /// ds:0x803c[civ]: 7 for the strongest of civs 1..7 down to 1 (power ranking 0x3121:
-    /// gold / 32 + 8 * citizens + research count + sum of unit costs; ties go to the lower
-    /// slot). CIV.EXE ranks once per turn; this ranks on the spot.
+    /// ds:0x803c[civ]: the civ's place in the last power ranking (`Game::rank_powers`), 7 for
+    /// the strongest; 0 before the first.
     pub(crate) fn power_rank(&self, slot: Slot) -> i32 {
-        let strength = |s: Slot| self.power_strength(s);
-        let mine = strength(slot);
-        let above = (1..8u8).filter(|o| *o != slot).filter(|o| {
-            let v = strength(*o);
-            v > mine || (v == mine && *o < slot)
-        });
-        7 - above.count() as i32
+        self.ai_memory.ranks.get(slot as usize).copied().unwrap_or(0) as i32
     }
 
     /// The LAUNCH button: a habitation module on board and not launched (o 0x17fa1).

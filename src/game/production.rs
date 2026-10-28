@@ -33,7 +33,11 @@ pub fn continent_index(cont: u8) -> usize {
     (cont as usize).min(CONTINENTS - 1)
 }
 
-/// The census 0x1579a takes at the start of each civilization's turn, for every civilization.
+/// The census 0x1579a takes at the start of each civilization's turn. Each civilization's rows
+/// are written only by its own AI turn (which CIV.EXE runs for the human and the barbarians
+/// too), so a reader sees every other civilization as it stood at the start of that one's last
+/// turn, before its units moved: the human's army that has just landed shows only after his
+/// next turn starts. CIV.EXE saves these tables (SVE 0x0788); civrs in its version-20 trailer.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Census {
     /// ds:0x6cac: summed defence of the civ's units (Nuclear excluded) standing on land of
@@ -49,6 +53,12 @@ pub struct Census {
     /// ds:0xb1ee: Plains, Grassland and River squares in columns 2..77, rows 2..47 (counted by
     /// the world generator, overlay 7 0x9d55..0x9ebf).
     pub sites: [i32; CONTINENTS],
+    /// ds:0x6e82: military strength, attack plus defence of every unit but the Nuclear, on
+    /// land or not, and of the stashed garrison of the civ's cities (0x15848, 0x15acc).
+    pub strength: [i32; 8],
+    /// ds:0x2a6e bit civ (0x15f3f): forces of the civ on a continent where the human has two
+    /// or more cities.
+    pub faces_human: u8,
 }
 
 /// The best candidates of one advisor run.
@@ -72,13 +82,20 @@ impl Game {
         }
     }
 
-    /// The census of 0x1579a (units 0x15801, cities 0x159be) for all civilizations at once.
+    /// The census tables as the civilizations' last AI turns left them (`Census`).
     pub fn census(&self) -> Census {
+        self.ai_memory.census.clone()
+    }
+
+    /// The census of 0x1579a (units 0x15801, cities 0x159be) for all civilizations as they
+    /// stand now.
+    pub fn live_census(&self) -> Census {
         let mut c = Census::default();
         for u in self.all_units() {
             if u.owner as usize >= 8 || u.kind == unit_ids::NUCLEAR {
                 continue;
             }
+            c.strength[u.owner as usize] += u.info().att as i32 + u.info().def as i32;
             let t = self.map.tile(u.x, u.y);
             if t.is_ocean() {
                 continue;
@@ -96,6 +113,7 @@ impl Game {
                     let t = &rules::UNITS[kind as usize];
                     c.defence[city.owner as usize][k] += t.def as i32;
                     c.attack[city.owner as usize][k] += t.att as i32;
+                    c.strength[city.owner as usize] += t.att as i32 + t.def as i32;
                 }
             }
         }
@@ -111,6 +129,40 @@ impl Game {
             }
         }
         c
+    }
+
+    /// The census part of `ai_civ_turn` (0x157a2..0x15b2a, 0x15f3f): `slot`'s rows of the
+    /// tables (continent forces and cities, strength) and its bit of ds:0x2a6e, read with the
+    /// human's rows as his last turn left them. The other civilizations' rows stay.
+    pub fn take_census(&mut self, slot: Slot) {
+        let live = self.live_census();
+        let s = slot as usize;
+        if s >= 8 {
+            return;
+        }
+        let m = &mut self.ai_memory.census;
+        m.defence[s] = live.defence[s];
+        m.attack[s] = live.attack[s];
+        m.cities[s] = live.cities[s];
+        m.strength[s] = live.strength[s];
+        m.squares = live.squares;
+        m.sites = live.sites;
+        let h = self.human_slot as usize;
+        let faces = h < 8 && (1..15).any(|k| m.defence[s][k] != 0 && m.cities[h][k] > 1);
+        m.faces_human = m.faces_human & !(1 << s) | (faces as u8) << s;
+    }
+
+    /// Every civilization's census rows as things stand now (a game from an older save).
+    pub fn take_census_all(&mut self) {
+        for s in 0..8 {
+            self.take_census(s);
+        }
+    }
+
+    /// The continent policy of `slot`'s last AI turn (ds:0xe698[civ][continent]); none before
+    /// its first.
+    pub fn stored_policy(&self, slot: Slot, k: usize) -> u8 {
+        self.ai_memory.policies.get(slot as usize).copied().flatten().map(|p| p[k.min(CONTINENTS - 1)]).unwrap_or(POLICY_NONE)
     }
 
     /// ds:0xe498 bit 1: a peace treaty between the two.
@@ -175,29 +227,23 @@ impl Game {
         policy
     }
 
-    /// ds:0x2a6e bit `slot` (0x15f3f): the civ has forces on a continent where the human has
-    /// two or more cities.
+    /// ds:0x2a6e bit `slot` (0x15f3f, read at 0xb3f3): the civ's last AI turn found forces of
+    /// it on a continent where the human has two or more cities.
     fn faces_human(&self, census: &Census, slot: Slot) -> bool {
-        let h = self.human_slot as usize;
-        h < 8 && (1..15).any(|k| census.defence[slot as usize][k] != 0 && census.cities[h][k] > 1)
+        census.faces_human & (1 << slot) != 0
     }
 
-    /// ds:0x6ed4 (0x15ca1): the civ is at war with someone.
+    /// ds:0x6ed4 (0x15ca1): the civ is at war with someone. CIV.EXE keeps one word for all
+    /// civilizations, so the advisor (0xb7c7) reads the war of whichever civ's AI turn ran last
+    /// (the civ before for cities processed at the start of a turn); civrs asks the city's own.
     fn exe_at_war(&self, slot: Slot) -> bool {
         (1..8).any(|o| o != slot && self.exe_war(slot, o))
     }
 
-    /// ds:0x8078 (power ranking 0x3121..0x330e): the human is the strongest civilization, has
-    /// more than four cities and no nuclear weapon, after turn 200 (strength: `power_strength`).
+    /// ds:0x8078 as the last power ranking set it (`Game::rank_powers`): the human is the
+    /// strongest civilization, has more than four cities and no nuclear weapon, after turn 200.
     pub fn world_gangs_up(&self) -> bool {
-        let h = self.human_slot;
-        if self.turn <= 200 || self.cities_of(h).len() <= 4 || self.all_units().any(|u| u.owner == h && u.kind == unit_ids::NUCLEAR) {
-            return false;
-        }
-        let power = |s: Slot| self.power_strength(s);
-        let ph = power(h);
-        // the ranking takes the first of equals
-        (1..8).all(|o| o == h || if o < h { power(o) < ph } else { power(o) <= ph })
+        self.ai_memory.gang_up
     }
 
     /// The first production of a new city (overlay 20 o 0x1b375): Militia, Musketeers once the
@@ -274,7 +320,8 @@ impl Game {
         let p = self.player(slot).clone();
         let k = continent_index(self.map.tile(city.x, city.y).continent);
         let census = self.census();
-        let policy = self.continent_policy(&census, slot, k);
+        // the policy the civ's last AI turn set (0xaf56)
+        let policy = self.stored_policy(slot, k);
         // [bp-0x13c]: a war footing on this continent
         let war = policy == POLICY_HOSTILE || policy == POLICY_THREATENED || (self.world_gangs_up() && policy == POLICY_OFFENSIVE);
         let y = self.city_yield(c);
@@ -637,9 +684,36 @@ mod tests {
     }
 
     #[test]
-    fn policies_of_the_continent_census() {
-        let (g, c) = ai_city();
+    fn each_civ_takes_only_its_own_census_rows() {
+        let (mut g, c) = ai_city();
         let slot = g.city(c).owner;
+        let h = g.human_slot;
+        let (x, y) = (g.city(c).x, g.city(c).y);
+        let k = continent_index(g.map.tile(x, y).continent);
+        g.take_census_all();
+        let before = g.census();
+        // the human lands an army and builds a Nuclear: nobody sees it before his own turn
+        for _ in 0..3 {
+            g.add_unit(h, unit_ids::KNIGHTS, x + 1, y);
+        }
+        g.add_unit(h, unit_ids::NUCLEAR, x + 1, y);
+        g.take_census(slot);
+        assert_eq!(g.census().attack[h as usize], before.attack[h as usize]);
+        assert_eq!(g.military_strength(h), before.strength[h as usize]);
+        // his turn: the Knights count (4 + 2 each), the Nuclear not
+        g.take_census(h);
+        assert_eq!(g.census().attack[h as usize][k], before.attack[h as usize][k] + 12);
+        assert_eq!(g.military_strength(h), before.strength[h as usize] + 18);
+        // the computer's rows stay as its own turn left them
+        assert_eq!(g.census().cities[slot as usize], before.cities[slot as usize]);
+    }
+
+    #[test]
+    fn policies_of_the_continent_census() {
+        let (mut g, c) = ai_city();
+        let slot = g.city(c).owner;
+        assert_eq!(g.census().cities[slot as usize], [0; CONTINENTS], "nothing before the civ's AI turn");
+        g.take_census(slot);
         let census = g.census();
         let k = continent_index(g.map.tile(g.city(c).x, g.city(c).y).continent);
         assert!(census.cities[slot as usize][k] >= 1);

@@ -341,7 +341,7 @@ mod tests {
         assert_eq!(g.martial_law_units(c), 3);
         let k = crate::game::production::continent_index(g.map.tile(20, 20).continent);
         let on_map: i32 = g.all_units().filter(|u| u.owner == h && g.map.tile(u.x, u.y).is_land() && crate::game::production::continent_index(g.map.tile(u.x, u.y).continent) == k).map(|u| u.info().def as i32).sum();
-        assert_eq!(g.census().defence[h as usize][k], on_map + 2 * 2);
+        assert_eq!(g.live_census().defence[h as usize][k], on_map + 2 * 2);
         // a computer city never stashes
         let ai = rival(&g);
         let other = g.add_city(ai, "Other".into(), 26, 26);

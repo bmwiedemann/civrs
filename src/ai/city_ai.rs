@@ -75,9 +75,9 @@ pub fn city_turn_purchase(g: &mut Game, c: CityId, net_shields: i32) {
     let mut amount = 0;
     if let Production::Unit(u) = city.production {
         if net_shields != 0 {
-            let census = g.census();
+            // the policy of the civ's last AI turn (0xec5e)
             let k = crate::game::production::continent_index(g.map.tile(city.x, city.y).continent);
-            let policy = g.continent_policy(&census, slot, k);
+            let policy = g.stored_policy(slot, k);
             if matches!(policy, 1 | 2 | 5) && rules::UNITS[u as usize].role as u8 == policy {
                 amount = gold / 64;
             }

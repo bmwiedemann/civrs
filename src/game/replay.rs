@@ -166,6 +166,34 @@ impl Game {
         p.gold / 32 + 8 * citizens + p.research_count as i32 + units
     }
 
+    /// The ranking of `power_ranking` (0x3216..0x330e), once a turn after the power history:
+    /// seven passes give rank 7, 6, ... 1 to the strongest civ left (the first of equals; the
+    /// ranked one counts -1 after), stored for the turn to come (ds:0x803c); then ds:0x8078,
+    /// the world against the human: he is ranked 7, has more than four cities and no Nuclear,
+    /// after turn 200.
+    pub fn rank_powers(&mut self) {
+        let mut v = [0i32; 8];
+        for s in 1..8u8 {
+            v[s as usize] = self.power_strength(s);
+        }
+        let mut ranks = [0u8; 8];
+        let mut pick = 1;
+        for rank in (1..8u8).rev() {
+            let mut best = -1;
+            for s in 1..8 {
+                if best < v[s] {
+                    best = v[s];
+                    pick = s;
+                }
+            }
+            ranks[pick] = rank;
+            v[pick] = -1;
+        }
+        self.ai_memory.ranks = ranks;
+        let h = self.human_slot;
+        self.ai_memory.gang_up = ranks[h as usize & 7] == 7 && self.cities_of(h).len() > 4 && self.nuclear_units(h) == 0 && self.turn > 200;
+    }
+
     /// The power history entry of `power_ranking` (0x31be..0x3214), at the end of every turn
     /// before turn 600: clamp(strength / 8, 0, 255) for civs 1..7 in row (turn / 4) % 150, so
     /// the last turn of each four stays.
@@ -280,6 +308,7 @@ mod tests {
         g.fifty_turn_block();
         assert!(g.history.log.is_empty());
         g.set_turn(50);
+        g.rank_powers();
         g.fifty_turn_block();
         let r = g.history.records();
         assert_eq!(r.iter().map(|r| r.kind).collect::<Vec<_>>(), vec![kind::CENSUS, kind::RANKING]);

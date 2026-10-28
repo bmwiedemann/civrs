@@ -95,9 +95,13 @@ pub struct AiMemory {
     pub moving: Option<Slot>,
     pub goto_cache: GotoCache,
     pub links: Option<BlockLinks>,
-    /// The census of the last AI turn (the tables ds:0x6cac, 0x807a, 0x6b96, ...), read by the
-    /// unit routine while the civilization moves.
+    /// The census tables (ds:0x6cac, 0x807a, 0x6b96, 0x6e82, 0x2a6e), each civilization's rows
+    /// from its last AI turn (`Game::take_census`).
     pub census: super::production::Census,
+    /// ds:0x803c: each civilization's place in the last power ranking (7 = strongest).
+    pub ranks: [u8; 8],
+    /// ds:0x8078: the last power ranking turned the world against the human.
+    pub gang_up: bool,
 }
 
 impl Default for AiMemory {
@@ -113,6 +117,8 @@ impl Default for AiMemory {
             goto_cache: GotoCache::default(),
             links: None,
             census: Default::default(),
+            ranks: [0; 8],
+            gang_up: false,
         }
     }
 }

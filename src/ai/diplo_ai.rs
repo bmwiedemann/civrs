@@ -1008,6 +1008,7 @@ mod tests {
             g.add_unit(human, unit_ids::KNIGHTS, 21, 20);
         }
         g.player_mut(ai).gold = 400;
+        g.take_census_all();
         let st = meeting(&mut g, ai, (15, 15), 0).expect("emissary");
         let m = st.meeting.clone().unwrap();
         assert!(m.threat >= 4, "threat {}", m.threat);
@@ -1098,6 +1099,7 @@ mod tests {
         for _ in 0..6 {
             g.add_unit(3, unit_ids::KNIGHTS, 25, 25);
         }
+        g.take_census_all();
         ask_for_help(&mut g, ai);
         assert!(decisions(&mut g).is_empty(), "ds:0x3934 is -1: never received");
         assert_eq!(g.diplo(ai, 3) & FOUGHT, 0);

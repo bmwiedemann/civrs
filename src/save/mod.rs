@@ -44,7 +44,11 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// 19: then by the number of city slots (u32 LE) and each slot's `City::known_size` byte (0 for
 /// an empty slot); older saves let the human know the size of every city whose square he has
 /// explored.
-pub const VERSION: u16 = 19;
+/// 20: then by the census trailer (`CENSUS_TRAILER` bytes per civilization: the continent
+/// defence, attack and cities rows of `Census`, 16 i32 LE each, its strength (i32 LE) and its
+/// power rank (u8), then the ds:0x2a6e and ds:0x8078 bytes); older saves take the census of
+/// every civilization and the power ranking as things stand.
+pub const VERSION: u16 = 20;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -144,6 +148,7 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     data.extend_from_slice(&g.catch_up.to_le_bytes());
     data.extend_from_slice(&(g.cities.len() as u32).to_le_bytes());
     data.extend(g.cities.iter().map(|c| c.as_ref().map(|c| c.known_size).unwrap_or(0)));
+    data.extend_from_slice(&census_trailer(g));
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -249,6 +254,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     }
     let mut catch_up = None;
     let mut known_sizes: Option<Vec<u8>> = None;
+    let mut census: Option<&[u8]> = None;
     // version 14: the tribe names, after the counters
     if ver >= 14 {
         let mut at = counters + 112 * g.players.len();
@@ -295,6 +301,8 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
             if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 19) {
                 let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
                 known_sizes = rest.get(at + 4..at + 4 + n).map(|b| b.to_vec());
+                at += 4 + n;
+                census = rest.get(at..at + 8 * CENSUS_TRAILER + 2).filter(|_| ver >= 20);
             }
         }
     } else {
@@ -349,7 +357,54 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
             }
         }
     }
+    match census {
+        Some(b) => read_census_trailer(&mut g, b),
+        None => {
+            g.take_census_all();
+            g.rank_powers();
+        }
+    }
     Ok(g)
+}
+
+/// Bytes per civilization of the version-20 census trailer: three rows of 16 i32, the
+/// strength (i32) and the power rank.
+const CENSUS_TRAILER: usize = 3 * 16 * 4 + 4 + 1;
+
+fn census_trailer(g: &Game) -> Vec<u8> {
+    let m = &g.ai_memory;
+    let c = &m.census;
+    let mut v = Vec::with_capacity(8 * CENSUS_TRAILER + 2);
+    for s in 0..8 {
+        for x in c.defence[s].iter().chain(&c.attack[s]).chain(&c.cities[s]) {
+            v.extend_from_slice(&x.to_le_bytes());
+        }
+        v.extend_from_slice(&c.strength[s].to_le_bytes());
+        v.push(m.ranks[s]);
+    }
+    v.push(c.faces_human);
+    v.push(m.gang_up as u8);
+    v
+}
+
+fn read_census_trailer(g: &mut Game, b: &[u8]) {
+    let live = g.live_census();
+    let m = &mut g.ai_memory;
+    let word = |at: usize| i32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]);
+    for s in 0..8 {
+        let r = s * CENSUS_TRAILER;
+        for k in 0..16 {
+            m.census.defence[s][k] = word(r + 4 * k);
+            m.census.attack[s][k] = word(r + 64 + 4 * k);
+            m.census.cities[s][k] = word(r + 128 + 4 * k);
+        }
+        m.census.strength[s] = word(r + 192);
+        m.ranks[s] = b[r + 196];
+    }
+    m.census.faces_human = b[8 * CENSUS_TRAILER];
+    m.gang_up = b[8 * CENSUS_TRAILER + 1] != 0;
+    m.census.squares = live.squares;
+    m.census.sites = live.sites;
 }
 
 /// First discoverers for a save from before version 15: the first civilization 1..7 that
@@ -756,6 +811,36 @@ mod tests {
         assert_eq!(old.diplo(1, 3), CONTACT);
         assert_eq!(old.diplo(1, 4), 0);
         assert_eq!(old.player(2).last_contact, -1);
+    }
+
+    #[test]
+    fn the_census_tables_and_power_ranks_survive_a_save() {
+        let mut g = Game::new(GameSetup { seed: 8, ..Default::default() }, None);
+        g.take_census_all();
+        g.ai_memory.census.attack[3][2] = 77;
+        g.ai_memory.census.strength[5] = -4;
+        g.ai_memory.census.faces_human = 0x24;
+        g.ai_memory.ranks = [0, 7, 6, 5, 4, 3, 2, 1];
+        g.ai_memory.gang_up = true;
+        let dir = std::env::temp_dir().join(format!("civrs-census-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        let l = super::load_game(&path).unwrap();
+        assert_eq!(l.ai_memory.census, g.ai_memory.census);
+        assert_eq!((l.ai_memory.ranks, l.ai_memory.gang_up), (g.ai_memory.ranks, true));
+        // a version-19 file takes the census and ranking of the moment
+        let mut data = std::fs::read(&path).unwrap();
+        data[4..6].copy_from_slice(&19u16.to_le_bytes());
+        data.truncate(data.len() - (8 * super::CENSUS_TRAILER + 2));
+        std::fs::write(&path, &data).unwrap();
+        let old = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        let mut now = g.clone();
+        now.ai_memory.census = Default::default();
+        now.take_census_all();
+        assert_eq!(old.ai_memory.census, now.ai_memory.census);
+        assert!(!old.ai_memory.gang_up);
+        assert_eq!(old.ai_memory.ranks.iter().filter(|r| **r == 7).count(), 1);
     }
 
     #[test]

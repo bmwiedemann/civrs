@@ -29,8 +29,10 @@ impl Ai {
 
 impl AiDriver for Ai {
     /// CIV.EXE's turn loop for a computer civilization after its cities and politics
-    /// (`Game::process_player_turn_start`): `ai_civ_turn` (0x2536, `unit_ai::civ_turn`), then
-    /// `ai_reset_goals` (0x2541) and `move_units` (0x25af, `unit_ai::move_units`).
+    /// (`Game::process_player_turn_start`): `ai_civ_turn` (0x2536, `unit_ai::civ_turn`, which
+    /// also picks the government), then `ai_reset_goals` (0x2541) and `move_units` (0x25af,
+    /// `unit_ai::move_units`). The barbarians' and the human's `ai_civ_turn` is the turn
+    /// runner's.
     fn play_turn(&mut self, g: &mut Game, slot: Slot, sink: &mut dyn FnMut(TurnStep)) {
         if slot == 0 {
             unit_ai::play_barbarians(g, sink);
@@ -40,7 +42,6 @@ impl AiDriver for Ai {
         if !p.in_game || !p.alive {
             return;
         }
-        govern(g, slot);
         unit_ai::civ_turn(g, slot);
         if !g.player(slot).alive {
             return;

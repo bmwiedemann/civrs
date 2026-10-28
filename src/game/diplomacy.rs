@@ -520,17 +520,10 @@ impl Game {
         self.civ_slots().into_iter().filter(|s| *s != slot && self.player(*s).alive && self.player(slot).has_contact(*s)).collect()
     }
 
-    /// ds:0x6e82: military strength, attack plus defence of every unit, the stashed garrison
-    /// of the cities included (census 0x15848, 0x15acc).
+    /// ds:0x6e82: military strength as the civ's last AI turn counted it (`Census::strength`:
+    /// attack plus defence of every unit but the Nuclear and of the stashed garrisons).
     pub fn military_strength(&self, slot: Slot) -> i32 {
-        let units: i32 = self.all_units().filter(|u| u.owner == slot).map(|u| u.info().att as i32 + u.info().def as i32).sum();
-        let stashed: i32 = self
-            .all_cities()
-            .filter(|c| c.owner == slot)
-            .flat_map(|c| c.garrison_units().collect::<Vec<_>>())
-            .map(|(k, _)| rules::UNITS[k as usize].att as i32 + rules::UNITS[k as usize].def as i32)
-            .sum();
-        units + stashed
+        self.ai_memory.census.strength.get(slot as usize).copied().unwrap_or(0)
     }
 
     /// ds:0xb3f0[0x38 * civ] (0x15789): the civ's Nuclear units (the per-type counter of
@@ -1047,6 +1040,7 @@ mod tests {
         g.add_city(3, "B1".into(), 30, 26);
         g.add_city(3, "B2".into(), 33, 26);
         g.add_city(4, "C1".into(), 36, 26);
+        g.rank_powers();
         assert!(g.world_gangs_up());
         g.gang_up_on_leader();
         assert_ne!(g.diplo(2, 1) & BREAK, 0, "a treaty partner means to break it");
@@ -1066,6 +1060,7 @@ mod tests {
             g.add_unit(3, unit_ids::KNIGHTS, 11, 10);
         }
         g.add_unit(2, unit_ids::MILITIA, 10, 10);
+        g.take_census_all();
         assert!(!g.ai_wants_war(2, 3), "b's attack outweighs a's defence where a has a city");
         assert!(g.ai_wants_war(3, 2), "b has no city at stake");
         g.civs_meet(2, 3, 11, 10);

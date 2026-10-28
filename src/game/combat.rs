@@ -1398,6 +1398,7 @@ mod tests {
             ids.push(c);
         }
         assert_eq!(g.player(2).capital, Some(ids[0]));
+        g.rank_powers();
         let a = g.add_unit(1, unit_ids::LEGION, 6, 11);
         assert_eq!(g.try_move(a, crate::game::Dir8::N).unwrap(), MoveOutcome::CapturedCity(ids[0]));
         let ev = g.events.iter().find_map(|e| match e {
@@ -1509,6 +1510,7 @@ mod tests {
         let a = g.add_unit(1, unit_ids::LEGION, 6, 11);
         g.player_mut(1).gold = 0;
         g.player_mut(2).gold = 3000;
+        g.rank_powers();
         assert!(g.power_rank(g.human_slot) < g.power_rank(2));
         assert_eq!(g.try_move(a, crate::game::Dir8::N).unwrap(), MoveOutcome::CapturedCity(ids[0]));
         // the most central of the other four (a tie: the first)
@@ -1529,6 +1531,7 @@ mod tests {
             if weak {
                 g.player_mut(1).gold = 30000;
             }
+            g.rank_powers();
             assert_eq!(g.power_rank(1) < g.power_rank(2), !weak);
             let a = g.add_unit(1, unit_ids::LEGION, 6, 11);
             assert_eq!(g.try_move(a, crate::game::Dir8::N).unwrap(), MoveOutcome::CapturedCity(ids[0]));
