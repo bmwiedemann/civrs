@@ -603,6 +603,30 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   (0xbb4a), and the computer Settlers' goals. After such a divergence, its effects follow on, for
   example the human's Chieftain research bonus when another civ found the goal first (0x12c93). Two
   CIV.EXE runs from the same save differ in the same way.
+- Mid- and late-game scripts (2026-10-28, all from CIVIL4 edited with sve_edit.py, the
+  commands in the headers; `build:` buildings, `wonder:`, `govt:`, `rates:`, `tile:` bits,
+  `warming:`, `contact:`, `work:` the first squares of the radius): MONARCHY / REPUBLIC /
+  DEMOCRACY (corruption, settlers' food, units abroad, disorder, the Senate overruling a
+  treaty break, a caravan's route to another continent, a far city, the Democracy falling),
+  GROWTH (size 10 with and without an Aqueduct, Granary, famine), RAPTURE (We Love the King
+  Day growth), POLLUTION (polluted squares, cleaning, a global warming), WONDERS. They match
+  CIV.EXE field for field over 5..8 turns but for combat rolls. Found and fixed: a Democracy
+  falls on the second turn of disorder by the status bit (0x12701, also right after a load),
+  the caravan revenue's travel distance (0x1d6af), the view of a loaded game (capital x - 7,
+  row 19, 0x1bd4) and the moves given back before the first unit is taken (0x40c0), and a
+  rapture growth that only raises the size (0x12b12).
+- The harness: the palace screen (overlay 17) gets section 4 (or the next one taken) and the
+  first style; the copy-protection quiz (overlay 16, every 50th turn in BC) is answered by
+  reference/tools/quiz.py, which finds the pictured advance by its icon's colours and rebuilds
+  the menu (the candidates, names compared without case, 0x157a1) and clicks the right line
+  (menu_select follows the mouse pointer, so keys alone would take the line under it); AutoSave
+  is turned off (game_turn 0x2796 saves turn 50, 100, ... to CIVIL4..9 and asks for the drive).
+- Effects of the diff method, not differences: a save loaded on a turn with turn & 3 == 0
+  replays the human's politics (0x252b), so the revolution flag already cleared that turn ends
+  the Anarchy of the import (DEMOCRACY's t52); CIV.EXE advances a Settlers' work when its loop
+  reaches the unit (0x50db), after the save if an earlier unit waits, civrs at the turn start.
+  Edited saves keep the cities' saved trade (+0xa) of the original until their next turn, which
+  the caravans and routes read, so the scripts set up routes from the second turn on.
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
