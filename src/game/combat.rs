@@ -350,6 +350,12 @@ impl Game {
         if from == self.human_slot && by != 0 {
             self.player_mut(by).last_contact = -1;
         }
+        // civil war (0x13db4..0x13e3b), before anything else: the Palace city of a computer
+        // player with more than four cities that ranks above the human (ds:0x803c)
+        let h = self.human_slot;
+        if from != 0 && from != h && city.has_improvement(imp::PALACE) && self.cities_of(from).len() > 4 && self.power_rank(h) < self.power_rank(from) {
+            self.civil_war(from, (city.x, city.y));
+        }
         // the plunder is reckoned first and leaves the loser even when the city is destroyed
         // or the barbarians take it (0x13e6c, 0x13f52)
         let gold = self.plunder_value(c);
@@ -372,7 +378,6 @@ impl Game {
             self.players[from as usize].stats.cities_lost += 1;
             if was_capital {
                 self.lose_capital(from);
-                self.civil_war(from, (city.x, city.y));
             }
             self.refresh_vision(by);
             self.refresh_vision(from);
@@ -419,7 +424,6 @@ impl Game {
         self.push_event(GameEvent::CityCaptured { city: c, by, from, gold, adv });
         if was_capital {
             self.lose_capital(from);
-            self.civil_war(from, (city.x, city.y));
         }
         self.refresh_vision(by);
         self.refresh_vision(from);
@@ -434,35 +438,15 @@ impl Game {
         self.cancel_spaceship(slot);
     }
 
-    /// Civil war when a capital falls: if the loser still has at least 6 cities, the half of
-    /// them farthest from the old capital defects to a new civilisation in a free slot.
-    pub fn civil_war_check(&mut self, from: Slot, by: Slot) {
-        if from == 0 || !self.player(from).in_game || !self.player(from).alive {
-            return;
-        }
-        let cities = self.cities_of(from);
-        if cities.len() < 6 {
-            return;
-        }
-        // old capital position is unknown here: use the captor's city nearest to the loser's
-        // remaining cities as the centre the rebellion spreads away from
-        let centre = self
-            .all_cities()
-            .filter(|c| c.owner == by)
-            .map(|c| (c.x, c.y))
-            .min_by_key(|p| cities.iter().map(|c| Map::dist(*p, self.city(*c).pos())).sum::<i32>())
-            .unwrap_or_else(|| self.city(cities[0]).pos());
-        self.civil_war(from, centre);
-    }
-
-    /// Split the civilisation `from`: the half of its cities farthest from `centre` defects to a
-    /// new civilisation in a free slot (no-op when fewer than 6 cities or no slot is free).
+    /// Split the civilisation `from` (`capture_city` checks when, 0x13db4): the half of its
+    /// cities farthest from `centre` defects to a new civilisation in a free slot (no-op when
+    /// no slot is free). CIV.EXE's split (ovl 15 0x14b75) goes by continent and population.
     pub fn civil_war(&mut self, from: Slot, centre: (i32, i32)) {
         if from == 0 || !self.player(from).in_game || !self.player(from).alive {
             return;
         }
         let mut cities = self.cities_of(from);
-        if cities.len() < 6 {
+        if cities.len() < 2 {
             return;
         }
         let Some(new_slot) = (1..8u8).find(|s| !self.players[*s as usize].in_game) else { return };
@@ -1120,6 +1104,39 @@ mod tests {
         assert!(rebels.iter().all(|c| g.city(*c).x >= 18));
         assert!(g.player(new_slot).capital.is_some());
         assert_eq!(g.cities_of(2).len(), 3);
+    }
+
+    #[test]
+    fn no_civil_war_for_the_human_or_a_civ_ranked_below_him() {
+        // 0x13db4: the old owner is a computer player above the human in ds:0x803c
+        for weak in [false, true] {
+            let mut g = flat_game_with(3);
+            let mut ids = Vec::new();
+            for i in 0..5 {
+                let c = g.add_city(2, format!("C{i}"), 6 + i * 3, 10);
+                g.city_mut(c).size = 3;
+                ids.push(c);
+            }
+            if weak {
+                g.player_mut(1).gold = 30000;
+            }
+            assert_eq!(g.power_rank(1) < g.power_rank(2), !weak);
+            let a = g.add_unit(1, unit_ids::LEGION, 6, 11);
+            assert_eq!(g.try_move(a, crate::game::Dir8::N).unwrap(), MoveOutcome::CapturedCity(ids[0]));
+            assert_eq!(g.events.iter().any(|e| matches!(e, GameEvent::CivilWar { .. })), !weak, "weak {weak}");
+        }
+        let mut g = flat_game_with(3);
+        let me = g.human_slot;
+        let mut ids = Vec::new();
+        for i in 0..7 {
+            let c = g.add_city(me, format!("H{i}"), 6 + i * 3, 10);
+            g.city_mut(c).size = 3;
+            ids.push(c);
+        }
+        let a = g.add_unit(2, unit_ids::LEGION, 6, 11);
+        g.try_move(a, crate::game::Dir8::N).unwrap();
+        assert_eq!(g.city(ids[0]).owner, 2);
+        assert!(!g.events.iter().any(|e| matches!(e, GameEvent::CivilWar { .. })));
     }
 
     #[test]
