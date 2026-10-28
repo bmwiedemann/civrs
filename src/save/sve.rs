@@ -410,6 +410,8 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
             garrison: [r[0x1a], r[0x1b]],
             garrison_out: st & 0x04 != 0,
             known_size: r[8],
+            // +6 bit 0x2: set at founding next to a big ocean (o 0x1b6b9)
+            coastal: st & 0x02 != 0,
         };
         if st & 0x80 != 0 {
             g.players[owner as usize].sold_cities.push(i as u16);
@@ -684,7 +686,18 @@ mod tests {
     }
 
     #[test]
-    fn reads_the_load_menu_line() {
+    fn the_coastal_bits_civ_exe_saved_follow_civrs_founding_rule() {
+        for n in [0u8, 1, 3, 4] {
+            let Some(mut g) = sample(n) else { continue };
+            let cities: Vec<_> = g.all_cities().map(|c| (c.name.clone(), c.owner, c.x, c.y, c.coastal)).collect();
+            for (name, owner, x, y, coastal) in cities {
+                assert_eq!(coastal, g.founding_coastal(owner, x, y), "CIVIL{n} {name}");
+            }
+        }
+    }
+
+    #[test]
+   fn reads_the_load_menu_line() {
         let Ok(dir) = crate::assets::AssetDir::locate(None) else { return };
         let Some(path) = slot_file(dir.root(), 3) else { return };
         let h = read_header(&path).unwrap();

@@ -784,7 +784,8 @@ fn transport(g: &mut Game, c: &Ctx) -> Option<Command> {
     if (want > passengers || roles == 1) && c.role == AiRole::Transport {
         let mut best = 999;
         let mut port_policy = None;
-        let ports: Vec<CityId> = g.all_cities().filter(|ct| ct.owner == slot && g.map.is_coastal(ct.x, ct.y)).map(|ct| ct.id).collect();
+        // own cities with the coastal bit (0x16f8d)
+        let ports: Vec<CityId> = g.all_cities().filter(|ct| ct.owner == slot && ct.coastal).map(|ct| ct.id).collect();
         for p in ports {
             let pc = g.city(p).clone();
             let mut d = Map::civ_distance((c.x, c.y), pc.pos());

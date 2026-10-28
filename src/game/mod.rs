@@ -810,7 +810,9 @@ impl Game {
             garrison: city::no_garrison(),
             garrison_out: false,
             known_size: 0,
+            coastal: false,
         };
+        c.coastal = self.founding_coastal(owner, x, y);
         if first_city {
             c.add_improvement(rules::improvement_ids::PALACE);
             self.players[owner as usize].capital = Some(id);
@@ -854,6 +856,14 @@ impl Game {
         // found_city o 0x1b4e4
         self.replay_city(replay::kind::CITY, owner, id);
         id
+    }
+
+    /// The coastal bit a city founded by `owner` at (x,y) gets (o 0x1b667..0x1b6b9): an Ocean
+    /// square among the eight around whose body of water is larger than 256 squares
+    /// (`continent_size` 0x1a68:0x1963), or any Ocean square for the human.
+    pub fn founding_coastal(&mut self, owner: Slot, x: i32, y: i32) -> bool {
+        let human = owner == self.human_slot;
+        Map::neighbours8(x, y).any(|(nx, ny)| self.map.is_ocean(nx, ny) && (human || self.ocean_size(nx, ny) > 256))
     }
 
     /// Remove a city from the map (destroyed).

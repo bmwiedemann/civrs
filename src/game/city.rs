@@ -99,6 +99,14 @@ pub struct City {
     /// [`Game::city_size_shown`]. Saved after the game body (save version 19).
     #[serde(skip)]
     pub known_size: u8,
+    /// CIV.EXE city status bit 0x2 (+6), set once at founding (o 0x1b687..0x1b6b9) when one of
+    /// the eight squares around is Ocean of a body larger than 256 squares, or any Ocean for
+    /// the human's city; a capture keeps it. Only this bit lets a city build sea units
+    /// (choose_production 0xaab2, for every civ) and makes it a port for the computer's
+    /// transports (0x16f8d). See [`Game::founding_coastal`]. Saved after the game body (save
+    /// version 20).
+    #[serde(skip)]
+    pub coastal: bool,
 }
 
 /// A free garrison slot (CIV.EXE writes 0xff at city founding, o 0x1b5cd).

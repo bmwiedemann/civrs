@@ -111,14 +111,14 @@ pub fn city_turn_purchase(g: &mut Game, c: CityId, net_shields: i32) {
 /// CIV.EXE's city status byte (+6) as far as civrs keeps its bits: 0x1 disorder, 0x2 coastal,
 /// 0x4 garrison out, 0x8 Hydro Plant site, 0x10 AUTO / alert, 0x20 advance stolen, 0x40
 /// celebration, 0x80 improvement sold this turn. CIV.EXE sets the coastal and hydro bits when
-/// the city is founded (o 0x1b6b9, 0x1b6d2); civrs derives them from the map (unverified that
-/// the tests are the same).
+/// the city is founded (o 0x1b6b9, 0x1b6d2); civrs keeps the coastal one (`City::coastal`)
+/// and derives the hydro one from the map.
 fn exe_status(g: &Game, c: CityId) -> u8 {
     let city = g.city(c);
     let hydro = Map::neighbours8(city.x, city.y).any(|(x, y)| matches!(g.map.terrain(x, y), Terrain::River | Terrain::Mountains));
     let bits = [
         city.disorder,
-        g.map.is_coastal(city.x, city.y),
+        city.coastal,
         city.garrison_out,
         hydro,
         city.auto_build,

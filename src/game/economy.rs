@@ -800,7 +800,8 @@ impl Game {
                 return false;
             }
         }
-        if u.domain == Domain::Sea && !self.map.is_coastal(city.x, city.y) {
+        // the city's coastal bit, not the map (CIV.EXE 0xaab2)
+        if u.domain == Domain::Sea && !city.coastal {
             return false;
         }
         // Nuclear: the Manhattan Project and Nuclear Fission as well (CIV.EXE 0xabb2)
@@ -1556,4 +1557,31 @@ mod tests {
         assert_eq!(g.cost_factor(ai), 14, "not at Warlord");
     }
 
+    #[test]
+    fn only_the_coastal_bit_lets_a_city_build_ships() {
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        let human = g.human_slot;
+        let ai = (1..8).find(|s| *s != human && g.player(*s).alive).unwrap();
+        // a one-square lake in a grassland block
+        for y in 10..20 {
+            for x in 10..30 {
+                let t = g.map.get_mut(x, y).unwrap();
+                t.terrain = if (x, y) == (20, 15) { Terrain::Ocean } else { Terrain::Grassland };
+                t.city = None;
+            }
+        }
+        g.barbarian_memory = Default::default();
+        for s in [human, ai] {
+            g.player_mut(s).learn(crate::rules::advance_ids::MAP_MAKING);
+        }
+        let mine = g.add_city(human, "Lake".into(), 19, 15);
+        let theirs = g.add_city(ai, "Pond".into(), 21, 15);
+        assert!(g.city(mine).coastal, "the human's city by any ocean");
+        assert!(!g.city(theirs).coastal, "a computer city needs more than 256 squares of ocean");
+        assert!(g.can_build_unit(mine, unit_ids::TRIREME));
+        assert!(!g.can_build_unit(theirs, unit_ids::TRIREME));
+        // a capture keeps the bit
+        g.city_mut(theirs).owner = human;
+        assert!(!g.can_build_unit(theirs, unit_ids::TRIREME));
+    }
 }

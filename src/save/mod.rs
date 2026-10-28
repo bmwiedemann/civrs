@@ -48,7 +48,9 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// defence, attack and cities rows of `Census`, 16 i32 LE each, its strength and citizens
 /// (i32 LE) and its power rank (u8), then the ds:0x2a6e and ds:0x8078 bytes); older saves take the census of
 /// every civilization and the power ranking as things stand.
-pub const VERSION: u16 = 20;
+/// 21: then by the number of city slots (u32 LE) and each slot's `City::coastal` byte (0/1, 0
+/// for an empty slot); older saves give each city the bit its owner would get founding it now.
+pub const VERSION: u16 = 21;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -149,6 +151,8 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     data.extend_from_slice(&(g.cities.len() as u32).to_le_bytes());
     data.extend(g.cities.iter().map(|c| c.as_ref().map(|c| c.known_size).unwrap_or(0)));
     data.extend_from_slice(&census_trailer(g));
+    data.extend_from_slice(&(g.cities.len() as u32).to_le_bytes());
+    data.extend(g.cities.iter().map(|c| c.as_ref().map(|c| c.coastal as u8).unwrap_or(0)));
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -255,6 +259,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     let mut catch_up = None;
     let mut known_sizes: Option<Vec<u8>> = None;
     let mut census: Option<&[u8]> = None;
+    let mut coastal: Option<Vec<u8>> = None;
     // version 14: the tribe names, after the counters
     if ver >= 14 {
         let mut at = counters + 112 * g.players.len();
@@ -303,6 +308,11 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
                 known_sizes = rest.get(at + 4..at + 4 + n).map(|b| b.to_vec());
                 at += 4 + n;
                 census = rest.get(at..at + 8 * CENSUS_TRAILER + 2).filter(|_| ver >= 20);
+                at += 8 * CENSUS_TRAILER + 2;
+                if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 21) {
+                    let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
+                    coastal = rest.get(at + 4..at + 4 + n).map(|b| b.to_vec());
+                }
             }
         }
     } else {
@@ -362,6 +372,22 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
         None => {
             g.take_census_all();
             g.rank_powers();
+        }
+    }
+    match coastal {
+        Some(b) => {
+            for (c, k) in g.cities.iter_mut().zip(b) {
+                if let Some(c) = c {
+                    c.coastal = k != 0;
+                }
+            }
+        }
+        None => {
+            for i in 0..g.cities.len() {
+                let Some((owner, x, y)) = g.cities[i].as_ref().map(|c| (c.owner, c.x, c.y)) else { continue };
+                let bit = g.founding_coastal(owner, x, y);
+                g.cities[i].as_mut().unwrap().coastal = bit;
+            }
         }
     }
     Ok(g)
@@ -724,6 +750,27 @@ mod tests {
         assert_eq!(l.historian_timer, 123);
         assert_eq!(l.history, g.history);
         assert_eq!(l.catch_up, 4, "the bonus of the last 50-turn mark");
+    }
+
+    #[test]
+    fn the_coastal_bit_survives_a_save_and_old_saves_derive_it() {
+        let mut g = Game::new(GameSetup { seed: 6, ..Default::default() }, None);
+        let h = g.human_slot;
+        let settler = g.units_of(h).into_iter().find(|id| g.unit(*id).kind == crate::rules::unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        let bit = g.city(c).coastal;
+        g.city_mut(c).coastal = !bit;
+        let dir = std::env::temp_dir().join(format!("civrs-coastal-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        assert_eq!(super::load_game(&path).unwrap().city(c).coastal, !bit);
+        let mut data = std::fs::read(&path).unwrap();
+        data[4..6].copy_from_slice(&19u16.to_le_bytes());
+        data.truncate(data.len() - 4 - g.cities.len());
+        std::fs::write(&path, &data).unwrap();
+        let old = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(old.city(c).coastal, bit, "derived as at founding");
     }
 
     #[test]
