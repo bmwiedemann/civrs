@@ -309,7 +309,7 @@ to PNG and viewing them (Read tool on image) before the UI tracks depend on them
   `../civ`, `/home/tester/git/reverse/civ`. No conversion step.
 - Rendering: 320x200 8-bit indexed `Surface` + active `Palette` -> RGBA -> texture each frame, 60 Hz.
 - Save games: own format (`CIVR` magic + version + bincode of `Game`), 10 slots in
-  `~/.local/share/civrs/` (`--save-dir` override), AutoSave option (CIV.EXE's every 50 turns into slots 4..9, plus civrs's silent save of every turn to slot 9); hall of fame `fame.dat`.
+  `~/.local/share/civrs/` (`--save-dir` override), AutoSave option (CIV.EXE's every 50 turns, here into slots 4..8 (CIV.EXE: 4..9), plus civrs's silent save of every turn to slot 9); hall of fame `fame.dat`.
   The original's CIVILn.SVE + CIVILn.MAP import into a `Game` (`save::sve`, overlay 11 layout;
   the .MAP is map page 2 as a PIC): `civrs --load-sve FILE` (also with `--dump screen:NAME`),
   and the load menu offers CIVILn.SVE (save or game directory) in slots without a civrs save.
