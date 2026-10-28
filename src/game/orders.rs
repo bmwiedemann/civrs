@@ -274,9 +274,10 @@ impl Game {
         })
     }
 
-    /// The turn loop's part of Settlers work (at the start of the slot's turn, after the moves
-    /// are restored): every working unit presses its order's key again (0x4492), a turn of
-    /// work that may finish the job; a job no longer possible is dropped.
+    /// The turn loop's part of a computer's Settlers work (civrs: at the start of the slot's
+    /// turn, after the moves are restored): every working unit presses its order's key again
+    /// (0x4492), a turn of work that may finish the job; a job no longer possible is dropped.
+    /// The human's Settlers press it as his loop comes to them (`run_auto_unit`).
     pub fn progress_work(&mut self, slot: super::Slot) {
         let ids: Vec<UnitId> = self.all_units().filter(|u| u.owner == slot && u.order.is_work()).map(|u| u.id).collect();
         for id in ids {
@@ -382,16 +383,41 @@ impl Game {
         Some(super::Dir8::ALL[k - 1])
     }
 
-    /// Move the human's unit `id` along its goto as far as its moves allow, or fly an aircraft
-    /// in return-to-base mode on, the unit loop pressing 'h' for it before every step (0x4528
-    /// ..0x4556, `press_home`), as the loop does when it comes to the unit (0x4bbe, 0x6d7f ->
-    /// 0x442c while it has moves). A goto ends at its square, when no step is left or a step
-    /// fails; a step that needs the player's answer (a caravan at one of his cities, a
-    /// Diplomat at a foreign city or unit) ends it too and comes back as `AutoStop::Menu`.
-    /// A unit stuck with its order and moves stops for the turn (civrs: CIV.EXE's loop would
-    /// press the key again, 0x6d7f -> 0x442c).
+    /// The human's unit `id` that moves or works by itself (`is_auto_unit`), as his loop
+    /// does when it comes to it (0x4492..0x4556 -> 0x4bbe) and again while the unit has moves
+    /// left after a key (0x6d7f -> 0x442c):
+    ///
+    /// - a Settlers at work presses its job's key ('r' 0x02, 'i' 0x40, 'm' 0x80, 'f' 0xc0,
+    ///   'p' 0x82; 0x44bd..0x452f): a turn of work (`work_step`), or, when the job is no
+    ///   longer possible, the order goes (`AutoStop::Refused`) and the unit, its moves
+    ///   kept, waits for orders at once;
+    /// - an aircraft returning to base presses 'h' before every step (0x4528..0x4556,
+    ///   `press_home`);
+    /// - a goto (which goes before both, 0x4bce) takes its next step (goto_direction
+    ///   0x1db0:0x4). It ends at its square, when no step is left or a step is refused (the
+    ///   zone of control clears it, 0x5b44); a step that needs the player's answer (a caravan
+    ///   at one of his cities, a Diplomat at a foreign city or unit) ends it too and comes
+    ///   back as `AutoStop::Menu`. A land unit whose step fails for want of moves (0x636f)
+    ///   keeps its goto for the next turn.
+    ///
+    /// CIV.EXE presses the key again for as long as the unit keeps its order and moves; when
+    /// a step neither moves the unit nor spends or clears anything (an aircraft standing on a
+    /// city with its return bit, a refused flight) that never ends. civrs stops such a unit
+    /// instead: on a city's square its order goes, elsewhere its turn ends.
     pub fn run_auto_unit(&mut self, id: UnitId) -> AutoStop {
         use super::MoveOutcome as M;
+        if let Some(o) = self.unit_opt(id).filter(|u| u.goto.is_none() && u.moves_left > 0).map(|u| u.order).filter(|o| o.is_work()) {
+            return match self.work_step(id, o) {
+                Ok(()) => AutoStop::Done,
+                Err(e) => {
+                    // a refused job drops the order bits and the counter (0x5091, 0x543f)
+                    let um = self.unit_mut(id);
+                    um.order = UnitOrder::None;
+                    um.order_turns = 0;
+                    AutoStop::Refused(e)
+                }
+            };
+        }
         let mut stop = AutoStop::Done;
         for _ in 0..40 {
             let Some(u) = self.unit_opt(id) else { break };
@@ -426,6 +452,9 @@ impl Game {
                     stop = AutoStop::Menu(out, dir);
                     break;
                 }
+                // a land unit short of moves fails its step with its moves gone (0x636f) and
+                // keeps the goto
+                Ok(M::Blocked) if self.unit_opt(id).is_some_and(|u| u.moves_left == 0) => break,
                 Ok(_) | Err(_) => {
                     if self.unit_opt(id).is_some() {
                         self.clear_goto(id);
@@ -434,8 +463,7 @@ impl Game {
                 }
             }
         }
-        // a unit that could not go on keeps its order for the next turn (the loop would only
-        // come back to it), but one on a city's square has arrived
+        // what CIV.EXE would press again without end (above)
         if let Some(u) = self.unit_opt(id).filter(|u| matches!(u.order, UnitOrder::Goto | UnitOrder::Home) && u.moves_left > 0) {
             if self.city_at(u.x, u.y).is_some() {
                 self.clear_goto(id);

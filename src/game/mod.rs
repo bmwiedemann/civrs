@@ -44,7 +44,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 /// Rule violations, mapped 1:1 to ERROR.TXT sections where one exists.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuleError {
     Zoc,
     Trireme,
@@ -354,11 +354,16 @@ pub struct UnitLoop {
     /// closes when the first unit waits for orders on turn 0 (0x4599) or the first Settlers
     /// on any turn (0x45c9), and when the loop runs out of units (0x76cd).
     pub looks_done: bool,
+    /// The last pick took a unit off the screen and centred the view on it (0x43c9), after
+    /// the loop's 30-tick pause (0x439a, which waits unless ds:0xb278 == 1; nothing in CIV.EXE
+    /// writes ds:0xb278, so the pause always comes). The map view pauses before it shows the
+    /// new view (`MapView::adopt_view`).
+    pub centred: bool,
 }
 
 impl Default for UnitLoop {
     fn default() -> Self {
-        UnitLoop { last: 0, mark: 0x7f, round: false, looks_done: false }
+        UnitLoop { last: 0, mark: 0x7f, round: false, looks_done: false, centred: false }
     }
 }
 
@@ -370,6 +375,9 @@ pub enum AutoStop {
     /// A step in direction `Dir8` needs the player's answer (`CaravanArrived`,
     /// `EnteredForeignCity` or `BribeOffer`); the goto is gone.
     Menu(MoveOutcome, Dir8),
+    /// The Settlers' job is no longer possible: the order is gone and the unit, its moves
+    /// kept, waits for orders; the key's message, if CIV.EXE has one, is shown.
+    Refused(RuleError),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1075,11 +1083,13 @@ impl Game {
     /// visible units for hidden ones; civrs wraps.
     ///
     /// The unit may be one that moves by itself (`is_auto_unit`): a goto, taken by the same
-    /// rule, or an aircraft returning to base, taken wherever it is (bit 0x02 skips the view
-    /// test, 0x4345). The caller moves it (`run_auto_unit`, 0x44b3 -> 0x4bbe) and goes on
-    /// with the loop, so these units move in record order among the ones waiting for orders.
+    /// rule, or a Settlers at work or an aircraft returning to base, taken wherever it is
+    /// (flags 0xc2 skip the view test, 0x4345). The caller moves it or presses its job's key
+    /// (`run_auto_unit`, 0x4492..0x4556 -> 0x4bbe) and goes on with the loop, so these units
+    /// move and work in record order among the ones waiting for orders.
     /// Every unit the loop passes looks around first while `UnitLoop::looks_done` is open
-    /// (0x41b7 -> unit_look 0x41e3).
+    /// (0x41b7 -> unit_look 0x41e3), and one that is fortifying becomes fortified
+    /// (`loop_passes`, 0x4239).
     pub fn next_active_unit(&mut self) -> Option<UnitId> {
         let after = self.active_unit;
         self.next_active_unit_from(after, 1, true)
@@ -1118,15 +1128,17 @@ impl Game {
         // a unit deleted since (disbanded, a caravan's help) leaves the loop at its record
         let at = from.and_then(|a| self.unit_opt(a)).filter(|u| u.owner == slot).map(|u| u.record).unwrap_or(self.unit_loop.last);
         let mut i = if from.is_some() { (at as usize + skip) & 127 } else { 0 };
-        let wants = |u: &Unit| u.moves_left > 0 && matches!(u.order, UnitOrder::None | UnitOrder::Goto | UnitOrder::Home);
+        self.unit_loop.centred = false;
+        let wants = |u: &Unit| u.moves_left > 0 && (matches!(u.order, UnitOrder::None | UnitOrder::Goto | UnitOrder::Home) || u.order.is_work());
         if !ids.iter().any(|id| wants(self.unit(*id))) {
-            // the loop runs out (0x7691): the rest of its round looks, then the latch closes
-            // for the End of Turn wait (0x76cd)
-            if !self.unit_loop.looks_done {
-                for r in i..128 {
-                    if let Some(id) = by_record[r] {
+            // the loop runs out (0x7691): it passes the rest of its round, then the latch
+            // closes for the End of Turn wait (0x76cd)
+            for r in i..128 {
+                if let Some(id) = by_record[r] {
+                    if !self.unit_loop.looks_done {
                         self.unit_look(id);
                     }
+                    self.loop_passes(id);
                 }
             }
             self.unit_loop.looks_done = true;
@@ -1143,17 +1155,20 @@ impl Game {
                 if !self.unit_loop.looks_done {
                     self.unit_look(id);
                 }
+                self.loop_passes(id);
             }
-            // (a look never takes a unit of the looking civ off the map)
+            // (a look never takes a unit of the looking civ off the map; a garrison stashed
+            // as the loop passed takes units off, `unit_opt`)
             if let Some(id) = by_record[i].filter(|id| self.unit_opt(*id).is_some_and(wants)) {
                 let u = self.unit(id);
                 let shown = self.view.is_some_and(|(vx, vy)| (1..=14).contains(&Map::wrap_x(u.x - vx)) && (1..=9).contains(&(u.y - vy)));
-                let (on_screen, (x, y)) = (shown || u.order == UnitOrder::Home, u.pos());
+                let (on_screen, (x, y)) = (shown || u.order == UnitOrder::Home || u.order.is_work(), u.pos());
                 if on_screen || self.unit_loop.round {
                     if !on_screen {
                         self.view = Some(Self::view_centred_on(x, y));
                         self.unit_loop.mark = (i as u8).wrapping_sub(1) & 127;
                         self.unit_loop.round = false;
+                        self.unit_loop.centred = true;
                     }
                     self.unit_loop.last = i as u8;
                     self.unit_waits(id);
@@ -1165,11 +1180,19 @@ impl Game {
         None
     }
 
-    /// A unit of the human's that moves by itself when his loop comes to it: on goto, or an
-    /// aircraft returning to base (0x44ac: flags 0xc2 or a goto, the work orders aside, which
-    /// civrs advances at the turn's start, `progress_work`).
+    /// A unit of the human's that moves or works by itself when his loop comes to it
+    /// (0x44ac: flags 0xc2 or a goto): on goto, an aircraft returning to base, or a Settlers
+    /// at work, for which the loop presses the job's key again (0x44bd..0x452f).
     pub fn is_auto_unit(&self, id: UnitId) -> bool {
-        self.unit_opt(id).is_some_and(|u| u.owner == self.human_slot && u.moves_left > 0 && matches!(u.order, UnitOrder::Goto | UnitOrder::Home))
+        self.unit_opt(id).is_some_and(|u| u.owner == self.human_slot && u.moves_left > 0 && (matches!(u.order, UnitOrder::Goto | UnitOrder::Home) || u.order.is_work()))
+    }
+
+    /// The loop passes the human's unit `id` (0x41fb..0x4327): one that is fortifying and has
+    /// its moves becomes fortified (`complete_fortify`).
+    fn loop_passes(&mut self, id: UnitId) {
+        if self.unit_opt(id).is_some_and(|u| u.order == UnitOrder::Fortify && u.moves_left > 0) {
+            self.complete_fortify(id);
+        }
     }
 
     /// The human's unit `id` waits for orders (0x455e): on turn 0 (FIRSTMOVE, 0x456b) and for
@@ -1186,6 +1209,19 @@ impl Game {
     /// The loop starts afresh, as move_units does at each turn and after a load.
     pub fn reset_unit_loop(&mut self) {
         self.unit_loop = UnitLoop::default();
+    }
+
+    /// Tests: the human's turn start with his loop run to its end, every unit it takes
+    /// skipped (Space).
+    #[cfg(test)]
+    pub fn run_human_loop(&mut self) {
+        self.reset_moves(self.human_slot);
+        self.active_unit = None;
+        self.reset_unit_loop();
+        while let Some(id) = self.next_active_unit() {
+            self.skip_unit(id);
+            self.active_unit = Some(id);
+        }
     }
 
     /// The view origin that puts (x, y) at column 7, row 6 (0x1a68:0xe).

@@ -614,17 +614,17 @@ impl Game {
         self.unit_look_goals(id);
     }
 
-    /// Reset movement points at the start of a player's turn; handles fortify completion.
+    /// Reset movement points at the start of a player's turn (move_units 0x40a9).
     ///
-    /// CIV.EXE's unit loop at the start of a civilization's turn (0x4174..0x4327) also looks
-    /// around with every unit (unit_look 0x41e3, which lets out the garrison of a foreign city
-    /// next to it; the human's units look in his loop, `next_active_unit`) and, for a unit
-    /// that finishes fortifying in a city: a computer's unit is rehomed to a city of size 3
-    /// or more (0x42a4), and a unit fortified in its home city
-    /// stashes the city's garrison when no foreign unit is next to it (0x42b2..0x431f).
+    /// CIV.EXE's unit loop then passes every unit (0x4174..0x4327): it looks around (unit_look
+    /// 0x41e3, which lets out the garrison of a foreign city next to it) and a unit that is
+    /// fortifying becomes fortified (`complete_fortify`). For a computer civilization civrs
+    /// does both here; the human's units do it as his loop comes to them
+    /// (`next_active_unit`).
     pub fn reset_moves(&mut self, slot: super::Slot) {
         let extra_sea_move = self.extra_sea_move(slot);
-        let mut fortified = Vec::new();
+        let human = slot == self.human_slot;
+        let mut fortifying = Vec::new();
         for u in self.units.iter_mut().flatten() {
             if u.owner != slot {
                 continue;
@@ -634,33 +634,56 @@ impl Game {
                 m += 3;
             }
             u.moves_left = m;
-            if u.order == UnitOrder::Fortify {
-                // the fortification completes with the turn's moves spent (CIV.EXE 0x4239)
-                u.order = UnitOrder::Fortified;
-                u.moves_left = 0;
-                fortified.push(u.id);
+            if u.order == UnitOrder::Fortify && !human {
+                fortifying.push(u.id);
             }
             if u.order == UnitOrder::Skip {
                 u.order = UnitOrder::None;
             }
         }
-        // the human's units look as his loop comes to them (0x41b7, `next_active_unit`)
-        if slot != self.human_slot {
-            self.units_look_around(slot);
+        if human {
+            return;
         }
-        for id in fortified {
+        for &id in &fortifying {
+            let u = self.unit_mut(id);
+            u.order = UnitOrder::Fortified;
+            u.moves_left = 0;
+        }
+        self.units_look_around(slot);
+        for id in fortifying {
             // an earlier stash may have taken the unit off the map already
-            let Some((x, y)) = self.unit_opt(id).map(|u| u.pos()) else { continue };
-            let Some(c) = self.city_at(x, y) else { continue };
-            if slot != self.human_slot && self.city(c).size >= 3 {
-                self.unit_mut(id).home = Some(c);
-            }
-            if self.unit(id).home == Some(c) && !self.foreign_unit_adjacent(slot, x, y) {
-                self.stash_garrison(c);
+            if self.unit_opt(id).is_some() {
+                self.fortified_in_city(id);
             }
         }
         // a sentried unit wakes only when a foreign unit looks around next to it, treaty or
         // not (unit_look 0x835f, 0x85cd): its own civ's turn start wakes nothing
+    }
+
+    /// The unit loop passes a unit that is fortifying (CIV.EXE 0x4239): it is fortified now,
+    /// its turn's moves spent, then `fortified_in_city`.
+    pub fn complete_fortify(&mut self, id: UnitId) {
+        let u = self.unit_mut(id);
+        u.order = UnitOrder::Fortified;
+        u.moves_left = 0;
+        self.fortified_in_city(id);
+    }
+
+    /// A unit that has just become fortified in a city (0x4255..0x431f): a computer's unit is
+    /// rehomed to a city of size 3 or more (0x42a4), and a unit fortified in its home city
+    /// stashes the city's garrison when no foreign unit is next to it (0x42b2..0x431f).
+    fn fortified_in_city(&mut self, id: UnitId) {
+        let (slot, x, y) = {
+            let u = self.unit(id);
+            (u.owner, u.x, u.y)
+        };
+        let Some(c) = self.city_at(x, y) else { return };
+        if slot != self.human_slot && self.city(c).size >= 3 {
+            self.unit_mut(id).home = Some(c);
+        }
+        if self.unit(id).home == Some(c) && !self.foreign_unit_adjacent(slot, x, y) {
+            self.stash_garrison(c);
+        }
     }
 }
 
@@ -785,15 +808,48 @@ mod tests {
 
     #[test]
     fn fortifying_completes_with_the_next_turns_moves_spent() {
-        // CIV.EXE 0x4239: flag 0x04 becomes 0x08 and the moves go to 0
+        // CIV.EXE 0x4239: flag 0x04 becomes 0x08 and the moves go to 0, for the human as his
+        // loop passes the unit
         let (mut g, id) = militia_before_mountains(1, 3);
         let slot = g.unit(id).owner;
         g.unit_mut(id).order = crate::game::UnitOrder::Fortify;
         g.reset_moves(slot);
+        assert_eq!((g.unit(id).order, g.unit(id).moves_left), (crate::game::UnitOrder::Fortify, 3), "not before the loop comes");
+        g.run_human_loop();
         assert_eq!(g.unit(id).order, crate::game::UnitOrder::Fortified);
         assert_eq!(g.unit(id).moves_left, 0);
         g.reset_moves(slot);
         assert_eq!(g.unit(id).moves_left, 3);
+        // a computer's unit at its turn's start
+        let ai = (1..8).find(|s| *s != slot && g.player(*s).in_game).unwrap();
+        let (x, y) = g.unit(id).pos();
+        let b = g.add_unit(ai, unit_ids::MILITIA, x, y + 3);
+        g.unit_mut(b).order = crate::game::UnitOrder::Fortify;
+        g.reset_moves(ai);
+        assert_eq!((g.unit(b).order, g.unit(b).moves_left), (crate::game::UnitOrder::Fortified, 0));
+    }
+
+    #[test]
+    fn a_goto_that_fails_for_want_of_moves_is_kept() {
+        // 0x636f: the step's roll fails, the moves go and the goto stays for the next turn
+        let mut failed = 0;
+        for seed in 0..40 {
+            let (mut g, id) = militia_before_mountains(seed, 2);
+            let (x, y) = g.unit(id).pos();
+            for dy in -1..=1 {
+                let t = g.map.get_mut(x + 1, y + dy).unwrap();
+                t.terrain = Terrain::Mountains;
+                t.flags = 0;
+            }
+            g.set_goto(id, x + 2, y);
+            assert_eq!(g.run_auto_unit(id), crate::game::AutoStop::Done);
+            if g.unit(id).pos() == (x, y) {
+                failed += 1;
+                assert_eq!(g.unit(id).moves_left, 0);
+                assert_eq!((g.unit(id).order, g.unit(id).goto), (crate::game::UnitOrder::Goto, Some((x + 2, y))));
+            }
+        }
+        assert!(failed > 0);
     }
 
     #[test]
@@ -1258,6 +1314,47 @@ mod zoc_tests {
         g.active_unit = Some(d);
         assert_eq!(g.next_active_unit(), Some(e));
         assert_eq!(g.city_size_shown(near_e), None, "no look after the Settlers waited");
+    }
+
+    #[test]
+    fn the_human_s_loop_fortifies_and_works_as_it_comes_to_each_unit() {
+        // 0x4239: a fortifying unit is fortified as the loop passes its record; 0x44bd: a
+        // Settlers at work is taken wherever it is (no centring) and presses its job's key
+        use crate::game::map::tile_flags;
+        let (mut g, a) = open_field();
+        let me = g.human_slot;
+        g.turn = 1;
+        let s = g.add_unit(me, unit_ids::SETTLERS, 45, 30);
+        let f = g.add_unit(me, unit_ids::MILITIA, 41, 25);
+        g.unit_mut(s).order = UnitOrder::Road;
+        g.unit_mut(s).order_turns = 1;
+        g.unit_mut(f).order = UnitOrder::Fortify;
+        g.reset_moves(me);
+        assert_eq!(g.unit(s).moves_left, 3, "no work at the turn's start");
+        g.reset_unit_loop();
+        let view = Game::view_centred_on(40, 25);
+        g.view = Some(view);
+        g.active_unit = None;
+        assert_eq!(g.next_active_unit(), Some(a));
+        assert_eq!(g.unit(f).order, UnitOrder::Fortify, "the loop has not come to it yet");
+        g.unit_mut(a).moves_left = 0;
+        g.active_unit = Some(a);
+        assert_eq!(g.next_active_unit(), Some(s));
+        assert_eq!((g.view, g.unit_loop.centred), (Some(view), false));
+        assert!(g.is_auto_unit(s));
+        assert_eq!(g.run_auto_unit(s), crate::game::AutoStop::Done);
+        // Grassland: a road takes 2 turns, the second done now
+        assert!(g.map.tile(45, 30).has(tile_flags::ROAD));
+        assert_eq!((g.unit(s).order, g.unit(s).moves_left), (UnitOrder::None, 0));
+        g.active_unit = Some(s);
+        assert_eq!(g.next_active_unit(), None);
+        assert_eq!((g.unit(f).order, g.unit(f).moves_left), (UnitOrder::Fortified, 0));
+        // a job no longer possible goes, and the unit waits for orders with its moves
+        g.reset_moves(me);
+        g.unit_mut(s).order = UnitOrder::Road;
+        g.unit_mut(s).order_turns = 1;
+        assert!(matches!(g.run_auto_unit(s), crate::game::AutoStop::Refused(_)));
+        assert_eq!((g.unit(s).order, g.unit(s).moves_left, g.unit(s).order_turns), (UnitOrder::None, 3, 0));
     }
 
     #[test]

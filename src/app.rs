@@ -16,7 +16,15 @@ pub struct App {
 
 /// The mouse pointer: TORCH.PIC (13x14) with its hot spot at the top-left corner, the colour
 /// of that corner transparent (CIV.EXE 0x1b87 loads it, 0:0x1697 installs it at offset 0,0).
+/// While the goto's square is chosen with a mouse, 'g' makes it map icon 2 (ds:0xd4ce[2],
+/// SP257 cell (2, 2), hot spot 0,0; CIV.EXE 0x4f11), and the loop puts back icon 7, the
+/// torch, when it takes its next unit (0x4411) or 'g' ends the choice.
 pub fn draw_cursor(fb: &mut Surface, ctx: &UiContext, x: i32, y: i32) {
+    if ctx.goto_pointer {
+        let (cx, cy) = crate::ui::tilerender::sp::CURSOR_GO;
+        crate::ui::tilerender::blit_sprite(fb, &ctx.sp.surf, crate::ui::tilerender::cell(cx, cy), x, y);
+        return;
+    }
     let torch = ctx.pic("TORCH");
     let key = torch.surf.get(0, 0);
     fb.blit_part(&torch.surf, torch.surf.bounds(), x, y, Some(key));

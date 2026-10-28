@@ -107,14 +107,15 @@ pub fn parse(text: &str) -> Result<Vec<(u32, Action)>, String> {
 }
 
 /// The next unit wanting orders, as the map view's `activate_next`; the units the loop meets
-/// on its way that move by themselves move (`run_autos`).
+/// on its way that move or work by themselves move or work (`run_autos`).
 fn activate_next(g: &mut Game) -> Result<(), String> {
     g.active_unit = g.next_active_unit();
     run_autos(g)
 }
 
-/// While the loop's unit moves by itself (a goto, an aircraft returning to base), move it
-/// and go on, as the map view's `update` does (`MapView::run_goto`); the audiences the
+/// While the loop's unit moves or works by itself (a goto, an aircraft returning to base, a
+/// Settlers at work), move it or press its job's key and go on (a refused job leaves the
+/// unit waiting for orders), as the map view's `update` does (`MapView::run_goto`); the audiences the
 /// units' looks bring get their first answer, as `--dump state` answers the turn's
 /// decisions.
 fn run_autos(g: &mut Game) -> Result<(), String> {

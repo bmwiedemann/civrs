@@ -581,7 +581,10 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   civilizations at war apart. civrs looks the same way (`Game::next_active_unit`, until the first
   Settlers waits, 0x45c9), and moves goto units and aircraft returning to base when the loop takes
   them, in record order (`Game::run_auto_unit`); a scripted turn ends with a Space for every unit
-  still waiting, as the harness presses it, so the loop passes them all.
+  still waiting, as the harness presses it, so the loop passes them all. The human's Settlers
+  work (the loop presses the job's key, 0x44bd..0x452f) and his units finish fortifying (and
+  stash a city's garrison, 0x4239..0x431f) as the loop comes to them too, not at the turn's
+  start, so a save made in his turn shows only the ones the loop has reached.
 - dosbox's captured mouse only moves relatively, one 640x400 picture pixel per host pixel, and the
   picture sits letterboxed at y = 40 of the 640x480 window: `dosciv.click` pushes the pointer into
   the top-left corner, where the driver clamps it, and then moves it by (2x + 1, 2y + 1).

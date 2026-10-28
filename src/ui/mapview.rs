@@ -243,7 +243,13 @@ pub struct MapView {
     terrain_only: bool,
     /// The keyboard-only look cursor's square, while it is on (see `look_key`).
     look: Option<(i32, i32)>,
+    /// The loop's pause before it centres the view on a unit off the screen (CIV.EXE
+    /// 0x439a): the ticks left and the view to show then (`adopt_view`).
+    recentre: Option<(u32, i32, i32)>,
 }
+
+/// Ticks the unit loop waits before it centres the view on a unit off the screen (0x4396).
+const RECENTRE_TICKS: u32 = 30;
 
 impl Default for MapView {
     fn default() -> Self {
@@ -276,6 +282,7 @@ impl MapView {
             advice_turn: None,
             terrain_only: false,
             look: None,
+            recentre: None,
         }
     }
 
@@ -327,16 +334,30 @@ impl MapView {
     /// moving by itself.
     fn active_takes_turn(&self, ctx: &UiContext) -> bool {
         let g = ctx.game();
-        g.active_unit.and_then(|a| g.unit_opt(a)).is_some_and(|u| u.owner == g.human_slot && u.moves_left > 0 && matches!(u.order, UnitOrder::None | UnitOrder::Goto | UnitOrder::Home))
+        g.active_unit.is_some_and(|a| g.is_auto_unit(a) || g.unit_opt(a).is_some_and(|u| u.owner == g.human_slot && u.moves_left > 0 && u.order == UnitOrder::None))
+    }
+
+    /// Take the game's view. One that the loop centred on a unit off the screen
+    /// (`UnitLoop::centred`) comes after the loop's 30-tick pause (0x439a), the old view
+    /// standing meanwhile; keys pressed in the pause go (`flush_input` 0x4403 after it).
+    fn adopt_view(&mut self, ctx: &mut UiContext) {
+        let instant = ctx.instant;
+        let g = ctx.game_mut();
+        let centred = std::mem::take(&mut g.unit_loop.centred);
+        if let Some((vx, vy)) = g.view {
+            if centred && !instant {
+                self.recentre = Some((RECENTRE_TICKS, vx, vy));
+            } else {
+                self.vx = vx;
+                self.vy = vy;
+            }
+        }
     }
 
     /// Follow the game's choice of the active unit and its view.
     fn adopt_active(&mut self, ctx: &mut UiContext) {
+        self.adopt_view(ctx);
         let g = ctx.game_mut();
-        if let Some((vx, vy)) = g.view {
-            self.vx = vx;
-            self.vy = vy;
-        }
         if let Some(id) = g.active_unit {
             self.last_centered = Some(id);
             self.mode = Mode::Normal;
@@ -780,10 +801,7 @@ impl MapView {
                     if g.active_unit == Some(id) || g.active_unit.is_none() {
                         g.active_unit = Some(id);
                     }
-                    if let Some((vx, vy)) = g.view {
-                        self.vx = vx;
-                        self.vy = vy;
-                    }
+                    self.adopt_view(ctx);
                 }
                 Transition::None
             }
@@ -1067,6 +1085,17 @@ impl MapView {
         if keep {
             g.unit_waits(id);
         }
+        // a Settlers whose job the loop's key press refused waits for orders after the key's
+        // message (the texts of ERROR.TXT; civrs's own refusals stay quiet here)
+        if let AutoStop::Refused(e) = stop {
+            if keep && e.section().is_some() {
+                let (x, y) = ctx.game().unit(id).pos();
+                self.ensure_visible(x, y);
+                self.last_centered = Some(id);
+                self.mode = Mode::Normal;
+                return self.error(ctx, &e);
+            }
+        }
         if let Some(s) = self.next_event_screen(ctx) {
             self.pending = Pending::Event;
             return Transition::Push(s);
@@ -1137,13 +1166,6 @@ impl MapView {
                     draw_text_centered(fb, &ctx.fonts, &st, px + 8, py + 16, &city.name);
                 }
             }
-        }
-        // the goto choice with a mouse: civrs marks the unit's square (CIV.EXE changes the
-        // pointer, 0x4f11); the keyboard-only mode shows the look cursor only
-        if let (Mode::Goto, false, Some(id)) = (self.mode, ctx.keyboard_only, ctx.game().active_unit) {
-            let (x, y) = ctx.game().unit(id).pos();
-            let (px, py) = (VIEW_X + Map::wrap_x(x - self.vx) * TILE, VIEW_Y + (y - self.vy) * TILE);
-            tilerender::blit_sprite(fb, &ctx.sp.surf, tilerender::cell(tilerender::sp::CURSOR_GO.0, tilerender::sp::CURSOR_GO.1), px, py);
         }
         // the look cursor: draw_outline(x, y, 15, 15, col), a 16x16 frame, white while the
         // active unit blinks off (0x8a43), black while it shows (0x8aff)
@@ -1341,6 +1363,10 @@ pub fn format_pop(p: i64) -> String {
 }
 
 impl Screen for MapView {
+    fn on_exit(&mut self, ctx: &mut UiContext) {
+        ctx.goto_pointer = false;
+    }
+
     fn on_enter(&mut self, ctx: &mut UiContext) {
         let g = ctx.game_mut();
         if g.active_unit.is_none() {
@@ -1360,6 +1386,16 @@ impl Screen for MapView {
 
     fn update(&mut self, ctx: &mut UiContext) -> Transition {
         self.blink = (ctx.frame / 16) % 2 == 0;
+        // the goto choice with a mouse shows the GO pointer (`app::draw_cursor`)
+        ctx.goto_pointer = self.mode == Mode::Goto && !ctx.keyboard_only;
+        if let Some((n, vx, vy)) = self.recentre.take() {
+            if n > 1 {
+                self.recentre = Some((n - 1, vx, vy));
+            } else {
+                (self.vx, self.vy) = (vx, vy);
+            }
+            return Transition::None;
+        }
         if let Some((x, y)) = ctx.center_request.take() {
             self.center_on(x, y);
         }
@@ -1656,7 +1692,7 @@ impl Screen for MapView {
     }
 
     fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
-        if self.mode == Mode::Processing {
+        if self.mode == Mode::Processing || self.recentre.is_some() {
             return Transition::None;
         }
         // 't' waits for any key or click (0x13d7:0x91e) and then draws the units again

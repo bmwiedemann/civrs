@@ -267,8 +267,9 @@ impl TurnRunner {
                     g.reset_goals(slot);
                     // move_units (0x4046): the GENERAL PRINCIPLES notes, then the moves
                     g.principles_hints();
+                    // (his Settlers work and his units finish fortifying as his loop comes
+                    // to them, `next_active_unit`)
                     g.reset_moves(slot);
-                    g.progress_work(slot);
                     g.refresh_all_vision();
                     g.active_unit = None;
                     g.reset_unit_loop();

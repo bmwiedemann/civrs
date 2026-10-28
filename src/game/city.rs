@@ -366,7 +366,7 @@ mod tests {
     fn fortified_home_units_but_the_first_go_into_the_record() {
         let (mut g, c, ids) = garrisoned();
         let h = g.human_slot;
-        g.reset_moves(h);
+        g.run_human_loop();
         assert_eq!(g.unit(ids[0]).order, UnitOrder::Fortified, "the first stays");
         assert!(g.unit_opt(ids[1]).is_none() && g.unit_opt(ids[2]).is_none());
         assert_eq!(g.city(c).garrison, [unit_ids::PHALANX | GARRISON_VETERAN, unit_ids::PHALANX]);
@@ -391,8 +391,7 @@ mod tests {
     #[test]
     fn a_foreign_unit_next_to_the_city_lets_the_garrison_out_until_the_city_turn() {
         let (mut g, c, _) = garrisoned();
-        let h = g.human_slot;
-        g.reset_moves(h);
+        g.run_human_loop();
         let scout = g.add_unit(rival(&g), unit_ids::MILITIA, 22, 20);
         assert_eq!(g.try_move(scout, crate::game::Dir8::W).unwrap(), MoveOutcome::Moved);
         assert_eq!(g.city(c).garrison, no_garrison());
@@ -417,7 +416,7 @@ mod tests {
     fn stashed_units_are_free_up_to_the_city_size_under_any_government() {
         let (mut g, c, _) = garrisoned();
         let h = g.human_slot;
-        g.reset_moves(h);
+        g.run_human_loop();
         g.player_mut(h).govt = Govt::Monarchy;
         // the unit on the map pays, the two in the record do not (size 3)
         assert_eq!(g.city_yield(c).shield_upkeep, 1);

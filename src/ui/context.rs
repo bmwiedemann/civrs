@@ -81,6 +81,8 @@ pub struct UiContext {
     pub menu_pause: u32,
     /// Map tile the map view should centre on (set by FindCity).
     pub center_request: Option<(i32, i32)>,
+    /// The pointer is the GO icon of the goto choice (set by the map view, `app::draw_cursor`).
+    pub goto_pointer: bool,
 }
 
 impl UiContext {
@@ -119,6 +121,7 @@ impl UiContext {
             quit_requested: false,
             menu_pause: 0,
             center_request: None,
+            goto_pointer: false,
         })
     }
 
