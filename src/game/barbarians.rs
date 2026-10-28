@@ -611,8 +611,10 @@ impl Game {
         let (near, d) = self.nearest_city_exe(u.x, u.y);
         for i in 1..=8usize {
             let (nx, ny) = (Map::wrap_x(u.x + DIR_DX[i]), u.y + DIR_DY[i]);
-            let occupant = self.owner_at(nx, ny);
-            if d <= 8 && Map::in_bounds(nx, ny) && self.map.is_land(nx, ny) && occupant.is_none() && ny > 1 && ny < 48 {
+            // the civ of the units there (0x1a68:0x14e6; an empty city is nobody's)
+            let occupant = self.unit_owner_at(nx, ny);
+            let city = self.city_at(nx, ny).is_some();
+            if d <= 8 && Map::in_bounds(nx, ny) && self.map.is_land(nx, ny) && !city && occupant.is_none() && ny > 1 && ny < 48 {
                 // the human is told when the landing is near one of his cities on that
                 // continent, on a square he knows (0x18f1d)
                 let human = self.human_slot;
@@ -625,8 +627,9 @@ impl Game {
                         self.unit_mut(id).seen_by |= 1 << human;
                     }
                 }
-                // unloading, the ship is seen by every civilization that knows its square (0x19029)
-                let known = self.map.tile(u.x, u.y).explored;
+                // unloading, the ship is seen by every civilization that knows the landing
+                // square (0x19029)
+                let known = self.map.tile(nx, ny).explored;
                 self.unit_mut(id).seen_by |= known;
                 self.unit_mut(id).moves_left = 0;
                 return BarbarianCommand::Unload;
@@ -897,6 +900,28 @@ mod tests {
         g.remove_unit(l);
         assert_eq!(g.barbarian_command(ship), BarbarianCommand::Disband);
         assert!(g.unit_opt(ship).is_none());
+    }
+
+    #[test]
+    fn a_ship_neither_lands_on_nor_attacks_an_empty_city() {
+        let mut g = plain_world(17);
+        let human = g.human_slot;
+        // the coast next to the ship is a single empty city square, the rest is water
+        for (x, y) in [(5, 10), (5, 11)] {
+            g.map.get_mut(x, y).unwrap().terrain = Terrain::Ocean;
+        }
+        let city = g.add_city(human, "Bare".into(), 5, 9);
+        let ship = g.add_barbarian(unit_ids::SAIL, 4, 10);
+        let l = g.add_barbarian(unit_ids::LEGION, 4, 10);
+        g.unit_mut(l).carried_by = Some(ship);
+        g.unit_mut(l).order = UnitOrder::Sentry;
+        // 0x18ef3 skips city squares for the landing, 0x18e8d attacks only units
+        let cmd = g.barbarian_command(ship);
+        assert!(!matches!(cmd, BarbarianCommand::Unload | BarbarianCommand::Step(_)), "{cmd:?}");
+        // with a defender in it the ship attacks
+        g.add_unit(human, unit_ids::PHALANX, 5, 9);
+        assert_eq!(g.barbarian_command(ship), BarbarianCommand::Step(Dir8::NE));
+        assert_eq!(g.city(city).owner, human);
     }
 
     #[test]
