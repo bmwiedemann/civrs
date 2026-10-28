@@ -178,7 +178,6 @@ pub(crate) enum Pending {
     BarMenu(usize),
     /// The stack box of a clicked square (`pick_unit_from_stack` 0x9dc5) is open.
     StackPick,
-    DisbandConfirm(UnitId),
     FoundCityConfirm(UnitId),
     QuitConfirm,
     RetireConfirm,
@@ -818,10 +817,11 @@ impl MapView {
                 Transition::None
             }
             Key::Char('d') if mods.shift => {
+                // 'D' deletes the unit at once, no question asked (0x4c35 -> 0x4c5a)
                 let Some(id) = active else { return Transition::None };
-                let name = ctx.game().unit(id).info().name;
-                self.pending = Pending::DisbandConfirm(id);
-                Transition::Push(Box::new(YesNo::new(vec![format!("Disband {name}?")], "No", "Yes")))
+                ctx.game_mut().disband(id);
+                self.activate_next(ctx);
+                Transition::None
             }
             Key::Char('g') => {
                 if let Some(id) = active {
@@ -1528,14 +1528,6 @@ impl Screen for MapView {
                         g.active_unit = Some(id);
                         self.mode = Mode::Normal;
                     }
-                }
-                Transition::None
-            }
-            Pending::DisbandConfirm(id) => {
-                if result == DialogResult::No || result == DialogResult::Choice(1) {
-                    // "Yes" is the second item
-                    ctx.game_mut().disband(id);
-                    self.activate_next(ctx);
                 }
                 Transition::None
             }
