@@ -607,7 +607,9 @@ impl MapView {
                 }
                 Transition::None
             }
-            Key::Char('w') | Key::Tab => {
+            // (Tab is no wait: with a mouse CIV.EXE ignores it, 0x58f3 -> 0x72e0; without one
+            // it switches the keyboard look cursor, which civrs does not have)
+            Key::Char('w') => {
                 if let Some(id) = active {
                     ctx.game_mut().wait_unit(id);
                     let g = ctx.game_mut();
@@ -1854,6 +1856,10 @@ mod tests {
         // "Leaders randomized." (0x71d9)
         assert!(matches!(mv.handle(&key(Key::Char('s'), SHIFT), &mut ctx), Transition::None));
         assert!(matches!(mv.handle(&key(Key::Char('r'), ALT), &mut ctx), Transition::Push(_)));
+        // Tab does nothing with a mouse (0x72e0)
+        mv.handle(&key(Key::Tab, NONE), &mut ctx);
+        assert_eq!(ctx.game().active_unit, Some(id));
+        assert_eq!(ctx.game().unit(id).order, UnitOrder::None);
         assert_eq!(ctx.game().unit(id).order, UnitOrder::None);
         ctx.game_mut().set_turn(5);
         assert!(matches!(mv.handle(&key(Key::Char('s'), SHIFT), &mut ctx), Transition::Push(_)));
