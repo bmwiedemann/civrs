@@ -339,7 +339,8 @@ impl Game {
     /// citizens + 1)`.
     pub fn plunder_value(&self, c: CityId) -> i32 {
         let city = self.city(c);
-        let total: i32 = self.all_cities().filter(|cc| cc.owner == city.owner).map(|cc| cc.size as i32).sum();
+        // the citizens of the loser's last AI turn (ds:0xd2f8, 0x14437)
+        let total = self.ai_memory.census.citizens[city.owner as usize & 7];
         let gold = self.player(city.owner).gold.max(0);
         (gold * city.size as i32 / (total + 1)).clamp(0, gold)
     }
@@ -516,7 +517,7 @@ impl Game {
     /// When that gives the rebels at most half of the loyal citizens, or more than them, the
     /// split is redone by distance instead (o 0x14f6a): the city farthest (more than 1) from
     /// the capital goes over until 9 * rebel citizens / (ds:0xdc6a + 3) reaches the
-    /// citizens `from` had (ds:0xdc6a is never written, so a third). `transfer_city`
+    /// citizens `from` had at its last AI turn (ds:0xdc6a is never written, so a third). `transfer_city`
     /// (o 0x153f4) only changes the owner.
     ///
     /// Units (o 0x1501f), in record order: in a city square a unit is re-created for the
@@ -547,7 +548,8 @@ impl Game {
             }
         }
         let Some((home_cont, centre)) = capital else { return false };
-        let total: i32 = self.cities_of(from).iter().map(|c| self.city(*c).size as i32).sum();
+        // the citizens of `from`'s last AI turn (ds:0xd2f8, o 0x15004)
+        let total = self.ai_memory.census.citizens[from as usize & 7];
         let first_civs = new_slot as i32 <= self.setup.num_civs.clamp(3, 7) as i32;
 
         // civ_init without the start square, then the tribe
@@ -572,6 +574,7 @@ impl Game {
         }
         self.ai_memory.persistent[new_slot as usize] = [super::goals::Goal::FREE; super::goals::PERSISTENT_GOALS];
         self.ai_memory.policies[new_slot as usize] = None;
+        self.clear_census(new_slot);
         let src = self.player(from).clone();
         let half = src.gold / 2;
         p.gold = half;
@@ -628,6 +631,11 @@ impl Game {
             let (x, y) = self.city(*c).pos();
             self.city_mut(*c).owner = new_slot;
             self.note_occupant(new_slot, x, y);
+            // transfer_city (o 0x153f4) adds the size to the rebels' citizens, which the
+            // loyal ones lose (o 0x1501b)
+            let size = self.city(*c).size as i32;
+            self.ai_memory.census.citizens[new_slot as usize] += size;
+            self.ai_memory.census.citizens[from as usize & 7] -= size;
         }
 
         // the units
@@ -773,6 +781,7 @@ impl Game {
         for id in ids {
             self.remove_unit(id);
         }
+        self.clear_census(slot);
         let (adjective, civ) = (self.player(slot).adjective().to_string(), self.player(slot).civ);
         self.push_event(GameEvent::CivDestroyed { slot, by, adjective, civ });
         self.replay_log(super::replay::kind::DESTROYED, &[slot, by]);
@@ -1244,6 +1253,7 @@ mod tests {
         g.player_mut(2).learn(crate::rules::advance_ids::ALPHABET);
         g.player_mut(2).learn(crate::rules::advance_ids::POTTERY);
         let before = g.player(1).gold;
+        g.take_census_all();
         let a = g.add_unit(1, unit_ids::LEGION, 19, 20);
         let out = g.try_move(a, crate::game::Dir8::E).unwrap();
         assert_eq!(out, MoveOutcome::CapturedCity(c));
@@ -1302,6 +1312,22 @@ mod tests {
     }
 
     #[test]
+    fn the_plunder_counts_the_citizens_of_the_losers_last_ai_turn() {
+        let mut g = flat_game();
+        let c = g.add_city(2, "Loot".into(), 20, 20);
+        let home = g.add_city(2, "Home".into(), 40, 30);
+        g.city_mut(c).size = 3;
+        g.player_mut(2).gold = 300;
+        g.take_census_all();
+        // grown since: 0x14437 still divides by ds:0xd2f8 + 1 = 4 + 1
+        g.city_mut(home).size = 6;
+        assert_eq!(g.plunder_value(c), 300 * 3 / 5);
+        // a destroyed civilization leaves no census behind
+        g.clear_census(2);
+        assert_eq!((g.census().citizens[2], g.military_strength(2)), (0, 0));
+    }
+
+    #[test]
     fn size_one_city_is_destroyed_and_weak_barbarians_raze() {
         let mut g = flat_game();
         let c = g.add_city(2, "Tiny".into(), 20, 20);
@@ -1309,6 +1335,7 @@ mod tests {
         g.player_mut(2).gold = 100;
         g.player_mut(2).learn(crate::rules::advance_ids::POTTERY);
         g.player_mut(1).forget(crate::rules::advance_ids::POTTERY);
+        g.take_census_all();
         let a = g.add_unit(1, unit_ids::LEGION, 19, 20);
         assert_eq!(g.try_move(a, crate::game::Dir8::E).unwrap(), MoveOutcome::DestroyedCity);
         assert!(g.city_opt(c).is_none());
@@ -1398,6 +1425,7 @@ mod tests {
             ids.push(c);
         }
         assert_eq!(g.player(2).capital, Some(ids[0]));
+        g.take_census_all();
         g.rank_powers();
         let a = g.add_unit(1, unit_ids::LEGION, 6, 11);
         assert_eq!(g.try_move(a, crate::game::Dir8::N).unwrap(), MoveOutcome::CapturedCity(ids[0]));
@@ -1450,6 +1478,7 @@ mod tests {
         g.unit_mut(rebel_follow).home = Some(ids[4]);
         g.player_mut(2).gold = 301;
         let n = (1..8u8).find(|s| g.cities_of(*s).is_empty() && g.units_of(*s).is_empty()).unwrap();
+        g.take_census_all();
         assert!(g.civil_war(2, ids[0]));
         let mut rebels = g.cities_of(n);
         rebels.sort();
@@ -1482,6 +1511,7 @@ mod tests {
             ids.push(c);
         }
         let n = (1..8u8).find(|s| g.cities_of(*s).is_empty() && g.units_of(*s).is_empty()).unwrap();
+        g.take_census_all();
         assert!(g.civil_war(2, ids[0]));
         // one continent: the farthest cities go until 3 * 9 >= 21
         let mut rebels = g.cities_of(n);
@@ -1510,6 +1540,7 @@ mod tests {
         let a = g.add_unit(1, unit_ids::LEGION, 6, 11);
         g.player_mut(1).gold = 0;
         g.player_mut(2).gold = 3000;
+        g.take_census_all();
         g.rank_powers();
         assert!(g.power_rank(g.human_slot) < g.power_rank(2));
         assert_eq!(g.try_move(a, crate::game::Dir8::N).unwrap(), MoveOutcome::CapturedCity(ids[0]));
@@ -1531,6 +1562,7 @@ mod tests {
             if weak {
                 g.player_mut(1).gold = 30000;
             }
+            g.take_census_all();
             g.rank_powers();
             assert_eq!(g.power_rank(1) < g.power_rank(2), !weak);
             let a = g.add_unit(1, unit_ids::LEGION, 6, 11);
@@ -1620,6 +1652,7 @@ mod tests {
         g.city_mut(c).add_improvement(imp::TEMPLE);
         g.city_mut(c).add_improvement(imp::MARKETPLACE);
         g.city_mut(c).add_improvement(imp::SDI_DEFENSE);
+        g.take_census_all();
         // CIV.EXE o 0x1d9b7: (300 + 1000) / (12 + 3) * 4 = 344, halved in disorder
         assert_eq!(g.incite_cost(c), Some(344));
         g.city_mut(c).disorder = true;

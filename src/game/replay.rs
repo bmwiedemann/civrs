@@ -154,14 +154,15 @@ impl Game {
     }
 
     /// A civilization's strength in `power_ranking` (0x3121): |gold| / 32 (truncated) + 8 *
-    /// citizens (ds:0xd2f8) + research count + the cost of every unit it has; 0 for one that is
+    /// citizens (ds:0xd2f8, `Census::citizens`) + research count + the cost of every unit it has; 0 for one that is
     /// out of the game.
     pub fn power_strength(&self, s: Slot) -> i32 {
         let p = self.player(s);
         if !p.in_game || !p.alive {
             return 0;
         }
-        let citizens: i32 = self.all_cities().filter(|c| c.owner == s).map(|c| c.size as i32).sum();
+        // as the civ's last AI turn counted them
+        let citizens = self.ai_memory.census.citizens[s as usize & 7];
         let units: i32 = self.all_units().filter(|u| u.owner == s).map(|u| u.info().cost as i32).sum();
         p.gold / 32 + 8 * citizens + p.research_count as i32 + units
     }

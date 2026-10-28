@@ -45,8 +45,8 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// an empty slot); older saves let the human know the size of every city whose square he has
 /// explored.
 /// 20: then by the census trailer (`CENSUS_TRAILER` bytes per civilization: the continent
-/// defence, attack and cities rows of `Census`, 16 i32 LE each, its strength (i32 LE) and its
-/// power rank (u8), then the ds:0x2a6e and ds:0x8078 bytes); older saves take the census of
+/// defence, attack and cities rows of `Census`, 16 i32 LE each, its strength and citizens
+/// (i32 LE) and its power rank (u8), then the ds:0x2a6e and ds:0x8078 bytes); older saves take the census of
 /// every civilization and the power ranking as things stand.
 pub const VERSION: u16 = 20;
 pub const SLOTS: u8 = 10;
@@ -368,8 +368,8 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
 }
 
 /// Bytes per civilization of the version-20 census trailer: three rows of 16 i32, the
-/// strength (i32) and the power rank.
-const CENSUS_TRAILER: usize = 3 * 16 * 4 + 4 + 1;
+/// strength and citizens (i32) and the power rank.
+const CENSUS_TRAILER: usize = 3 * 16 * 4 + 4 + 4 + 1;
 
 fn census_trailer(g: &Game) -> Vec<u8> {
     let m = &g.ai_memory;
@@ -380,6 +380,7 @@ fn census_trailer(g: &Game) -> Vec<u8> {
             v.extend_from_slice(&x.to_le_bytes());
         }
         v.extend_from_slice(&c.strength[s].to_le_bytes());
+        v.extend_from_slice(&c.citizens[s].to_le_bytes());
         v.push(m.ranks[s]);
     }
     v.push(c.faces_human);
@@ -399,7 +400,8 @@ fn read_census_trailer(g: &mut Game, b: &[u8]) {
             m.census.cities[s][k] = word(r + 128 + 4 * k);
         }
         m.census.strength[s] = word(r + 192);
-        m.ranks[s] = b[r + 196];
+        m.census.citizens[s] = word(r + 196);
+        m.ranks[s] = b[r + 200];
     }
     m.census.faces_human = b[8 * CENSUS_TRAILER];
     m.gang_up = b[8 * CENSUS_TRAILER + 1] != 0;

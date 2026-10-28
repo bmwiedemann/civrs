@@ -56,6 +56,9 @@ pub struct Census {
     /// ds:0x6e82: military strength, attack plus defence of every unit but the Nuclear, on
     /// land or not, and of the stashed garrison of the civ's cities (0x15848, 0x15acc).
     pub strength: [i32; 8],
+    /// ds:0xd2f8: the citizens of the civ's cities (0x15a3e), read by the power ranking and
+    /// the plunder of a captured city.
+    pub citizens: [i32; 8],
     /// ds:0x2a6e bit civ (0x15f3f): forces of the civ on a continent where the human has two
     /// or more cities.
     pub faces_human: u8,
@@ -108,6 +111,7 @@ impl Game {
             if (city.owner as usize) < 8 {
                 let k = continent_index(self.map.tile(city.x, city.y).continent);
                 c.cities[city.owner as usize][k] += 1;
+                c.citizens[city.owner as usize] += city.size as i32;
                 // the stashed garrison (0x15a95..0x15b2a)
                 for (kind, _) in city.garrison_units() {
                     let t = &rules::UNITS[kind as usize];
@@ -145,11 +149,29 @@ impl Game {
         m.attack[s] = live.attack[s];
         m.cities[s] = live.cities[s];
         m.strength[s] = live.strength[s];
+        m.citizens[s] = live.citizens[s];
         m.squares = live.squares;
         m.sites = live.sites;
         let h = self.human_slot as usize;
         let faces = h < 8 && (1..15).any(|k| m.defence[s][k] != 0 && m.cities[h][k] > 1);
         m.faces_human = m.faces_human & !(1 << s) | (faces as u8) << s;
+    }
+
+    /// Empty census rows for `slot`, whose civilization is gone or starts afresh. (CIV.EXE keeps
+    /// a destroyed civ's rows from its last AI turn, which the other civs' policies go on
+    /// counting, and a new civ in the slot inherits them until its first AI turn.)
+    pub fn clear_census(&mut self, slot: Slot) {
+        let s = slot as usize;
+        if s >= 8 {
+            return;
+        }
+        let m = &mut self.ai_memory.census;
+        m.defence[s] = [0; CONTINENTS];
+        m.attack[s] = [0; CONTINENTS];
+        m.cities[s] = [0; CONTINENTS];
+        m.strength[s] = 0;
+        m.citizens[s] = 0;
+        m.faces_human &= !(1 << s);
     }
 
     /// Every civilization's census rows as things stand now (a game from an older save).
