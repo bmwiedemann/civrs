@@ -1655,13 +1655,14 @@ impl Game {
     }
 
     /// One-off revenue of a caravan of `slot` from `home` arriving in `target` (CIV.EXE
-    /// 0x146be): `(distance + 10) * (trade of both) / 24`, halved on the same continent and
+    /// 0x146be): `(distance + 10) * (trade of both) / 24` with the travel distance (0x1d6af:
+    /// the longer axis plus half the shorter, `Map::civ_distance`), halved on the same continent and
     /// halved again between cities of one civilization; a third less each when the target's
     /// owner knows the Railroad, then Flight. CIV.EXE looks up the home city's continent at
     /// (x, x) (0x14738 pushes x twice); civrs uses the home city's real tile.
     pub fn trade_route_revenue(&self, slot: Slot, home: CityId, target: CityId) -> i32 {
         let (a, b) = (self.city(home), self.city(target));
-        let mut v = (Map::dist(a.pos(), b.pos()) + 10) * (self.visible_trade(home) + self.visible_trade(target)) / 24;
+        let mut v = (Map::civ_distance(a.pos(), b.pos()) + 10) * (self.visible_trade(home) + self.visible_trade(target)) / 24;
         if self.map.tile(a.x, a.y).continent == self.map.tile(b.x, b.y).continent {
             v /= 2;
         }
@@ -2962,6 +2963,10 @@ mod tests {
         g.player_mut(slot).learn(adv::RAILROAD);
         let v = 25 * (g.visible_trade(home) + g.visible_trade(far)) / 24 / 4;
         assert_eq!(g.trade_route_revenue(slot, home, far), v - v / 3);
+        // the travel distance (0x1d6af): 15 across and 6 down count 15 + 3
+        let diag = g.add_city(slot, "Diag".into(), 20, 11);
+        let v = (18 + 10) * (g.visible_trade(home) + g.visible_trade(diag)) / 24 / 4;
+        assert_eq!(g.trade_route_revenue(slot, home, diag), v - v / 3);
         // a full list only takes a stronger route
         g.city_mut(home).trade_routes = vec![far, far, far];
         g.add_trade_route(home, near);
