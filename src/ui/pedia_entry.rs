@@ -493,7 +493,8 @@ impl Screen for EntryScreen {
             return Transition::None;
         }
         let next = match ev {
-            Event::Key { key: Key::Esc, down: true, .. } => return Transition::Pop(DialogResult::Done),
+            // every page waits for any key or click (wait_key_or_click 0x1468e, o 0xb7ed), Esc
+            // included: on the history page it shows the stats page
             Event::Key { key: Key::Unknown, .. } => false,
             Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } => true,
             _ => false,
