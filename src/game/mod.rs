@@ -141,12 +141,14 @@ pub struct Options {
     pub palace: bool,
 }
 
+/// The options a new game starts with: ds:0x19c0 = 0xfa (o 0x446c), everything but Instant
+/// Advice and End of Turn.
 impl Default for Options {
     fn default() -> Self {
         Options {
             autosave: true,
             animations: true,
-            instant_advice: true,
+            instant_advice: false,
             sound: true,
             end_turn_confirm: false,
             enemy_moves: true,
@@ -394,7 +396,8 @@ impl Game {
             active_unit: None,
             rng,
             setup: setup.clone(),
-            options: Options::default(),
+            // Instant Advice is on only for a Chieftain (o 0x4576)
+            options: Options { instant_advice: setup.difficulty == Difficulty::Chieftain, ..Options::default() },
             wonders_built: [None; 22],
             polluted_tiles: 0,
             global_warming_count: 0,
@@ -983,6 +986,16 @@ mod calendar_tests {
         g.players[3].spaceship = Spaceship::default();
         g.advance_calendar();
         assert_eq!(g.year(), 1765);
+    }
+
+    #[test]
+    fn instant_advice_starts_on_only_for_a_chieftain() {
+        // o 0x446c: options 0xfa; o 0x4576: bit 0 set at Chieftain
+        let g = Game::new(GameSetup { seed: 9, difficulty: Difficulty::Chieftain, ..Default::default() }, None);
+        assert!(g.options.instant_advice);
+        let g = Game::new(GameSetup { seed: 9, difficulty: Difficulty::Prince, ..Default::default() }, None);
+        assert!(!g.options.instant_advice);
+        assert!(g.options.autosave && g.options.palace && !g.options.end_turn_confirm);
     }
 
     #[test]

@@ -1258,14 +1258,10 @@ impl Game {
     /// The human's revolution (CIV.EXE 0x6f50, after *REV): the government is Anarchy at once,
     /// written directly (no `set_government`, so nothing is logged and the vendettas stay until
     /// the new government); `anarchy_check` ends it, the Pyramids included, at a later turn.
+    /// Nothing else changes: the menu offers it under Anarchy too (the message is shown again),
+    /// and the cities keep their celebration flag (+6 bit 0x40) until their next turn.
     pub fn revolution(&mut self, slot: Slot) {
-        if self.player(slot).govt == Govt::Anarchy {
-            return;
-        }
         self.player_mut(slot).govt = Govt::Anarchy;
-        for c in self.cities_of(slot) {
-            self.city_mut(c).celebrating = false;
-        }
         self.push_event(GameEvent::Revolution { slot });
     }
 
@@ -2452,6 +2448,20 @@ mod tests {
         assert_eq!(g.player(slot).govt, Govt::Anarchy);
         assert_eq!(g.player(slot).anarchy_turns, 1);
         assert!(g.take_events().contains(&GameEvent::GovernmentCollapsed { slot, city: c }));
+    }
+
+    #[test]
+    fn revolution_touches_only_the_government() {
+        // 0x6f50: ds:0xdefc[civ] = 0 and the message, under Anarchy too; city flags untouched
+        let (mut g, c) = fixture();
+        let slot = g.human_slot;
+        g.city_mut(c).celebrating = true;
+        g.revolution(slot);
+        assert_eq!(g.player(slot).govt, Govt::Anarchy);
+        assert!(g.city(c).celebrating);
+        g.take_events();
+        g.revolution(slot);
+        assert!(g.take_events().contains(&GameEvent::Revolution { slot }));
     }
 
     #[test]
