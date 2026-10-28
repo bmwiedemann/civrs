@@ -3,7 +3,7 @@
 //! city map, improvements with sell dots, FOOD STORAGE, the INFO / HAPPY / MAP / VIEW tabs,
 //! the production box with CHANGE / BUY and the RENAME / EXIT buttons.
 
-use crate::game::{CityId, Production, RuleError, Specialist};
+use crate::game::{CityId, Production, RuleError, Specialist, UnitOrder};
 use crate::gfx::{Rect, Surface};
 use crate::platform::{Event, Key, MouseButton};
 use crate::rules::{self, improvement_ids};
@@ -53,20 +53,23 @@ pub struct CityScreen {
     /// A foreign city seen by an investigating Diplomat: only the tabs work, anything else
     /// closes the screen.
     view_only: bool,
+    /// 'a' (CIV.EXE 0x118fb..0x11b11): the blinking selection among the units in the city,
+    /// moved with the cursor keys; Enter or Space wakes the selected unit, Esc ends it.
+    unit_cursor: Option<usize>,
 }
 
 pub fn city_screen(c: CityId) -> Box<dyn Screen> {
-    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0, view_only: false })
+    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0, view_only: false, unit_cursor: None })
 }
 
 /// City screen that opens on a tab or dialog: "happy", "map", "view", "change", "buy", "rename", "sell".
 pub fn city_screen_at(c: CityId, start: &str) -> Box<dyn Screen> {
-    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: Some(start.to_string()), imp_start: 0, view_only: false })
+    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: Some(start.to_string()), imp_start: 0, view_only: false, unit_cursor: None })
 }
 
 /// City screen of a foreign city investigated by a Diplomat (CIV.EXE o 0x1d6a2).
 pub fn city_screen_view(c: CityId) -> Box<dyn Screen> {
-    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0, view_only: true })
+    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0, view_only: true, unit_cursor: None })
 }
 
 // ---- layout (coordinates include the 1-px borders) ---------------------------------------
@@ -158,6 +161,32 @@ impl CityScreen {
                 _ => Transition::None,
             };
         }
+        if let Some(sel) = self.unit_cursor {
+            // the selection loop reads only the keyboard (0x119cb)
+            let Event::Key { key, down: true, .. } = ev else { return Transition::None };
+            let units = self.info_units(ctx);
+            let last = units.len().saturating_sub(1) as i32;
+            let sel = sel as i32;
+            let moved = match key {
+                Key::Up | Key::Kp(8) => sel - 6,
+                Key::Left | Key::Kp(4) => sel - 1,
+                Key::Right | Key::Kp(6) => sel + 1,
+                Key::Down | Key::Kp(2) => sel + 6,
+                _ => sel,
+            }
+            .clamp(0, last) as usize;
+            self.unit_cursor = Some(moved);
+            match key {
+                Key::Enter | Key::Space => {
+                    if let Some(&id) = units.get(moved) {
+                        ctx.game_mut().wake_unit(id);
+                    }
+                }
+                Key::Esc => self.unit_cursor = None,
+                _ => {}
+            }
+            return Transition::None;
+        }
         match ev {
             Event::Key { key, mods, down: true, .. } => match key {
                 Key::Esc | Key::Enter => Transition::Pop(DialogResult::Done),
@@ -169,6 +198,15 @@ impl CityScreen {
                 Key::Char('c') => self.change(ctx),
                 Key::Char('b') => self.buy(ctx),
                 Key::Char('r') => self.rename(ctx),
+                Key::Char('a') if !mods.shift => {
+                    // starts on the first unit without orders (flags & 0xcf), else the first
+                    let g = ctx.game();
+                    let units = self.info_units(ctx);
+                    if !units.is_empty() {
+                        self.unit_cursor = Some(units.iter().position(|id| matches!(g.unit(*id).order, UnitOrder::None | UnitOrder::Goto | UnitOrder::Skip)).unwrap_or(0));
+                    }
+                    Transition::None
+                }
                 Key::Char(d @ '1'..='9') => self.cycle_specialist(ctx, (*d as u8 - b'1') as usize),
                 Key::Char('a') if mods.shift => {
                     // AUTO on asks the production advisor at once; with nothing worth it the
@@ -718,7 +756,10 @@ impl CityScreen {
             let y = 116 + 16 * (i as i32 / 6);
             // the map's unit routine (0x1b639), so a fortified unit gets its fortification
             // and the order letters show as on the map
-            crate::ui::tilerender::draw_unit(fb, ctx, g, *id, x - 1, y - 1, false);
+            // the 'a' selection blinks: background, 10 ticks, the unit, 10 ticks (0x1197e)
+            if self.unit_cursor != Some(i) || (ctx.frame / 16) % 2 == 0 {
+                crate::ui::tilerender::draw_unit(fb, ctx, g, *id, x - 1, y - 1, false);
+            }
             let home = u.home.and_then(|h| g.city_opt(h)).map(|c| c.name.to_ascii_uppercase()).unwrap_or_else(|| "NONE".into());
             let abbrev: String = home.chars().take(3).chain(std::iter::once('.')).collect();
             small_text(fb, ctx, x, y + 15, BLACK, &abbrev);
