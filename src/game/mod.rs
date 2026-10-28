@@ -29,6 +29,7 @@ pub mod score;
 pub mod spaceship;
 pub mod turn;
 pub mod unit;
+pub mod wonders;
 
 pub use city::{City, Production, Specialist};
 pub use events::{Decision, DecisionReply, EndReason, GameEvent, HutOutcome};

@@ -461,6 +461,8 @@ impl Game {
     /// players and before the turn counter advances).
     pub fn process_world(&mut self) {
         self.global_warming_check();
+        // the computer's free wonders follow the warming step in the same routine (0x3ae7)
+        self.ai_wonder_purchases();
         self.disaster_check();
         // the power ranking (0x3121): the power history, then the world against a leading human
         self.record_power();
