@@ -598,6 +598,20 @@ impl Game {
     /// out, it sees and is seen, meets other civilizations and notes its civ's goals.
     pub fn unit_look(&mut self, id: UnitId) {
         let Some((slot, x, y)) = self.unit_opt(id).map(|u| (u.owner, u.x, u.y)) else { return };
+        // the human's unit shows him the improvements of its 3x3 (5x5 with a sight of two,
+        // a ship's outer ring on ocean only) (0x8038..0x807e)
+        if slot == self.human_slot {
+            let u = self.unit(id);
+            let (r, sea) = (u.sight_range(), u.is_sea());
+            for yy in y - r..=y + r {
+                for xx in x - r..=x + r {
+                    let outer = (xx - x).abs() > 1 || (yy - y).abs() > 1;
+                    if Map::in_bounds(xx, yy) && !(sea && outer && !self.map.is_ocean(xx, yy)) {
+                        self.map.update_seen(xx, yy);
+                    }
+                }
+            }
+        }
         self.reveal_garrisons_near(slot, x, y);
         self.mark_sightings(id);
         self.look_for_contacts(id);

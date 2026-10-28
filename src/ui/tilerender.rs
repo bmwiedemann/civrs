@@ -49,7 +49,11 @@ pub mod sp {
     use crate::gfx::Rect;
     pub const BASE_LAND: (i32, i32) = (0, 4);
     pub const CURSOR_GO: (i32, i32) = (2, 2);
+    /// The city screen's smog (ds:0xb2ba, o 0x58d5).
     pub const POLLUTION: (i32, i32) = (3, 2);
+    /// A polluted map square: icon 6 (ds:0xd4da, 0x1b034), drawn in the palette's black
+    /// entries 0x72..0x7f.
+    pub const MAP_POLLUTION: (i32, i32) = (6, 2);
     pub const IRRIGATION: (i32, i32) = (4, 2);
     /// Map icons 5 and 0x1f of CIV.EXE's icon table (ds:0xd4ce, filled at o 0x59d7): icons
     /// 0..6 are cells (i, 2), icons 0x10.. row 7. Cell (7, 2) is the TORCH cursor.
@@ -191,7 +195,7 @@ pub fn draw_terrain(fb: &mut Surface, ctx: &UiContext, game: &Game, x: i32, y: i
         fb.blit_part(sp, Rect::new(153, 41, 7, 7), px + 4, py + 4, Some(0));
     }
     if has(tile_flags::POLLUTION) {
-        blit_sprite(fb, sp, cell(sp::POLLUTION.0, sp::POLLUTION.1), px, py);
+        blit_sprite(fb, sp, cell(sp::MAP_POLLUTION.0, sp::MAP_POLLUTION.1), px, py);
     }
     // roads (0x1b0c6): a piece towards each neighbour the human saw a road on, a railroad
     // piece where both squares have a railroad or a city, else a dot in the centre, black
