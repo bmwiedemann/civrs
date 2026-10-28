@@ -58,6 +58,8 @@ pub trait Screen {
 pub struct ScreenStack {
     stack: Vec<Box<dyn Screen>>,
     quit: bool,
+    /// A transition held back for `UiContext::menu_pause` ticks, with the ticks left.
+    held: Option<(u32, Transition)>,
 }
 
 impl Default for ScreenStack {
@@ -68,7 +70,7 @@ impl Default for ScreenStack {
 
 impl ScreenStack {
     pub fn new() -> Self {
-        ScreenStack { stack: Vec::new(), quit: false }
+        ScreenStack { stack: Vec::new(), quit: false, held: None }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -120,13 +122,30 @@ impl ScreenStack {
     }
 
     pub fn handle(&mut self, ev: &Event, ctx: &mut crate::ui::context::UiContext) {
+        // no input while a chosen menu row is up
+        if self.held.is_some() {
+            return;
+        }
         if let Some(top) = self.stack.last_mut() {
             let t = top.handle(ev, ctx);
+            let pause = std::mem::take(&mut ctx.menu_pause);
+            if pause > 0 && !ctx.instant && !matches!(t, Transition::None) {
+                self.held = Some((pause, t));
+                return;
+            }
             self.apply(t, ctx);
         }
     }
 
     pub fn update(&mut self, ctx: &mut crate::ui::context::UiContext) {
+        if let Some((n, t)) = self.held.take() {
+            if n > 1 {
+                self.held = Some((n - 1, t));
+            } else {
+                self.apply(t, ctx);
+            }
+            return;
+        }
         if let Some(top) = self.stack.last_mut() {
             let t = top.update(ctx);
             self.apply(t, ctx);

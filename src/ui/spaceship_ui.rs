@@ -807,6 +807,10 @@ mod tests {
         // "Which nation?": only the human's line is open, Enter takes it
         st.update(&mut ctx);
         st.handle(&key(Key::Enter), &mut ctx);
+        // (a chosen row stays up 20 ticks, o 0x1cc73)
+        for _ in 0..crate::ui::widgets::MENU_CHOICE_TICKS {
+            st.update(&mut ctx);
+        }
         st.update(&mut ctx);
         Some((ctx, st))
     }
@@ -820,6 +824,9 @@ mod tests {
         assert_eq!(st.len(), 3, "the confirmation is up");
         st.handle(&key(Key::Down), &mut ctx);
         st.handle(&key(Key::Enter), &mut ctx);
+        for _ in 0..crate::ui::widgets::MENU_CHOICE_TICKS {
+            st.update(&mut ctx);
+        }
         assert_eq!(st.len(), 1);
         let g = ctx.game_mut();
         assert!(g.player(h).spaceship.launched());
@@ -839,6 +846,9 @@ mod tests {
         st.handle(&Event::MouseButton { button: MouseButton::Left, x: 260, y: 192, down: true }, &mut ctx);
         assert_eq!(st.len(), 3);
         st.handle(&key(Key::Enter), &mut ctx);
+        for _ in 0..crate::ui::widgets::MENU_CHOICE_TICKS {
+            st.update(&mut ctx);
+        }
         assert_eq!(st.len(), 1);
         assert!(!ctx.game().player(h).spaceship.launched());
     }

@@ -75,6 +75,10 @@ pub struct UiContext {
     /// Skip timed transitions such as the pixel dissolve (headless previews).
     pub instant: bool,
     pub quit_requested: bool,
+    /// Ticks the screen stack holds the transition of the event just handled: set by a menu
+    /// choice (`MenuDialog`), as menu_select waits 20 ticks with the chosen row up before it
+    /// returns (`wait_ticks(20)`, o 0x1cc73; not after Esc).
+    pub menu_pause: u32,
     /// Map tile the map view should centre on (set by FindCity).
     pub center_request: Option<(i32, i32)>,
 }
@@ -113,6 +117,7 @@ impl UiContext {
             skip_intro: false,
             instant: false,
             quit_requested: false,
+            menu_pause: 0,
             center_request: None,
         })
     }

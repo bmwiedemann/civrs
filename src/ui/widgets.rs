@@ -744,6 +744,26 @@ impl Screen for MenuDialog {
     }
 
     fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
+        let t = self.handle_input(ev, ctx);
+        // the chosen row stays up 20 ticks before the menu returns (o 0x1cc73), whoever
+        // holds the menu (`ScreenStack::handle`)
+        if let Transition::Pop(DialogResult::Choice(i)) = t {
+            self.sel = i;
+            ctx.menu_pause = MENU_CHOICE_TICKS;
+        }
+        t
+    }
+
+    fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
+        self.draw_menu(fb, ctx);
+    }
+}
+
+/// Ticks a chosen menu row stays up (CIV.EXE 0x1cc73).
+pub const MENU_CHOICE_TICKS: u32 = 20;
+
+impl MenuDialog {
+    fn handle_input(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
         match ev {
             // Alt-V flips the sound option in any menu (o 0x1cbd0)
             Event::Key { key: Key::Char('v'), mods, down: true, .. } if mods.alt => {
@@ -831,7 +851,7 @@ impl Screen for MenuDialog {
         Transition::None
     }
 
-    fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
+    fn draw_menu(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
         if self.is_popup() {
             // the menu's own EGA colours; the title colour depends on the background
             let cols = StyleColours { text: 0, title: 15, hilite_bar: 11, hilite_text: 0, disabled: 3 };
@@ -1264,6 +1284,37 @@ mod tests {
         let mut m = MenuDialog::new(vec!["Title".into()], vec!["One".into(), "Two".into(), "Three".into()]).with_pos(80, 40);
         m.on_enter(ctx);
         m
+    }
+
+    #[test]
+    fn a_chosen_row_stays_up_twenty_ticks() {
+        // menu_select: wait_ticks(20) after a choice (o 0x1cc73), no input meanwhile; none
+        // after Esc
+        struct Base;
+        impl Screen for Base {
+            fn handle(&mut self, _ev: &Event, _ctx: &mut UiContext) -> Transition {
+                Transition::None
+            }
+            fn draw(&mut self, _fb: &mut Surface, _ctx: &mut UiContext) {}
+        }
+        let Some(mut ctx) = ctx() else { return };
+        let key = |k| Event::Key { key: k, mods: Default::default(), down: true, repeat: false };
+        let mut st = crate::ui::screen::ScreenStack::new();
+        st.push(Box::new(Base), &mut ctx);
+        st.push(Box::new(menu(&mut ctx)), &mut ctx);
+        st.handle(&key(Key::Enter), &mut ctx);
+        st.handle(&key(Key::Esc), &mut ctx);
+        for _ in 1..MENU_CHOICE_TICKS {
+            st.update(&mut ctx);
+            assert_eq!(st.len(), 2);
+        }
+        st.update(&mut ctx);
+        assert_eq!(st.len(), 1);
+        let mut m = menu(&mut ctx);
+        m.cancel_ok = true;
+        st.push(Box::new(m), &mut ctx);
+        st.handle(&key(Key::Esc), &mut ctx);
+        assert_eq!(st.len(), 1);
     }
 
     #[test]
