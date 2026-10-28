@@ -593,6 +593,7 @@ impl Game {
     /// Returns happy − unhappy as the routine does (0x13223), `None` when the city is gone.
     pub fn process_city(&mut self, c: CityId) -> Option<i32> {
         let slot = self.city(c).owner;
+        let events_before = self.events.len();
         // a store out of 0..=999 (a shortage leaves it negative) starts again from 0 (0xc977)
         {
             let cm = self.city_mut(c);
@@ -639,7 +640,12 @@ impl Game {
         if slot != 0 && !h.disorder && self.player(slot).govt != Govt::Anarchy {
             self.player_mut(slot).gold += t.tax;
         }
+        // a human city whose turn called for the player's attention (ds:0xb1e8: a population
+        // decrease 0xd769, "builds" 0xe3f8, a building 0xe604, a first turn of disorder
+        // 0x126dd) checks no research completion (0x12d53); the next city does
+        self.research_held = self.player(slot).human && self.events.iter().skip(events_before).any(|e| self.calls_attention(e, c));
         self.city_science(c, t.sci);
+        self.research_held = false;
         // hazards and upkeep, the human's cities only (0x12ddd)
         self.pollution_roll(c);
         self.meltdown_roll(c);
@@ -1009,6 +1015,16 @@ impl Game {
     /// the city screen's CHANGE button flashes until something else is chosen; the computer asks
     /// its production advisor (CIV.EXE 0xe720), an AUTO city of the human takes the advisor's
     /// improvement, and with none worth it AUTO goes off (0xeb15..0xec08).
+    /// Whether event `e` of the human's city `c` sets CIV.EXE's attention flag ds:0xb1e8.
+    fn calls_attention(&self, e: &GameEvent, c: CityId) -> bool {
+        match e {
+            GameEvent::PopulationDecrease(x) | GameEvent::Disorder(x) | GameEvent::DisorderOngoing { city: x, first: true } => *x == c,
+            GameEvent::ItemBuilt { city, item } => *city == c && !matches!(item, Production::Unit(k) if *k != unit_ids::SETTLERS && *k < unit_ids::DIPLOMAT),
+            GameEvent::WonderBuilt { city, .. } => *city == c,
+            _ => false,
+        }
+    }
+
     /// A wonder built elsewhere or an improvement the city has: nothing happens and nothing is
     /// said (0xe4e8, 0xe51d -> 0xeb15); only a human city on AUTO asks its chooser again
     /// (0xeb57). A computer city keeps the item; civrs's `city_ai::manage` re-chooses at its
@@ -2230,6 +2246,25 @@ mod tests {
         assert!(!ai.1.is_empty() && ai.1.iter().all(|s| *s == 1), "{:?}", ai.1);
         assert!(g.city(c).size > 1);
         assert_eq!(g.turn, 1);
+    }
+
+    #[test]
+    fn a_human_city_that_calls_for_attention_completes_no_research() {
+        // 0x12d53: ds:0xb1e8 set by the completion (0xe604) skips the check in that city
+        let (mut g, c) = fixture();
+        let me = g.human_slot;
+        let goal = (0..rules::ADVANCES.len() as u8).find(|a| !g.player(me).knows(*a) && g.researchable(me).contains(a)).unwrap();
+        g.player_mut(me).researching = Some(goal);
+        g.player_mut(me).beakers = 10_000;
+        g.city_mut(c).production = Production::Improvement(imp::BARRACKS);
+        g.city_mut(c).shields = 200;
+        g.process_city(c);
+        assert!(g.city(c).has_improvement(imp::BARRACKS));
+        assert!(!g.player(me).knows(goal), "held in the city that built");
+        g.city_mut(c).production = Production::Unit(unit_ids::MILITIA);
+        g.city_mut(c).shields = 0;
+        g.process_city(c);
+        assert!(g.player(me).knows(goal));
     }
 
     #[test]

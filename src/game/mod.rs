@@ -264,6 +264,10 @@ pub struct Game {
     /// ds:0x6b92: the riot animation ran this turn. Not saved.
     #[serde(skip)]
     pub riot_shown: bool,
+    /// The human city being processed called for attention: no research completion in it
+    /// (`process_city`, CIV.EXE 0x12d53). Not saved.
+    #[serde(skip)]
+    pub research_held: bool,
 }
 
 /// `wonders_built` entry of a wonder whose city was destroyed: built, owned by no one, listed
@@ -417,6 +421,7 @@ impl Game {
             opening: true,
             unit_limit_shown: false,
             riot_shown: false,
+            research_held: false,
         };
         game.place_starting_units(&slots, &world, &mut wr);
         game.refresh_all_vision();

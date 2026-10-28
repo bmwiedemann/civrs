@@ -127,7 +127,7 @@ impl Game {
         if self.owner_has_wonder(slot, won::SETI_PROGRAM) {
             self.player_mut(slot).beakers += sci / 2;
         }
-        if self.research_complete(slot) {
+        if !self.research_held && self.research_complete(slot) {
             self.player_mut(slot).beakers = 0;
             self.choose_research(slot);
         }
