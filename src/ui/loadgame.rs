@@ -11,7 +11,8 @@
 //! with " Game has been saved." / " Press key to continue." at (64, 127).
 //!
 //! Loading from the GAME menu does not exist in CIV.EXE; civrs offers it with the save screens'
-//! look.
+//! look. A load slot without a civrs save offers the original game's CIVILn.SVE (with its
+//! .MAP) when the save directory or the game directory has one (`save::sve`).
 
 use crate::assets::Palette;
 use crate::gfx::text::draw_text;
@@ -75,6 +76,8 @@ pub struct SlotPage {
     drive: char,
     border: u8,
     slots: Vec<Option<SlotInfo>>,
+    /// The original saves (CIVILn.SVE) the load menu offers in slots without a civrs save.
+    originals: Vec<Option<std::path::PathBuf>>,
     /// Save result lines and whether it failed.
     result: Option<(Vec<String>, bool)>,
     started: bool,
@@ -82,7 +85,7 @@ pub struct SlotPage {
 
 impl SlotPage {
     pub fn new(mode: SlotMode) -> SlotPage {
-        SlotPage { mode, step: Step::Drive, drive: 'C', border: 0, slots: Vec::new(), result: None, started: false }
+        SlotPage { mode, step: Step::Drive, drive: 'C', border: 0, slots: Vec::new(), originals: Vec::new(), result: None, started: false }
     }
 
     fn saving(&self) -> bool {
@@ -112,7 +115,11 @@ impl SlotPage {
         if self.slots.get(i).is_none_or(|s| s.is_none()) {
             return Transition::Pop(DialogResult::Cancelled);
         }
-        match crate::save::load_game(&path) {
+        let loaded = match self.originals.get(i).cloned().flatten() {
+            Some(sve) => crate::save::sve::import(&sve),
+            None => crate::save::load_game(&path),
+        };
+        match loaded {
             Ok(g) => {
                 ctx.game = Some(g);
                 ctx.last_slot = Some(i);
@@ -150,6 +157,14 @@ impl Screen for SlotPage {
         self.slots = crate::save::list_slots(&ctx.save_dir);
         if self.saving() {
             self.slots.truncate(4);
+        } else {
+            let dirs = [ctx.save_dir.clone(), ctx.assets.root().to_path_buf()];
+            self.originals = self.slots.iter().zip(0u8..).map(|(s, n)| s.is_none().then(|| dirs.iter().find_map(|d| crate::save::sve::slot_file(d, n))).flatten()).collect();
+            for (slot, sve) in self.slots.iter_mut().zip(&self.originals) {
+                if let Some(p) = sve {
+                    *slot = crate::save::sve::read_header(p);
+                }
+            }
         }
         // random(2) in the original; the frame counter keeps headless renders repeatable
         self.border = (ctx.frame.wrapping_mul(0x9e37_79b9) >> 13) as u8 & 1;
@@ -264,5 +279,22 @@ mod tests {
         let info = SlotInfo { slot: 0, leader: "Caesar".into(), civ: "Romans".into(), year: -3340, difficulty: crate::rules::Difficulty::Chieftain };
         assert_eq!(slot_line(&Some(info)), "Chief Caesar, Romans/3340 BC");
         assert_eq!(slot_line(&None), "(EMPTY)");
+    }
+
+    #[test]
+    fn the_load_menu_offers_the_original_saves() {
+        let Ok(assets) = crate::assets::AssetDir::locate(None) else { return };
+        if crate::save::sve::slot_file(assets.root(), 3).is_none() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("civrs-sve-menu-{}", std::process::id()));
+        let mut ctx = UiContext::new(assets, dir.clone()).expect("ui context");
+        let mut page = SlotPage::new(SlotMode::LoadTitle);
+        page.on_enter(&mut ctx);
+        assert_eq!(slot_line(&page.slots[3]), "Chief Caesar, Romans/2540 BC");
+        page.step = Step::Slots;
+        assert!(matches!(page.chosen(3, &mut ctx), Transition::Replace(_)));
+        assert_eq!(ctx.game().year_text(), "2540 BC");
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

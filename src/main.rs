@@ -6,10 +6,11 @@ use std::path::{Path, PathBuf};
 fn usage() -> ! {
     eprintln!(
         "civrs - Civilization (1991) reimplementation\n\
-         usage: civrs [--assets DIR] [--scale N] [--fullscreen]\n\
-                civrs --dump TARGET --out FILE.ppm [--assets DIR] [--zoom N]\n\
+         usage: civrs [--assets DIR] [--scale N] [--fullscreen] [--load-sve CIVILn.SVE]\n\
+                civrs --dump TARGET --out FILE.ppm [--assets DIR] [--zoom N] [--load-sve CIVILn.SVE]\n\
          dump targets: pic:NAME | sheet:NAME | fonts | pal:NAME | all-pics:DIR\n\
-                       sound:ID[:LEVEL[:SECONDS]] (WAV) | sound-regs:ID[:LEVEL[:TICKS]] (OPL2 register log)"
+                       sound:ID[:LEVEL[:SECONDS]] (WAV) | sound-regs:ID[:LEVEL[:TICKS]] (OPL2 register log)\n\
+         --load-sve: start from (or, with screen:NAME, render) an original CIVILn.SVE + .MAP"
     );
     std::process::exit(2);
 }
@@ -23,10 +24,12 @@ struct Cli {
     zoom: usize,
     skip_intro: bool,
     seed: Option<u64>,
+    /// An original CIVILn.SVE to import (`save::sve`).
+    load_sve: Option<PathBuf>,
 }
 
 fn parse_cli() -> Cli {
-    let mut cli = Cli { assets: None, scale: None, fullscreen: false, dump: None, out: None, zoom: 1, skip_intro: false, seed: None };
+    let mut cli = Cli { assets: None, scale: None, fullscreen: false, dump: None, out: None, zoom: 1, skip_intro: false, seed: None, load_sve: None };
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -37,6 +40,7 @@ fn parse_cli() -> Cli {
             "--out" => cli.out = args.next().map(PathBuf::from),
             "--skip-intro" => cli.skip_intro = true,
             "--seed" => cli.seed = args.next().and_then(|s| s.parse().ok()),
+            "--load-sve" => cli.load_sve = args.next().map(PathBuf::from),
             "--zoom" => cli.zoom = args.next().and_then(|s| s.parse().ok()).unwrap_or(1),
             "-h" | "--help" => usage(),
             _ => {
@@ -48,7 +52,7 @@ fn parse_cli() -> Cli {
     cli
 }
 
-fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), Box<dyn std::error::Error>> {
+fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(spec) = target.strip_prefix("sound:") {
         return dump_sound(assets, spec, out, false);
     }
@@ -192,11 +196,15 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
         // keeps the dissolve, for checking it frame by frame with CIVRS_FRAMES)
         ctx.instant = std::env::var("CIVRS_TRANSITIONS").is_err();
         let setup = civrs::game::GameSetup { seed, ..Default::default() };
-        let mut game = civrs::game::Game::new(setup, None);
+        // --load-sve: the screen of an original saved game, which has its own cities
+        let mut game = match sve {
+            Some(p) => civrs::save::sve::import(p)?,
+            None => civrs::game::Game::new(setup, None),
+        };
         // previews compare against plain captures: no CIVILIZATION NOTE hints on top
         game.hints_shown = u32::MAX;
         // (mapcity: the map screen after founding that city)
-        if !matches!(parts[0], "map" | "mapall" | "founded" | "built" | "city" | "diplomat") {
+        if sve.is_none() && !matches!(parts[0], "map" | "mapall" | "founded" | "built" | "city" | "diplomat") {
             // reports want a city: found one with the first human Settlers
             let slot = game.human_slot;
             if let Some(s) = game.units_of(slot).into_iter().find(|u| game.unit(*u).kind == civrs::rules::unit_ids::SETTLERS) {
@@ -220,7 +228,9 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize) -> Result<(), 
         }
         // the city screen needs a city: found one with the human's first settler
         let mut city = None;
-        if matches!(parts.first(), Some(&"city" | &"founded" | &"built" | &"diplomat")) {
+        if sve.is_some() {
+            city = game.cities_of(game.human_slot).first().copied();
+        } else if matches!(parts.first(), Some(&"city" | &"founded" | &"built" | &"diplomat")) {
             let slot = game.human_slot;
             let id = game.units_of(slot).into_iter().find(|id| game.unit(*id).kind == civrs::rules::unit_ids::SETTLERS).ok_or("no settler")?;
             city = Some(game.found_city(id).map_err(|e| format!("{e:?}"))?);
@@ -538,7 +548,7 @@ fn main() {
     };
     if let Some(target) = &cli.dump {
         let out = cli.out.clone().unwrap_or_else(|| PathBuf::from("dump.ppm"));
-        if let Err(e) = dump(&assets, target, &out, cli.zoom) {
+        if let Err(e) = dump(&assets, target, &out, cli.zoom, cli.load_sve.as_deref()) {
             eprintln!("dump failed: {e}");
             std::process::exit(1);
         }
@@ -552,7 +562,16 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let first: Box<dyn civrs::ui::Screen> = if cli.skip_intro {
+    let first: Box<dyn civrs::ui::Screen> = if let Some(p) = &cli.load_sve {
+        match civrs::save::sve::import(p) {
+            Ok(g) => ctx.game = Some(g),
+            Err(e) => {
+                eprintln!("{}: {e}", p.display());
+                std::process::exit(1);
+            }
+        }
+        Box::new(civrs::ui::mapview::MapView::new())
+    } else if cli.skip_intro {
         let setup = civrs::game::GameSetup { seed: cli.seed.unwrap_or(7), ..Default::default() };
         ctx.game = Some(civrs::game::Game::new(setup, None));
         Box::new(civrs::ui::mapview::MapView::new())

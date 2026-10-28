@@ -1,5 +1,7 @@
 //! Saved games (own format) and the hall of fame.
 
+pub mod sve;
+
 use crate::game::Game;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -59,6 +61,8 @@ impl std::fmt::Display for SaveError {
         }
     }
 }
+
+impl std::error::Error for SaveError {}
 
 impl From<std::io::Error> for SaveError {
     fn from(e: std::io::Error) -> Self {

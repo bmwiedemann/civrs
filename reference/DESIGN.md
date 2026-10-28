@@ -310,6 +310,9 @@ to PNG and viewing them (Read tool on image) before the UI tracks depend on them
 - Rendering: 320x200 8-bit indexed `Surface` + active `Palette` -> RGBA -> texture each frame, 60 Hz.
 - Save games: own format (`CIVR` magic + version + bincode of `Game`), 10 slots in
   `~/.local/share/civrs/` (`--save-dir` override), autosave option; hall of fame `fame.dat`.
+  The original's CIVILn.SVE + CIVILn.MAP import into a `Game` (`save::sve`, overlay 11 layout;
+  the .MAP is map page 2 as a PIC): `civrs --load-sve FILE` (also with `--dump screen:NAME`),
+  and the load menu offers CIVILn.SVE (save or game directory) in slots without a civrs save.
   Original `.SVE` compatibility is not attempted.
 - Sound: AdLib driver re-implementation (`Audio::play(Sound)`, `national_theme(civ, long)`),
   OPL2 emulation, SDL3 audio stream; MT-32/Tandy/PC-speaker drivers not reproduced.
