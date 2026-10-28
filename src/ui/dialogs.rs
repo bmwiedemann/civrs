@@ -369,7 +369,9 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
             }
         }
         // KING.TXT *ESCHISM, shown to everyone (civil_war o 0x14dce: $US / $THEM the two
-        // adjectives)
+        // adjectives). For the human's own civil war civil_war picks *SCHISM (o 0x14dd6),
+        // which KING.TXT lacks (load_text_entry 0x1ee63 returns -1, the box would be empty),
+        // but its one caller never splits the human (0x13db4): dead code, *ESCHISM always.
         GameEvent::CivilWar { slot, new_slot } => {
             let v = Vars { us: g.player(*slot).adjective().to_string(), them: g.player(*new_slot).adjective().to_string(), ..Default::default() };
             let lines = ctx.texts.king.section("ESCHISM").map(|l| paragraphs(&substitute(l, &v))).unwrap_or_else(|| vec!["Civil war!".into()]);
