@@ -360,8 +360,12 @@ impl Game {
         // civil war (0x13db4..0x13e3b), before anything else: the Palace city of a computer
         // player with more than four cities that ranks above the human (ds:0x803c)
         let h = self.human_slot;
-        if from != 0 && from != h && city.has_improvement(imp::PALACE) && self.cities_of(from).len() > 4 && self.power_rank(h) < self.power_rank(from) {
-            self.civil_war(from, (city.x, city.y));
+        if from != 0 && from != h && city.has_improvement(imp::PALACE) && self.cities_of(from).len() > 4 && self.power_rank(h) < self.power_rank(from) && !self.civil_war(from, c) {
+            // without a civil war the most central other city starts on a new Palace
+            // (0x13e12..0x13e37: production byte -1)
+            if let Some(m) = self.most_central_city(from, Some(c)) {
+                self.city_mut(m).production = super::Production::Improvement(imp::PALACE);
+            }
         }
         // the plunder is reckoned first and leaves the loser even when the city is destroyed
         // or the barbarians take it (0x13e6c, 0x13f52)
@@ -384,7 +388,7 @@ impl Game {
             self.place_unit(id, city.x, city.y, 3);
             self.players[from as usize].stats.cities_lost += 1;
             if was_capital {
-                self.lose_capital(from);
+                self.lose_capital(from, c);
             }
             self.refresh_vision(by);
             self.refresh_vision(from);
@@ -428,7 +432,7 @@ impl Game {
         self.players[from as usize].stats.cities_lost += 1;
         self.push_event(GameEvent::CityCaptured { city: c, by, from, gold, adv });
         if was_capital {
-            self.lose_capital(from);
+            self.lose_capital(from, c);
         }
         self.refresh_vision(by);
         self.refresh_vision(from);
@@ -438,83 +442,244 @@ impl Game {
 
     /// Bookkeeping when a civilisation loses its capital: no palace, spaceship cancelled
     /// (CIV.EXE 0x13e43: the captured city had the Palace).
-    fn lose_capital(&mut self, slot: Slot) {
-        self.player_mut(slot).capital = None;
+    fn lose_capital(&mut self, slot: Slot, c: CityId) {
+        // a civil war has already given the loser a new capital
+        if self.player(slot).capital == Some(c) {
+            self.player_mut(slot).capital = None;
+        }
         self.cancel_spaceship(slot);
     }
 
-    /// Split the civilisation `from` (`capture_city` checks when, 0x13db4): the half of its
-    /// cities farthest from `centre` defects to a new civilisation in a free slot (no-op when
-    /// no slot is free). CIV.EXE's split (ovl 15 0x14b75) goes by continent and population.
-    pub fn civil_war(&mut self, from: Slot, centre: (i32, i32)) {
-        if from == 0 || !self.player(from).in_game || !self.player(from).alive {
-            return;
+    /// `civil_war(civ)` (ovl 15 o 0x14b75), called by `capture_city` before the capital
+    /// changes hands (0x13e06): the empire of `from` splits and the rebels take over the
+    /// first slot 1..7 that has neither cities nor units. Returns false when no slot is free
+    /// or `from` has no Palace city.
+    ///
+    /// The new civilization is reset as `civ_init` does with the slot left out of the active
+    /// mask (o5 0x493c: no start square, no Settlers): Despotism, tax and science 4 tenths,
+    /// clean diplomacy both ways, cleared goals. Its tribe (o 0x14cb6): a slot of the game's
+    /// first civilizations (slot <= ds:0xd2f4 + 1) whose tribe is even or which is slot 7
+    /// switches to its other tribe, any other draws random(2) (0: civ + 8, which marks
+    /// ds:0xdf1e as the tribe it began with). It gets half the gold, the beakers, the
+    /// advance count, the government and the advances of `from`; it talked to it 8 turns
+    /// ago and both are at war, the rebels with a vendetta. The explored map is not copied.
+    ///
+    /// The cities split by continent (o 0x14e8b): in continent order each continent but the
+    /// capital's goes to the rebels while their citizens are no more than the loyal ones.
+    /// When that gives the rebels at most half of the loyal citizens, or more than them, the
+    /// split is redone by distance instead (o 0x14f6a): the city farthest (more than 1) from
+    /// the capital goes over until 9 * rebel citizens / (ds:0xdc6a + 3) reaches the
+    /// citizens `from` had (ds:0xdc6a is never written, so a third). `transfer_city`
+    /// (o 0x153f4) only changes the owner.
+    ///
+    /// Units (o 0x1501f), in record order: in a city square a unit is re-created for the
+    /// city's owner unless its home city has that owner already, keeping its flags (but
+    /// sentry) only when it goes over to the rebels from a rebel home; elsewhere the first unit
+    /// of a stack decides: with a rebel home the whole stack is re-created for the rebels
+    /// (flags but sentry kept, homes of units not supported by the rebels set to its own),
+    /// else units of the stack with a rebel home are re-homed to its home city. Re-created
+    /// ships lose the land units they carry, as `delete_unit` (0x8d6c) drowns them.
+    ///
+    /// Finally each side's most central city (`most_central_city` o 0x1542f; for `from`
+    /// without the captured one) gets the Palace.
+    pub fn civil_war(&mut self, from: Slot, captured: CityId) -> bool {
+        if from == 0 || !self.player(from).alive {
+            return false;
         }
-        let mut cities = self.cities_of(from);
-        if cities.len() < 2 {
-            return;
+        let free = |g: &Game, s: Slot| !g.all_cities().any(|c| c.owner == s) && !g.all_units().any(|u| u.owner == s);
+        let Some(new_slot) = (1..8u8).find(|s| free(self, *s)) else { return false };
+        // citizens per continent and the Palace city (the one at ds:0xdcec[civ] if several)
+        let cont = |g: &Game, c: &super::City| g.map.tile(c.x, c.y).continent as usize & 15;
+        let capital_x = self.player(from).capital.and_then(|c| self.city_opt(c)).map(|c| c.x);
+        let mut pop = [0i32; 16];
+        let mut capital: Option<(usize, (i32, i32))> = None;
+        for c in self.all_cities().filter(|c| c.owner == from) {
+            pop[cont(self, c)] += c.size as i32;
+            if c.has_improvement(imp::PALACE) && (capital.is_none() || capital_x == Some(c.x)) {
+                capital = Some((cont(self, c), c.pos()));
+            }
         }
-        let Some(new_slot) = (1..8u8).find(|s| !self.players[*s as usize].in_game) else { return };
-        cities.sort_by_key(|c| std::cmp::Reverse(Map::dist(centre, self.city(*c).pos())));
-        let n = cities.len() / 2;
-        let rebels: Vec<CityId> = cities[..n].to_vec();
-        // new civilisation from the free slot's pair
-        let pair = rules::civs_for_slot(new_slot);
-        let used: Vec<u8> = self.players.iter().filter(|p| p.in_game).map(|p| p.civ).collect();
-        let civ = if !used.contains(&pair[1]) && self.rng.chance(50) { pair[1] } else if !used.contains(&pair[0]) { pair[0] } else { pair[1] };
-        let old = self.player(from).clone();
+        let Some((home_cont, centre)) = capital else { return false };
+        let total: i32 = self.cities_of(from).iter().map(|c| self.city(*c).size as i32).sum();
+        let first_civs = new_slot as i32 <= self.setup.num_civs.clamp(3, 7) as i32;
+
+        // civ_init without the start square, then the tribe
+        let old = self.player(new_slot).clone();
+        let mut start_civ = old.start_civ;
+        let civ = if first_civs && (new_slot == 7 || old.civ & 1 == 0) && old.civ <= 15 {
+            old.civ ^ 8
+        } else if self.rng.below(2) != 0 {
+            new_slot
+        } else {
+            start_civ = new_slot + 8;
+            new_slot + 8
+        };
         let mut p = Player::new(new_slot, civ, false);
         p.in_game = true;
         p.alive = true;
-        p.govt = Govt::Despotism;
-        p.anarchy_turns = 0;
-        p.advances = old.advances;
-        p.future_techs = old.future_techs;
-        p.gold = old.gold / 2;
-        p.tax = 50;
-        p.lux = 0;
-        self.player_mut(from).gold -= old.gold / 2;
-        // the new civilization starts with clean diplomacy words both ways (o 0x4a7c), at war
-        // with the old one, which it holds a vendetta against, and talked to 8 turns ago
-        // (civil war o 0x14e61..0x14e86)
-        p.last_contact = self.turn as i32 - 8;
+        p.start_civ = start_civ;
+        p.tax = 40;
+        p.lux = 20;
         for s in 0..8usize {
-            p.diplo[s] = 0;
             self.players[s].diplo[new_slot as usize] = 0;
         }
+        self.ai_memory.persistent[new_slot as usize] = [super::goals::Goal::FREE; super::goals::PERSISTENT_GOALS];
+        self.ai_memory.policies[new_slot as usize] = None;
+        let src = self.player(from).clone();
+        let half = src.gold / 2;
+        p.gold = half;
+        self.player_mut(from).gold -= half;
+        p.beakers = src.beakers;
+        p.research_count = src.research_count;
+        p.govt = src.govt;
+        p.advances = src.advances;
+        p.future_techs = src.future_techs;
+        p.last_contact = self.turn as i32 - 8;
         p.diplo[from as usize] = super::diplomacy::flags::CONTACT | super::diplomacy::flags::VENDETTA;
-        self.players[from as usize].diplo[new_slot as usize] = super::diplomacy::flags::CONTACT;
+        self.players[from as usize].diplo[new_slot as usize] |= super::diplomacy::flags::CONTACT;
         self.players[new_slot as usize] = p;
-        // transfer the rebel cities (the farthest becomes the new capital) and their units
-        for (i, c) in rebels.iter().enumerate() {
+        self.push_event(GameEvent::CivilWar { slot: from, new_slot });
+
+        // the split
+        let mut side = [0u8; 16];
+        let (mut loyal, mut rebel) = (pop[home_cont], 0);
+        for k in 0..16 {
+            if pop[k] == 0 {
+                continue;
+            }
+            if rebel > loyal || k == home_cont {
+                if k != home_cont {
+                    loyal += pop[k];
+                }
+                side[k] = 1;
+            } else {
+                rebel += pop[k];
+                side[k] = 2;
+            }
+        }
+        let rebels: Vec<CityId> = if rebel * 2 > loyal && rebel <= loyal {
+            self.all_cities().filter(|c| c.owner == from && side[cont(self, c)] == 2).map(|c| c.id).collect()
+        } else {
+            let mut picked = Vec::new();
+            let mut moved = 0;
+            while 9 * moved / 3 < total {
+                let mut best: Option<(CityId, i32)> = None;
+                for c in self.all_cities().filter(|c| c.owner == from && !picked.contains(&c.id)) {
+                    let d = Map::civ_distance(c.pos(), centre);
+                    if d > best.map_or(1, |b| b.1) {
+                        best = Some((c.id, d));
+                    }
+                }
+                // CIV.EXE moves a stale city again when none is farther than 1 (o 0x14fcf)
+                let Some((c, _)) = best else { break };
+                moved += self.city(c).size as i32;
+                picked.push(c);
+            }
+            picked
+        };
+        for c in &rebels {
             let (x, y) = self.city(*c).pos();
-            {
-                let cm = self.city_mut(*c);
-                cm.owner = new_slot;
-                cm.disorder = false;
-                cm.celebrating = false;
-                if i == 0 {
-                    cm.add_improvement(imp::PALACE);
+            self.city_mut(*c).owner = new_slot;
+            self.note_occupant(new_slot, x, y);
+        }
+
+        // the units
+        let home_owner = |g: &Game, u: &Unit| u.home.and_then(|h| g.city_opt(h)).map(|c| c.owner);
+        let ids = self.units_of(from);
+        for id in ids {
+            let Some(u) = self.unit_opt(id).cloned() else { continue };
+            if u.owner != from {
+                continue;
+            }
+            if let Some(c) = self.city_at(u.x, u.y) {
+                let owner = self.city(c).owner;
+                if home_owner(self, &u) == Some(owner) {
+                    if owner == new_slot {
+                        let n = self.recreate_unit(&u, new_slot);
+                        self.keep_flags(n, &u);
+                    }
+                } else {
+                    self.recreate_unit(&u, owner);
+                }
+            } else {
+                let stack: Vec<UnitId> = self.units_at(u.x, u.y).into_iter().filter(|s| *s != id && self.unit(*s).owner == from).collect();
+                if home_owner(self, &u) == Some(new_slot) {
+                    let n = self.recreate_unit(&u, new_slot);
+                    self.keep_flags(n, &u);
+                    self.unit_mut(n).home = u.home;
+                    for s in stack {
+                        let Some(su) = self.unit_opt(s).cloned() else { continue };
+                        let n = self.recreate_unit(&su, new_slot);
+                        self.keep_flags(n, &su);
+                        // CIV.EXE leaves rebel-supported units of the stack the home
+                        // create_unit gives them (o 0x1521a); they keep their own here
+                        self.unit_mut(n).home = if home_owner(self, &su) == Some(new_slot) { su.home } else { u.home };
+                    }
+                } else {
+                    for s in stack {
+                        if home_owner(self, self.unit(s)) == Some(new_slot) {
+                            self.unit_mut(s).home = u.home;
+                        }
+                    }
                 }
             }
-            if i == 0 {
-                self.players[new_slot as usize].capital = Some(*c);
-            }
-            let moving: Vec<UnitId> = self.all_units().filter(|u| u.owner == from && (u.home == Some(*c) || (u.x, u.y) == (x, y))).map(|u| u.id).collect();
-            for id in moving {
-                // re-created for the new civilization: the counters move along
-                let kind = self.unit(id).kind as usize % 28;
-                self.players[from as usize].unit_counter[kind] -= 1;
-                self.players[new_slot as usize].unit_counter[kind] += 1;
-                self.unit_mut(id).owner = new_slot;
-            }
-            // trade routes stay (transfer_city o 0x153f4 only sets the owner)
-            self.auto_assign(*c);
         }
-        copy_explored(&mut self.map, new_slot, from);
+
+        // the new capitals
+        for (slot, without) in [(new_slot, None), (from, Some(captured))] {
+            if let Some(c) = self.most_central_city(slot, without) {
+                self.city_mut(c).add_improvement(imp::PALACE);
+                self.players[slot as usize].capital = Some(c);
+            }
+        }
         self.refresh_vision(new_slot);
         self.refresh_vision(from);
-        self.push_event(GameEvent::CivilWar { slot: from, new_slot });
+        true
+    }
+
+    /// Delete unit `u` and create one of its type on its square for `owner` (`delete_unit`
+    /// 0x8d6c, which drowns a ship's cargo, then `create_unit` 0x8b51 with its home rule).
+    /// Cargo re-created before its ship rides on in the new one; the old owner's drowns.
+    fn recreate_unit(&mut self, u: &Unit, owner: Slot) -> UnitId {
+        let aboard: Vec<UnitId> = self.all_units().filter(|c| c.carried_by == Some(u.id) && c.owner != u.owner).map(|c| c.id).collect();
+        for c in &aboard {
+            self.unit_mut(*c).carried_by = None;
+        }
+        self.remove_unit(u.id);
+        let n = self.add_unit(owner, u.kind, u.x, u.y);
+        self.players[owner as usize].stats.units_built -= 1;
+        if self.city_at(u.x, u.y).is_none() {
+            self.unit_mut(n).carried_by = u.carried_by;
+        }
+        for c in aboard {
+            self.unit_mut(c).carried_by = Some(n);
+        }
+        n
+    }
+
+    /// The unit flags but the sentry bit go over to the re-created unit (o 0x1509f).
+    fn keep_flags(&mut self, n: UnitId, u: &Unit) {
+        let m = self.unit_mut(n);
+        m.veteran = u.veteran;
+        m.order = match u.order {
+            UnitOrder::Sentry | UnitOrder::Goto => UnitOrder::None,
+            o => o,
+        };
+    }
+
+    /// `most_central_city(civ)` (ovl 15 o 0x1542f): the city of `slot` with the smallest sum
+    /// of distances to its other cities, the first in record order on a tie; `without` is
+    /// left out (the captured capital, whose owner byte CIV.EXE sets to -1 meanwhile).
+    pub fn most_central_city(&self, slot: Slot, without: Option<CityId>) -> Option<CityId> {
+        let own: Vec<(CityId, (i32, i32))> = self.all_cities().filter(|c| c.owner == slot && Some(c.id) != without).map(|c| (c.id, c.pos())).collect();
+        let mut best: Option<(CityId, i32)> = None;
+        for (c, p) in &own {
+            let sum: i32 = own.iter().map(|(_, q)| Map::civ_distance(*p, *q)).sum();
+            if best.map_or(true, |b| sum < b.1) {
+                best = Some((*c, sum));
+            }
+        }
+        best.map(|b| b.0)
     }
 
     /// Mark a civilisation destroyed when it has no cities and no settlers left (the computer's
@@ -685,15 +850,6 @@ impl Game {
                 continue;
             }
             return Some((x, y));
-        }
-    }
-}
-
-/// Copy another slot's explored area to a slot (new civilisation born from a civil war).
-fn copy_explored(map: &mut Map, slot: Slot, from: Slot) {
-    for t in map.tiles.iter_mut() {
-        if t.explored_by(from) {
-            t.explored |= 1 << slot;
         }
     }
 }
@@ -1159,6 +1315,106 @@ mod tests {
         assert!(rebels.iter().all(|c| g.city(*c).x >= 18));
         assert!(g.player(new_slot).capital.is_some());
         assert_eq!(g.cities_of(2).len(), 3);
+    }
+
+    #[test]
+    fn civil_war_splits_by_continent_and_moves_the_units() {
+        let mut g = flat_game_with(3);
+        // continent 3 west of x 17, continent 5 east of it
+        for y in 5..30 {
+            for x in 5..30 {
+                g.map.get_mut(x, y).unwrap().continent = if x < 17 { 3 } else { 5 };
+            }
+        }
+        // loyal: 4 x 3 citizens on the capital's continent, (15, 28) the farthest city;
+        // rebels: 2 x 4 on the other (2 * 8 > 12 and 8 <= 12)
+        let mut ids = Vec::new();
+        for (x, y, size) in [(6, 10, 3), (9, 10, 3), (12, 10, 3), (15, 28, 3), (21, 10, 4), (24, 10, 4)] {
+            let c = g.add_city(2, format!("C{x}"), x, y);
+            g.city_mut(c).size = size;
+            ids.push(c);
+        }
+        // a veteran in a rebel city, a rebel-supported unit in a loyal city, and two stacks:
+        // led by a rebel-supported unit, led by a loyal one
+        let vet = g.add_unit(2, unit_ids::MUSKETEERS, 21, 10);
+        g.unit_mut(vet).veteran = true;
+        let back = g.add_unit(2, unit_ids::MUSKETEERS, 9, 10);
+        g.unit_mut(back).home = Some(ids[4]);
+        g.unit_mut(back).veteran = true;
+        let lead = g.add_unit(2, unit_ids::LEGION, 18, 20);
+        g.unit_mut(lead).home = Some(ids[5]);
+        let follow = g.add_unit(2, unit_ids::LEGION, 18, 20);
+        g.unit_mut(follow).home = Some(ids[1]);
+        let loyal_lead = g.add_unit(2, unit_ids::LEGION, 8, 20);
+        g.unit_mut(loyal_lead).home = Some(ids[2]);
+        let rebel_follow = g.add_unit(2, unit_ids::LEGION, 8, 20);
+        g.unit_mut(rebel_follow).home = Some(ids[4]);
+        g.player_mut(2).gold = 301;
+        let n = (1..8u8).find(|s| g.cities_of(*s).is_empty() && g.units_of(*s).is_empty()).unwrap();
+        assert!(g.civil_war(2, ids[0]));
+        let mut rebels = g.cities_of(n);
+        rebels.sort();
+        assert_eq!(rebels, vec![ids[4], ids[5]]);
+        // half the gold, civ_init's rates, Palaces in the most central cities
+        assert_eq!((g.player(n).gold, g.player(2).gold), (150, 151));
+        assert_eq!((g.player(n).tax, g.player(n).lux), (40, 20));
+        assert!(g.player(n).capital.is_some_and(|c| rebels.contains(&c) && g.city(c).has_improvement(imp::PALACE)));
+        let cap = g.player(2).capital.expect("new capital for the loyal side");
+        assert!(cap != ids[0] && g.city(cap).owner == 2 && g.city(cap).has_improvement(imp::PALACE));
+        // units
+        let at = |g: &Game, x: i32, y: i32| g.units_at(x, y).into_iter().map(|u| g.unit(u).clone()).collect::<Vec<_>>();
+        let v = at(&g, 21, 10);
+        assert!(v.len() == 1 && v[0].owner == n && v[0].veteran);
+        let b = at(&g, 9, 10);
+        assert!(b.len() == 1 && b[0].owner == 2 && !b[0].veteran && b[0].home == Some(ids[1]));
+        let r = at(&g, 18, 20);
+        assert!(r.len() == 2 && r.iter().all(|u| u.owner == n && u.home == Some(ids[5])));
+        let l = at(&g, 8, 20);
+        assert!(l.len() == 2 && l.iter().all(|u| u.owner == 2 && u.home == Some(ids[2])));
+    }
+
+    #[test]
+    fn civil_war_by_distance_takes_a_third_of_the_citizens() {
+        let mut g = flat_game_with(3);
+        let mut ids = Vec::new();
+        for i in 0..7 {
+            let c = g.add_city(2, format!("C{i}"), 6 + i * 3, 10);
+            g.city_mut(c).size = 3;
+            ids.push(c);
+        }
+        let n = (1..8u8).find(|s| g.cities_of(*s).is_empty() && g.units_of(*s).is_empty()).unwrap();
+        assert!(g.civil_war(2, ids[0]));
+        // one continent: the farthest cities go until 3 * 9 >= 21
+        let mut rebels = g.cities_of(n);
+        rebels.sort();
+        assert_eq!(rebels, vec![ids[4], ids[5], ids[6]]);
+        assert_eq!(g.player(n).relation(2), Relation::War);
+    }
+
+    #[test]
+    fn without_a_free_slot_the_loser_starts_a_new_palace() {
+        let mut g = flat_game_with(7);
+        for s in 1..8u8 {
+            g.players[s as usize].in_game = true;
+            g.players[s as usize].alive = true;
+            if g.units_of(s).is_empty() {
+                g.add_unit(s, unit_ids::SETTLERS, 28, 6 + s as i32);
+            }
+        }
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            let c = g.add_city(2, format!("C{i}"), 6 + i * 3, 10);
+            g.city_mut(c).size = 3;
+            ids.push(c);
+        }
+        assert!(!g.civil_war(2, ids[0]));
+        let a = g.add_unit(1, unit_ids::LEGION, 6, 11);
+        g.player_mut(1).gold = 0;
+        g.player_mut(2).gold = 3000;
+        assert!(g.power_rank(g.human_slot) < g.power_rank(2));
+        assert_eq!(g.try_move(a, crate::game::Dir8::N).unwrap(), MoveOutcome::CapturedCity(ids[0]));
+        // the most central of the other four (a tie: the first)
+        assert_eq!(g.city(ids[2]).production, crate::game::Production::Improvement(imp::PALACE));
     }
 
     #[test]

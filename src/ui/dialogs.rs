@@ -195,7 +195,13 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
                 news(vec![format!("{name} destroyed"), format!("by the {}!", civ(*by)), if *from == me { String::new() } else { format!("({} city)", g.player(*from).adjective()) }])
             }
         }
-        GameEvent::CivilWar { slot, new_slot } if *slot == me || *new_slot == me => msg(vec!["Civil war!".into()]),
+        // KING.TXT *ESCHISM, shown to everyone (civil_war o 0x14dce: $US / $THEM the two
+        // adjectives)
+        GameEvent::CivilWar { slot, new_slot } => {
+            let v = Vars { us: g.player(*slot).adjective().to_string(), them: g.player(*new_slot).adjective().to_string(), ..Default::default() };
+            let lines = ctx.texts.king.section("ESCHISM").map(|l| paragraphs(&substitute(l, &v))).unwrap_or_else(|| vec!["Civil war!".into()]);
+            msg(lines)
+        }
         // civ_destroyed (o5 0x4fe1): "<adjective> civilization / destroyed by <plural>!"
         GameEvent::CivDestroyed { adjective, by, .. } => news(vec![format!("{adjective} civilization"), "destroyed".into(), format!("by {}!", civ(*by))]),
         // CIV.EXE 0x18fb1 (ds:0x2a70), drawn as the Defense Minister's box at (100,32); the
