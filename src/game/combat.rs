@@ -894,6 +894,23 @@ mod tests {
     }
 
     #[test]
+    fn the_human_is_asked_before_attacking_below_full_strength() {
+        // CIV.EXE 0x5fc4: "Attack at 1/3 strength?" before the fight
+        let mut g = flat_game();
+        let h = g.human_slot;
+        let foe = if h == 1 { 2 } else { 1 };
+        g.set_relation(h, foe, Relation::War);
+        g.add_unit(foe, unit_ids::PHALANX, 11, 10);
+        let a = g.add_unit(h, unit_ids::LEGION, 10, 10);
+        g.unit_mut(a).moves_left = 1;
+        assert_eq!(g.try_move(a, crate::game::Dir8::E), Ok(MoveOutcome::WeakAttack(1)));
+        assert_eq!(g.unit(a).pos(), (10, 10));
+        g.weak_attack_ok = true;
+        assert!(matches!(g.try_move(a, crate::game::Dir8::E), Ok(MoveOutcome::Attacked { .. })));
+        assert!(!g.weak_attack_ok, "the answer is used up");
+    }
+
+    #[test]
     fn a_computer_attacks_only_with_two_thirds_of_a_move() {
         // CIV.EXE 0x6023: below 2 thirds the computer's attack is not made
         let mut g = flat_game();

@@ -217,6 +217,9 @@ pub struct Game {
     /// civilization: the next move goes ahead (CIV.EXE 0x1a3b4 returned 1). Not saved.
     #[serde(skip)]
     pub treaty_break_ok: Option<Slot>,
+    /// The human has confirmed an attack below full strength (`MoveOutcome::WeakAttack`).
+    #[serde(skip)]
+    pub weak_attack_ok: bool,
     /// The global warming counter ds:0xb1ea (0..99): one step a turn towards twice the
     /// polluted squares minus four per warming so far (`global_warming_check`); stored after
     /// the game body in version-9 saves.
@@ -282,6 +285,10 @@ pub enum MoveOutcome {
     /// 0x1a3b4); after "Break treaty." (and no Senate) the UI sets `Game::treaty_break_ok`
     /// and moves again. The unit has not moved.
     BreakTreaty(Slot),
+    /// The human's unit would attack with these thirds of a move: "Attack at N/3 strength?
+    /// Cancel / Attack" (CIV.EXE 0x5fc4, menu at (100,16)); after "Attack" the UI sets
+    /// `Game::weak_attack_ok` and moves again. The unit has not moved.
+    WeakAttack(u8),
 }
 
 impl Game {
@@ -381,6 +388,7 @@ impl Game {
             audience_pending: 0,
             diplo_latch: -1,
             treaty_break_ok: None,
+            weak_attack_ok: false,
             warming_counter: 0,
             first_discoverer: vec![0; 72],
             historian_timer: 80 + historian,

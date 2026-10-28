@@ -85,6 +85,9 @@ pub(crate) enum Pending {
     /// "We have signed a peace treaty..." before a unit attacks or enters the land of a treaty
     /// partner: (unit, direction, partner).
     AttackTreaty(UnitId, Dir8, crate::game::Slot),
+    /// "Attack at N/3 strength?" (CIV.EXE 0x5fc4): "Attack" moves again, "Cancel" drops the
+    /// unit's goto (0x5ef3).
+    WeakAttack(UnitId, Dir8),
     /// senate_check_attack before a pillage near a treaty partner's city (CIV.EXE 0x4cea).
     PillageTreaty(UnitId, crate::game::Slot),
 }
@@ -333,6 +336,10 @@ impl MapView {
                 }
                 let t = match outcome {
                     MoveOutcome::BreakTreaty(o) => self.treaty_question(ctx, id, d, o),
+                    MoveOutcome::WeakAttack(m) => {
+                        self.pending = Pending::WeakAttack(id, d);
+                        Transition::Push(Box::new(MenuDialog::new(vec!["Attack at".into(), format!("{m}/3 strength?")], vec!["Cancel".into(), "Attack".into()]).with_pos(100, 16)))
+                    }
                     MoveOutcome::EnteredForeignCity(c) => self.foreign_city_menu(ctx, id, c),
                     MoveOutcome::CaravanArrived(c) => self.caravan_menu(ctx, id, c, d),
                     MoveOutcome::BribeOffer(t) => self.bribe_offer(ctx, id, t, d),
@@ -357,6 +364,17 @@ impl MapView {
 
     /// "We have signed a\npeace treaty with\nthe <Plural>!" Cancel action. / Break treaty. (CIV.EXE
     /// 0x1a3cf, at (80, 80)).
+    /// The move again after a "Break treaty." or "Attack" answer; the answers hold while the
+    /// other question is open, and are dropped once the move is done.
+    fn confirmed_move(&mut self, ctx: &mut UiContext, d: Dir8) -> Transition {
+        let t = self.move_active(ctx, d, false);
+        if !matches!(self.pending, Pending::AttackTreaty(..) | Pending::WeakAttack(..)) {
+            ctx.game_mut().weak_attack_ok = false;
+            ctx.game_mut().treaty_break_ok = None;
+        }
+        t
+    }
+
     fn treaty_question(&mut self, ctx: &mut UiContext, id: UnitId, d: Dir8, o: crate::game::Slot) -> Transition {
         let lines = vec!["We have signed a".into(), "peace treaty with".into(), format!("the {}!", ctx.game().player(o).plural())];
         self.pending = Pending::AttackTreaty(id, d, o);
@@ -1322,6 +1340,24 @@ impl Screen for MapView {
                 DialogResult::Choice(1) if ctx.game().active_unit == Some(id) => self.unit_order(ctx, UnitOrder::Pillage),
                 _ => Transition::None,
             },
+            Pending::WeakAttack(id, d) => match result {
+                DialogResult::Choice(1) if ctx.game().unit_opt(id).is_some() && ctx.game().active_unit == Some(id) => {
+                    ctx.game_mut().weak_attack_ok = true;
+                    self.confirmed_move(ctx, d)
+                }
+                _ => {
+                    ctx.game_mut().weak_attack_ok = false;
+                    ctx.game_mut().treaty_break_ok = None;
+                    if ctx.game().unit_opt(id).is_some() {
+                        let u = ctx.game_mut().unit_mut(id);
+                        u.goto = None;
+                        if u.order == UnitOrder::Goto {
+                            u.order = UnitOrder::None;
+                        }
+                    }
+                    Transition::None
+                }
+            },
             Pending::AttackTreaty(id, d, o) => match result {
                 DialogResult::Choice(1) if ctx.game().senate_overrules(ctx.game().human_slot) => {
                     self.pending = Pending::Event;
@@ -1330,12 +1366,14 @@ impl Screen for MapView {
                 DialogResult::Choice(1) => {
                     ctx.game_mut().treaty_break_ok = Some(o);
                     if ctx.game().unit_opt(id).is_some() && ctx.game().active_unit == Some(id) {
-                        return self.move_active(ctx, d, false);
+                        return self.confirmed_move(ctx, d);
                     }
                     ctx.game_mut().treaty_break_ok = None;
+                    ctx.game_mut().weak_attack_ok = false;
                     Transition::None
                 }
                 _ => {
+                    ctx.game_mut().weak_attack_ok = false;
                     if ctx.game().unit_opt(id).is_some() {
                         let u = ctx.game_mut().unit_mut(id);
                         u.goto = None;

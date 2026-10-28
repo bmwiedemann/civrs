@@ -122,9 +122,10 @@ impl Game {
                 if self.treaty_break_ok != Some(o) {
                     return Ok(MoveOutcome::BreakTreaty(o));
                 }
-                self.treaty_break_ok = None;
                 if units_here.is_empty() {
                     // the territory rule ends the treaty (0x6583); a fight ends it in combat
+                    // (the answer holds until the fight, past "Attack at N/3 strength?")
+                    self.treaty_break_ok = None;
                     self.clear_diplo_flag(slot, o, super::diplomacy::flags::PEACE);
                 }
             }
@@ -157,6 +158,11 @@ impl Game {
                 if !self.is_human(slot) && u.moves_left < 2 {
                     return Ok(MoveOutcome::Blocked);
                 }
+                if self.is_human(slot) && u.moves_left < 3 && !self.weak_attack_ok {
+                    return Ok(MoveOutcome::WeakAttack(u.moves_left));
+                }
+                self.weak_attack_ok = false;
+                self.treaty_break_ok = None;
                 // move_units counts the units lost in the fight (ds:0x70d8, o 0x6075..0x60ae)
                 self.counting_losses = true;
                 let out = if u.kind == unit_ids::NUCLEAR {
