@@ -360,7 +360,22 @@ impl Game {
     }
 
     fn place_structural(&mut self, slot: Slot) {
-        if let Some(i) = human_structural_slot(&self.player(slot).spaceship) {
+        let entry = human_structural_slot(&self.player(slot).spaceship);
+        self.human_place(slot, entry);
+    }
+
+    /// The human's part goes to `entry`. His first part (ship-started bit ds:0x4cd8 bit 8+civ
+    /// still clear) sets the last-contact turn ds:0xd2e4 of every civ whose ship is started to
+    /// 0, so those leaders may ask for an audience again at once (o 0x187ed..0x18833).
+    fn human_place(&mut self, slot: Slot, entry: Option<usize>) {
+        if let Some(i) = entry {
+            if self.player(slot).spaceship.parts() == 0 {
+                for o in 1..8u8 {
+                    if o != slot && self.player(o).spaceship.parts() > 0 {
+                        self.player_mut(o).last_contact = 0;
+                    }
+                }
+            }
             place(&mut self.player_mut(slot).spaceship, i);
         }
         self.after_human_part(slot);
@@ -374,10 +389,8 @@ impl Game {
             1 => part::PROPULSION + choice.min(1) as u8,
             _ => part::HABITATION + choice.min(2) as u8,
         };
-        if let Some(i) = first_free_slot(&self.player(slot).spaceship, t) {
-            place(&mut self.player_mut(slot).spaceship, i);
-        }
-        self.after_human_part(slot);
+        let entry = first_free_slot(&self.player(slot).spaceship, t);
+        self.human_place(slot, entry);
     }
 
     /// Redraw with the LAUNCH button (ship_draw(civ, -1, 1), o 0x18842): the human sees the
@@ -778,6 +791,24 @@ mod tests {
         assert!(s.launched());
         assert!(s.modules > 0 && s.components > 0);
         assert!(g.take_events().iter().any(|e| matches!(e, GameEvent::SpaceshipLaunched(x) if *x == ai)));
+    }
+
+    #[test]
+    fn human_first_part_reopens_talks() {
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        let h = g.human_slot;
+        let ai = (1..8u8).find(|s| *s != h && g.player(*s).alive).unwrap();
+        let other = (1..8u8).find(|s| *s != h && *s != ai && g.player(*s).alive).unwrap();
+        g.apollo_built = true;
+        place(&mut g.player_mut(ai).spaceship, 0);
+        g.player_mut(ai).last_contact = 30;
+        g.player_mut(other).last_contact = 30;
+        g.place_spaceship_part(h, 0, 0);
+        assert_eq!((g.player(ai).last_contact, g.player(other).last_contact), (0, 30));
+        // only the first part does it
+        g.player_mut(ai).last_contact = 30;
+        g.place_spaceship_part(h, 0, 0);
+        assert_eq!(g.player(ai).last_contact, 30);
     }
 
     #[test]
