@@ -196,83 +196,19 @@ const fn adv_cell(page: u8, row: i32, col: i32) -> (&'static str, Rect) {
     (name, Rect::new(1 + 111 * col, 1 + 69 * row, 110, 68))
 }
 
+/// The advances in the order of their icons on ICONPG1..ICONPG8, nine to a page row by row
+/// (far table 0x269d:0x0000, searched by pedia_advance_rank o 0xc639).
+const ADVANCE_ICON_ORDER: [u8; 67] = [
+    24, 32, 11, 65, 26, 36, 13, 59, 53, 44, 39, 5, 1, 51, 4, 35, 16, 50, 52, 38, 29, 49, 22, 0, 21, 10, 33, 60, 19, 37, 45, 12, 15, 43,
+    30, 40, 2, 41, 17, 27, 18, 3, 61, 56, 57, 6, 34, 55, 14, 62, 20, 58, 23, 8, 64, 66, 63, 31, 9, 48, 42, 7, 47, 54, 28, 25, 46,
+];
+
 /// Civilopedia icon of an advance: sheet base name and the cell rectangle (110x68, drawn
-/// opaque at (7,8) on the entry page; background index 253).
-///
-/// Mapping by artwork; confidence notes: "?" = plausible but unverified guess.
+/// opaque at (7,8) on the entry page; background index 253). The rank k of the advance in
+/// `ADVANCE_ICON_ORDER` gives page k / 9 + 1, column k % 3 and row k % 9 / 3 (o 0xb6a7).
 pub fn advance_icon(id: AdvanceId) -> Option<(&'static str, Rect)> {
-    use rules::advance_ids as a;
-    let c = match id {
-        a::ALPHABET => adv_cell(3, 1, 2),            // letters "ABCDEFG / Aa"
-        a::CODE_OF_LAWS => adv_cell(2, 1, 2),        // raised hands over a flag (oath) ?
-        a::CURRENCY => adv_cell(5, 0, 0),            // coins and a bank note
-        a::ATOMIC_THEORY => adv_cell(5, 1, 2),       // atom
-        a::DEMOCRACY => adv_cell(2, 1, 0),           // Statue of Liberty
-        a::MONARCHY => adv_cell(2, 0, 2),            // crown
-        a::ASTRONOMY => adv_cell(6, 0, 0),           // telescope
-        a::MAP_MAKING => adv_cell(7, 2, 1),          // map with compass rose
-        a::NAVIGATION => adv_cell(6, 2, 2),          // ship's wheel and chart
-        a::MATHEMATICS => adv_cell(7, 1, 1),         // abacus
-        a::MEDICINE => adv_cell(3, 2, 1),            // caduceus
-        a::PHYSICS => adv_cell(1, 0, 2),             // pulley and weight ?
-        a::ENGINEERING => adv_cell(4, 1, 1),         // blueprint, compasses, hammer ?
-        a::UNIVERSITY => adv_cell(1, 2, 0),          // mortarboard and diploma
-        a::MAGNETISM => adv_cell(6, 1, 0),           // horseshoe magnet
-        a::ELECTRONICS => adv_cell(4, 1, 2),         // circuit board
-        a::MASONRY => adv_cell(2, 2, 1),             // bricks and trowel
-        a::BRONZE_WORKING => adv_cell(5, 1, 1),      // shield, spears and fire ?
-        a::IRON_WORKING => adv_cell(7, 1, 2),        // crucible pouring metal ?
-        a::BRIDGE_BUILDING => adv_cell(4, 0, 1),     // suspension bridge
-        a::INVENTION => adv_cell(6, 1, 2),           // gramophone, light bulb, flask
-        a::COMPUTERS => adv_cell(3, 2, 0),           // personal computer
-        a::WRITING => adv_cell(3, 1, 1),             // quill and inkwell
-        a::STEAM_ENGINE => adv_cell(6, 2, 1),        // boiler and turbine
-        a::TRADE => adv_cell(1, 0, 0),               // hands bartering ?
-        a::CEREMONIAL_BURIAL => adv_cell(8, 0, 2),   // sarcophagus
-        a::MYSTICISM => adv_cell(1, 1, 1),           // meditating figure ?
-        a::NUCLEAR_FISSION => adv_cell(5, 1, 0),     // mushroom cloud
-        a::PHILOSOPHY => adv_cell(8, 0, 1),          // The Thinker
-        a::RELIGION => adv_cell(3, 0, 2),            // stained-glass window
-        a::LITERACY => adv_cell(4, 2, 1),            // books
-        a::HORSEBACK_RIDING => adv_cell(7, 1, 0),    // horse
-        a::FEUDALISM => adv_cell(1, 0, 1),           // castle
-        a::THE_WHEEL => adv_cell(3, 2, 2),           // stone wheel on the ground ?
-        a::GUNPOWDER => adv_cell(6, 0, 1),           // musket and powder
-        a::INDUSTRIALIZATION => adv_cell(2, 2, 0),   // factory
-        a::CHEMISTRY => adv_cell(1, 1, 2),           // red vessel with glass dome ?
-        a::COMBUSTION => adv_cell(4, 0, 2),          // engine ?
-        a::FLIGHT => adv_cell(3, 0, 1),              // Leonardo's wings
-        a::ADVANCED_FLIGHT => adv_cell(2, 0, 1),     // stealth bomber (verified)
-        a::SPACE_FLIGHT => adv_cell(4, 2, 2),        // Earth through a porthole
-        a::MASS_PRODUCTION => adv_cell(5, 0, 1),     // row of Model T cars
-        a::POTTERY => adv_cell(7, 2, 0),             // vases
-        a::COMMUNISM => adv_cell(4, 2, 0),           // hammer and sickle
-        a::THE_REPUBLIC => adv_cell(2, 0, 0),        // eagle on a globe ?
-        a::CONSTRUCTION => adv_cell(4, 1, 0),        // hammer and house frame
-        a::ROCKETRY => adv_cell(8, 1, 0),            // rocket on a gantry
-        a::THE_CORPORATION => adv_cell(7, 2, 2),     // chart and executives ?
-        a::METALLURGY => adv_cell(5, 0, 2),          // cauldron over fire ?
-        a::RAILROAD => adv_cell(3, 1, 0),            // locomotive
-        a::NUCLEAR_POWER => adv_cell(2, 2, 2),       // radiation symbol
-        a::THEORY_OF_GRAVITY => adv_cell(2, 1, 1),   // falling balls
-        a::STEEL => adv_cell(3, 0, 0),               // steel mill and blast furnace ?
-        a::BANKING => adv_cell(1, 2, 2),             // piggy bank
-        a::ELECTRICITY => adv_cell(5, 2, 2),         // circuit with bulb and meters
-        a::REFINING => adv_cell(6, 0, 2),            // oil pump and barrels ?
-        a::EXPLOSIVES => adv_cell(5, 2, 1),          // dynamite
-        a::SUPERCONDUCTOR => adv_cell(8, 0, 0),      // sparking red cube ?
-        a::AUTOMOBILE => adv_cell(6, 2, 0),          // early automobile
-        a::GENETIC_ENGINEERING => adv_cell(1, 2, 1), // embryo and molecules
-        a::PLASTICS => adv_cell(4, 0, 0),            // plastic bags and bottles ?
-        a::RECYCLING => adv_cell(5, 2, 0),           // recycling arrows
-        a::CHIVALRY => adv_cell(6, 1, 1),            // sword and pennant
-        a::ROBOTICS => adv_cell(7, 0, 2),            // robot arm
-        a::CONSCRIPTION => adv_cell(7, 0, 0),        // row of soldiers
-        a::LABOR_UNION => adv_cell(1, 1, 0),         // handshake, hammer and shovel ?
-        a::FUSION_POWER => adv_cell(7, 0, 1),        // colliding atoms in a sun
-        _ => return None,
-    };
-    Some(c)
+    let k = ADVANCE_ICON_ORDER.iter().position(|a| *a == id)? as i32;
+    Some(adv_cell(k as u8 / 9 + 1, k % 9 / 3, k % 3))
 }
 
 /// Picture of a unit type in ICONPGA..ICONPGE (2x3 grid of ~160x60 cells with a cloud
@@ -396,6 +332,17 @@ mod tests {
         assert!(all.contains(&Entry::Advance(adv::UNIVERSITY)) && !all.contains(&Entry::Improvement(imp::UNIVERSITY)));
         assert!(entries(CAT_IMPROVEMENTS).contains(&Entry::Improvement(imp::UNIVERSITY)));
         assert_eq!(entries(CAT_MISC).len(), 21);
+    }
+
+    #[test]
+    fn advance_icons_follow_civ_exes_order() {
+        use crate::rules::advance_ids as a;
+        assert_eq!(advance_icon(a::CODE_OF_LAWS), Some(adv_cell(2, 1, 0)));
+        assert_eq!(advance_icon(a::DEMOCRACY), Some(adv_cell(2, 1, 2)));
+        assert_eq!(advance_icon(a::ELECTRICITY), Some(adv_cell(8, 0, 0)));
+        assert_eq!(advance_icon(a::ADVANCED_FLIGHT), Some(adv_cell(2, 0, 1)), "the capture");
+        assert!((0..67).all(|i| advance_icon(i).is_some()));
+        assert_eq!(advance_icon(a::FUTURE_TECH), None);
     }
 
     #[test]
