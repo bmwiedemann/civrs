@@ -113,6 +113,20 @@ pub struct City {
     /// the game body (save version 22).
     #[serde(skip)]
     pub hydro_site: bool,
+    /// The city's entry in the 256-name table (CIV.EXE city +0x16), given at founding and kept
+    /// by a rename, which CIV.EXE writes over that entry: Find City orders cities by it (o
+    /// 0x1ecf4). `NO_NAME_INDEX` for a name from outside the table. Saved after the game body
+    /// (save version 23).
+    #[serde(skip)]
+    pub name_index: u8,
+}
+
+/// `City::name_index` of a city whose name is not in the name table.
+pub const NO_NAME_INDEX: u8 = 0xff;
+
+/// The name-table entry of `name` (the first one that has it), or `NO_NAME_INDEX`.
+pub fn name_table_index(name: &str) -> u8 {
+    crate::rules::city_names::name_table().iter().position(|t| *t == name).map_or(NO_NAME_INDEX, |i| i as u8)
 }
 
 /// A free garrison slot (CIV.EXE writes 0xff at city founding, o 0x1b5cd).

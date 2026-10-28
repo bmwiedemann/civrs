@@ -519,9 +519,8 @@ impl FindCity {
     /// The typed name against the city names (prompt_city_name o 0x1ecf4..0x1ed6b): the first
     /// name of the 256-name table, in table order, that starts with the typed text, ignoring
     /// case (strnicmp over its length), and that a city has; then the map centres on that city
-    /// if the human has seen its square, else "Unknown city." (o 0x1ec00). A renamed city's
-    /// name is not in civrs's table: CIV.EXE writes it over the city's own entry, civrs puts
-    /// it after the table, in city order.
+    /// if the human has seen its square, else "Unknown city." (o 0x1ec00). A renamed city
+    /// keeps its place: CIV.EXE writes the new name over the city's entry (`City::name_index`).
     fn lookup(&self, ctx: &UiContext) -> Option<(i32, i32)> {
         let g = ctx.game();
         let c = find_city_by_name(g, &self.edit.text())?;
@@ -533,9 +532,7 @@ impl FindCity {
 /// The city Find City picks for `typed` (o 0x1ecf4): see `FindCity::lookup`.
 fn find_city_by_name(g: &crate::game::Game, typed: &str) -> Option<crate::game::CityId> {
     let q = typed.to_ascii_lowercase();
-    let table = crate::rules::city_names::name_table();
-    let order = |name: &str| table.iter().position(|t| *t == name).unwrap_or(table.len());
-    let mut cities: Vec<(usize, crate::game::CityId, &str)> = g.all_cities().map(|c| (order(&c.name), c.id, c.name.as_str())).collect();
+    let mut cities: Vec<(u8, crate::game::CityId, &str)> = g.all_cities().map(|c| (c.name_index, c.id, c.name.as_str())).collect();
     cities.sort_unstable();
     cities.into_iter().find(|(_, _, name)| name.to_ascii_lowercase().starts_with(&q)).map(|(_, id, _)| id)
 }
@@ -597,5 +594,15 @@ mod tests {
         assert_eq!(super::find_city_by_name(&g, "big"), Some(renamed));
         assert_eq!(super::find_city_by_name(&g, "Berlins"), None);
         assert_eq!(super::find_city_by_name(&g, " "), None);
+        // a renamed city keeps its table entry: "Bremen" (German) renamed "Aardvark" sorts
+        // where Bremen did (o 0x1ecf4 walks the table, which holds the new name)
+        let bremen = g.add_city(3, "Bremen".into(), 40, 10);
+        g.rename_city(bremen, "Aardvark").unwrap();
+        let aachen = g.add_city(2, "Aachen".into(), 50, 10);
+        assert_eq!(super::find_city_by_name(&g, "a"), Some(bremen), "Bremen's entry comes before a name outside the table");
+        assert_eq!(super::find_city_by_name(&g, "aa"), Some(bremen));
+        assert_eq!(super::find_city_by_name(&g, "aac"), Some(aachen));
+        g.rename_city(babylon, "Abc").unwrap();
+        assert_eq!(super::find_city_by_name(&g, "a"), Some(babylon), "Babylon's entry comes first");
     }
 }

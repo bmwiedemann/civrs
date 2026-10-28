@@ -804,16 +804,18 @@ impl Game {
     /// 256-name table (16 per tribe 1..7, 9..15, then 32 spare ones) never given to a city
     /// in this game, looking in the tribe's own 16, then the spare ones, then the whole table
     /// from the start. CIV.EXE marks a name used for good (es:0x540[name]), so a destroyed
-    /// city's name is not given again; civrs takes the names the replay has logged.
+    /// city's name is not given again; civrs takes the names the replay has logged, and the
+    /// entries of the cities there are (a renamed city keeps its entry, `City::name_index`).
     pub fn next_city_name(&mut self, slot: Slot) -> String {
         let civ = self.players[slot as usize].civ as usize;
         let mut used: Vec<String> = self.all_cities().map(|c| c.name.clone()).collect();
         used.extend(self.history.names.iter().cloned());
+        let held: Vec<u8> = self.all_cities().map(|c| c.name_index).collect();
         let list = &rules::CIVS[civ].cities;
         let table = rules::city_names::name_table();
         let own = if civ == 0 || civ == 8 { 224 } else { 16 * (if civ > 7 { civ - 2 } else { civ - 1 }) };
         for i in (own..own + 16).chain(224..256).chain(0..256) {
-            if !used.iter().any(|u| u == table[i]) {
+            if !used.iter().any(|u| u == table[i]) && !held.contains(&(i as u8)) {
                 return table[i].to_string();
             }
         }
@@ -864,7 +866,9 @@ impl Game {
             known_size: 0,
             coastal: false,
             hydro_site: false,
+            name_index: city::NO_NAME_INDEX,
         };
+        c.name_index = city::name_table_index(&c.name);
         c.coastal = self.founding_coastal(owner, x, y);
         c.hydro_site = self.founding_hydro_site(x, y);
         if first_city {
@@ -1190,7 +1194,11 @@ mod new_game_tests {
         assert_eq!(t.flags & (tile_flags::ROAD | tile_flags::IRRIGATION | tile_flags::MINE | tile_flags::POLLUTION), tile_flags::ROAD | tile_flags::IRRIGATION | tile_flags::POLLUTION);
         // a destroyed city's name stays used (es:0x540, o 0x1b3c5)
         assert_eq!(g.next_city_name(s), list[1]);
-        for (i, n) in list.iter().enumerate().skip(1) {
+        // a renamed city keeps its entry, so its first name is not given again
+        let renamed = g.add_city(s, list[1].to_string(), 40, 40);
+        g.rename_city(renamed, "Elsewhere").unwrap();
+        assert_eq!(g.next_city_name(s), list[2]);
+        for (i, n) in list.iter().enumerate().skip(2) {
             g.add_city(s, n.to_string(), 2 + 2 * i as i32, 30);
         }
         assert_eq!(g.next_city_name(s), rules::SPARE_CITY_NAMES[0]);

@@ -52,7 +52,10 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// for an empty slot); older saves give each city the bit its owner would get founding it now.
 /// 22: then by the number of city slots (u32 LE) and each slot's `City::hydro_site` byte (0/1,
 /// 0 for an empty slot); older saves derive it from the squares around the city.
-pub const VERSION: u16 = 22;
+/// 23: then by the number of city slots (u32 LE) and each slot's `City::name_index` byte (0xff
+/// for an empty slot); older saves take the table entry of the city's name, none for a renamed
+/// city.
+pub const VERSION: u16 = 23;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -157,6 +160,8 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     data.extend(g.cities.iter().map(|c| c.as_ref().map(|c| c.coastal as u8).unwrap_or(0)));
     data.extend_from_slice(&(g.cities.len() as u32).to_le_bytes());
     data.extend(g.cities.iter().map(|c| c.as_ref().map(|c| c.hydro_site as u8).unwrap_or(0)));
+    data.extend_from_slice(&(g.cities.len() as u32).to_le_bytes());
+    data.extend(g.cities.iter().map(|c| c.as_ref().map_or(crate::game::city::NO_NAME_INDEX, |c| c.name_index)));
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -265,6 +270,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     let mut census: Option<&[u8]> = None;
     let mut coastal: Option<Vec<u8>> = None;
     let mut hydro: Option<Vec<u8>> = None;
+    let mut name_index: Option<Vec<u8>> = None;
     // version 14: the tribe names, after the counters
     if ver >= 14 {
         let mut at = counters + 112 * g.players.len();
@@ -321,6 +327,11 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
                     if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 22) {
                         let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
                         hydro = rest.get(at + 4..at + 4 + n).map(|b| b.to_vec());
+                        at += 4 + n;
+                        if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 23) {
+                            let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
+                            name_index = rest.get(at + 4..at + 4 + n).map(|b| b.to_vec());
+                        }
                     }
                 }
             }
@@ -407,6 +418,13 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
             None => g.founding_hydro_site(x, y),
         };
         g.cities[i].as_mut().unwrap().hydro_site = bit;
+    }
+    for (i, c) in g.cities.iter_mut().enumerate() {
+        let Some(c) = c else { continue };
+        c.name_index = match &name_index {
+            Some(b) => b.get(i).copied().unwrap_or(crate::game::city::NO_NAME_INDEX),
+            None => crate::game::city::name_table_index(&c.name),
+        };
     }
     Ok(g)
 }
@@ -812,6 +830,29 @@ mod tests {
         let old = super::load_game(&path).unwrap();
         let _ = std::fs::remove_dir_all(dir);
         assert_eq!(old.city(c).hydro_site, bit, "derived as at founding");
+    }
+
+    #[test]
+    fn the_name_index_survives_a_save_and_old_saves_derive_it() {
+        let mut g = Game::new(GameSetup { seed: 6, ..Default::default() }, None);
+        let h = g.human_slot;
+        let settler = g.units_of(h).into_iter().find(|id| g.unit(*id).kind == crate::rules::unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        let idx = g.city(c).name_index;
+        assert_eq!(idx, crate::game::city::name_table_index(&g.city(c).name));
+        assert_ne!(idx, crate::game::city::NO_NAME_INDEX);
+        g.rename_city(c, "Elsewhere").unwrap();
+        let dir = std::env::temp_dir().join(format!("civrs-nameidx-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        assert_eq!(super::load_game(&path).unwrap().city(c).name_index, idx);
+        let mut data = std::fs::read(&path).unwrap();
+        data[4..6].copy_from_slice(&22u16.to_le_bytes());
+        data.truncate(data.len() - 4 - g.cities.len());
+        std::fs::write(&path, &data).unwrap();
+        let old = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(old.city(c).name_index, crate::game::city::NO_NAME_INDEX, "a renamed city's name is not in the table");
     }
 
     #[test]
