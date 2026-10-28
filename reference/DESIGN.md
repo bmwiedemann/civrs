@@ -460,7 +460,7 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
 
 ## Input model
 Keyboard: numpad 1-9/arrows move (Home/PgUp/End/PgDn diagonals); Space skip; w wait; f fortify; s sentry; g goto; r road/rail; i irrigate; m mine;
-F fortress; P pillage; p clean pollution; b build/join city; h home; u unload; D disband; c centre; Enter end turn; Esc cancel/undo; G/O/A/W/C menus;
+f fortify (Settlers: fortress); P pillage; p clean pollution; b build/join city; h home; u unload; D disband; c centre; Enter end turn; Esc cancel/undo; G/O/A/W/C menus;
 F1-F12 reports; Alt-R leaders randomized; Alt-V sound; Ctrl-S/Ctrl-L quick save/load; Alt-Q (Ctrl-Q) quit prompt; Esc on the map: nothing (keyboard-only: look cursor off). City screen: I H M V R Esc, Shift-M, Shift-A.
 Mouse (320x200 space): LMB menu bar/items; LMB tile: own city -> city screen, own unit -> activate/stack list, else centre; RMB adjacent tile -> move;
 goto LMB = destination; LMB minimap centres; LMB unit box cycles; dialogs LMB choose, RMB cancel; city map LMB toggles worker, citizen click cycles specialist.
@@ -528,7 +528,9 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   script in both games (format in `src/save/actions.rs`; `civrs --dump state:N --actions SCRIPT`).
   Each `turn T` block runs at the start of the human's turn T, right after the harness saved
   t<T>.SVE, so its effects show in the later saves. Unit lines name the square of the active unit
-  and send map keys (keypad moves k1..k9, r i m f s b w space, F fortress, P pillage); `tax`/`lux`
+  and send map keys (keypad moves k1..k9, r i m f s b w space h, P pillage, D disband, `ret` for a
+  message box; `kN:ROW` answers the menu a move opens: a caravan's "Will you?", a treaty
+  partner's "Break treaty."); `tax`/`lux`
   move the cursor of the rate menus ('=' / '-', which start on the current rate); `revolution` uses
   the GAME menu; `city NAME X,Y change ROW | buy | sell ROW | spec N | tile DX,DY` opens the city
   screen with FindCity ('/' and the name, which centres the map: the city at column 7, row

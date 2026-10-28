@@ -12,7 +12,8 @@
 //!                          default name) w space h u D(disband); ret is a Return for a
 //!                          message box in CIV.EXE (nothing in civrs)
 //! unit 12,28 k2:2          a move that opens a menu (a caravan at one of the human's cities:
-//!                          0 keep moving, 1 trade route, 2 help build the wonder) and its row;
+//!                          0 keep moving, 1 trade route, 2 help build the wonder; a treaty
+//!                          partner's unit or land: 0 cancel, 1 break the treaty) and its row;
 //!                          a caravan entering a foreign city sets up its route, a move onto a
 //!                          foreign unit attacks
 //! select 7,23 Caesarea 9,25   FindCity, a click on the square and Return: its one unit
@@ -255,6 +256,22 @@ fn unit_key(g: &mut Game, id: crate::game::UnitId, k: &str) -> Result<(), String
                     _ => return Err(format!("move {k}: no caravan menu row {row:?}")),
                 }
             }
+            // "We have signed a peace treaty with the X!" (0x1a3cf): 0 Cancel action., 1 Break
+            // treaty. (no Senate asks), and the move goes on
+            MoveOutcome::BreakTreaty(o) => match row {
+                Some(0) => {}
+                Some(1) => {
+                    g.treaty_break_ok = Some(o);
+                    let out = g.try_move(id, d).map_err(|e| e.message().to_string());
+                    g.treaty_break_ok = None;
+                    g.weak_attack_ok = false;
+                    match out? {
+                        MoveOutcome::Moved | MoveOutcome::Attacked { .. } => {}
+                        out => return Err(format!("move {k} after breaking the treaty: {out:?}")),
+                    }
+                }
+                _ => return Err(format!("move {k}: no treaty menu row {row:?}")),
+            },
             out => return Err(format!("move {k}: {out:?}")),
         }
         // the map view follows the unit (scroll_to 0x9505, MapView::ensure_visible)
