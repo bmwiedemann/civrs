@@ -819,8 +819,9 @@ impl Game {
             let city = self.city(c);
             let size = city.size as i32;
             if 2 * size < food_after_settlers && (size < 10 || city.has_improvement(imp::AQUEDUCT)) {
+                // only the size goes up (0x12b12): the new citizen gets a square from the
+                // worker assignment of the city's next turn (or its city screen)
                 self.city_mut(c).size += 1;
-                self.fix_workers(c);
                 self.push_event(GameEvent::CityGrew(c));
             }
         }
@@ -2257,8 +2258,14 @@ mod tests {
         assert_eq!(g.city(c).size, 4);
         assert!(g.city(c).celebrating);
         g.city_mut(c).food = 0;
+        let workers = g.city(c).workers();
         g.process_city(c);
         assert_eq!(g.city(c).size, 5);
+        // the new citizen waits for the next turn's worker assignment (0x12b12)
+        assert_eq!(g.city(c).workers(), workers);
+        g.city_mut(c).food = 0;
+        g.process_city(c);
+        assert_eq!(g.city(c).workers() + g.city(c).specialists.len() as u32, 5);
     }
 
     #[test]
