@@ -288,6 +288,14 @@ impl Game {
                 shown.push(a);
             }
         }
+        // with nothing left to research the menu's text goes up as a message with the one
+        // line " Future Technology N" and that is the goal (0xc290..0xc2e6)
+        if shown == [rules::advance_ids::FUTURE_TECH] {
+            self.set_research(slot, rules::advance_ids::FUTURE_TECH);
+            self.push_event(GameEvent::FutureTechnology { slot, n: self.player(slot).future_techs as u32 + 1 });
+            self.research_chosen(slot);
+            return false;
+        }
         self.push_event(GameEvent::NeedsDecision(super::Decision::ChooseResearch { slot, options: shown }));
         true
     }
@@ -345,6 +353,24 @@ mod tests {
         let ai = g.alive_slots().into_iter().find(|s| *s != me).unwrap();
         assert!(!g.pick_research(ai));
         assert_eq!(g.player(ai).researching, None);
+    }
+
+    #[test]
+    fn with_every_advance_future_technology_is_set_without_a_menu() {
+        // choose_research 0xc290: a message and the goal 0x47
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        let me = g.human_slot;
+        for a in 0..67 {
+            g.player_mut(me).learn(a);
+        }
+        g.player_mut(me).researching = None;
+        g.player_mut(me).future_techs = 2;
+        g.take_events();
+        assert!(!g.pick_research(me));
+        assert_eq!(g.player(me).researching, Some(rules::advance_ids::FUTURE_TECH));
+        let ev = g.take_events();
+        assert!(ev.contains(&GameEvent::FutureTechnology { slot: me, n: 3 }));
+        assert!(!ev.iter().any(|e| matches!(e, GameEvent::NeedsDecision(_))));
     }
 
     #[test]

@@ -281,6 +281,10 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             let lines = ctx.texts.king.section("UMAX").map(paragraphs).unwrap_or_else(|| vec!["Too many units.".into()]);
             msg(lines)
         }
+        GameEvent::FutureTechnology { slot, n } if *slot == me => {
+            let who = if g.player(*slot).knows(rules::advance_ids::INVENTION) { "scientists" } else { "wise men" };
+            msg(vec!["Which discovery should our".into(), format!("{who} be pursuing, sire?"), "Pick one...".into(), format!(" Future Technology {n}")])
+        }
         GameEvent::LowFunds { slot } if *slot == me => {
             let lines = ctx.texts.king.section("TAXES").map(paragraphs).unwrap_or_else(|| vec!["Treasury is low!".into()]);
             msg(lines)

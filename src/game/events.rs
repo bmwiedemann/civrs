@@ -228,6 +228,10 @@ pub enum GameEvent {
     /// KING.TXT *UMAX, once a turn (ds:0xd760): the human's city finished a unit while the
     /// civilization had all its 127 unit slots in use (create_unit 0x8d24).
     UnitLimit(Slot),
+    /// The research menu's text with the single line " Future Technology N" as a plain
+    /// message at (100,80): the human has every advance and `n` is his next Future Technology,
+    /// now his goal (choose_research CIV.EXE 0xc290).
+    FutureTechnology { slot: Slot, n: u32 },
     /// "Civil Disorder in\nCITY! Mayor\nflees in panic." as a plain message (CIV.EXE 0x126a5):
     /// a further turn of disorder (`first` false), or a first one after this turn's riot
     /// animation (`Disorder`).
