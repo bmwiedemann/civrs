@@ -255,20 +255,20 @@ argument. Civ → tune: `ds:0x1518 + 0x3a*civ` short, `+2` long (Barbarians and 
 Call sites (file offsets; o = `civ-overlays.asm`): intro title theme 3 (o 0xeb2, the intro
 animation paces frames on `SoundTimer() >= 21*f/4`), menu choice fades at a 288-tick phrase
 boundary after tick 5269 (0x1f61); story: fade then 4 (o 0xa701), lines paced by SoundTimer;
-new game *INIT → long anthem (o 0x48ad), faded at start of play (0x24bf); ZOC → 37 (0x5b1a);
+new game *INIT → long anthem (o 0x48ad), faded at start of play (0x24bf); ZOC → 37 for a human unit, the *ZOC note only with Instant Advice (0x5b1a);
 discovery → short anthem (0xbe14); famine 36 (0xd0e3); nuclear test 36 (0xe566); civil
 disorder 36 (0x12641); democracy collapse 36 (0x127ce); WLTKD start 34 (0x12a49) / end 35
-(0x12b5b); pollution 36 (0x12fe9); city captured → conqueror's short anthem (0x140d3);
-AI wonder → owner's short anthem (0x3e9e); combat (0x19bc4): winning bomber 43, else human
+(0x12b5b); meltdown 36 after the explosion's 42 (0x12fe9; pollution itself is silent); city captured → conqueror's short anthem (0x140d3);
+wonder given to a computer at the end of the turn → owner's short anthem (0x3e9e; a wonder from its own production is silent); combat (0x19bc4): winning bomber 43, else human
 owns the winner → 38/40, otherwise 39/41, "modern" = winner attack > 4 or defence > 2;
 spaceship story 3 (o 0x1a37) then 34 at spacest.pic (o 0x1de4); destroyed/*ARCH 35 then
-human's short anthem (o 0x20db/0x2301); Hall of Fame new entry 34 (o 0x2e3d); diplomacy:
+human's short anthem (o 0x20db/0x2301); rating screen 34 (o 0x2e3d, faded at its key o 0x3102); diplomacy:
 war drums 33 for CANCEL/TRIBUTE/TAKECIV/PROVOKE/REJECT/RID/MOBILIZE (o 0x6c68..0x76b1),
 emissary prompt short anthem (o 0x7afc), audience long anthem (o 0x7b77), fade at the end
 (o 0x86b5); conquest plaque long anthem (o 0xd9c8); civ destroyed slam screen → long anthem
 of the victim (o 0xdd5e) then human's over the score wall (o 0xe07d); palace long anthem
 (o 0x16006); city view with the new item 44 (o 0x19fa1); nuke animation 42 (o 0x1dfb6);
-retirement at the year limit long anthem (0x2b96); exit PlayTune(0) + Close (0x1c11).
+the year limit's "dynasty ends" newspaper long anthem (0x2b96; a retirement and a conquest's newspaper are silent); exit PlayTune(0) + Close (0x1c11).
 Nearly every tune is followed by PlayTune(1) when its screen closes.
 
 ### Sprite-sheet map (SP257.PIC, 16x16 cells, origin (cx*16, cy*16); colour 0 = transparent)

@@ -15,6 +15,7 @@
 
 use crate::assets::text::{paragraphs, substitute, Vars};
 use crate::assets::Palette;
+use crate::audio::{Sound, Tune};
 use crate::game::EndReason;
 use crate::gfx::text::draw_text_centered;
 use crate::gfx::{Rect, Surface, TextStyle};
@@ -78,8 +79,11 @@ fn ending_news(ctx: &UiContext, reason: EndReason) -> Vec<Box<dyn Screen>> {
             crate::ui::spaceship_ui::arrival_screen(ctx, slot),
             newspaper(vec![format!("{} spaceship", g.player(slot).adjective()), "arrives at Alpha Centauri.".into()], None),
         ],
+        // over the full anthem, faded as the newspaper closes (0x2b96, 0x2bae); the other
+        // endings bring their own music
         EndReason::TimeLimit => {
-            vec![newspaper(vec![format!("{} dynasty", g.human().leader), "ends after glorious".into(), "6000 year reign!".into()], None)]
+            let paper = newspaper(vec![format!("{} dynasty", g.human().leader), "ends after glorious".into(), "6000 year reign!".into()], None);
+            vec![crate::ui::dialogs::tuned(Tune::Theme { civ: g.human().civ, long: true }, paper)]
         }
         _ => Vec::new(),
     }
@@ -162,7 +166,76 @@ pub fn arch_screen(ctx: &UiContext) -> Box<dyn Screen> {
     let v = Vars { rplc1: evidence, us: g.map(|g| g.human().leader.to_ascii_uppercase()).unwrap_or_default(), ..Default::default() };
     let lines = ctx.texts.king.section("ARCH").map(|l| l.to_vec()).unwrap_or_default();
     let text = paragraphs(&substitute(&lines, &v));
-    Box::new(PicScreen::new("ARCH", text).with_caption_pos(6, 4).with_caption_width(200))
+    let pic = PicScreen::new("ARCH", text).with_caption_pos(6, 4).with_caption_width(200);
+    Box::new(Arch { pic: Box::new(pic), coda: None })
+}
+
+/// Ticks the human's jingle plays at the end of `archaeology_screen` (o 0x2309).
+const ARCH_CODA: u32 = 300;
+
+/// The music of `archaeology_screen`: tune 35 as the screen clears (o 0x20db); after the
+/// text, a fade, the human's jingle for 300 ticks and a fade again (o 0x22e6..0x2319).
+struct Arch {
+    pic: Box<dyn Screen>,
+    coda: Option<u32>,
+}
+
+impl Screen for Arch {
+    fn on_enter(&mut self, ctx: &mut UiContext) {
+        ctx.audio.play(Sound::Lose);
+        self.pic.on_enter(ctx);
+    }
+    fn update(&mut self, ctx: &mut UiContext) -> Transition {
+        match self.coda.as_mut() {
+            Some(t) => {
+                *t = t.saturating_sub(1);
+                if *t == 0 || ctx.instant {
+                    ctx.audio.fade_out();
+                    return Transition::Pop(DialogResult::Done);
+                }
+                Transition::None
+            }
+            None => {
+                let t = self.pic.update(ctx);
+                self.forward(t, ctx)
+            }
+        }
+    }
+    fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
+        if self.coda.is_some() {
+            return Transition::None;
+        }
+        let t = self.pic.handle(ev, ctx);
+        self.forward(t, ctx)
+    }
+    fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
+        self.pic.draw(fb, ctx);
+    }
+    fn palette(&self, ctx: &UiContext) -> Palette {
+        self.pic.palette(ctx)
+    }
+    fn draws_parent(&self) -> bool {
+        false
+    }
+    fn wants_cursor(&self) -> bool {
+        false
+    }
+}
+
+impl Arch {
+    fn forward(&mut self, t: Transition, ctx: &mut UiContext) -> Transition {
+        match t {
+            Transition::Pop(_) => {
+                ctx.audio.fade_out();
+                if let Some(g) = ctx.game.as_ref() {
+                    ctx.audio.play_tune(Tune::Theme { civ: g.human().civ, long: false });
+                }
+                self.coda = Some(ARCH_CODA);
+                Transition::None
+            }
+            other => other,
+        }
+    }
 }
 
 /// Shows `screen`, then `next` (if any) in its place.
@@ -251,15 +324,19 @@ struct RatingScreen {
 
 impl Screen for RatingScreen {
     fn on_enter(&mut self, ctx: &mut UiContext) {
-        ctx.audio.play(crate::audio::Sound::Win);
+        ctx.audio.play(Sound::Win);
     }
     fn update(&mut self, _ctx: &mut UiContext) -> Transition {
         self.guard = self.guard.saturating_sub(1);
         Transition::None
     }
-    fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
+    fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
         match ev {
-            Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } if self.guard == 0 => Transition::Pop(DialogResult::Done),
+            // the key fades the tune (o 0x3102)
+            Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } if self.guard == 0 => {
+                ctx.audio.fade_out();
+                Transition::Pop(DialogResult::Done)
+            }
             _ => Transition::None,
         }
     }

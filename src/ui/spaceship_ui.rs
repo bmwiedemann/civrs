@@ -236,6 +236,8 @@ impl ArrivalScreen {
 
 impl Screen for ArrivalScreen {
     fn on_enter(&mut self, ctx: &mut UiContext) {
+        // the title theme over the approach, whoever's ship it is (o 0x1a37)
+        ctx.audio.play(crate::audio::Sound::MainTheme);
         // PLANET1 moved up 24 rows, its rows 56..79 again at 176..199 (o 0x1800..0x1856)
         let p1 = ctx.pic("PLANET1");
         copy(&mut self.page, &p1.surf, 0, 24, 320, 176, 0, 0);
