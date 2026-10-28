@@ -220,6 +220,12 @@ impl Game {
                 self.unit_mut(id).veteran = true;
                 self.push_event(GameEvent::UnitVeteran(id));
             }
+            // a computer's city square left without a unit: that civilization's cities on the
+            // continent re-choose their production at once (0x622b..0x625e -> 0x18bef)
+            if t.city.is_some() && defender.owner != self.human_slot && self.units_at(x, y).is_empty() {
+                let k = super::production::continent_index(t.continent);
+                crate::ai::city_ai::rechoose(self, defender.owner, Some(k));
+            }
             self.refresh_vision(attacker.owner);
             for l in losers {
                 self.refresh_vision(l);
@@ -1894,5 +1900,31 @@ mod tests {
         g.player_mut(h).gold = 1000;
         let n = g.bribe_unit(h, t).unwrap();
         assert_eq!(g.unit(n).seen_by, 1 << h | 1 << o);
+    }
+
+    #[test]
+    fn a_computer_city_left_empty_by_an_attack_rechooses_at_once() {
+        // 0x622b..0x625e: CIVIL4's Berlin (Granary) loses its only Militia to a Roman
+        // Catapult and re-chooses before its turn (0x18bef), as CIV.EXE did in a differential
+        // run from an edited CIVIL4
+        let Ok(dir) = crate::assets::AssetDir::locate(None) else { return };
+        let Some(path) = crate::save::sve::slot_file(dir.root(), 4) else { return };
+        let base = crate::save::sve::import(&path).unwrap();
+        let berlin = base.city_at(11, 20).unwrap();
+        assert_eq!(base.city(berlin).production, crate::game::Production::Improvement(imp::GRANARY));
+        let mut won = false;
+        for seed in 0..40 {
+            let mut g = base.clone();
+            g.rng = crate::game::Rng::new(seed);
+            g.declare_war(1, 3);
+            let cat = g.add_unit(1, unit_ids::CATAPULT, 11, 21);
+            if matches!(g.attack(cat, 11, 20), MoveOutcome::Attacked { won: true, .. }) {
+                assert!(g.units_at(11, 20).is_empty());
+                assert_ne!(g.city(berlin).production, crate::game::Production::Improvement(imp::GRANARY));
+                won = true;
+                break;
+            }
+        }
+        assert!(won);
     }
 }
