@@ -963,9 +963,9 @@ impl Game {
     }
 
     /// Set tax and luxury rates (science is the remainder), multiples of 10. The human's rate
-    /// dialogs (o 0x6fd9 / 0x70bf) list every split and store the choice: CIV.EXE applies the
-    /// government's maximum only to the computer's own rates (0xa5e2), and the city split
-    /// (0xf237) clamps nothing but the trade. Anarchy forces 0/100/0.
+    /// dialogs (o 0x6fd9 / 0x70bf) list every split and store the choice; the computer's rates
+    /// (0xa5e2) get no government maximum either, and the city split (0xf237) clamps nothing
+    /// but the trade. Anarchy forces 0/100/0.
     pub fn set_rates(&mut self, slot: Slot, tax: u8, lux: u8) -> Result<(), RuleError> {
         if tax % 10 != 0 || lux % 10 != 0 || tax as u32 + lux as u32 > 100 {
             return Err(RuleError::Other("Rates must be multiples of 10% adding up to 100%."));
