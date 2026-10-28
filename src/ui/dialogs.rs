@@ -8,41 +8,106 @@ use crate::game::{Decision, Game, GameEvent, HutOutcome};
 use crate::rules;
 use crate::ui::context::UiContext;
 use crate::ui::eventpics;
-use crate::ui::screen::Screen;
+use crate::audio::{Sound, Tune};
+use crate::ui::screen::{DialogResult, Screen, Transition};
 use crate::ui::widgets::{MenuDialog, MessageBox};
 
-/// Start the sound CIV.EXE plays for an event (before its dialog opens).
-pub fn sound_for_event(ctx: &UiContext, ev: &GameEvent) {
-    use crate::audio::Sound;
-    let Some(g) = ctx.game.as_ref() else { return };
+/// The tune CIV.EXE plays with an event's message, started as the message opens and faded
+/// (`PlayTune(1)`) as it closes. Only these call sites react to game events; everything else
+/// (unit moves, pollution, barbarians, wars between computer players, the end of a
+/// civilization, a computer's wonder from its own production) is silent.
+pub fn event_tune(g: &Game, ev: &GameEvent) -> Option<Tune> {
     let me = g.human_slot;
-    let a = &ctx.audio;
-    let mine = |c: &crate::game::CityId| g.city_opt(*c).map(|c| c.owner == me).unwrap_or(false);
+    let mine = |c: &crate::game::CityId| g.city_opt(*c).is_some_and(|c| c.owner == me);
+    // no celebration messages under Anarchy (0x129e4, 0x12b4d)
+    let ruled = g.player(me).govt != rules::Govt::Anarchy;
+    let theme = |s: crate::game::Slot| Tune::Theme { civ: g.player(s).civ, long: false };
     match ev {
-        GameEvent::Famine(c) | GameEvent::Disorder(c) | GameEvent::DisorderOngoing { city: c, .. } if mine(c) => a.play(Sound::Disorder),
-        GameEvent::FoodExhausted { owner, .. } if *owner == me => a.play(Sound::Disorder),
-        GameEvent::Celebration(c) if mine(c) => a.play(Sound::Win),
-        GameEvent::CelebrationEnded(c) if mine(c) => a.play(Sound::Lose),
-        // completed production has no sound of its own: only the city view plays tune 44 as
-        // it adds a new building (CIV.EXE o 0x19fa1)
-        GameEvent::Pollution { city, .. } | GameEvent::Meltdown { city } if mine(city) => a.play(Sound::Disorder),
-        // "Sensors report a NUCLEAR WEAPONS test"; another civ's wonder gets its jingle, our own
-        // only the city view's build-complete sound
-        GameEvent::WonderBuilt { wonder, .. } if *wonder == rules::wonder_ids::MANHATTAN_PROJECT => a.play(Sound::Disorder),
-        GameEvent::WonderBuilt { owner, .. } if *owner != me => a.national_theme(g.player(*owner).civ, false),
-        GameEvent::AdvanceDiscovered { slot, .. } if *slot == me => a.national_theme(g.player(me).civ, false),
-        GameEvent::CityCaptured { by, from, .. } if *by == me || *from == me => a.national_theme(g.player(*by).civ, false),
-        GameEvent::BarbariansLanded { target, .. } | GameEvent::BarbarianUprising { target, .. } if *target == me => a.play(Sound::Disorder),
-        GameEvent::WarDeclared { a: x, b: y } if *x == me || *y == me => a.play(Sound::WarDrums),
-        GameEvent::NuclearStrike { .. } => a.play(Sound::Nuke),
-        GameEvent::CivDestroyed { by, civ, .. } if *by == me => a.national_theme(*civ, true),
-        GameEvent::GameEnded(reason) | GameEvent::GameEndedAgain(reason) => match reason {
-            crate::game::EndReason::Destroyed => a.play(Sound::Lose),
-            crate::game::EndReason::Spaceship(_) => a.play(Sound::MainTheme),
-            // conquest and retirement show their plaque over the full anthem
-            _ => a.national_theme(g.player(me).civ, true),
-        },
-        _ => {}
+        // "Food storage exhausted" (0xd0e3), civil disorder (0x12641), "Government Collapses!"
+        // (0x127ce), "Nuclear Catastrophe" after the explosion (0x12fe9)
+        GameEvent::FoodExhausted { owner, .. } if *owner == me => Some(Tune::Sound(Sound::Disorder)),
+        GameEvent::Disorder(c) | GameEvent::DisorderOngoing { city: c, .. } | GameEvent::Meltdown { city: c } if mine(c) => Some(Tune::Sound(Sound::Disorder)),
+        GameEvent::GovernmentCollapsed { slot, .. } if *slot == me => Some(Tune::Sound(Sound::Disorder)),
+        GameEvent::Celebration(c) if mine(c) && ruled => Some(Tune::Sound(Sound::Win)),
+        GameEvent::CelebrationEnded(c) if mine(c) && ruled => Some(Tune::Sound(Sound::Lose)),
+        // "Sensors report a NUCLEAR WEAPONS test", whoever built it (0xe566)
+        GameEvent::WonderBuilt { wonder, .. } if *wonder == rules::wonder_ids::MANHATTAN_PROJECT => Some(Tune::Sound(Sound::Disorder)),
+        // the owner's jingle (0x3e9e, 0xbe14, 0x140d3)
+        GameEvent::WonderGranted { owner, .. } => Some(theme(*owner)),
+        GameEvent::AdvanceDiscovered { slot, .. } if *slot == me => Some(theme(me)),
+        GameEvent::CityCaptured { by, from, .. } if *by == me || *from == me => Some(theme(*by)),
+        _ => None,
+    }
+}
+
+/// A screen with a tune: it starts as the screen opens and fades out (`PlayTune(1)`) as it
+/// closes, as nearly every CIV.EXE call site does.
+pub struct Tuned {
+    tune: Tune,
+    inner: Box<dyn Screen>,
+}
+
+pub fn tuned(tune: Tune, inner: Box<dyn Screen>) -> Box<dyn Screen> {
+    Box::new(Tuned { tune, inner })
+}
+
+/// `s` with the tune, when both are there.
+fn with_tune(tune: Option<Tune>, s: Option<Box<dyn Screen>>) -> Option<Box<dyn Screen>> {
+    match (tune, s) {
+        (Some(t), Some(s)) => Some(tuned(t, s)),
+        (_, s) => s,
+    }
+}
+
+impl Tuned {
+    fn forward(&mut self, t: Transition, ctx: &mut UiContext) -> Transition {
+        match t {
+            Transition::Pop(r) => {
+                ctx.audio.fade_out();
+                Transition::Pop(r)
+            }
+            Transition::Replace(mut s) => {
+                self.inner.on_exit(ctx);
+                s.on_enter(ctx);
+                self.inner = s;
+                Transition::None
+            }
+            other => other,
+        }
+    }
+}
+
+impl Screen for Tuned {
+    fn on_enter(&mut self, ctx: &mut UiContext) {
+        ctx.audio.play_tune(self.tune);
+        self.inner.on_enter(ctx);
+    }
+    fn on_exit(&mut self, ctx: &mut UiContext) {
+        self.inner.on_exit(ctx);
+    }
+    fn handle(&mut self, ev: &crate::platform::Event, ctx: &mut UiContext) -> Transition {
+        let t = self.inner.handle(ev, ctx);
+        self.forward(t, ctx)
+    }
+    fn update(&mut self, ctx: &mut UiContext) -> Transition {
+        let t = self.inner.update(ctx);
+        self.forward(t, ctx)
+    }
+    fn resume(&mut self, result: DialogResult, ctx: &mut UiContext) -> Transition {
+        let t = self.inner.resume(result, ctx);
+        self.forward(t, ctx)
+    }
+    fn draw(&mut self, fb: &mut crate::gfx::Surface, ctx: &mut UiContext) {
+        self.inner.draw(fb, ctx);
+    }
+    fn palette(&self, ctx: &UiContext) -> crate::assets::Palette {
+        self.inner.palette(ctx)
+    }
+    fn draws_parent(&self) -> bool {
+        self.inner.draws_parent()
+    }
+    fn wants_cursor(&self) -> bool {
+        self.inner.wants_cursor()
     }
 }
 
@@ -92,8 +157,15 @@ fn disaster_text(ctx: &UiContext, city: &str, kind: crate::game::events::Disaste
 }
 
 /// Produce a dialog for a game event, if it concerns the human player and is worth showing.
+/// The event's tune (`event_tune`) plays over it.
 pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn Screen>> {
-    sound_for_event(ctx, ev);
+    let mut tune = event_tune(ctx.game.as_ref()?, ev);
+    let s = event_message(ctx, ev, &mut tune);
+    with_tune(tune, s)
+}
+
+/// The screen of an event; an arm that plays the tune over only a part of it takes `tune`.
+fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -> Option<Box<dyn Screen>> {
     let g = ctx.game.as_ref()?;
     let me = g.human_slot;
     let msg = |lines: Vec<String>| -> Option<Box<dyn Screen>> { Some(Box::new(MessageBox::new(lines))) };
@@ -149,11 +221,22 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
                 None => paper(vec![format!("{} builds", city_name(*city)), format!("{}.", rules::WONDERS[*wonder as usize].name)], Some(*city)),
             };
             if *wonder == rules::wonder_ids::MANHATTAN_PROJECT {
+                // the tune plays over the test's newspaper only (0xe566..0xe57e)
                 let test = paper(vec!["Sensors report a".into(), "NUCLEAR WEAPONS test".into(), format!("near {}!", city_name(*city))], None);
+                let test = with_tune(tune.take(), test);
                 Some(Box::new(Sequence { first: test, then: builds }))
             } else {
                 builds
             }
+        }
+        // "CITY (Adjective)\nbuilds WONDER." from the Foreign Minister with an embassy, else
+        // the travelers, then the wonder's Civilopedia page (CIV.EXE 0x3e07..0x3b93; the
+        // speaker's portrait is not drawn)
+        GameEvent::WonderGranted { city, wonder, owner } => {
+            let lines = vec![format!("{} ({})", city_name(*city), g.player(*owner).adjective()), format!("builds {}.", rules::WONDERS[*wonder as usize].name)];
+            let title = if g.player(me).has_embassy(*owner) { "Foreign Minister:" } else { "Travelers report:" };
+            let page = crate::ui::civilopedia::entry_screen(crate::ui::pedia_data::Entry::Wonder(*wonder), 0);
+            Some(Box::new(Sequence { first: Some(eventpics::news_box(title, lines)), then: Some(page) }))
         }
         // "<adv> cancels\nthe effect of\n<wonder>." (CIV.EXE 0xc796, the human's wonders, a
         // newspaper)
@@ -169,7 +252,8 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
         // the riot message without its animation, at (100, 80) (CIV.EXE 0x126a5..0x126b7)
         GameEvent::DisorderOngoing { city, .. } if g.city(*city).owner == me => Some(Box::new(MessageBox::new(eventpics::disorder_lines(ctx, *city)).with_pos(100, 80))),
         GameEvent::DisorderEnded(c) if g.city(*c).owner == me => msg(vec![format!("Order restored in {}.", city_name(*c))]),
-        GameEvent::Celebration(c) if g.city(*c).owner == me => Some(eventpics::celebration_screen(ctx, *c)),
+        // not under Anarchy (CIV.EXE 0x129e4)
+        GameEvent::Celebration(c) if g.city(*c).owner == me && g.human().govt != rules::Govt::Anarchy => Some(eventpics::celebration_screen(ctx, *c)),
         // "'We love the TITLE'\ncelebration canceled\nin CITY." in the city's newspaper, not
         // under Anarchy (CIV.EXE 0x12b23..0x12bbd)
         GameEvent::CelebrationEnded(c) if g.city(*c).owner == me && g.human().govt != rules::Govt::Anarchy => paper(
@@ -230,6 +314,8 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             } else {
                 paper(lines, Some(*city))
             };
+            // the jingle fades before the theft's message (0x1413c)
+            let news = with_tune(tune.take(), news);
             match adv {
                 Some(a) if *from == me => Some(Box::new(Sequence {
                     first: news,
@@ -307,6 +393,8 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             let vy = (at.1 - crate::ui::mapview::VIEW_H / 2).clamp(0, crate::rules::MAP_H as i32 - crate::ui::mapview::VIEW_H);
             let anim = eventpics::nuke_animation_at_tile(at.0, at.1, vx, vy);
             let text = paper(vec!["Nuclear Catastrophe".into(), format!("in {}!", city_name(*city)), "Contamination feared!".into()], Some(*city));
+            // the explosion's own tune 42 first, then 36 over the newspaper (0x12fe9)
+            let text = with_tune(tune.take(), text);
             Some(Box::new(Sequence { first: Some(anim), then: text }))
         }
         // ds:0x3b6a (o 0xa924) and ds:0x1df8 (0x3b2e), in the newspaper
@@ -632,4 +720,47 @@ pub fn error_screen(ctx: &UiContext, e: &crate::game::RuleError) -> Option<Box<d
 /// Whether a turn step needs the map redrawn with a pause (enemy move animation).
 pub fn step_is_visible_move(step: &TurnStep) -> bool {
     matches!(step, TurnStep::AiMove { visible: true, .. } | TurnStep::Combat { visible: true, .. })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::GameSetup;
+    use crate::rules::{unit_ids, wonder_ids, Govt};
+
+    #[test]
+    fn event_tunes_follow_the_call_sites() {
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        let me = g.human_slot;
+        let settler = g.units_of(me).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        let ai = g.alive_slots().into_iter().find(|s| *s != me && *s != 0).unwrap();
+        let mine = Tune::Theme { civ: g.player(me).civ, long: false };
+        let theirs = Tune::Theme { civ: g.player(ai).civ, long: false };
+        let disorder = Some(Tune::Sound(Sound::Disorder));
+        let tune = |g: &Game, ev: GameEvent| event_tune(g, &ev);
+
+        assert_eq!(tune(&g, GameEvent::Disorder(c)), disorder);
+        assert_eq!(tune(&g, GameEvent::GovernmentCollapsed { slot: me, city: c }), disorder);
+        assert_eq!(tune(&g, GameEvent::Meltdown { city: c }), disorder);
+        assert_eq!(tune(&g, GameEvent::AdvanceDiscovered { slot: me, adv: 0 }), Some(mine));
+        assert_eq!(tune(&g, GameEvent::AdvanceDiscovered { slot: ai, adv: 0 }), None);
+        // the Manhattan Project's test is heard from anyone; other computer wonders only when
+        // granted at the end of the turn (0x3e9e)
+        assert_eq!(tune(&g, GameEvent::WonderBuilt { city: c, wonder: wonder_ids::MANHATTAN_PROJECT, owner: ai }), disorder);
+        assert_eq!(tune(&g, GameEvent::WonderBuilt { city: c, wonder: wonder_ids::PYRAMIDS, owner: ai }), None);
+        assert_eq!(tune(&g, GameEvent::WonderGranted { city: c, wonder: wonder_ids::PYRAMIDS, owner: ai }), Some(theirs));
+        assert_eq!(tune(&g, GameEvent::CityCaptured { city: c, by: ai, from: me, gold: 0, adv: None }), Some(theirs));
+        // no call site at all
+        assert_eq!(tune(&g, GameEvent::Pollution { city: c, at: (0, 0) }), None);
+        assert_eq!(tune(&g, GameEvent::CivDestroyed { slot: ai, by: me, adjective: String::new(), civ: 1 }), None);
+        assert_eq!(tune(&g, GameEvent::NuclearStrike { at: (0, 0), by: ai, city: None }), None);
+        // the celebrations are silent under Anarchy (0x129e4, 0x12b4d)
+        g.player_mut(me).govt = Govt::Monarchy;
+        assert_eq!(tune(&g, GameEvent::Celebration(c)), Some(Tune::Sound(Sound::Win)));
+        assert_eq!(tune(&g, GameEvent::CelebrationEnded(c)), Some(Tune::Sound(Sound::Lose)));
+        g.player_mut(me).govt = Govt::Anarchy;
+        assert_eq!(tune(&g, GameEvent::Celebration(c)), None);
+        assert_eq!(tune(&g, GameEvent::CelebrationEnded(c)), None);
+    }
 }

@@ -28,13 +28,16 @@ pub enum Sound {
     Evolution = 4,
     /// Threats, cancelled treaties, war declared.
     WarDrums = 33,
-    /// Game won; also a city entering "We Love the King Day".
+    /// The colony on Alpha Centauri, the rating screen; also a city entering "We Love the
+    /// King Day".
     Win = 34,
-    /// Game lost; also "We Love the King Day" ending.
+    /// The archaeologists' screen of a destroyed civilization; also "We Love the King Day"
+    /// ending.
     Lose = 35,
-    /// Civil disorder, famine, Manhattan Project, meltdown, the Barbarians' theme.
+    /// Civil disorder, famine, a Democracy's collapse, the Manhattan Project, meltdown; also
+    /// the Barbarians' theme.
     Disorder = 36,
-    /// Zone-of-control violation and other refused orders.
+    /// A human unit stopped by a zone of control (CIV.EXE 0x5b1a, the only call site).
     IllegalMove = 37,
     BattleWon = 38,
     BattleLost = 39,
@@ -60,6 +63,14 @@ pub fn theme_id(civ: u8, long: bool) -> u8 {
     } else {
         id + 14
     }
+}
+
+/// A tune as CIV.EXE's call sites pick it: a fixed sound or a civ's national theme (by
+/// tribe, `[ds:0x1518 + 0x3a * leader]` short, `+2` long).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tune {
+    Sound(Sound),
+    Theme { civ: u8, long: bool },
 }
 
 /// Battle sounds use the "modern" explosion variants when either unit is strong.
@@ -145,6 +156,13 @@ impl Audio {
     /// A civ's national theme: the full arrangement (`long`) or the short jingle.
     pub fn national_theme(&self, civ: u8, long: bool) {
         self.play_id(theme_id(civ, long), 3);
+    }
+
+    pub fn play_tune(&self, t: Tune) {
+        match t {
+            Tune::Sound(s) => self.play(s),
+            Tune::Theme { civ, long } => self.national_theme(civ, long),
+        }
     }
 
     pub fn stop(&self) {

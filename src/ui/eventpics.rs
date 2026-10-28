@@ -431,6 +431,11 @@ pub fn nuke_animation_at_tile(x: i32, y: i32, vx: i32, vy: i32) -> Box<dyn Scree
 }
 
 impl Screen for NukeAnimation {
+    /// `nuke_animation` plays tune 42 before the first frame (CIV.EXE o 0x1dfb6), for a
+    /// nuclear attack and a meltdown alike.
+    fn on_enter(&mut self, ctx: &mut UiContext) {
+        ctx.audio.play(crate::audio::Sound::Nuke);
+    }
     fn update(&mut self, _ctx: &mut UiContext) -> Transition {
         self.t += 1;
         if self.t > (NUKE_FRAMES as u64) * 3 + 10 {

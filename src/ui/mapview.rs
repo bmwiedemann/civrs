@@ -405,11 +405,16 @@ impl MapView {
     }
 
     fn error(&mut self, ctx: &mut UiContext, e: &crate::game::RuleError) -> Transition {
+        // a zone of control: tune 37 for the human's unit, the *ZOC note only with Instant
+        // Advice (CIV.EXE 0x5b0e..0x5b2e)
+        if *e == crate::game::RuleError::Zoc {
+            ctx.audio.play(crate::audio::Sound::IllegalMove);
+            if !ctx.game().options.instant_advice {
+                return Transition::None;
+            }
+        }
         match dialogs::error_screen(ctx, e) {
             Some(s) => {
-                if *e == crate::game::RuleError::Zoc {
-                    ctx.audio.play(crate::audio::Sound::IllegalMove);
-                }
                 self.pending = Pending::Error;
                 Transition::Push(s)
             }

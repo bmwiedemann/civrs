@@ -64,7 +64,7 @@ impl Game {
             self.replay_log(super::replay::kind::WONDER, &[civ, w + 1]);
             let gold = self.player(civ).gold;
             self.player_mut(civ).gold -= (gold / 3).clamp(0, 10 * info.cost as i32);
-            self.push_event(GameEvent::WonderBuilt { city: c, wonder: w, owner: civ });
+            self.push_event(GameEvent::WonderGranted { city: c, wonder: w, owner: civ });
             match w {
                 won::MANHATTAN_PROJECT => self.nukes_enabled = true,
                 won::APOLLO_PROGRAM => self.apollo_built = true,
@@ -118,7 +118,7 @@ mod tests {
         assert!(g.city(c).has_wonder(w));
         assert_eq!(g.city(c).shields, 0);
         assert_eq!(g.player(ai).gold, 900 - (300.min(10 * rules::WONDERS[w as usize].cost as i32)));
-        assert!(g.take_events().iter().any(|e| matches!(e, GameEvent::WonderBuilt { city, owner, .. } if *city == c && *owner == ai)));
+        assert!(g.take_events().iter().any(|e| matches!(e, GameEvent::WonderGranted { city, owner, .. } if *city == c && *owner == ai)));
     }
 
     #[test]

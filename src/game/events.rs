@@ -241,6 +241,10 @@ pub enum GameEvent {
     /// embassy with learned an advance from `source` (`AdvanceSource::code`; grant_advance
     /// CIV.EXE 0xc37f..0xc50a).
     ForeignAdvance { slot: Slot, adv: AdvanceId, source: i8 },
+    /// A computer player is given a wonder at the end of the turn (`ai_wonder_purchases`,
+    /// CIV.EXE 0x3e07..0x3ba3): "CITY (Adjective)\nbuilds WONDER." to the human with the
+    /// owner's jingle and the wonder's Civilopedia page.
+    WonderGranted { city: CityId, wonder: WonderId, owner: Slot },
 }
 
 /// A choice the engine needs from the human player before continuing.
