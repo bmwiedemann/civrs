@@ -633,11 +633,16 @@ impl Game {
         }
         // production
         let prod = self.city(c).production;
+        let mut blocked = false;
         if self.city(c).shields >= self.production_cost(c, prod) {
+            blocked = !matches!(prod, Production::Unit(_)) && self.production_invalid(c);
             self.complete_production(c, prod);
         }
         if self.city_opt(c).is_none() {
             return None;
+        }
+        if self.player(slot).human {
+            self.auto_rechoose(c, blocked);
         }
         // a computer city's purchases and alert (CIV.EXE 0xec0d..0xef79), before its taxes
         if !self.player(slot).human {
@@ -1023,33 +1028,33 @@ impl Game {
         Some(id)
     }
 
-    /// A wonder built elsewhere or an improvement the city has: nothing happens and nothing is
-    /// said (0xe4e8, 0xe51d -> 0xeb15); only a human city on AUTO asks its chooser again
-    /// (0xeb57). A computer city keeps the item; civrs's `city_ai::manage` re-chooses at its
-    /// next turn.
-    fn production_blocked(&mut self, c: CityId, human: bool) {
-        if human {
-            self.after_building(c, true);
-        }
-    }
-
     /// Production after an improvement or wonder is finished: a human's city stays on it, so
-    /// the city screen's CHANGE button flashes until something else is chosen; the computer asks
-    /// its production advisor (CIV.EXE 0xe720), an AUTO city of the human takes the advisor's
-    /// improvement, and with none worth it AUTO goes off (0xeb15..0xec08).
+    /// the city screen's CHANGE button flashes until something else is chosen (an AUTO city
+    /// asks its advisor at the end of the production step, `auto_rechoose`); the computer
+    /// asks its production advisor (CIV.EXE 0xe720).
     fn after_building(&mut self, c: CityId, human: bool) {
         if !human {
             let next = self.ai_production(c);
             self.city_mut(c).production = next;
-        } else if self.city(c).auto_build {
-            match self.auto_production(c) {
-                Some(next) => {
-                    // the advisor's own choice needs no city screen (0xeb87)
-                    self.city_attention = false;
-                    self.city_mut(c).production = next;
-                }
-                None => self.city_mut(c).auto_build = false,
+        }
+    }
+
+    /// The end of the production step for a human city (0xeb15..0xec08): on AUTO, with the
+    /// shield store empty (after anything it completed, units too, or with nothing stored)
+    /// or its improvement or wonder `blocked`, it takes the advisor's improvement; with none
+    /// worth it AUTO goes off.
+    fn auto_rechoose(&mut self, c: CityId, blocked: bool) {
+        let city = self.city(c);
+        if !city.auto_build || !(city.shields == 0 || blocked) {
+            return;
+        }
+        match self.auto_production(c) {
+            Some(next) => {
+                // the advisor's own choice needs no city screen (0xeb87)
+                self.city_attention = false;
+                self.city_mut(c).production = next;
             }
+            None => self.city_mut(c).auto_build = false,
         }
     }
 
@@ -1137,7 +1142,6 @@ impl Game {
                 // still set to an improvement the city has: nothing is built, the shields
                 // wait for a new choice (CIV.EXE 0xe4f1)
                 if self.city(c).has_improvement(i) {
-                    self.production_blocked(c, human);
                     return;
                 }
                 let cost = self.production_cost(c, prod);
@@ -1172,8 +1176,9 @@ impl Game {
                 }
             }
             Production::Wonder(w) => {
+                // a wonder built elsewhere, likewise: nothing happens and nothing is said
+                // (0xe4e8, 0xe51d -> 0xeb15; a human AUTO city asks again, `auto_rechoose`)
                 if self.wonders_built[w as usize].is_some() {
-                    self.production_blocked(c, human);
                     return;
                 }
                 self.wonders_built[w as usize] = Some(c);
@@ -2331,6 +2336,24 @@ mod tests {
         assert_eq!(g.units_of(me).len(), before);
         assert_eq!(g.city(c).shields, 0);
         assert_eq!(g.take_events().iter().filter(|e| matches!(e, GameEvent::UnitLimit(_))).count(), 1);
+    }
+
+    #[test]
+    fn a_human_auto_city_asks_its_advisor_after_a_unit_too() {
+        // 0xeb15..0xeb87: the store is empty after the unit, so the advisor chooses
+        let (mut g, c) = fixture();
+        g.city_mut(c).production = Production::Unit(unit_ids::MILITIA);
+        g.city_mut(c).shields = 100;
+        g.city_mut(c).auto_build = true;
+        g.process_city(c);
+        let city = g.city(c);
+        assert!(!city.auto_build || matches!(city.production, Production::Improvement(_)), "{:?}", city.production);
+        // without AUTO it keeps building Militia
+        let (mut g, c) = fixture();
+        g.city_mut(c).production = Production::Unit(unit_ids::MILITIA);
+        g.city_mut(c).shields = 100;
+        g.process_city(c);
+        assert_eq!(g.city(c).production, Production::Unit(unit_ids::MILITIA));
     }
 
     #[test]
