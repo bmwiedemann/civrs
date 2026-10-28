@@ -1650,9 +1650,7 @@ impl Game {
         for id in gone {
             self.remove_unit(id);
         }
-        for other in self.cities.iter_mut().flatten() {
-            other.trade_routes.retain(|r| *r != c);
-        }
+        // the trade routes stay, both ways (capture_city 0x13d76 leaves the route bytes)
         let unrest = self.captured_in_disorder(to);
         {
             let cm = self.city_mut(c);
@@ -1663,7 +1661,6 @@ impl Game {
             cm.disorder_turns = unrest as u8;
             cm.auto_build = false;
             cm.garrison_out = false;
-            cm.trade_routes.clear();
             cm.specialists.clear();
             cm.production = Production::Unit(unit_ids::MILITIA);
             cm.shields = 0;

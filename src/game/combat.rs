@@ -407,7 +407,8 @@ impl Game {
             // CIV.EXE 0x13ef0/0x13fb7 clear (among others) the AUTO and garrison-out bits
             cm.auto_build = false;
             cm.garrison_out = false;
-            cm.trade_routes.clear();
+            // the trade routes stay, both ways: only founding (o 0x1b646) and destroy_city
+            // (0xa76a) clear route bytes
             cm.specialists.clear();
             cm.shields = 0;
             cm.caravan_shields = 0;
@@ -418,10 +419,6 @@ impl Game {
         let homed: Vec<UnitId> = self.all_units().filter(|u| (u.home == Some(c) && u.owner == from) || ((u.x, u.y) == (city.x, city.y) && u.owner == from)).map(|u| u.id).collect();
         for h in homed {
             self.remove_unit(h);
-        }
-        // other cities' trade routes to this city are cancelled
-        for other in self.cities.iter_mut().flatten() {
-            other.trade_routes.retain(|r| *r != c);
         }
         self.place_unit(id, city.x, city.y, 3);
         self.unit_mut(id).order = UnitOrder::None;
@@ -496,7 +493,6 @@ impl Game {
                 cm.owner = new_slot;
                 cm.disorder = false;
                 cm.celebrating = false;
-                cm.trade_routes.clear();
                 if i == 0 {
                     cm.add_improvement(imp::PALACE);
                 }
@@ -512,12 +508,7 @@ impl Game {
                 self.players[new_slot as usize].unit_counter[kind] += 1;
                 self.unit_mut(id).owner = new_slot;
             }
-            // trade routes of the loser pointing at rebel cities are cut
-            for other in self.cities.iter_mut().flatten() {
-                if other.owner == from {
-                    other.trade_routes.retain(|r| r != c);
-                }
-            }
+            // trade routes stay (transfer_city o 0x153f4 only sets the owner)
             self.auto_assign(*c);
         }
         copy_explored(&mut self.map, new_slot, from);
@@ -984,6 +975,24 @@ mod tests {
         assert_eq!(g.player(2).gold, 120);
         assert_eq!(g.unit(a).pos(), (20, 20));
         assert!(g.events.iter().any(|e| matches!(e, GameEvent::CityCaptured { city, by: 1, from: 2, gold: 180, .. } if *city == c)));
+    }
+
+    #[test]
+    fn trade_routes_survive_a_capture_but_not_a_destruction() {
+        // capture_city 0x13d76 leaves the route bytes; destroy_city 0xa812 clears routes to it
+        let mut g = flat_game();
+        let c = g.add_city(2, "Loot".into(), 20, 20);
+        let other = g.add_city(2, "Home".into(), 40, 30);
+        let tiny = g.add_city(2, "Tiny".into(), 30, 10);
+        g.city_mut(c).size = 3;
+        g.city_mut(c).trade_routes = vec![other];
+        g.city_mut(other).trade_routes = vec![c, tiny];
+        let a = g.add_unit(1, unit_ids::LEGION, 19, 20);
+        assert_eq!(g.try_move(a, crate::game::Dir8::E).unwrap(), MoveOutcome::CapturedCity(c));
+        assert_eq!(g.city(c).trade_routes, vec![other]);
+        let b = g.add_unit(1, unit_ids::LEGION, 29, 10);
+        assert_eq!(g.try_move(b, crate::game::Dir8::E).unwrap(), MoveOutcome::DestroyedCity);
+        assert_eq!(g.city(other).trade_routes, vec![c]);
     }
 
     #[test]

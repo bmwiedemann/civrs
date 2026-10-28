@@ -821,6 +821,10 @@ impl Game {
                 u.home = None;
             }
         }
+        // every route to it is cleared (destroy_city 0xa812), so a new city in the slot has none
+        for c in self.cities.iter_mut().flatten() {
+            c.trade_routes.retain(|r| *r != id);
+        }
         // its wonders are lost for good (destroy_city sets ds:0x6ea8[w] = 0x80)
         for w in self.wonders_built.iter_mut() {
             if *w == Some(id) {
