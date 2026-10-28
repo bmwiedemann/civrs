@@ -888,6 +888,7 @@ mod tests {
         g.unit_mut(homed).home = Some(c);
         let ship = g.add_unit(2, unit_ids::TRIREME, 20, 20);
         let guard = g.add_unit(2, unit_ids::PHALANX, 20, 20);
+        g.unit_mut(guard).home = None;
         g.remove_city(c);
         assert!(g.unit_opt(homed).is_none() && g.unit_opt(ship).is_none());
         assert!(g.unit_opt(guard).is_some());
@@ -908,6 +909,18 @@ mod tests {
         g.weak_attack_ok = true;
         assert!(matches!(g.try_move(a, crate::game::Dir8::E), Ok(MoveOutcome::Attacked { .. })));
         assert!(!g.weak_attack_ok, "the answer is used up");
+    }
+
+    #[test]
+    fn a_new_unit_is_homed_to_the_nearest_city_when_it_is_the_owners() {
+        // create_unit (CIV.EXE 0x8b51..0x8c1e)
+        let mut g = flat_game();
+        let mine = g.add_city(1, "Mine".into(), 10, 10);
+        g.add_city(2, "Theirs".into(), 20, 10);
+        let near = g.add_unit(1, unit_ids::LEGION, 12, 10);
+        let far = g.add_unit(1, unit_ids::LEGION, 18, 10);
+        assert_eq!(g.unit(near).home, Some(mine));
+        assert_eq!(g.unit(far).home, None);
     }
 
     #[test]

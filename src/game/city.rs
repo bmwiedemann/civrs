@@ -370,6 +370,7 @@ mod tests {
         let b = g.add_unit(ai, unit_ids::PHALANX, 26, 14);
         for id in [a, b] {
             g.unit_mut(id).order = UnitOrder::Fortify;
+            g.unit_mut(id).home = None;
         }
         g.reset_moves(ai);
         assert_eq!(g.unit(a).home, Some(big));

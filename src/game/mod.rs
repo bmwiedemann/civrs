@@ -648,7 +648,10 @@ impl Game {
 
     pub fn add_unit(&mut self, owner: Slot, kind: UnitTypeId, x: i32, y: i32) -> UnitId {
         let id = self.units.iter().position(|u| u.is_none()).unwrap_or(self.units.len()) as UnitId;
-        let u = Unit::new(id, owner, kind, x, y, self.turn);
+        let mut u = Unit::new(id, owner, kind, x, y, self.turn);
+        // create_unit (CIV.EXE 0x8b51) homes the unit to the nearest city when that city is
+        // the owner's (0x8c0c), else to none
+        u.home = self.nearest_city_exe(x, y).0.filter(|c| self.city(*c).owner == owner);
         if id as usize == self.units.len() {
             self.units.push(Some(u));
         } else {
