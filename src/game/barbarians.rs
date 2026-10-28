@@ -467,7 +467,7 @@ impl Game {
         // every fourth turn a unit away from any city, or whose nearest city is on another
         // continent, gives up (0x1913f)
         let here_cont = self.continent_exe(u.x, u.y);
-        if (id as u32 + self.turn) & 3 == 0 {
+        if (u.record as u32 + self.turn) & 3 == 0 {
             let lost = match near {
                 Some(c) => {
                     let (cx, cy) = self.city(c).pos();

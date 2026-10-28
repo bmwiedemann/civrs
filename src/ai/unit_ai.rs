@@ -295,7 +295,7 @@ fn task_units(g: &mut Game, slot: Slot, reserve: i32) {
         }
         let cont = g.continent_exe(u.x, u.y);
         let pol = policy(g, slot, cont);
-        if (id as i32 + turn) & 0xf == 0 {
+        if (u.record as i32 + turn) & 0xf == 0 {
             let p = g.player(slot);
             let obsolete = u.info().obsolete_by.map(|a| p.knows(a)).unwrap_or(false);
             let militia = (p.govt as u8 > Govt::Despotism as u8 || pol == POLICY_OFFENSIVE) && u.kind == unit_ids::MILITIA;
@@ -694,7 +694,7 @@ fn in_city(g: &mut Game, c: &Ctx) -> Option<Command> {
     if !beaten && need > defenders_before(g, c.id) {
         return Some(Command::Fortify);
     }
-    if (c.id as i32 + g.turn as i32) & 7 == 0 {
+    if (g.unit(c.id).record as i32 + g.turn as i32) & 7 == 0 {
         let u = g.unit_mut(c.id);
         if matches!(u.order, UnitOrder::Sentry | UnitOrder::Fortify | UnitOrder::Fortified) {
             u.order = UnitOrder::None;
@@ -2110,5 +2110,24 @@ mod tests {
         g.unit_mut(f).order = UnitOrder::Sentry;
         move_units(&mut g, s, &mut |_| {});
         assert_eq!(g.unit(f).fuel, 0);
+    }
+
+    #[test]
+    fn the_disband_turn_goes_by_the_unit_record() {
+        // 0x160b1: (record [bp-0x54] + turn) & 15 == 0
+        let mut g = arena();
+        let s = ai(&g);
+        let other = (1..5).find(|o| *o != s).unwrap();
+        g.add_unit(other, unit_ids::MILITIA, 30, 25);
+        g.player_mut(s).govt = Govt::Monarchy;
+        let m = g.add_unit(s, unit_ids::MILITIA, 10, 10);
+        let (id, record) = (m as u32, g.unit(m).record as u32);
+        assert_ne!(id & 15, record & 15);
+        g.turn = 16 - (id & 15);
+        task_units(&mut g, s, 3);
+        assert!(g.unit_opt(m).is_some(), "not the unit's turn by its id");
+        g.turn = 16 - (record & 15);
+        task_units(&mut g, s, 3);
+        assert!(g.unit_opt(m).is_none());
     }
 }
