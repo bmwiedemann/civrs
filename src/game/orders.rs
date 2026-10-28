@@ -383,6 +383,19 @@ impl Game {
         u.goto = None;
     }
 
+    /// Wake a unit clicked in the map's stack box (`pick_unit_from_stack`, CIV.EXE 0xa075): a
+    /// Settlers job (flags 0xc2) gives back the full moves, then every order but the veteran
+    /// bits is cleared (flags &= 0x30) and so is the goto.
+    pub fn wake_picked_unit(&mut self, id: UnitId) {
+        let u = self.unit_mut(id);
+        if matches!(u.order, UnitOrder::Road | UnitOrder::Irrigate | UnitOrder::Mine | UnitOrder::Fortress | UnitOrder::CleanPollution) {
+            u.moves_left = u.full_moves();
+        }
+        u.order = UnitOrder::None;
+        u.order_turns = 0;
+        u.goto = None;
+    }
+
     pub fn skip_unit(&mut self, id: UnitId) {
         self.unit_mut(id).order = UnitOrder::Skip;
         self.unit_mut(id).moves_left = 0;
@@ -424,6 +437,24 @@ mod tests {
             g.reset_moves(slot);
             g.progress_work(slot);
         }
+    }
+
+    #[test]
+    fn a_unit_woken_in_the_stack_box_gets_its_moves_back_from_a_job() {
+        let mut g = Game::new(GameSetup { seed: 3, ..Default::default() }, None);
+        let id = g.units_of(g.human_slot)[0];
+        let u = g.unit_mut(id);
+        u.order = UnitOrder::Road;
+        u.moves_left = 0;
+        g.wake_picked_unit(id);
+        assert_eq!(g.unit(id).order, UnitOrder::None);
+        assert_eq!(g.unit(id).moves_left, g.unit(id).full_moves());
+        // a sentry keeps its moves as they are (0xa075 tests flags 0xc2 only)
+        let u = g.unit_mut(id);
+        u.order = UnitOrder::Sentry;
+        u.moves_left = 0;
+        g.wake_picked_unit(id);
+        assert_eq!(g.unit(id).moves_left, 0);
     }
 
     #[test]

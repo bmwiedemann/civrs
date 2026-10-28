@@ -17,8 +17,124 @@ pub const VIEW_X: i32 = 80;
 pub const VIEW_Y: i32 = 8;
 pub const VIEW_W: i32 = 15;
 pub const VIEW_H: i32 = 12;
-pub const MINIMAP: Rect = Rect::new(0, 9, 80, 48);
+/// The sidebar minimap, 80x50 at (0, 8) (`draw_map_view` 0x1a68e); clicks scroll the map.
+pub const MINIMAP: Rect = Rect::new(0, 8, 80, 50);
 pub const MENU_H: i32 = 8;
+
+/// What a mouse press on the map screen hits, in move_units' order (CIV.EXE 0x466e..0x479c):
+/// above y 8 the pull-down menu of column x / 60 (`game_menu` 0x1c026, any button); left of
+/// x 80 the minimap (y < 58), the palace strip (y < 72) or the panels below; else the map.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SideHit {
+    Menu(usize),
+    Minimap,
+    Palace,
+    UnitBox,
+    Map,
+}
+
+fn side_hit(mx: i32, my: i32) -> SideHit {
+    if my < MENU_H {
+        SideHit::Menu((mx / 60).clamp(0, 4) as usize)
+    } else if mx >= VIEW_X {
+        SideHit::Map
+    } else if my < MINIMAP.bottom() {
+        SideHit::Minimap
+    } else if my < 72 {
+        SideHit::Palace
+    } else {
+        SideHit::UnitBox
+    }
+}
+
+/// Whether a GoTo picked with the mouse may head for a square (CIV.EXE 0x4940..0x49de, on an
+/// explored square): land units need land, ships the ocean or a city, aircraft go anywhere.
+fn goto_target_ok(domain: rules::Domain, ocean: bool, city: bool) -> bool {
+    match domain {
+        rules::Domain::Land => !ocean,
+        rules::Domain::Sea => ocean || city,
+        rules::Domain::Air => true,
+    }
+}
+
+/// `pick_unit_from_stack(civ, unit)` (CIV.EXE 0x9dc5) with the mouse on: up to 12 of our units
+/// on a clicked square in a box at (100, 96 - 8n), each with its sprite at (106, y), name (and
+/// " (V)") at (128, y) in 15 and home city at (128, y + 8) in 14, 16 px apart. A click on a
+/// row (x 101..219) wakes that unit; with more than one unit the box stays for the next
+/// click. A key or a click elsewhere closes it. The result is the last woken unit, else the
+/// square's best defender (0x8ee5), as `Choice(unit id)`.
+struct StackPicker {
+    units: Vec<UnitId>,
+    chosen: UnitId,
+}
+
+impl StackPicker {
+    fn new(mut units: Vec<UnitId>, default: UnitId) -> StackPicker {
+        units.truncate(12);
+        StackPicker { units, chosen: default }
+    }
+
+    fn top(&self) -> i32 {
+        96 - 8 * self.units.len() as i32
+    }
+
+    /// The row a press at (x, y) hits (0xa022..0xa058).
+    fn row_at(&self, x: i32, y: i32) -> Option<usize> {
+        if x <= 100 || x >= 220 {
+            return None;
+        }
+        let d = y - self.top() - 5;
+        // C division: a press just above the first row still counts as row 0
+        let row = d / 16;
+        (d > -16 && (row as usize) < self.units.len()).then_some(row as usize)
+    }
+}
+
+impl Screen for StackPicker {
+    fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
+        match ev {
+            Event::Key { key: Key::Unknown, .. } => Transition::None,
+            Event::Key { down: true, .. } => Transition::Pop(DialogResult::Choice(self.chosen as usize)),
+            Event::MouseButton { button: MouseButton::Left, x, y, down: true } => match self.row_at(*x, *y) {
+                Some(row) => {
+                    let id = self.units[row];
+                    ctx.game_mut().wake_picked_unit(id);
+                    self.chosen = id;
+                    if self.units.len() > 1 {
+                        Transition::None
+                    } else {
+                        Transition::Pop(DialogResult::Choice(id as usize))
+                    }
+                }
+                None => Transition::Pop(DialogResult::Choice(self.chosen as usize)),
+            },
+            Event::MouseButton { down: true, .. } => Transition::Pop(DialogResult::Choice(self.chosen as usize)),
+            _ => Transition::None,
+        }
+    }
+
+    fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
+        let g = ctx.game();
+        let n = self.units.len() as i32;
+        let (x, y, w, h) = (100, self.top(), 120, 16 * n + 5);
+        // draw_frame(x, y, w, h, 3) (0x1d1a2)
+        fb.fill_rect(Rect::new(x + 1, y + 1, w, h), 3);
+        crate::ui::widgets::bevel(fb, x + 1, y + 1, w, h, 15, 8);
+        fb.rect_outline(Rect::new(x, y, w + 3, h + 3), 0);
+        for (i, &id) in self.units.iter().enumerate() {
+            let ry = y + 5 + 16 * i as i32;
+            let u = g.unit(id);
+            tilerender::draw_unit(fb, ctx, g, id, 106, ry, false);
+            let mut name = u.info().name.to_string();
+            if u.veteran {
+                name += " (V)";
+            }
+            draw_text(fb, &ctx.fonts, &TextStyle::new(0, 15), 128, ry, &name);
+            let home = u.home.and_then(|h| g.city_opt(h)).map(|c| c.name.clone()).unwrap_or_else(|| "NONE".into());
+            draw_text(fb, &ctx.fonts, &TextStyle::new(0, 14), 128, ry + 8, &home);
+        }
+    }
+}
 
 const MENU_LABELS: [(&str, i32); 5] = [("GAME", 8), ("ORDERS", 64), ("ADVISORS", 128), ("WORLD", 192), ("CIVILOPEDIA", 240)];
 
@@ -60,7 +176,8 @@ pub(crate) enum Pending {
     Event,
     /// Player answered a menu-bar menu: which bar menu.
     BarMenu(usize),
-    CityPick(i32, i32),
+    /// The stack box of a clicked square (`pick_unit_from_stack` 0x9dc5) is open.
+    StackPick,
     DisbandConfirm(UnitId),
     FoundCityConfirm(UnitId),
     QuitConfirm,
@@ -1292,15 +1409,14 @@ impl Screen for MapView {
                 DialogResult::Choice(c) => self.bar_menu_choice(ctx, i, c),
                 _ => Transition::None,
             },
-            Pending::CityPick(x, y) => {
+            Pending::StackPick => {
+                // 0x4b0f: the box's unit becomes the active one unless it still sentries or
+                // is fortified
                 if let DialogResult::Choice(i) = result {
-                    let units = ctx.game().units_at(x, y);
-                    if let Some(id) = units.get(i) {
-                        let g = ctx.game_mut();
-                        let u = g.unit_mut(*id);
-                        u.order = UnitOrder::None;
-                        u.goto = None;
-                        g.active_unit = Some(*id);
+                    let id = i as UnitId;
+                    let g = ctx.game_mut();
+                    if g.unit_opt(id).is_some() && !matches!(g.unit(id).order, UnitOrder::Sentry | UnitOrder::Fortified) {
+                        g.active_unit = Some(id);
                         self.mode = Mode::Normal;
                     }
                 }
@@ -1560,49 +1676,35 @@ impl Screen for MapView {
             }
             Event::MouseButton { button, x, y, down: true } => {
                 let (mx, my) = (*x, *y);
-                if my < MENU_H {
-                    for (i, (label, lx)) in MENU_LABELS.iter().enumerate() {
-                        let w = crate::gfx::text::text_width(&ctx.fonts, 0, label);
-                        if mx >= lx - 4 && mx < lx + w + 4 {
-                            return self.bar_menu(ctx, i);
-                        }
+                match side_hit(mx, my) {
+                    SideHit::Menu(i) => return self.bar_menu(ctx, i),
+                    SideHit::Minimap => {
+                        // o 0x46b2: the clicked minimap square, in the minimap's scrolled frame
+                        let (mx0, my0) = self.minimap_origin(ctx);
+                        self.center_on(Map::wrap_x(mx + mx0), (my - 8 + my0).clamp(0, 49));
+                        return Transition::None;
                     }
-                    return Transition::None;
-                }
-                if MINIMAP.contains(mx, my) {
-                    // o 0x46b2: the clicked minimap square, in the minimap's scrolled frame
-                    let (mx0, my0) = self.minimap_origin(ctx);
-                    self.center_on(Map::wrap_x(mx + mx0), (my - 8 + my0).clamp(0, 49));
-                    return Transition::None;
-                }
-                if mx < VIEW_X {
-                    // unit status box: cycle units
-                    if *button == MouseButton::Left {
-                        if ctx.game().active_unit.is_some() {
-                            return self.key_order(ctx, Key::Char('w'), crate::platform::Mods::default());
-                        } else if self.mode == Mode::EndOfTurn {
+                    SideHit::Palace => return Transition::Push(crate::ui::palace::palace_screen(ctx, Vec::new())),
+                    SideHit::UnitBox => {
+                        if self.mode == Mode::EndOfTurn {
                             self.start_end_turn(ctx);
                         }
+                        return Transition::None;
                     }
-                    return Transition::None;
+                    SideHit::Map => {}
                 }
                 let Some((tx, ty)) = self.tile_at_pixel(mx, my) else { return Transition::None };
-                if let Mode::Goto { .. } = self.mode {
-                    if *button == MouseButton::Left {
-                        return self.confirm_goto(ctx, (tx, ty));
-                    }
-                    self.mode = Mode::Normal;
-                    return Transition::None;
-                }
                 let g = ctx.game();
                 let me = g.human_slot;
                 match button {
                     MouseButton::Right => {
-                        // CIV.EXE 0x479c: a square next to the active unit moves it there, any
-                        // other explored square shows the Civilopedia page of its terrain
+                        // CIV.EXE 0x479c: a square next to the active unit (around the map's
+                        // seam too) becomes its goto, which ends a GoTo choice; any other
+                        // explored square shows the Civilopedia page of its terrain
                         if let Some(id) = g.active_unit {
                             let (ux, uy) = g.unit(id).pos();
-                            if let Some(d) = Dir8::from_delta(tx - ux, ty - uy) {
+                            if let Some(d) = Dir8::from_delta(Map::delta_x(ux, tx), ty - uy) {
+                                self.mode = Mode::Normal;
                                 return self.try_move(ctx, d);
                             }
                         }
@@ -1613,28 +1715,30 @@ impl Screen for MapView {
                         Transition::None
                     }
                     MouseButton::Left => {
+                        if let Mode::Goto { .. } = self.mode {
+                            // 0x4913: the target must be explored and suit the unit: land
+                            // units no ocean, ships ocean or a city, aircraft anything
+                            self.mode = Mode::Normal;
+                            let Some(id) = g.active_unit else { return Transition::None };
+                            let terrain = g.map.tile(tx, ty).terrain;
+                            if g.explored(me, tx, ty) && goto_target_ok(g.unit(id).info().domain, terrain == rules::Terrain::Ocean, g.city_at(tx, ty).is_some()) {
+                                return self.confirm_goto(ctx, (tx, ty));
+                            }
+                            return Transition::None;
+                        }
                         if let Some(c) = g.city_at(tx, ty) {
                             if g.city(c).owner == me {
                                 self.pending = Pending::Event;
                                 return self.open_city(ctx, c);
                             }
                         }
+                        // 0x4ac5: one of our units there opens the stack box (0x9dc5), even
+                        // for a lone unit; elsewhere the view centres on the square
                         let own: Vec<UnitId> = g.units_at(tx, ty).into_iter().filter(|u| g.unit(*u).owner == me).collect();
-                        if own.len() == 1 {
-                            let g = ctx.game_mut();
-                            let u = g.unit_mut(own[0]);
-                            u.order = UnitOrder::None;
-                            u.goto = None;
-                            g.active_unit = Some(own[0]);
-                            self.mode = Mode::Normal;
-                            return Transition::None;
-                        } else if own.len() > 1 {
-                            let items: Vec<String> = own.iter().map(|id| {
-                                let u = g.unit(*id);
-                                format!("{}{}", u.info().name, u.order.letter().map(|l| format!(" ({l})")).unwrap_or_default())
-                            }).collect();
-                            self.pending = Pending::CityPick(tx, ty);
-                            return Transition::Push(Box::new(MenuDialog::new(vec!["Select unit...".into()], items)));
+                        if !own.is_empty() {
+                            let default = g.best_defender(tx, ty, None).filter(|id| own.contains(id)).unwrap_or(own[0]);
+                            self.pending = Pending::StackPick;
+                            return Transition::Push(Box::new(StackPicker::new(own, default)));
                         }
                         self.center_on(tx, ty);
                         Transition::None
@@ -1833,6 +1937,82 @@ mod tests {
     const SHIFT: Mods = Mods { shift: true, ctrl: false, alt: false };
     const ALT: Mods = Mods { shift: false, ctrl: false, alt: true };
     const NONE: Mods = Mods { shift: false, ctrl: false, alt: false };
+
+    fn press(button: MouseButton, x: i32, y: i32) -> Event {
+        Event::MouseButton { button, x, y, down: true }
+    }
+
+    #[test]
+    fn mouse_regions_follow_move_units() {
+        // the menu is the column x / 60, over the whole bar (0x467f)
+        assert_eq!(side_hit(0, 0), SideHit::Menu(0));
+        assert_eq!(side_hit(59, 7), SideHit::Menu(0));
+        assert_eq!(side_hit(60, 3), SideHit::Menu(1));
+        assert_eq!(side_hit(319, 7), SideHit::Menu(4));
+        assert_eq!(side_hit(10, 8), SideHit::Minimap);
+        assert_eq!(side_hit(79, 57), SideHit::Minimap);
+        assert_eq!(side_hit(10, 58), SideHit::Palace);
+        assert_eq!(side_hit(10, 71), SideHit::Palace);
+        assert_eq!(side_hit(10, 72), SideHit::UnitBox);
+        assert_eq!(side_hit(10, 199), SideHit::UnitBox);
+        assert_eq!(side_hit(80, 8), SideHit::Map);
+    }
+
+    #[test]
+    fn goto_targets_suit_the_unit() {
+        use rules::Domain::*;
+        assert!(goto_target_ok(Land, false, false));
+        assert!(!goto_target_ok(Land, true, false));
+        assert!(goto_target_ok(Sea, true, false));
+        assert!(!goto_target_ok(Sea, false, false));
+        assert!(goto_target_ok(Sea, false, true));
+        assert!(goto_target_ok(Air, true, false));
+    }
+
+    #[test]
+    fn stack_box_rows() {
+        let p = StackPicker::new(vec![4, 5, 6], 5);
+        // three rows from y 72 + 5, 16 px each, x 101..219
+        assert_eq!(p.top(), 72);
+        assert_eq!(p.row_at(150, 77), Some(0));
+        assert_eq!(p.row_at(150, 70), Some(0), "C division rounds a small negative to row 0");
+        assert_eq!(p.row_at(150, 93), Some(1));
+        assert_eq!(p.row_at(150, 124), Some(2));
+        assert_eq!(p.row_at(150, 125), None);
+        assert_eq!(p.row_at(100, 80), None);
+        assert_eq!(p.row_at(220, 80), None);
+    }
+
+    #[test]
+    fn clicking_the_unit_box_with_a_unit_does_nothing() {
+        let Some((mut ctx, mut mv, id)) = view() else { return };
+        let before = ctx.game().unit(id).clone();
+        assert!(matches!(mv.handle(&press(MouseButton::Left, 20, 150), &mut ctx), Transition::None));
+        assert_eq!(ctx.game().active_unit, Some(id));
+        assert_eq!(ctx.game().unit(id).order, before.order);
+        assert!(matches!(mv.handle(&press(MouseButton::Left, 20, 60), &mut ctx), Transition::Push(_)), "the palace strip opens the palace");
+    }
+
+    #[test]
+    fn a_click_on_our_unit_opens_the_stack_box_and_a_row_wakes_it() {
+        let Some((mut ctx, mut mv, id)) = view() else { return };
+        let (ux, uy) = ctx.game().unit(id).pos();
+        mv.center_on(ux, uy);
+        ctx.game_mut().unit_mut(id).order = UnitOrder::Sentry;
+        ctx.game_mut().active_unit = None;
+        let px = VIEW_X + Map::wrap_x(ux - mv.vx) * TILE + 4;
+        let py = VIEW_Y + (uy - mv.vy) * TILE + 4;
+        let Transition::Push(mut boxed) = mv.handle(&press(MouseButton::Left, px, py), &mut ctx) else { panic!("no stack box") };
+        let n = ctx.game().units_at(ux, uy).len().min(12) as i32;
+        let row_y = 96 - 8 * n + 5;
+        let t = boxed.handle(&press(MouseButton::Left, 150, row_y), &mut ctx);
+        assert_eq!(ctx.game().unit(id).order, UnitOrder::None, "the row's unit is woken");
+        if n == 1 {
+            let Transition::Pop(r) = t else { panic!("a lone unit closes the box") };
+            mv.resume(r, &mut ctx);
+            assert_eq!(ctx.game().active_unit, Some(id));
+        }
+    }
 
     /// A map view over a new game whose first human unit is active.
     fn view() -> Option<(UiContext, MapView, UnitId)> {
