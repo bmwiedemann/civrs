@@ -464,6 +464,15 @@ impl Game {
         p.lux = (lux * 10) as u8;
     }
 
+    /// A computer player's first rates (civ_init o 0x4e0b): science the "civilized" trait + 3
+    /// tenths, taxes 9 - science, luxuries 1. (The human starts at 5/0/5, o 0x475b.)
+    pub fn ai_initial_rates(&mut self, slot: Slot) {
+        let sci = self.player(slot).civ().civilized as i32 + 3;
+        let p = self.player_mut(slot);
+        p.tax = ((9 - sci) * 10) as u8;
+        p.lux = 10;
+    }
+
     /// `set_government` (CIV.EXE 0x15031) gives a computer player taxes of 4 - government / 2
     /// tenths; its science stays and luxuries take the rest (none when the two exceed 10, which
     /// civrs cannot hold: then science gets the rest).
@@ -2055,6 +2064,9 @@ mod tests {
         let (mut g, _c) = fixture();
         let ai = g.alive_slots().into_iter().find(|s| *s != g.human_slot).unwrap();
         let civilized = g.player(ai).civ().civilized as i32;
+        // civ_init (o 0x4e0b): sci civilized + 3, tax 9 - sci, lux 1; the human 5/0/5
+        assert_eq!((g.player(ai).tax as i32, g.player(ai).lux), ((6 - civilized) * 10, 10));
+        assert_eq!((g.human().tax, g.human().lux), (50, 0));
         g.set_turn(5);
         g.player_mut(ai).gold = 0;
         g.player_mut(ai).forget(adv::ROBOTICS);

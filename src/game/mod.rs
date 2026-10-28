@@ -423,6 +423,9 @@ impl Game {
             // civ_init ends by zeroing the unit counters and losses (o5 0x4fc2..0x4fcb)
             self.players[slot as usize].unit_counter = [0; 28];
             self.players[slot as usize].units_lost_by_type = [0; 28];
+            if !self.players[slot as usize].human {
+                self.ai_initial_rates(slot);
+            }
         }
         let starts: Vec<(Slot, (i32, i32))> = slots.iter().map(|&(s, _, p)| (s, p)).collect();
         let bonus = mapgen::start_bonuses(&self.map, &world.land_sizes, &starts);
