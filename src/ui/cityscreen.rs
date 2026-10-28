@@ -169,6 +169,7 @@ impl CityScreen {
                 Key::Char('c') => self.change(ctx),
                 Key::Char('b') => self.buy(ctx),
                 Key::Char('r') => self.rename(ctx),
+                Key::Char(d @ '1'..='9') => self.cycle_specialist(ctx, (*d as u8 - b'1') as usize),
                 Key::Char('a') if mods.shift => {
                     // AUTO on asks the production advisor at once; with nothing worth it the
                     // flag stays until the city finishes its item (CIV.EXE 0x113d7..0x11411)
@@ -383,11 +384,9 @@ impl CityScreen {
         let n = c.size as usize;
         let workers = n - c.specialists.len();
         let pitch = Self::citizen_pitch(n);
-        // below size 5 a click on the citizens only brings the message (CIV.EXE 0x121c7, message 0x13d54)
+        // below size 5 a click on the citizens only brings the message (CIV.EXE 0x121c7)
         if c.size < 5 {
-            self.pending = Pending::Ignore;
-            let lines = ["A City must have five", "population units to support", "taxmen or scientists."];
-            return Transition::Push(Box::new(MessageBox::new(lines.iter().map(|l| l.to_string()).collect()).with_pos(32, 32)));
+            return self.specialists_need_size_5();
         }
         if mx < CITIZEN_X {
             return Transition::None;
@@ -397,8 +396,25 @@ impl CityScreen {
         if i < workers || i >= n {
             return Transition::None;
         }
-        let si = i - workers;
-        let next = match c.specialists[si] {
+        self.cycle_specialist(ctx, i - workers)
+    }
+
+    /// The 0x13d54 message: specialists other than entertainers need size 5.
+    fn specialists_need_size_5(&mut self) -> Transition {
+        self.pending = Pending::Ignore;
+        let lines = ["A City must have five", "population units to support", "taxmen or scientists."];
+        Transition::Push(Box::new(MessageBox::new(lines.iter().map(|l| l.to_string()).collect()).with_pos(32, 32)))
+    }
+
+    /// Entertainer -> taxman -> scientist -> entertainer for specialist `si`, as a click or the
+    /// keys '1'..'9' do (CIV.EXE 0x11c34..0x11cb3, 0x12217); refused below size 5.
+    fn cycle_specialist(&mut self, ctx: &mut UiContext, si: usize) -> Transition {
+        let c = ctx.game().city(self.city);
+        let Some(&s) = c.specialists.get(si) else { return Transition::None };
+        if c.size < 5 {
+            return self.specialists_need_size_5();
+        }
+        let next = match s {
             Specialist::Entertainer => Specialist::Taxman,
             Specialist::Taxman => Specialist::Scientist,
             Specialist::Scientist => Specialist::Entertainer,

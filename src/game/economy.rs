@@ -308,7 +308,7 @@ impl Game {
                 y.trade += (self.visible_trade(*r) + y.trade + 4) / div;
             }
         }
-        // food upkeep: 2 per citizen plus settlers (1; 2 under Republic/Democracy)
+        // food upkeep: 2 per citizen plus settlers (1; 2 from the Monarchy on, CIV.EXE 0xcc2d)
         let g = rules::GOVERNMENTS[p.govt as usize];
         let settlers = self.all_units().filter(|u| u.home == Some(c) && u.kind == unit_ids::SETTLERS).count() as i32;
         y.food_upkeep = city.size as i32 * 2 + settlers * g.settler_food as i32;
