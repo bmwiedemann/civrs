@@ -174,9 +174,9 @@ impl Game {
     pub fn tile_workable(&self, c: CityId, idx: u8) -> bool {
         let Some((x, y)) = self.radius_tile(c, idx) else { return false };
         let t = self.map.tile(x, y);
-        // the computer players know the whole map; the human works only what was explored
+        // a civilization works only what it has explored, the barbarians anything (0xd4b6)
         let owner = self.city(c).owner;
-        if idx != 0 && !t.explored_by(owner) && self.player(owner).human {
+        if idx != 0 && !t.explored_by(owner) && owner != 0 {
             return false;
         }
         if t.worked_by.is_some() && t.worked_by != Some(c) {
@@ -1170,13 +1170,15 @@ mod tests {
     }
 
     #[test]
-    fn only_the_human_needs_explored_tiles() {
+    fn only_the_barbarians_work_unexplored_tiles() {
         let (mut g, c) = fixture();
         let slot = g.city(c).owner;
         let (x, y) = g.radius_tile(c, 9).unwrap();
         g.map.get_mut(x, y).unwrap().explored &= !(1 << slot);
         assert!(!g.tile_workable(c, 9));
         g.player_mut(slot).human = false;
+        assert!(!g.tile_workable(c, 9));
+        g.city_mut(c).owner = 0;
         assert!(g.tile_workable(c, 9));
     }
 

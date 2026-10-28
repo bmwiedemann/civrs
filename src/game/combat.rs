@@ -1086,6 +1086,9 @@ mod tests {
         use crate::rules::wonder_ids as won;
         let mut g = flat_game();
         let admired = g.add_city(2, "Eden".into(), 10, 10);
+        // a civilization works only the squares it has explored (0xd4b6)
+        g.map.explore(2, 10, 10, 2);
+        g.auto_assign(admired);
         g.city_mut(admired).add_wonder(won::HANGING_GARDENS);
         g.wonders_built[won::HANGING_GARDENS as usize] = Some(admired);
         g.add_city(1, "Capital".into(), 25, 25);
