@@ -119,7 +119,8 @@ impl Game {
                 if !(acts && self.is_human(slot) && self.treaty(slot, o)) {
                     return Ok(MoveOutcome::Blocked);
                 }
-                if self.treaty_break_ok != Some(o) {
+                // an attack asks in combat, after the move code's questions (below)
+                if units_here.is_empty() && self.treaty_break_ok != Some(o) {
                     return Ok(MoveOutcome::BreakTreaty(o));
                 }
                 if units_here.is_empty() {
@@ -160,6 +161,10 @@ impl Game {
                 }
                 if self.is_human(slot) && u.moves_left < 3 && !self.weak_attack_ok {
                     return Ok(MoveOutcome::WeakAttack(u.moves_left));
+                }
+                // then combat's senate_check_attack (0x199fd) asks about a treaty partner
+                if !hostile && self.treaty_break_ok != Some(o) {
+                    return Ok(MoveOutcome::BreakTreaty(o));
                 }
                 self.weak_attack_ok = false;
                 self.treaty_break_ok = None;

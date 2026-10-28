@@ -188,6 +188,9 @@ impl Game {
                 }
             }
             self.players[attacker.owner as usize].stats.units_killed += 1;
+            if let Some(c) = t.city.filter(|_| self.units_at(x, y).is_empty()) {
+                self.city_emptied(c);
+            }
             // a city without walls shrinks when its defender loses, unless the attack came from
             // the sea, or at Chieftain from anyone against the human (CIV.EXE 0x615d..0x618a);
             // only the size drops: the extra worker goes at the city's next turn, the human's
@@ -236,6 +239,49 @@ impl Game {
             self.check_destroyed(attacker.owner);
             MoveOutcome::Attacked { won: false, at: (x, y), defender: defender.kind }
         }
+    }
+
+    /// A city has lost its last defender (combat 0x1a13a..0x1a1e5; CIV.EXE tests that the
+    /// defender ends its stack list, civrs that nobody is left): every computer stack on the
+    /// city's square and the eight around is reset (`reset_unit`), and when the city is the
+    /// human's, the loaded transports at sea of every civilization without a treaty with him
+    /// that are less than three times their moves away head for it (0x19632).
+    fn city_emptied(&mut self, c: CityId) {
+        let (cx, cy) = self.city(c).pos();
+        let around: Vec<(i32, i32)> = Map::neighbours8(cx, cy).chain(std::iter::once((cx, cy))).collect();
+        let h = self.human_slot;
+        let reset: Vec<UnitId> = self.all_units().filter(|u| u.owner != h && around.contains(&u.pos())).map(|u| u.id).collect();
+        for id in reset {
+            self.reset_unit(id);
+        }
+        if self.city(c).owner != h {
+            return;
+        }
+        let ships: Vec<UnitId> = self
+            .all_units()
+            .filter(|u| u.owner != h && u.owner != 0 && !self.treaty(u.owner, h) && u.info().capacity > 0 && self.map.is_ocean(u.x, u.y))
+            .filter(|u| self.all_units().any(|o| o.id != u.id && o.owner == u.owner && o.pos() == u.pos()))
+            .filter(|u| Map::civ_distance(u.pos(), (cx, cy)) < u.full_moves() as i32)
+            .map(|u| u.id)
+            .collect();
+        for id in ships {
+            self.unit_mut(id).goto = Some((cx, cy));
+        }
+    }
+
+    /// `reset_unit` (CIV.EXE 0x93ef): a work order loses its progress (status & 0xc2), a unit
+    /// at work, sentried or fortified (& 0xcb) gets its full moves back, and every order and
+    /// goto is cleared.
+    pub fn reset_unit(&mut self, id: UnitId) {
+        let u = self.unit_mut(id);
+        if u.order.is_work() {
+            u.order_turns = 0;
+        }
+        if u.order.is_work() || matches!(u.order, UnitOrder::Sentry | UnitOrder::Fortified) {
+            u.moves_left = u.full_moves();
+        }
+        u.order = UnitOrder::None;
+        u.goto = None;
     }
 
     /// Nuclear attack by unit `id` on tile (x,y) (`nuclear_attack` CIV.EXE 0x1a463): on the
@@ -1103,6 +1149,57 @@ mod tests {
         g.weak_attack_ok = true;
         assert!(matches!(g.try_move(a, crate::game::Dir8::E), Ok(MoveOutcome::Attacked { .. })));
         assert!(!g.weak_attack_ok, "the answer is used up");
+    }
+
+    #[test]
+    fn the_strength_question_comes_before_the_treaty_question() {
+        // the move code asks "Attack at N/3 strength?" (0x5fc4), combat then the treaty (0x199fd)
+        let mut g = flat_game();
+        let h = g.human_slot;
+        let foe = if h == 1 { 2 } else { 1 };
+        g.set_relation(h, foe, Relation::Peace);
+        g.add_unit(foe, unit_ids::PHALANX, 11, 10);
+        let a = g.add_unit(h, unit_ids::LEGION, 10, 10);
+        g.unit_mut(a).moves_left = 1;
+        assert_eq!(g.try_move(a, crate::game::Dir8::E), Ok(MoveOutcome::WeakAttack(1)));
+        g.weak_attack_ok = true;
+        assert_eq!(g.try_move(a, crate::game::Dir8::E), Ok(MoveOutcome::BreakTreaty(foe)));
+        g.treaty_break_ok = Some(foe);
+        assert!(matches!(g.try_move(a, crate::game::Dir8::E), Ok(MoveOutcome::Attacked { .. })));
+    }
+
+    #[test]
+    fn a_city_losing_its_last_defender_wakes_the_computer_units_around() {
+        // 0x1a13a..0x1a1c2: reset_unit (0x93ef) on every non-human stack of the 3x3 square
+        let mut g = flat_game();
+        let h = g.human_slot;
+        let (foe, other) = if h == 1 { (2, 3) } else { (1, if h == 2 { 3 } else { 2 }) };
+        g.set_relation(foe, other, Relation::War);
+        let c = g.add_city(other, "Target".into(), 11, 10);
+        g.city_mut(c).size = 4;
+        g.add_unit(other, unit_ids::MILITIA, 11, 10);
+        let a = g.add_unit(foe, unit_ids::ARMOR, 10, 10);
+        let w = g.add_unit(foe, unit_ids::SETTLERS, 12, 11);
+        g.unit_mut(w).order = UnitOrder::Fortified;
+        g.unit_mut(w).moves_left = 0;
+        g.unit_mut(w).goto = Some((20, 20));
+        let mine = g.add_unit(h, unit_ids::MILITIA, 12, 9);
+        g.unit_mut(mine).order = UnitOrder::Sentry;
+        let mut won = false;
+        for _ in 0..20 {
+            g.unit_mut(a).moves_left = 3;
+            if matches!(g.attack(a, 11, 10), MoveOutcome::Attacked { won: true, .. }) {
+                won = true;
+                break;
+            }
+            if g.unit_opt(a).is_none() {
+                break;
+            }
+        }
+        assert!(won && g.city_opt(c).is_some());
+        let u = g.unit(w);
+        assert_eq!((u.order, u.goto, u.moves_left), (UnitOrder::None, None, 3));
+        assert_eq!(g.unit(mine).order, UnitOrder::Sentry, "the human's units stay as they are");
     }
 
     #[test]

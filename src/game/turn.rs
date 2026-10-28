@@ -206,6 +206,7 @@ impl TurnRunner {
                     self.phase = Phase::NewTurn;
                 }
                 Phase::NewTurn => {
+                    g.unit_limit_shown = false;
                     g.advance_calendar();
                     g.fifty_turn_block();
                     g.historian_check();
@@ -1044,6 +1045,16 @@ impl Game {
                     }
                     let next = self.ai_rechoose(c);
                     self.city_mut(c).production = next;
+                    return;
+                }
+                // with every unit slot in use the shields are spent on nothing and the store
+                // is emptied (create_unit 0x8b62 returns -1; 0xdeb8, 0xdf9d -> 0xe3bc), and the
+                // human hears *UMAX once a turn
+                if !self.unit_room(owner) {
+                    self.city_mut(c).shields = 0;
+                    if human && !std::mem::replace(&mut self.unit_limit_shown, true) {
+                        self.push_event(GameEvent::UnitLimit(owner));
+                    }
                     return;
                 }
                 let id = self.add_unit(owner, k, x, y);
@@ -2188,6 +2199,25 @@ mod tests {
         assert!(!ai.1.is_empty() && ai.1.iter().all(|s| *s == 1), "{:?}", ai.1);
         assert!(g.city(c).size > 1);
         assert_eq!(g.turn, 1);
+    }
+
+    #[test]
+    fn no_unit_beyond_127_and_the_human_hears_it_once_a_turn() {
+        // create_unit 0x8b62 / 0x8d24 (*UMAX, ds:0xd760); the shields are gone (0xdeb8, 0xe3bc)
+        let (mut g, c) = fixture();
+        let me = g.human_slot;
+        let (x, y) = g.city(c).pos();
+        while g.unit_room(me) {
+            g.add_unit(me, unit_ids::MILITIA, x, y);
+        }
+        let before = g.units_of(me).len();
+        g.city_mut(c).shields = 50;
+        g.complete_production(c, Production::Unit(unit_ids::MILITIA));
+        g.city_mut(c).shields = 50;
+        g.complete_production(c, Production::Unit(unit_ids::MILITIA));
+        assert_eq!(g.units_of(me).len(), before);
+        assert_eq!(g.city(c).shields, 0);
+        assert_eq!(g.take_events().iter().filter(|e| matches!(e, GameEvent::UnitLimit(_))).count(), 1);
     }
 
     #[test]

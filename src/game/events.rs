@@ -225,6 +225,9 @@ pub enum GameEvent {
     /// a Diplomat of `to` or defected to it; shown when the human is one of them or has an
     /// embassy with either.
     CityRebels { city: CityId, from: Slot, to: Slot },
+    /// KING.TXT *UMAX, once a turn (ds:0xd760): the human's city finished a unit while the
+    /// civilization had all its 127 unit slots in use (create_unit 0x8d24).
+    UnitLimit(Slot),
 }
 
 /// A choice the engine needs from the human player before continuing.

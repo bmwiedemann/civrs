@@ -258,11 +258,17 @@ pub struct Game {
     /// (`TurnRunner::opening`). Not saved: a saved game is in the human's turn.
     #[serde(skip)]
     pub opening: bool,
+    /// ds:0xd760: *UMAX was shown this turn (`GameEvent::UnitLimit`). Not saved.
+    #[serde(skip)]
+    pub unit_limit_shown: bool,
 }
 
 /// `wonders_built` entry of a wonder whose city was destroyed: built, owned by no one, listed
 /// as "(Destroyed)" (CIV.EXE stores city 0x80). No city has this id.
 pub const WONDER_LOST: CityId = CityId::MAX;
+
+/// Unit slots per civilization (create_unit CIV.EXE 0x8b62; KING.TXT *UMAX).
+pub const MAX_UNITS: usize = 127;
 
 fn no_audience() -> i8 {
     -1
@@ -406,6 +412,7 @@ impl Game {
             catch_up: 0,
             free_research: 0,
             opening: true,
+            unit_limit_shown: false,
         };
         game.place_starting_units(&slots, &world, &mut wr);
         game.refresh_all_vision();
@@ -680,9 +687,22 @@ impl Game {
     }
 
     pub fn remove_unit(&mut self, id: UnitId) {
-        // units carried by this one are lost too
-        let carried: Vec<UnitId> = self.all_units().filter(|u| u.carried_by == Some(id)).map(|u| u.id).collect();
-        for c in carried.into_iter().chain([id]) {
+        // a ship with room for others that goes down at sea takes every land unit of its
+        // owner on the square along, a Carrier every aircraft too (delete_unit 0x8dba,
+        // 0x8e06); elsewhere what it carried stays
+        let Some(dead) = self.unit_opt(id).cloned() else { return };
+        let lost: Vec<UnitId> = if dead.info().capacity > 0 && self.map.tile(dead.x, dead.y).is_ocean() {
+            let carrier = dead.kind == rules::unit_ids::CARRIER;
+            self.all_units().filter(|u| u.id != id && u.owner == dead.owner && u.pos() == dead.pos() && (u.is_land() || (carrier && u.is_air()))).map(|u| u.id).collect()
+        } else {
+            Vec::new()
+        };
+        for u in self.units.iter_mut().flatten() {
+            if u.carried_by == Some(id) {
+                u.carried_by = None;
+            }
+        }
+        for c in lost.into_iter().chain([id]) {
             if let Some(u) = self.units[c as usize].take() {
                 let p = &mut self.players[u.owner as usize];
                 p.unit_counter[u.kind as usize % 28] -= 1;
@@ -694,6 +714,11 @@ impl Game {
         if self.active_unit == Some(id) {
             self.active_unit = None;
         }
+    }
+
+    /// Whether `slot` has a free unit slot: create_unit (CIV.EXE 0x8b51) uses slots 0..126.
+    pub fn unit_room(&self, slot: Slot) -> bool {
+        self.all_units().filter(|u| u.owner == slot).count() < MAX_UNITS
     }
 
     pub fn push_event(&mut self, e: GameEvent) {

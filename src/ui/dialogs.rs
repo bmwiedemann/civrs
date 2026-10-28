@@ -125,6 +125,8 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             msg(vec![format!("{} in {} disbanded", rules::UNITS[*unit_kind as usize].name, city_name(*city)), format!("({reason})")])
         }
         GameEvent::ItemBuilt { city, item } if g.city(*city).owner == me => match item {
+            // "CITY builds UNIT." only for Settlers, Diplomats and Caravans (CIV.EXE 0xe3dc)
+            crate::game::Production::Unit(k) if *k == rules::unit_ids::SETTLERS || *k >= rules::unit_ids::DIPLOMAT => msg(vec![format!("{} builds {}.", city_name(*city), item.name())]),
             crate::game::Production::Unit(_) => None,
             _ => match built_view_item(g, *city, *item) {
                 Some(view) => Some(crate::ui::city_view::built_view(ctx, *city, view)),
@@ -259,6 +261,10 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
         GameEvent::GovernmentCollapsed { slot, city } if *slot == me => msg(vec!["Discontented citizens of".into(), format!("{} revolt:", city_name(*city)), "Government Collapses!".into()]),
         GameEvent::AnarchyEnded { slot } if *slot == me => None,
         GameEvent::GovernmentChanged { slot, govt } if *slot == me => Some(crate::ui::govtscreen::govt_screen(ctx, *govt)),
+        GameEvent::UnitLimit(slot) if *slot == me => {
+            let lines = ctx.texts.king.section("UMAX").map(paragraphs).unwrap_or_else(|| vec!["Too many units.".into()]);
+            msg(lines)
+        }
         GameEvent::LowFunds { slot } if *slot == me => {
             let lines = ctx.texts.king.section("TAXES").map(paragraphs).unwrap_or_else(|| vec!["Treasury is low!".into()]);
             msg(lines)

@@ -1464,10 +1464,19 @@ fn do_step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) ->
     let u = g.unit(id).clone();
     let (dx, dy) = d.delta();
     let (nx, ny) = (Map::wrap_x(u.x + dx), u.y + dy);
+    // the stack limit (0x6437..0x64b8), checked after the step's cost is taken (0x62b1..0x63c9):
+    // no joining an own stack outside a city of 4 units, or of 2 when the step leaves no move
+    // points; the refused step keeps its cost. (The stack is the mover's: ds:0xd20a is the
+    // owner `unit_at` found there, 0x5a91.)
     if let Some(first) = g.units_at(nx, ny).first().copied() {
         let counts = u.is_land() || (u.is_air() && fuel_left(&u) != 0);
-        if g.unit(first).owner == u.owner && g.city_at(nx, ny).is_none() && counts && stack_count(g, first) >= 4 {
-            return false;
+        if g.unit(first).owner == u.owner && g.city_at(nx, ny).is_none() && counts {
+            // a partial move ends with no points whether its roll succeeds or not (0x634a)
+            let left = u.moves_left.saturating_sub(g.move_cost(&u, u.pos(), (nx, ny)));
+            if stack_count(g, first) >= if left != 0 { 4 } else { 2 } {
+                g.unit_mut(id).moves_left = left;
+                return false;
+            }
         }
     }
     let slot = u.owner;
@@ -1787,6 +1796,52 @@ mod tests {
 
     fn ai(g: &Game) -> Slot {
         (2..5).find(|s| *s != g.human_slot).unwrap()
+    }
+
+    #[test]
+    fn a_computer_unit_joins_no_stack_of_four_or_of_two_on_its_last_move() {
+        // 0x6437..0x64b8 after the cost (0x62b1..0x63c9): the refused step keeps its cost
+        let mut g = arena();
+        let s = ai(&g);
+        for _ in 0..2 {
+            g.add_unit(s, unit_ids::MILITIA, 11, 10);
+        }
+        let c = g.add_unit(s, unit_ids::CAVALRY, 10, 10);
+        assert!(do_step(&mut g, c, Dir8::E, &mut |_| {}));
+        assert_eq!((g.unit(c).pos(), g.unit(c).moves_left), ((11, 10), 3));
+        g.unit_mut(c).x = 10;
+        g.unit_mut(c).moves_left = 3;
+        assert!(!do_step(&mut g, c, Dir8::E, &mut |_| {}), "2 + 1, no moves after the step");
+        assert_eq!((g.unit(c).pos(), g.unit(c).moves_left), ((10, 10), 0));
+        for _ in 0..2 {
+            g.add_unit(s, unit_ids::MILITIA, 11, 10);
+        }
+        g.unit_mut(c).moves_left = 6;
+        g.set_heading(c, 0xff);
+        assert!(!do_step(&mut g, c, Dir8::E, &mut |_| {}), "a stack of 4");
+        assert_eq!((g.unit(c).pos(), g.unit(c).moves_left), ((10, 10), 3));
+    }
+
+    #[test]
+    fn a_ship_sunk_at_sea_takes_the_land_units_on_its_square_along() {
+        // delete_unit 0x8dba: every land unit of the owner there, carried or not; in port none
+        let mut g = arena();
+        let s = ai(&g);
+        let t = g.add_unit(s, unit_ids::TRANSPORT, 3, 3);
+        let t2 = g.add_unit(s, unit_ids::TRANSPORT, 3, 3);
+        let a = g.add_unit(s, unit_ids::MILITIA, 3, 3);
+        g.unit_mut(a).carried_by = Some(t);
+        let b = g.add_unit(s, unit_ids::MILITIA, 3, 3);
+        g.unit_mut(b).carried_by = Some(t2);
+        g.remove_unit(t);
+        assert!(g.unit_opt(a).is_none() && g.unit_opt(b).is_none());
+        assert!(g.unit_opt(t2).is_some());
+        g.add_city(s, "Port".into(), 5, 5);
+        let p = g.add_unit(s, unit_ids::TRANSPORT, 5, 5);
+        let m = g.add_unit(s, unit_ids::MILITIA, 5, 5);
+        g.unit_mut(m).carried_by = Some(p);
+        g.remove_unit(p);
+        assert_eq!(g.unit_opt(m).map(|u| u.carried_by), Some(None));
     }
 
     #[test]
