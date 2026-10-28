@@ -81,11 +81,19 @@ pub struct SlotPage {
     /// Save result lines and whether it failed.
     result: Option<(Vec<String>, bool)>,
     started: bool,
+    /// The slot an autosave writes without the slot menu (`save_game(slot)`, o 0xf0df).
+    fixed: Option<usize>,
 }
 
 impl SlotPage {
     pub fn new(mode: SlotMode) -> SlotPage {
-        SlotPage { mode, step: Step::Drive, drive: 'C', border: 0, slots: Vec::new(), originals: Vec::new(), result: None, started: false }
+        SlotPage { mode, step: Step::Drive, drive: 'C', border: 0, slots: Vec::new(), originals: Vec::new(), result: None, started: false, fixed: None }
+    }
+
+    /// The autosave of game_turn (0x2779..0x27b6): `save_game(slot)` asks for the drive as a
+    /// save from the menu does, then writes `slot` without the slot menu.
+    pub fn autosave(slot: usize) -> SlotPage {
+        SlotPage { fixed: Some(slot), ..SlotPage::new(SlotMode::Save) }
     }
 
     fn saving(&self) -> bool {
@@ -111,8 +119,10 @@ impl SlotPage {
             self.step = Step::Writing(i);
             return Transition::None;
         }
-        // an empty slot ends the load like Esc (o 0xee1b)
+        // an empty slot ends the load like Esc (o 0xee1b); either forgets the last slot
+        // (ds:0xe168 = -1), so the next save menu starts on slot 0
         if self.slots.get(i).is_none_or(|s| s.is_none()) {
+            ctx.last_slot = None;
             return Transition::Pop(DialogResult::Cancelled);
         }
         let loaded = match self.originals.get(i).cloned().flatten() {
@@ -155,6 +165,7 @@ impl SlotPage {
 impl Screen for SlotPage {
     fn on_enter(&mut self, ctx: &mut UiContext) {
         self.slots = crate::save::list_slots(&ctx.save_dir);
+        self.drive = ctx.save_drive;
         if self.saving() {
             self.slots.truncate(4);
         } else {
@@ -198,13 +209,23 @@ impl Screen for SlotPage {
         match self.step {
             Step::Drive => match key {
                 Key::Char(c @ 'a'..='f') => self.drive = c.to_ascii_uppercase(),
-                Key::Esc => return Transition::Pop(DialogResult::Cancelled),
+                Key::Esc => {
+                    ctx.save_drive = 'C';
+                    return Transition::Pop(DialogResult::Cancelled);
+                }
                 Key::Enter if matches!(self.drive, 'A' | 'B') => {
+                    ctx.save_drive = self.drive;
                     self.step = Step::NoDisk;
                     let msg = format!("No Disk in Drive {}.", self.drive);
                     return Transition::Push(Box::new(MessageBox::text(&msg).with_pos(100, 80)));
                 }
+                Key::Enter if self.fixed.is_some() => {
+                    ctx.save_drive = self.drive;
+                    self.step = Step::Slots;
+                    return self.chosen(self.fixed.unwrap_or(0), ctx);
+                }
                 Key::Enter => {
+                    ctx.save_drive = self.drive;
                     self.step = Step::Slots;
                     return self.slot_menu(ctx);
                 }
@@ -219,6 +240,10 @@ impl Screen for SlotPage {
     fn resume(&mut self, r: DialogResult, ctx: &mut UiContext) -> Transition {
         match (self.step, r) {
             (Step::Slots, DialogResult::Choice(i)) => self.chosen(i, ctx),
+            (Step::Slots, _) if !self.saving() => {
+                ctx.last_slot = None;
+                Transition::Pop(DialogResult::Cancelled)
+            }
             _ => Transition::Pop(DialogResult::Cancelled),
         }
     }
@@ -279,6 +304,37 @@ mod tests {
         let info = SlotInfo { slot: 0, leader: "Caesar".into(), civ: "Romans".into(), year: -3340, difficulty: crate::rules::Difficulty::Chieftain };
         assert_eq!(slot_line(&Some(info)), "Chief Caesar, Romans/3340 BC");
         assert_eq!(slot_line(&None), "(EMPTY)");
+    }
+
+    #[test]
+    fn an_autosave_asks_for_the_drive_and_writes_its_slot() {
+        let Ok(assets) = crate::assets::AssetDir::locate(None) else { return };
+        let dir = std::env::temp_dir().join(format!("civrs-autosave-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let mut ctx = UiContext::new(assets, dir.clone()).expect("ui context");
+        ctx.game = Some(crate::game::Game::new(crate::game::GameSetup { seed: 3, ..Default::default() }, None));
+        let mut page = SlotPage::autosave(5);
+        page.on_enter(&mut ctx);
+        page.update(&mut ctx);
+        assert!(page.step == Step::Drive);
+        let enter = Event::Key { key: Key::Enter, mods: Default::default(), down: true, repeat: false };
+        assert!(matches!(page.handle(&enter, &mut ctx), Transition::None));
+        assert!(page.step == Step::Writing(5));
+        page.update(&mut ctx);
+        assert!(page.step == Step::Result);
+        assert!(crate::save::slot_path(&dir, 5).exists());
+        assert_eq!(ctx.last_slot, Some(5));
+        // the next prompt starts on the drive picked last (ds:0x4384)
+        let d = Event::Key { key: Key::Char('d'), mods: Default::default(), down: true, repeat: false };
+        let mut page = SlotPage::autosave(5);
+        page.on_enter(&mut ctx);
+        page.update(&mut ctx);
+        page.handle(&d, &mut ctx);
+        page.handle(&enter, &mut ctx);
+        let mut next = SlotPage::new(SlotMode::Save);
+        next.on_enter(&mut ctx);
+        assert_eq!(next.drive, 'D');
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

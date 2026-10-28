@@ -58,6 +58,9 @@ pub struct UiContext {
     pub warp_mouse: Option<(i32, i32)>,
     /// Save slot last loaded or saved (ds:0xe168), preselected by the save menu.
     pub last_slot: Option<usize>,
+    /// The drive of the last load or save prompt (ds:0x4384; an Esc forgets it, so the next
+    /// prompt starts from the current drive C: again, o 0xf36d).
+    pub save_drive: char,
     /// World seed for new games from the command line (`--seed`), instead of the clock.
     pub seed_override: Option<u64>,
     /// No mouse: CIV.EXE's setup answer "Keyboard only" (ds:0x1a3c = 0, `--keyboard-only`).
@@ -99,6 +102,7 @@ impl UiContext {
             mouse_down: false,
             warp_mouse: None,
             last_slot: None,
+            save_drive: 'C',
             seed_override: None,
             keyboard_only: false,
             pic_cache: RefCell::new(cache),

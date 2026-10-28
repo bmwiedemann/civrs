@@ -357,6 +357,10 @@ impl MapView {
                 TurnStep::Done => {
                     self.runner = None;
                     self.after_turn(ctx);
+                    if let Some(slot) = autosave_slot(ctx.game()) {
+                        self.pending = Pending::Event;
+                        return Transition::Push(Box::new(crate::ui::loadgame::SlotPage::autosave(slot)));
+                    }
                     return self.continue_gotos(ctx);
                 }
                 TurnStep::Decision(d) => {
@@ -396,10 +400,6 @@ impl MapView {
     }
 
     fn after_turn(&mut self, ctx: &mut UiContext) {
-        if ctx.game().options.autosave {
-            let path = crate::save::slot_path(&ctx.save_dir, 9);
-            let _ = crate::save::save_game(&path, ctx.game());
-        }
         self.last_centered = None;
         // the turn's units start again from the first record (move_units 0x4149)
         ctx.game_mut().active_unit = None;
@@ -1948,6 +1948,14 @@ impl MapView {
     }
 }
 
+/// The AutoSave option saves every 50 turns, into slots 4..9 in turn (game_turn 0x2769..0x27b6:
+/// turn % 50 == 0, option bit 1 of ds:0x19c0, `save_game((turn / 50 - 1) % 6 + 4)`). CIV.EXE
+/// saves as the new turn begins, before any civ's turn; civrs saves once the turn processing is
+/// over, where its saves resume.
+fn autosave_slot(g: &crate::game::Game) -> Option<usize> {
+    (g.options.autosave && g.turn > 0 && g.turn.is_multiple_of(50)).then(|| (g.turn as usize / 50 - 1) % 6 + 4)
+}
+
 /// `screen_layout_tutorial` (overlay 2 +0x17d9, 0x234e): over the first map of a Chieftain game,
 /// each of the eight squares around the view centre gets a label with its terrain, resource or
 /// "Village": a line in 15 from (200 + 16 dx, 112 + 16 dy) to a framed popup at (170 + 64 dx,
@@ -2022,6 +2030,23 @@ mod tests {
 
     fn press(button: MouseButton, x: i32, y: i32) -> Event {
         Event::MouseButton { button, x, y, down: true }
+    }
+
+    #[test]
+    fn autosave_every_fifty_turns_into_slots_4_to_9() {
+        let mut g = Game::new(GameSetup { seed: 3, ..Default::default() }, None);
+        g.options.autosave = true;
+        let slot = |g: &mut Game, t: u32| {
+            g.turn = t;
+            autosave_slot(g)
+        };
+        assert_eq!(slot(&mut g, 49), None);
+        assert_eq!(slot(&mut g, 50), Some(4));
+        assert_eq!(slot(&mut g, 100), Some(5));
+        assert_eq!(slot(&mut g, 300), Some(9));
+        assert_eq!(slot(&mut g, 350), Some(4));
+        g.options.autosave = false;
+        assert_eq!(slot(&mut g, 50), None);
     }
 
     #[test]
