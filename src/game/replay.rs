@@ -136,11 +136,20 @@ impl Game {
     }
 
     /// Names a city. The replay shows a city under its current name, as CIV.EXE writes a new
-    /// name into its name table.
+    /// name into its name table. That entry stays marked as given out (far 0x540[name] is only
+    /// ever set, by found_city o 0x1b43f), so the city's first name is never given again, even
+    /// once the city is gone: it stays among the names given out.
     pub fn set_city_name(&mut self, c: CityId, name: String) {
+        let idx = self.city(c).name_index;
         let old = std::mem::replace(&mut self.city_mut(c).name, name.clone());
-        if let Some(n) = self.history.names.iter_mut().find(|n| **n == old) {
+        let names = &mut self.history.names;
+        if let Some(n) = names.iter_mut().find(|n| **n == old) {
             *n = name;
+        }
+        if let Some(first) = crate::rules::city_names::name_table().get(idx as usize).filter(|_| idx != super::city::NO_NAME_INDEX) {
+            if !names.iter().any(|n| n == first) && names.len() < 256 {
+                names.push(first.to_string());
+            }
         }
     }
 
@@ -253,6 +262,20 @@ mod tests {
 
     fn game() -> Game {
         Game::new(GameSetup { seed: 7, ..Default::default() }, None)
+    }
+
+    #[test]
+    fn a_renamed_city_keeps_its_first_name_taken_after_it_is_gone() {
+        let mut g = game();
+        let h = g.human_slot;
+        let settler = g.units_of(h).into_iter().find(|id| g.unit(*id).kind == crate::rules::unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        let first = g.city(c).name.clone();
+        g.rename_city(c, "Elsewhere").unwrap();
+        g.remove_city(c);
+        // far 0x540[entry] stays set: the next city gets the following name
+        assert_ne!(g.next_city_name(h), first);
+        assert_ne!(g.next_city_name(h), "Elsewhere");
     }
 
     #[test]

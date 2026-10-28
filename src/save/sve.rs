@@ -611,9 +611,17 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
         }
         at += 2 + n;
     }
+    // a renamed city's entry holds its new name; its first name (civrs's fixed table) stays
+    // given out as well (`Game::set_city_name`)
+    let table = crate::rules::city_names::name_table();
     for (i, name) in names.iter().enumerate() {
-        if s.b(off::NAME_USED + i) != 0xff && !logged.contains(name) && logged.len() < 255 {
-            logged.push(name.clone());
+        if s.b(off::NAME_USED + i) == 0xff {
+            continue;
+        }
+        for n in [name.as_str(), table.get(i).copied().unwrap_or("")] {
+            if !n.is_empty() && !logged.iter().any(|l| l == n) && logged.len() < 255 {
+                logged.push(n.to_string());
+            }
         }
     }
     g.history.log = log;
