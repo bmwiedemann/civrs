@@ -593,7 +593,9 @@ impl Game {
     /// advance the human knows and a computer civilization found with probability 1/2
     /// (first discoverer, which may be the slot's destroyed civilization), Despotism,
     /// no gold, science (civilized trait + 3) tenths, tax the rest but one tenth, and clean
-    /// diplomacy both ways. Barbarian units within 8 squares are deleted.
+    /// diplomacy both ways. Barbarian units within 8 squares are deleted. (civ_init leaves the
+    /// slot's ship grid and ds:0x4cd8 launch bits alone, so CIV.EXE hands a destroyed civ's
+    /// spaceship to the new tribe; civrs starts it without one.)
     pub fn respawn_civ(&mut self, slot: Slot) -> bool {
         let old = self.player(slot).clone();
         let civ = old.civ ^ 8;
