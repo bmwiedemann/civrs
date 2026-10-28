@@ -585,6 +585,13 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   work (the loop presses the job's key, 0x44bd..0x452f) and his units finish fortifying (and
   stash a city's garrison, 0x4239..0x431f) as the loop comes to them too, not at the turn's
   start, so a save made in his turn shows only the ones the loop has reached.
+- The computer's and the barbarians' loop (`ai::unit_ai::move_units`) is the same move_units:
+  moves restored after ai_civ_turn and ai_reset_goals (0x40a4, so the looks' goals survive),
+  then by record each unit looks (every pass: the look latch is never set for a computer),
+  is passed over when sentried, fortified or without moves, completes a fortification
+  (0x4239), else takes up to five commands from ai_unit_command (the barbarian routine for
+  civ 0; working Settlers too, 0x41fb tests only 0x09), and an aircraft counts its fuel
+  (0x750f). Audiences from its contacts reach the turn runner at the look that made them.
 - dosbox's captured mouse only moves relatively, one 640x400 picture pixel per host pixel, and the
   picture sits letterboxed at y = 40 of the 640x480 window: `dosciv.click` pushes the pointer into
   the top-left corner, where the driver clamps it, and then moves it by (2x + 1, 2y + 1).
