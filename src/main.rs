@@ -308,19 +308,29 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&P
             }
             "diplomacy" => {
                 use civrs::game::diplomacy::{DiplomacyState, Proposal};
+                // screen:diplomacy:SEED:TURNS[:SLOT][:SECTION]: the audience of computer player
+                // SLOT (2), or its screen of the KING.TXT SECTION (x: EXCHANGE)
+                let ai: u8 = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(2);
+                use Proposal::*;
+                let all = [Exchange, Cancel, Tribute, TakeCiv, Peace, Attitude, Provoke, Reject, Rid, Mobilize, Threat, HelpMe, Crusade, GiveCiv, GiveCash, GiveMore, Grovel, Treaty, Gape, AtWar, NoContact, Mercenary, Unfortunate];
+                let last = parts.last().map(|s| s.to_ascii_uppercase()).unwrap_or_default();
+                let section = all.into_iter().find(|p| p.section() == last).or((last == "X").then_some(Exchange));
+                let exchange = section.is_some();
                 let g = ctx.game_mut();
                 let human = g.human_slot;
-                g.players[2].in_game = true;
-                g.players[2].alive = true;
-                g.set_relation(2, human, civrs::game::Relation::Peace);
+                if sve.is_none() {
+                    g.players[ai as usize].in_game = true;
+                    g.players[ai as usize].alive = true;
+                    g.set_relation(ai, human, civrs::game::Relation::Peace);
+                }
                 // a Diplomat's audience (mode 1) opens with the leader's greeting; an
                 // EXCHANGE screen when the leader has nothing to say
-                let at = g.cities_of(2).first().map(|c| g.city(*c).pos()).unwrap_or((-1, -1));
-                // screen:diplomacy:SEED:TURNS:x shows the EXCHANGE screen
-                let audience = if parts.get(3).is_some() { None } else { civrs::ai::diplo_ai::human_audience(g, 2, at) };
+                let at = g.cities_of(ai).first().map(|c| g.city(*c).pos()).unwrap_or((-1, -1));
+                let audience = if exchange { None } else { civrs::ai::diplo_ai::human_audience(g, ai, at) };
                 let st = audience.unwrap_or_else(|| {
-                    let mut st = DiplomacyState::new(2, human, Proposal::Exchange);
+                    let mut st = DiplomacyState::new(ai, human, section.unwrap_or(Exchange));
                     st.rplc1 = "Bronze Working".into();
+                    st.bucks = 50;
                     st.advance = Some(civrs::rules::advance_ids::BRONZE_WORKING);
                     st.human_initiated = true;
                     st

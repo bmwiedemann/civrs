@@ -2,7 +2,8 @@
 //! government (BACKgX.PIC), advisors from GOVTgX.PIC behind the king (as many as his power
 //! rank earns), the leader's bust from KINGnn.PIC and the KING.TXT texts in `leader_dialog`
 //! (o 0x8892): the shared pop-up menu (`MenuDialog`) at (36, 0x8b) in the leader's font, rows
-//! 8 apart, without a frame on the picture's own text box.
+//! 8 apart, without a frame on the picture's own text box, while the leader's face moves
+//! with his mood (`animate_leader` o 0x7ea8).
 //!
 //! The screen runs a whole audience (`diplo_ai`, CIV.EXE overlay 6): it shows each screen of
 //! it, passes the answer to `diplo_ai::respond` and shows what follows, until the audience is
@@ -82,6 +83,17 @@ pub fn leader_font(civ: u8) -> usize {
     }
 }
 
+/// The heads' picture group (o 0x86f4..0x8724): (government / 2) % 3, 3 more in the modern
+/// era, 6 for Communism.
+fn head_group(govt: crate::rules::Govt, modern: bool) -> usize {
+    let g = govt.as_u8() as usize;
+    if g == 3 {
+        6
+    } else {
+        (g / 2) % 3 + if modern { 3 } else { 0 }
+    }
+}
+
 /// leader_dialog (o 0x8892): popup_menu3(text, 0x14, 0x8b), the x 0x14 made 0x24.
 const LEADER_DIALOG_X: i32 = 0x24;
 
@@ -114,6 +126,230 @@ fn split_items(lines: Vec<String>) -> (Vec<String>, Vec<String>) {
     (text, items)
 }
 
+/// What a screen sets of the leader's face: the mood ds:0x3936 (0 pleased, 1 calm, 2 angry;
+/// None: -1, no animation and the font's own pitch), ds:0x6b8e (the angry or pleased face
+/// variant) and the talk counter ds:0xd76c; a None field keeps the last value (the calls of
+/// `leader_dialog` in o 0x6375..0x7a20 and 0x7bb1, 0x7de2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Cue {
+    mood: Option<Option<i8>>,
+    mad: Option<bool>,
+    talk: Option<i32>,
+}
+
+fn cue(st: &DiplomacyState) -> Cue {
+    let c = |mood: Option<Option<i8>>, mad: Option<bool>, talk: Option<i32>| Cue { mood, mad, talk };
+    let m = |v: i8| Some(Some(v));
+    let want = st.meeting.as_ref().is_some_and(|m| m.want);
+    match st.proposal {
+        Proposal::Exchange => c(m(1), None, Some(12)),
+        Proposal::Cancel => c(m(if want { 2 } else { 1 }), None, Some(12)),
+        Proposal::Tribute | Proposal::TakeCiv => c(m(2), Some(false), Some(12)),
+        Proposal::Provoke | Proposal::Reject | Proposal::Rid => c(m(2), Some(true), Some(12)),
+        Proposal::Peace => c(m(0), Some(false), Some(12)),
+        Proposal::GiveCiv | Proposal::GiveCash | Proposal::Grovel | Proposal::GiveMore => c(m(0), None, Some(12)),
+        Proposal::Mobilize => c(m(2), Some(true), Some(4)),
+        Proposal::Attitude => c(m(1), None, Some(4)),
+        // ds:0x6b8e = 1 after the attitude (o 0x754b)
+        Proposal::Threat => c(None, Some(true), None),
+        Proposal::NoContact | Proposal::AtWar | Proposal::Mercenary => c(m(1), None, Some(4)),
+        Proposal::Treaty => c(None, None, Some(12)),
+        Proposal::Message => {
+            let first = st.text.first().map(String::as_str).unwrap_or("");
+            match st.meeting.as_deref().map(|m| &m.awaiting) {
+                // steal_advance runs with ds:0x3936 = -1 (o 0x6b31)
+                Some(Await::Pick(_)) | Some(Await::Ack(crate::game::diplomacy::Step::ExchangePick)) => c(Some(None), None, None),
+                _ if first.starts_with("Greetings") || first.starts_with("O most") => c(m(1), None, Some(12)),
+                _ if first.starts_with("We welcome") => c(m(0), None, Some(12)),
+                _ if first.starts_with("We ignore") => c(m(1), None, Some(4)),
+                _ => c(None, None, None),
+            }
+        }
+        _ => c(None, None, None),
+    }
+}
+
+/// Eyes (ds:0x3a94), mouth (ds:0x3aa6) and next step (ds:0x3ab8: 0 rest, 1 go on, -1 / -2 / -3
+/// back to the rest state 0 / 6 / 14) of the 18 face states: 0 calm, 1..2 blink, 3..5 smiling,
+/// 6 pleased, 7..9 back to calm, 10..11 pleased blink, 12..13 frowning, 14 angry, 15..16 back,
+/// 17 angry blink.
+const FACE_EYES: [i8; 18] = [8, 0, 1, 2, 2, 4, 4, 4, 2, 2, 12, 13, 9, 10, 10, 10, 9, 11];
+const FACE_MOUTH: [i8; 18] = [0, 0, 0, 2, 3, 4, 5, 4, 3, 2, 5, 5, 7, 10, 11, 10, 7, 11];
+const FACE_NEXT: [i8; 18] = [0, 1, -1, 1, 1, 1, 0, 1, 1, -1, 1, -2, 1, 1, 0, 1, -1, -3];
+
+/// Where the face parts go for each KINGnn (the far table at segment 0x2679 +0x10 and +0x48,
+/// o 0x8800..0x8837): the eyes at (x, y - 2), the mouth at (x, y + 18).
+const FACE_AT: [(i32, i32); 14] = [(133, 31), (139, 31), (133, 35), (131, 31), (128, 22), (130, 48), (127, 34), (128, 39), (130, 28), (124, 37), (130, 24), (124, 44), (128, 24), (131, 21)];
+
+/// The advisors' heads relative to the figure, by picture group and figure (the far table's
+/// +0x80/+0x82 and +0xf0/+0xf2, o 0x8768..0x87af).
+const HEAD_AT: [[(i32, i32); 4]; 7] = [
+    [(32, 17), (17, 12), (15, 13), (30, 7)],
+    [(29, 6), (23, 10), (26, 3), (27, 9)],
+    [(26, 15), (29, 8), (24, 4), (25, 6)],
+    [(25, 14), (22, 8), (30, 6), (27, 2)],
+    [(23, 8), (32, 5), (21, 13), (22, 8)],
+    [(26, 6), (19, 5), (33, 6), (22, 6)],
+    [(19, 7), (23, 10), (25, 7), (28, 12)],
+];
+
+/// The face sprite `k` (0..13) of a KING sheet (o 0x821e..0x8279): cells of 60x50 in rows of
+/// five, cells 8, 9, 12 and 13 skipped; the eyes are the top 59x20, the mouth the 59x29 below.
+fn face_cell(k: i8) -> (i32, i32) {
+    let k = k as i32;
+    let n = k + if k >= 8 { 2 } else { 0 } + if k >= 11 { 2 } else { 0 };
+    ((n % 5) * 60 + 1, (n / 5) * 50 + 1)
+}
+
+/// The leader's animation, `animate_leader` (o 0x7ea8): one step per `wait_ticks(10)` while a
+/// dialog waits; the parts drawn last stay on the screen.
+#[derive(Clone, Debug)]
+struct Face {
+    mood: Option<i8>,
+    mad: bool,
+    talk: i32,
+    /// ds:0x67f4, ds:0x67f6.
+    state: usize,
+    hold: i32,
+    eyes: [i8; 18],
+    mouth: [i8; 18],
+    /// The eyes and mouth drawn last, and the advisors' expression (ds:0x67e8).
+    shown: (i8, i8),
+    heads: i8,
+    rng: u32,
+    last_step: Option<u64>,
+}
+
+impl Face {
+    fn new(seed: u64) -> Face {
+        Face { mood: None, mad: false, talk: 0, state: 0, hold: 0, eyes: FACE_EYES, mouth: FACE_MOUTH, shown: (-1, -1), heads: -1, rng: seed as u32 | 1, last_step: None }
+    }
+
+    fn apply(&mut self, c: Cue) {
+        if let Some(m) = c.mood {
+            self.mood = m;
+        }
+        if let Some(b) = c.mad {
+            self.mad = b;
+        }
+        if let Some(t) = c.talk {
+            self.talk = t;
+        }
+    }
+
+    /// random(n) of the animation (CIV.EXE draws it from the game's generator; civrs keeps the
+    /// game's stream out of it).
+    fn random(&mut self, n: u32) -> u32 {
+        self.rng ^= self.rng << 13;
+        self.rng ^= self.rng >> 17;
+        self.rng ^= self.rng << 5;
+        self.rng % n
+    }
+
+    fn step(&mut self) {
+        let Some(mood) = self.mood else { return };
+        let mut adv = -1i8;
+        let (eyes, mouth);
+        if self.talk != 0 && self.state == 0 {
+            // talking: the mouth moves, the eyes stay (o 0x7ec4..0x7f0b)
+            eyes = -1;
+            let mut m = if self.random(2) == 0 { 0 } else { 9 };
+            if self.talk & 3 == 0 {
+                m = 8;
+            }
+            mouth = m;
+            self.talk -= 1;
+            self.hold = 4;
+        } else {
+            let t = FACE_NEXT[self.state];
+            if t == 0 {
+                // at rest: the mood picks where to go (o 0x7f1e..0x7fb5)
+                let mut next = -1i32;
+                match mood {
+                    0 => {
+                        self.eyes[6] = if self.mad { 4 } else { 2 };
+                        if self.state != 6 {
+                            next = 3;
+                        }
+                    }
+                    1 => {
+                        if self.state != 0 {
+                            next = 0;
+                        }
+                    }
+                    2 => {
+                        let v = if self.mad { 11 } else { 7 };
+                        self.mouth[14] = v;
+                        self.mouth[17] = v;
+                        if self.state != 14 {
+                            next = 12;
+                        }
+                    }
+                    _ => {}
+                }
+                if self.talk != 0 && self.state != 0 {
+                    next = 0;
+                }
+                if next == -1 {
+                    adv = match self.state {
+                        14 => 1,
+                        6 => 2,
+                        _ => 0,
+                    };
+                } else {
+                    if self.state == 0 {
+                        self.state = next as usize;
+                    }
+                    if self.state == 6 || self.state == 14 {
+                        self.state += 1;
+                    }
+                }
+            } else if t < 0 {
+                self.state = match t {
+                    -3 => 14,
+                    -2 => 6,
+                    _ => 0,
+                };
+            } else {
+                self.state += 1;
+            }
+            // a blink now and then (random(12), o 0x8011)
+            if self.hold == 0 && self.random(12) == 0 && FACE_NEXT[self.state] == 0 {
+                self.state = match self.state {
+                    0 => 1,
+                    6 => 10,
+                    14 => 17,
+                    s => s,
+                };
+            }
+            eyes = self.eyes[self.state];
+            mouth = self.mouth[self.state];
+        }
+        if self.hold != 0 {
+            self.hold -= 1;
+        }
+        if adv != -1 {
+            self.heads = adv;
+        }
+        if eyes != -1 {
+            self.shown.0 = eyes;
+        }
+        if mouth != -1 {
+            self.shown.1 = mouth;
+        }
+    }
+
+    /// The steps since the last frame, one per 10 ticks (60 Hz frames).
+    fn advance(&mut self, frame: u64) {
+        let mut last = self.last_step.unwrap_or(frame).min(frame);
+        while frame >= last + 10 {
+            last += 10;
+            self.step();
+        }
+        self.last_step = Some(last);
+    }
+}
+
 pub struct AudienceScreen {
     state: Option<DiplomacyState>,
     ai: Slot,
@@ -125,11 +361,12 @@ pub struct AudienceScreen {
     has_items: bool,
     /// The leader's anthem is playing (the throne room is up).
     anthem: bool,
+    face: Face,
 }
 
 impl AudienceScreen {
     fn empty(ai: Slot) -> AudienceScreen {
-        AudienceScreen { state: None, ai, start: None, sub_shown: false, has_items: false, anthem: false }
+        AudienceScreen { state: None, ai, start: None, sub_shown: false, has_items: false, anthem: false, face: Face::new(0x2545_f491 ^ ai as u64) }
     }
 }
 
@@ -150,7 +387,7 @@ pub fn human_audience(ai_slot: u8, at: (i32, i32)) -> Box<dyn Screen> {
 /// The pop-up of a screen of the audience: `leader_dialog` in the throne room, popup_menu
 /// over the map for the emissary (100, 80, o 0x7b15) and for a refused emissary's declaration
 /// (40, 100, o 0x6f83).
-pub fn audience_dialog(ctx: &UiContext, st: &DiplomacyState) -> MenuDialog {
+pub fn audience_dialog(ctx: &UiContext, st: &DiplomacyState, mood_set: bool) -> MenuDialog {
     let (text, items) = match st.proposal {
         Proposal::Message | Proposal::Emissary => (st.text.clone(), st.menu.clone()),
         _ => split_items(king_lines(ctx, st)),
@@ -171,7 +408,12 @@ pub fn audience_dialog(ctx: &UiContext, st: &DiplomacyState) -> MenuDialog {
         d = d.no_cancel();
     }
     let civ = ctx.game.as_ref().map(|g| g.player(st.ai).civ).unwrap_or(1);
-    d.with_pos(LEADER_DIALOG_X, LEADER_DIALOG_Y).with_font(leader_font(civ)).with_pitch(8)
+    d = d.with_pos(LEADER_DIALOG_X, LEADER_DIALOG_Y).with_font(leader_font(civ));
+    // the pitch is 8 while the leader's mood is set (o 0x1c8de)
+    if mood_set {
+        d = d.with_pitch(8);
+    }
+    d
 }
 
 impl AudienceScreen {
@@ -189,6 +431,9 @@ impl AudienceScreen {
         // CIV.EXE plays the war drums (tune 33) for demands, threats and declarations of war
         if st.drums {
             ctx.audio.play(crate::audio::Sound::WarDrums);
+        }
+        if throne {
+            self.face.apply(cue(&st));
         }
         self.state = Some(st);
         self.sub_shown = false;
@@ -243,7 +488,7 @@ impl Screen for AudienceScreen {
         if st.proposal == Proposal::Intelligence {
             return Transition::Push(Box::new(crate::ui::report_advisors::Dossier::new(st.ai)));
         }
-        let d = audience_dialog(ctx, &st);
+        let d = audience_dialog(ctx, &st, self.face.mood.is_some());
         self.has_items = !d.items.is_empty();
         Transition::Push(Box::new(d))
     }
@@ -286,6 +531,28 @@ impl Screen for AudienceScreen {
         let kp = ctx.pic(&king);
         let key = kp.surf.get(KING_BUST.x, KING_BUST.y);
         fb.blit_part(&kp.surf, KING_BUST, KING_AT.0, KING_AT.1, Some(key));
+        // animate_leader's parts over the bust and the heads (draw_leader_face o 0x86d7)
+        self.face.advance(ctx.frame);
+        if self.face.heads >= 0 {
+            let grp = ctx.game.as_ref().map(|g| head_group(g.player(self.ai).govt, self.era(ctx))).unwrap_or(0);
+            let hkey = sheet.surf.get(161, 1);
+            for (i, x) in ADVISOR_X.iter().enumerate().take(count) {
+                let idx = (i + self.ai as usize) & 3;
+                let (dx, dy) = HEAD_AT[grp][idx];
+                let r = Rect::new(161 + 29 * self.face.heads as i32, 1 + 25 * idx as i32, 28, 24);
+                fb.blit_part(&sheet.surf, r, x + dx, 34 + dy, Some(hkey));
+            }
+        }
+        let k = king_index(ctx.game.as_ref().map(|g| g.player(self.ai).civ).unwrap_or(1)) as usize;
+        let (fx, fy) = FACE_AT[k.min(13)];
+        if self.face.shown.0 >= 0 {
+            let (cx, cy) = face_cell(self.face.shown.0);
+            fb.blit_part(&kp.surf, Rect::new(cx, cy, 59, 20), fx, fy - 2, Some(key));
+        }
+        if self.face.shown.1 >= 0 {
+            let (cx, cy) = face_cell(self.face.shown.1);
+            fb.blit_part(&kp.surf, Rect::new(cx, cy + 20, 59, 29), fx, fy + 18, Some(key));
+        }
     }
 
     /// BACKgX.PAL with the leader's colours 64..143 from KINGnn.PAL (o 0x85f3..0x8637); the
@@ -312,6 +579,31 @@ mod tests {
         // the table of segment 0x2679: Caesar 0 -> font 8, Hammurabi 1 -> 9, Frederick 2 -> 3
         assert_eq!((leader_font(1), leader_font(2), leader_font(3)), (7, 8, 2));
         assert_eq!(advisor_rect(3), Rect::new(241, 101, 78, 99));
+    }
+
+    #[test]
+    fn the_face_settles_on_its_mood() {
+        // animate_leader: talking first (12 steps of mouths 0 / 9 / 8), then to the rest state
+        // of the mood: angry 14 with the advisors' expression 1, pleased 6 with 2
+        let mut f = Face::new(7);
+        f.apply(Cue { mood: Some(Some(2)), mad: Some(true), talk: Some(12) });
+        for _ in 0..12 {
+            f.step();
+            assert!([0, 8, 9].contains(&f.shown.1));
+        }
+        assert_eq!(f.talk, 0);
+        for _ in 0..40 {
+            f.step();
+        }
+        assert!(f.state == 14 || f.state == 17, "{}", f.state);
+        assert_eq!((f.heads, f.mouth[14]), (1, 11));
+        f.apply(Cue { mood: Some(Some(0)), mad: Some(false), talk: None });
+        for _ in 0..40 {
+            f.step();
+        }
+        assert!(f.state == 6 || f.state == 10 || f.state == 11, "{}", f.state);
+        assert_eq!((f.heads, f.eyes[6]), (2, 2));
+        assert_eq!(face_cell(8), (1, 101));
     }
 
     #[test]
