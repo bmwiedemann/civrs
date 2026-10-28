@@ -318,13 +318,16 @@ impl Game {
         let c = self.add_city(u.owner, name, u.x, u.y);
         // found_city o 0x1b375 drops the city-site goals within 4 (0x1b38c)
         self.remove_goals_near(u.owner, super::goals::goal::SETTLE, u.x, u.y, 4);
-        self.remove_unit(id);
-        self.refresh_vision(u.owner);
-        // the computer asks its production advisor at once (found_city o 0x1b375)
+        // the computer asks its production advisor at once (found_city o 0x1b375), while the
+        // Settlers still stand in the new city: 'b' deletes the unit only after found_city
+        // returns (0x5829 -> 0x57e9), so the advisor counts them among the civ's units and
+        // the city is not empty
         if !self.player(u.owner).human {
             let p = self.ai_production(c);
             self.city_mut(c).production = p;
         }
+        self.remove_unit(id);
+        self.refresh_vision(u.owner);
         self.push_event(super::GameEvent::CityFounded { city: c });
         Ok(c)
     }

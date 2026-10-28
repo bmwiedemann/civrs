@@ -634,6 +634,24 @@ mod tests {
     }
 
     #[test]
+    fn the_advisor_of_a_new_city_still_sees_its_settlers() {
+        // 'b' deletes the Settlers after found_city has asked the advisor (0x5829 -> 0x57e9):
+        // a civ whose last unit founds the city does not take the no-units Militia shortcut,
+        // and the city is not empty (no 2-defender need)
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        let slot = (1..8).find(|s| *s != g.human_slot && g.player(*s).alive && !g.units_of(*s).is_empty()).unwrap();
+        let units = g.units_of(slot);
+        let settler = *units.iter().find(|id| g.unit(**id).kind == unit_ids::SETTLERS).unwrap();
+        for id in units.into_iter().filter(|id| *id != settler) {
+            g.remove_unit(id);
+        }
+        g.player_mut(slot).learn(adv::BRONZE_WORKING);
+        let c = g.found_city(settler).unwrap();
+        assert!(g.units_of(slot).is_empty());
+        assert_ne!(g.city(c).production, Production::Unit(unit_ids::MILITIA));
+    }
+
+    #[test]
     fn an_empty_city_builds_a_defender() {
         let (mut g, c) = ai_city();
         let slot = g.city(c).owner;
