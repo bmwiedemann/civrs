@@ -3,7 +3,8 @@
 
     python3 -I sve_diff.py play GAME_DIR SLOT TURNS OUT_DIR [--actions SCRIPT]
         Start CIV.EXE in dosbox (dosciv.py) on GAME_DIR (a private writable copy of the game),
-        load CIVIL<SLOT>.SVE, turn Instant Advice off and End of Turn on, then TURNS times:
+        load CIVIL<SLOT>.SVE, turn Instant Advice and AutoSave off and End of Turn on, then
+        TURNS times:
         perform the script's actions of the turn (src/save/actions.rs; examples in
         actions/), skip the active unit (Space) until the turn ends, save to slot 2
         (CIVIL2.SVE) and copy every new turn's save to OUT_DIR/t<TURN>.SVE/.MAP. Space only
@@ -149,7 +150,9 @@ def play(game, slot, turns, out, script=None):
     with open(os.path.join(game, 'CIVIL%s.SVE' % slot), 'rb') as f:
         f.seek(0x8aa4)
         opts = f.read(1)[0]
-    toggle = (['Return'] if opts & 1 else []) + ['Down', 'Down'] + (['Return'] if not opts & 4 else [])
+    # and AutoSave off (its save every 50th turn to CIVIL4..9, game_turn 0x2796, would take
+    # the harness's Return for its drive prompt and overwrite a slot of GAME_DIR)
+    toggle = (['Return'] if opts & 1 else []) + ['Down'] + (['Return'] if opts & 2 else []) + ['Down'] + (['Return'] if not opts & 4 else [])
     k(['alt+g', 'sleep1', 'Down', 'Down', 'Down', 'Return', 'sleep1'] + toggle + ['Escape', 'sleep1'])
     save = os.path.join(game, 'CIVIL2.SVE')
     last = turn_of(os.path.join(game, 'CIVIL%s.SVE' % slot))

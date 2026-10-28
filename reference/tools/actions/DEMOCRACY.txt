@@ -1,0 +1,19 @@
+# DEMOCRACY (slot 7 in a scratch copy of the game): CIVIL4 edited by hand as REPUBLIC.txt but
+# for govt:1:5 and the slot,
+#   sve_edit.py CIVIL4.SVE CIVIL7.SVE ... diplo:3:1:3 contact:2:70 contact:3:70 govt:1:5
+# The Romans under Democracy: two unhappy citizens per unit abroad, no corruption by
+# distance, the Senate overrules the attack on Berlin ("Overruled by the Senate." takes a
+# Return); a city in disorder a second turn in a row makes the government collapse into
+# Anarchy (0x12701 -> 0x127ba): Rome and Caesarea riot from turn 50.
+turn 50
+unit 12,27 f
+unit 9,25 f
+unit 10,26 f
+unit 11,21 k8:1 ret f
+unit 14,14 f
+unit 12,29 f
+unit 11,30 space
+unit 63,41 space
+unit 58,41 b
+turn 51
+unit 63,41 k6 ret

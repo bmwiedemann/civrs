@@ -1,0 +1,12 @@
+# GROWTH (slot 8 in a scratch copy of the game): CIVIL4 edited by hand, made with
+#   sve_edit.py CIVIL4.SVE CIVIL8.SVE adv:1:1,2,4,5,9,16,25,26,29,42,44,45,53 govt:1:4
+#     rates:1:30,0 city:0:size=10,food=200 work:0:10 imp:0:3,4,5,11,14
+#     city:4:size=10,food=200 work:4:10 imp:4:3,4,5,9,14 tile:12,28:0x0a tile:11,29:0x0a
+#     tile:12,30:0x0a tile:13,30:0x0a tile:11,30:0x0a tile:10,25:0x0a tile:11,25:0x0a
+#     tile:10,26:0x0a tile:11,26:0x0a tile:9,24:0x0a city:1:food=-1 city:2:food=-1
+# Full food boxes at size 10: Rome (Granary, no Aqueduct) grows and shrinks back at once
+# ("Rome requires an AQUEDUCT", a message the harness answers), Caesarea (Granary, Aqueduct)
+# grows to 11 and keeps 5 * 11 + 5 food (0xd1c7); both then starve slowly. Berlin and
+# Tenochtitlan start with an empty store below zero: famine (0xd007), Berlin's Settlers are
+# lost, Tenochtitlan shrinks. Luxuries 70%: Caesarea celebrates.
+turn 50

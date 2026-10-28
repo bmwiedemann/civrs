@@ -1,0 +1,31 @@
+# REPUBLIC (slot 6 in a scratch copy of the game): CIVIL4 edited by hand, made with
+#   sve_edit.py CIVIL4.SVE CIVIL6.SVE adv:1:1,2,4,5,9,16,25,26,29,42,44,45,53 rates:1:40,50
+#     city:0:size=8,food=60 work:0:8 imp:0:3,4,5,6 city:4:size=6,food=20 work:4:6 imp:4:7
+#     tile:12,28:0x0a tile:11,29:0x0a tile:12,30:0x0a tile:13,30:0x0a tile:11,30:0x0a
+#     tile:10,25:0x0a tile:11,25:0x0a tile:10,26:0x0a tile:11,26:0x0a tile:9,24:0x0a
+#     unit:1:3:12,27:0 unit:1:3:12,29:0 unit:1:0:11,30:0 unit:1:8:9,25:4 unit:1:3:10,26:4
+#     unit:1:3:11,21:4 unit:1:27:63,41:0 unit:1:0:58,41 diplo:1:2:3 diplo:2:1:3 diplo:1:3:3
+#     diplo:3:1:3 contact:2:70 contact:3:70 govt:1:4
+# The Romans under the Republic: Rome size 8 with Temple, Market, Library and Granary,
+# Legions in it and outside (a content citizen each), Settlers eating 2 food; Caesarea size 6
+# with a Courthouse and two units. Turn 50: the Legion at 11,21 tries to break the treaty with
+# the Germans ("Overruled by the Senate." takes a Return); Settlers on the other continent
+# found a city far from the Palace. Turn 51 (when Rome's saved trade, city +0xa, is fresh
+# again after the edit) a caravan enters Babylon there (the route's message takes a
+# Return). Turn 52 luxuries 50% (celebration and rapture growth), turn 55 back to 10%.
+turn 50
+unit 12,27 f
+unit 9,25 f
+unit 10,26 f
+unit 11,21 k8:1 ret f
+unit 14,14 f
+unit 12,29 f
+unit 11,30 space
+unit 63,41 space
+unit 58,41 b
+turn 51
+unit 63,41 k6 ret
+turn 52
+lux +4
+turn 55
+lux -4
