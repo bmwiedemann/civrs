@@ -154,7 +154,27 @@ pub fn read_header(path: &Path) -> Option<SlotInfo> {
 pub fn import(sve: &Path) -> Result<Game, SaveError> {
     let data = std::fs::read(sve)?;
     let map = std::fs::read(map_file(sve))?;
-    import_bytes(&data, &map)
+    let mut g = import_bytes(&data, &map)?;
+    // load_game sets ds:0xdf60 = 2 for the slots from 4 on (o 0xf0bc, slot ds:0xe168), and
+    // then move_units (0x40c0) gives the human's units their full moves again, as at the start
+    // of a turn; slots 0..3 (ds:0xdf60 = 1) keep the saved moves
+    if slot_of(sve).is_some_and(|n| n >= 4) {
+        let extra = g.extra_sea_move(g.human_slot);
+        let human = g.human_slot;
+        for u in g.units.iter_mut().flatten().filter(|u| u.owner == human) {
+            u.moves_left = u.full_moves() + if u.is_sea() && extra { 3 } else { 0 };
+        }
+        g.active_unit = None;
+        g.active_unit = g.next_active_unit();
+    }
+    Ok(g)
+}
+
+/// The slot n of a CIVILn.SVE file name.
+fn slot_of(sve: &Path) -> Option<u8> {
+    let name = sve.file_name()?.to_str()?.to_ascii_uppercase();
+    let n = name.strip_prefix("CIVIL")?.strip_suffix(".SVE")?;
+    (n.len() == 1).then(|| n.parse().ok()).flatten()
 }
 
 /// The order a unit's flag byte (+0) and goto (+6) stand for (the order keys of `move_units`
@@ -784,6 +804,20 @@ mod tests {
             }
         }
         assert!(seen[0] + seen[1] == 0 || seen.iter().all(|n| *n > 0), "both kinds among the samples: {seen:?}");
+    }
+
+    #[test]
+    fn a_load_from_slot_4_on_gives_the_human_units_their_moves() {
+        // CIVIL4's Militia was saved with no moves left; ds:0xdf60 = 2 restores them, and the
+        // records keep their numbers (the human's Militia is record 0)
+        let Some(g) = sample(4) else { return };
+        let h = g.human_slot;
+        let m = g.units_of(h)[0];
+        assert_eq!((g.unit(m).kind, g.unit(m).moves_left, g.unit(m).record), (rules::unit_ids::MILITIA, 3, 0));
+        assert_eq!(g.active_unit, Some(m));
+        let Some(g0) = sample(0) else { return };
+        let s = g0.all_units().find(|u| u.owner == g0.human_slot && u.kind == rules::unit_ids::SETTLERS).unwrap();
+        assert_eq!(s.moves_left, 0, "slots 0..3 keep the saved moves");
     }
 
     #[test]
