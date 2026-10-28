@@ -275,6 +275,9 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
     g.year = s.w(off::YEAR) as i32;
     g.human_slot = human;
     g.opening = false;
+    // a loaded game starts with the map view at (capital x - 7, 19) (0x1bd4: ds:0xd4cc =
+    // ds:0xdcec[human] - 7, ds:0xd75e = 0x13), which decides the human's first unit (0x434f)
+    g.view = Some((Map::wrap_x(s.civ_w(off::CAPITAL_X, human as usize) as i32 - 7), 19));
     g.hints_shown = 0;
 
     // the map page
@@ -694,6 +697,8 @@ pub fn state_text(g: &Game) -> String {
             let _ = writeln!(o, "{k}.researching {:?}", p.researching);
         }
         let _ = writeln!(o, "{k}.units_per_type {:?}", &p.unit_counter[..]);
+        // the losses in combat by type (SVE 0x869e, counted by delete_unit 0x8d71)
+        let _ = writeln!(o, "{k}.lost_per_type {:?}", &p.units_lost_by_type[..]);
         let _ = writeln!(o, "{k}.cities {}", g.all_cities().filter(|c| c.owner == p.slot).count());
         let _ = writeln!(o, "{k}.diplo {:04x?}", &p.diplo[..]);
         if p.slot > g.human_slot {
@@ -722,7 +727,7 @@ pub fn state_text(g: &Game) -> String {
         last = (u.owner, u.kind);
         let _ = writeln!(
             o,
-            "unit{}.{}.{} at {},{} moves {} order {:?} turns {} fuel {} vet {} home {:?} goto {:?} heading {}",
+            "unit{}.{}.{} at {},{} moves {} order {:?} turns {} fuel {} vet {} home {:?} goto {:?} heading {} rec {}",
             u.owner,
             u.info().name,
             n,
@@ -735,7 +740,8 @@ pub fn state_text(g: &Game) -> String {
             u.veteran,
             u.home,
             u.goto,
-            g.heading(u.id)
+            g.heading(u.id),
+            u.record
         );
     }
     // the terrain, a letter per square (Terrain order: Desert .. River)
@@ -811,6 +817,9 @@ mod tests {
         assert_eq!(rome.production, Production::Improvement(rules::improvement_ids::GRANARY));
         assert!(rome.has_improvement(rules::improvement_ids::PALACE));
         assert_eq!(g.human().capital, Some(0));
+        // a loaded game's view (capital x - 7, row 19: 0x1bd4) has no unit wanting orders, so
+        // the loop centres it on the first one, the Militia at 3,20 (0x438f)
+        assert_eq!(g.view, Some((76, 14)));
         assert_eq!(rome.workers(), 2);
         assert_eq!(g.city(1).name, "Berlin");
         assert_eq!(g.city(1).owner, 3);
