@@ -83,24 +83,33 @@ impl Game {
         }
     }
 
-    /// The Nuclear Plant is lost; every city on the 3x3 squares around loses half its size and
-    /// the other land squares are polluted two times in three (0x1a5d9).
+    /// The Nuclear Plant is lost, then `nuclear_fallout` at the city.
     pub fn meltdown(&mut self, c: CityId) {
         self.city_mut(c).remove_improvement(imp::NUCLEAR_PLANT);
         let (cx, cy) = self.city(c).pos();
-        for (x, y) in std::iter::once((cx, cy)).chain(super::Map::neighbours8(cx, cy)) {
+        self.nuclear_fallout(cx, cy);
+        self.push_event(GameEvent::Meltdown { city: c });
+    }
+
+    /// `nuclear_fallout` (CIV.EXE 0x1a5d9): every city on the 3x3 squares around (cx, cy)
+    /// loses half its size (rounded down) and the other land squares are polluted two times in
+    /// three. Returns the cities hit.
+    pub fn nuclear_fallout(&mut self, cx: i32, cy: i32) -> Vec<CityId> {
+        let mut hit_cities = Vec::new();
+        for (x, y) in std::iter::once((super::Map::wrap_x(cx), cy)).chain(super::Map::neighbours8(cx, cy)) {
             let Some(t) = self.map.get(x, y) else { continue };
             if let Some(hit) = t.city {
                 let loss = self.city(hit).size as i32 / 2;
                 if loss > 0 {
                     self.shrink_city(hit, loss);
                 }
+                hit_cities.push(hit);
             } else if self.rng.below(3) != 0 && t.is_land() && !t.has(tile_flags::POLLUTION) {
                 self.map.get_mut(x, y).unwrap().set(tile_flags::POLLUTION, true);
                 self.polluted_tiles += 1;
             }
         }
-        self.push_event(GameEvent::Meltdown { city: c });
+        hit_cities
     }
 
     /// The end-of-turn warming step (CIV.EXE 0x3ae7): `warming_counter` moves one step

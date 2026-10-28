@@ -214,6 +214,9 @@ pub enum GameEvent {
     /// "CITY requires an AQUEDUCT\nfor further growth." (CIV.EXE 0xd221, ds:0x2534): the city
     /// grew past size 10 without one and shrank back.
     AqueductNeeded(CityId),
+    /// "SDI protects <city>." at (80,100), for everyone (`nuclear_attack` CIV.EXE 0x1a51f):
+    /// the city's units survive a nuclear blast.
+    SdiProtects { city: CityId },
 }
 
 /// A choice the engine needs from the human player before continuing.

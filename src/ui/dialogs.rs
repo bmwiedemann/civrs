@@ -365,6 +365,7 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             let text = vec![format!("The {} launch", civ(*by)), format!("a nuclear attack {where_}!")];
             Some(Box::new(Sequence { first: Some(anim), then: Some(eventpics::travelers_report(text)) }))
         }
+        GameEvent::SdiProtects { city } => Some(Box::new(MessageBox::new(vec![format!("SDI protects {}.", city_name(*city))]).with_pos(80, 100))),
         GameEvent::GameEnded(reason) => Some(crate::ui::endgame::end_screen(ctx, *reason)),
         GameEvent::GameEndedAgain(reason) => Some(crate::ui::endgame::end_again_screen(ctx, *reason)),
         // a computer Diplomat's deeds are announced to the human whoever was involved

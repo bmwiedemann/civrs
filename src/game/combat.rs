@@ -238,62 +238,46 @@ impl Game {
         }
     }
 
-    /// Is tile (x,y) protected by an SDI Defense (a city within 3 tiles that has one, owned by
-    /// anyone other than `attacker`)?
-    pub fn sdi_protects(&self, attacker: Slot, x: i32, y: i32) -> bool {
-        self.all_cities().any(|c| c.owner != attacker && c.has_improvement(imp::SDI_DEFENSE) && Map::dist((c.x, c.y), (x, y)) <= 3)
-    }
-
-    /// Nuclear attack by unit `id` on tile (x,y): every unit in the 3x3 area dies, a city there
-    /// loses half its population, land tiles are polluted. SDI Defense within 3 tiles of the
-    /// target shoots the missile down (the nuclear unit is lost either way).
+    /// Nuclear attack by unit `id` on tile (x,y) (`nuclear_attack` CIV.EXE 0x1a463): on the
+    /// target and its 8 neighbours (the nuclear unit's own square among them) every stack
+    /// dies, except one in a city with SDI Defense ("SDI protects <city>."); then
+    /// `nuclear_fallout` (0x1a5d9) halves every city there, SDI or not, and pollutes the other
+    /// land squares two times in three.
     pub fn nuke(&mut self, id: UnitId, x: i32, y: i32) -> MoveOutcome {
         let attacker = self.unit(id).clone();
         let by = attacker.owner;
-        self.unit_mut(id).moves_left = 0;
-        if self.sdi_protects(by, x, y) {
-            self.push_event(GameEvent::UnitLost { slot: by, kind: attacker.kind, at: (x, y), reason: "destroyed by SDI Defense".into() });
-            self.remove_unit(id);
-            self.refresh_vision(by);
-            return MoveOutcome::Attacked { won: false, at: (x, y), defender: unit_ids::NUCLEAR };
-        }
         self.remove_unit(id);
         let mut losers: Vec<Slot> = Vec::new();
-        for yy in (y - 1)..=(y + 1) {
-            for xx in (x - 1)..=(x + 1) {
-                if !Map::in_bounds(xx, yy) {
-                    continue;
+        let mut killers: Vec<Slot> = Vec::new();
+        for (xx, yy) in std::iter::once((Map::wrap_x(x), y)).chain(Map::neighbours8(x, y)) {
+            if let Some(c) = self.city_at(xx, yy).filter(|c| self.city(*c).has_improvement(imp::SDI_DEFENSE)) {
+                self.push_event(GameEvent::SdiProtects { city: c });
+                continue;
+            }
+            for v in self.units_at(xx, yy) {
+                let Some(vu) = self.unit_opt(v).cloned() else { continue };
+                self.players[vu.owner as usize].stats.units_lost += 1;
+                self.push_event(GameEvent::UnitLost { slot: vu.owner, kind: vu.kind, at: (xx, yy), reason: "nuclear attack".into() });
+                self.remove_unit(v);
+                if !losers.contains(&vu.owner) {
+                    losers.push(vu.owner);
                 }
-                for v in self.units_at(xx, yy) {
-                    let Some(vu) = self.unit_opt(v).cloned() else { continue };
-                    self.players[vu.owner as usize].stats.units_lost += 1;
-                    self.push_event(GameEvent::UnitLost { slot: vu.owner, kind: vu.kind, at: (xx, yy), reason: "nuclear attack".into() });
-                    self.remove_unit(v);
-                    if !losers.contains(&vu.owner) {
-                        losers.push(vu.owner);
-                    }
-                }
-                let t = self.map.tile(xx, yy);
-                if t.is_land() && t.city.is_none() && !t.has(tile_flags::POLLUTION) {
-                    self.map.get_mut(xx, yy).unwrap().set(tile_flags::POLLUTION, true);
-                    self.polluted_tiles += 1;
+                if !killers.contains(&vu.owner) {
+                    killers.push(vu.owner);
                 }
             }
         }
         let city = self.city_at(x, y);
-        if let Some(c) = city {
-            let size = self.city(c).size;
-            self.city_mut(c).size = (size / 2).max(1);
-            self.auto_assign(c);
-            self.push_event(GameEvent::CityShrank(c));
+        for c in self.nuclear_fallout(x, y) {
             let owner = self.city(c).owner;
             if !losers.contains(&owner) {
                 losers.push(owner);
             }
         }
         self.last_combat = Some(((attacker.x, attacker.y), (x, y), true));
-        // the victims hold a vendetta against the attacker and remember the bomb (0x1a5ba)
-        for l in losers.iter().copied().filter(|l| *l != by) {
+        // those who lost units hold a vendetta against the attacker and remember the bomb
+        // (0x1a5ba)
+        for l in killers.into_iter().filter(|l| *l != by) {
             self.raise_flag(l, by, super::diplomacy::flags::VENDETTA | super::diplomacy::flags::NUCLEAR);
         }
         self.push_event(GameEvent::NuclearStrike { at: (x, y), by, city });
@@ -1016,16 +1000,22 @@ mod tests {
         assert!(matches!(out, MoveOutcome::Attacked { won: true, .. }));
         assert!(g.units_at(20, 20).is_empty() && g.units_at(21, 21).is_empty());
         assert_eq!(g.city(c).size, 4);
-        assert!(g.map.tile(19, 19).has(tile_flags::POLLUTION));
         assert!(!g.map.tile(20, 20).has(tile_flags::POLLUTION), "city tile itself is not polluted");
         assert!(g.unit_opt(n).is_none());
-        // SDI blocks the next one
+        // CIV.EXE 0x1a463: SDI Defense saves the city's units, not its people; a second city
+        // in the blast is halved too (size - size / 2)
         g.city_mut(c).add_improvement(imp::SDI_DEFENSE);
+        let near = g.add_city(2, "Near".into(), 21, 19);
+        g.city_mut(near).size = 5;
         let n2 = g.add_unit(1, unit_ids::NUCLEAR, 18, 20);
         g.add_unit(2, unit_ids::MUSKETEERS, 20, 20);
-        assert!(matches!(g.nuke(n2, 20, 20), MoveOutcome::Attacked { won: false, .. }));
+        g.add_unit(2, unit_ids::MUSKETEERS, 19, 21);
+        assert!(matches!(g.nuke(n2, 20, 20), MoveOutcome::Attacked { won: true, .. }));
         assert_eq!(g.units_at(20, 20).len(), 1);
-        assert_eq!(g.city(c).size, 4);
+        assert!(g.units_at(19, 21).is_empty());
+        assert_eq!(g.city(c).size, 2);
+        assert_eq!(g.city(near).size, 3);
+        assert!(g.events.iter().any(|e| matches!(e, GameEvent::SdiProtects { city } if *city == c)));
     }
 
     #[test]
