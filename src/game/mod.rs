@@ -1037,6 +1037,17 @@ impl Game {
         (Map::wrap_x(x - 7), (y - 6).clamp(0, crate::rules::MAP_H as i32 - 12))
     }
 
+    /// The view after `scroll_to` (0x9505), which keeps a moving unit in sight: a square
+    /// outside columns vx+2..vx+13 or rows vy+2..vy+9 gets the view origin (x - 8, y - 6).
+    pub fn view_scrolled_to(view: (i32, i32), x: i32, y: i32) -> (i32, i32) {
+        let rel = Map::wrap_x(x - view.0);
+        if (2..=13).contains(&rel) && (view.1 + 2..=view.1 + 9).contains(&y) {
+            view
+        } else {
+            (Map::wrap_x(x - 8), (y - 6).clamp(0, crate::rules::MAP_H as i32 - 12))
+        }
+    }
+
     /// Any human unit still able to act this turn?
     pub fn human_units_pending(&self) -> bool {
         self.all_units().any(|u| u.owner == self.human_slot && u.moves_left > 0 && u.order == UnitOrder::None)

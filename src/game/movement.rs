@@ -687,6 +687,17 @@ mod tests {
     }
 
     #[test]
+    fn a_moving_unit_keeps_two_squares_from_the_view_edge() {
+        // scroll_to 0x9505: columns vx+2..vx+13 and rows vy+2..vy+9 keep the view, any other
+        // square gets the origin (x - 8, y - 6)
+        assert_eq!(Game::view_scrolled_to((5, 23), 12, 27), (5, 23));
+        assert_eq!(Game::view_scrolled_to((5, 23), 7, 24), (79, 18));
+        assert_eq!(Game::view_scrolled_to((5, 23), 7, 33), (79, 27));
+        assert_eq!(Game::view_scrolled_to((5, 23), 19, 25), (11, 19));
+        assert_eq!(Game::view_scrolled_to((75, 10), 2, 15), (75, 10), "across the date line");
+    }
+
+    #[test]
     fn one_full_move_point_always_enters_mountains() {
         for seed in 0..20 {
             let (mut g, id) = militia_before_mountains(seed, 3);

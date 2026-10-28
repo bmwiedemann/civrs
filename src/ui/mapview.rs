@@ -285,11 +285,9 @@ impl MapView {
         self.vy = (y - 6).clamp(0, MAP_H as i32 - VIEW_H);
     }
 
+    /// `scroll_to` (CIV.EXE 0x9505), before a unit's move or fight is shown.
     fn ensure_visible(&mut self, x: i32, y: i32) {
-        let rel = Map::wrap_x(x - self.vx);
-        if rel < 1 || rel >= VIEW_W - 1 || y < self.vy + 1 || y >= self.vy + VIEW_H - 1 {
-            self.center_on(x, y);
-        }
+        (self.vx, self.vy) = crate::game::Game::view_scrolled_to((self.vx, self.vy), x, y);
     }
 
     fn tile_at_pixel(&self, px: i32, py: i32) -> Option<(i32, i32)> {
