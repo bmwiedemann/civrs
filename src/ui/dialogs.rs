@@ -180,6 +180,10 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
                 news(vec![format!("{} capture", civ(*by)), format!("{} city of {}!", g.player(*from).adjective(), city_name(*city))])
             }
         }
+        GameEvent::CityRebels { city, from, to } if *from == me || *to == me || g.player(me).has_embassy(*from) || g.player(me).has_embassy(*to) => {
+            let lines = vec![format!("{} rebel!", g.player(*from).plural()), "Civil War in".into(), format!("{}.", city_name(*city)), format!("{} influence", g.player(*to).adjective()), "suspected.".into()];
+            Some(Box::new(MessageBox::new(lines).with_pos(100, 32)))
+        }
         GameEvent::CityDestroyed { name, by, from, .. } => {
             if *by == me {
                 msg(vec![format!("{name} destroyed!")])

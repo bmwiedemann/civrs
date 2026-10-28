@@ -219,6 +219,10 @@ pub enum GameEvent {
     /// "Discontented citizens of\nCITY revolt:\nGovernment Collapses!" (CIV.EXE 0x127d6, the
     /// human's newspaper): a Democracy's city stayed in disorder for a second turn.
     GovernmentCollapsed { slot: Slot, city: CityId },
+    /// "<Plural> rebel!\nCivil War in\n<city>.\n<Adjective> influence\nsuspected." at
+    /// (100,32) (`city_revolt` CIV.EXE o 0x1e1d4): a Diplomat of `to` incited the city of
+    /// `from`; shown when the human is one of them or has an embassy with either.
+    CityRebels { city: CityId, from: Slot, to: Slot },
 }
 
 /// A choice the engine needs from the human player before continuing.

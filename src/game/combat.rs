@@ -1296,6 +1296,45 @@ mod tests {
         assert_eq!(g.player(1).gold, 5000 - 2 * cost + plunder);
     }
 
+    /// city_revolt (CIV.EXE o 0x1e325..0x1e3b6) re-creates the old owner's units next to the
+    /// city for the inciter: no veteran status or orders, homed to the city; capture_city then
+    /// marks the old owner's last contact (0x13da6) and announces the rebellion first.
+    #[test]
+    fn incited_units_are_recreated_homed_to_the_city() {
+        use crate::game::turn::DiplomatAction;
+        let (mut g, c, d) = diplomat_game();
+        g.player_mut(1).gold = 5000;
+        let cap = g.cities_of(2).into_iter().find(|x| *x != c).unwrap();
+        let guard = g.add_unit(2, unit_ids::PHALANX, 21, 20);
+        g.unit_mut(guard).veteran = true;
+        g.unit_mut(guard).order = UnitOrder::Fortified;
+        g.unit_mut(guard).home = Some(cap);
+        g.diplomat_action(d, DiplomatAction::InciteRevolt { subvert: false }, c).unwrap();
+        let u = g.unit(guard);
+        assert_eq!((u.owner, u.home, u.veteran, u.order), (1, Some(c), false, UnitOrder::None));
+        assert_eq!(g.human_slot, 1);
+        assert_eq!(g.player(2).last_contact, -2);
+        let rebels = g.events.iter().position(|e| matches!(e, GameEvent::CityRebels { city, from: 2, to: 1 } if *city == c)).expect("rebellion");
+        let captured = g.events.iter().position(|e| matches!(e, GameEvent::CityCaptured { .. })).unwrap();
+        assert!(rebels < captured);
+    }
+
+    /// Industrial Sabotage that finds no improvement has drawn random(2) and 99 x random(24),
+    /// the last one unused (CIV.EXE o 0x1d871..0x1d887).
+    #[test]
+    fn sabotage_draws_ninety_nine_times_in_vain() {
+        use crate::game::turn::{DiplomatAction, DiplomatResult};
+        let (mut g, c, d) = diplomat_game();
+        g.city_mut(c).shields = 0;
+        let mut rng = g.rng.clone();
+        rng.below(2);
+        for _ in 0..99 {
+            rng.below(24);
+        }
+        assert_eq!(g.diplomat_action(d, DiplomatAction::Sabotage, c).unwrap(), DiplomatResult::Sabotaged(None));
+        assert_eq!(g.rng, rng);
+    }
+
     #[test]
     fn diplomat_steals_once_per_city() {
         use crate::game::turn::{DiplomatAction, DiplomatResult};

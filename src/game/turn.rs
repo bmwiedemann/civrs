@@ -10,7 +10,7 @@
 
 use super::events::{Decision, DecisionReply, Disaster, EndReason, GameEvent};
 use super::map::{CityId, Map, Slot, UnitId};
-use super::{Game, Production, RuleError, UnitOrder};
+use super::{Game, Production, RuleError};
 use crate::ai::AiDriver;
 use crate::rules::{self, advance_ids as adv, improvement_ids as imp, unit_ids, wonder_ids as won, AdvanceId, Govt, ImprovementId, Terrain, UnitTypeId};
 use serde::{Deserialize, Serialize};
@@ -1552,14 +1552,18 @@ impl Game {
     }
 
     /// Industrial Sabotage (CIV.EXE o 0x1d84a): half of the time (or when nothing is stored) a
-    /// random improvement other than the Palace, found within 99 draws; otherwise (or when none
-    /// was found) the stored shields. Returns the improvement destroyed.
+    /// random improvement other than the Palace, found within 98 draws (a 99th is drawn and
+    /// thrown away, o 0x1d880); otherwise (or when none was found) the stored shields. Returns
+    /// the improvement destroyed.
     fn sabotage_city(&mut self, city: CityId) -> Option<ImprovementId> {
         let target = self.city(city).clone();
         let mut destroyed = None;
         if self.rng.below(2) != 0 || target.shields == 0 {
-            for _ in 0..98 {
+            for n in 1..=99 {
                 let i = self.rng.below(24) as ImprovementId + 1;
+                if n == 99 {
+                    break;
+                }
                 if i != imp::PALACE && target.has_improvement(i) {
                     destroyed = Some(i);
                     break;
@@ -1669,6 +1673,9 @@ impl Game {
     /// (never the last) and its Palace, Temple, Courthouse and Cathedral (`capture_losses`).
     pub fn transfer_city(&mut self, c: CityId, to: Slot) {
         let from = self.city(c).owner;
+        // "<Plural> rebel!\nCivil War in\n<city>.\n<Adjective> influence\nsuspected." (o 0x1e1d4,
+        // ds:0x533c), before capture_city's own message
+        self.push_event(GameEvent::CityRebels { city: c, from, to });
         let (gold, adv) = self.revolt_city(c, to);
         self.push_event(GameEvent::CityCaptured { city: c, by: to, from, gold, adv });
     }
@@ -1683,33 +1690,46 @@ impl Game {
             let city = self.city(c);
             (city.pos(), city.owner, city.size)
         };
+        // the leaders remember, as for a city taken by force (capture_city 0x13da6, 0x13e5c)
+        if to == self.human_slot && from != 0 {
+            self.player_mut(from).last_contact = -2;
+        }
+        if from == self.human_slot && to != 0 {
+            self.player_mut(to).last_contact = -1;
+        }
         let gold = self.plunder_value(c);
         self.player_mut(from).gold -= gold;
         if to != 0 {
             self.player_mut(to).gold += gold;
         }
-        // capture_city logs the city as taken (0x13f97)
+        // capture_city logs the city as taken (0x13f97) and drops the new owner's city-site
+        // goals around it (0x13faf)
         self.replay_city(super::replay::kind::CAPTURE, to, c);
+        self.remove_goals_near(to, super::goals::goal::SETTLE, pos.0, pos.1, 4);
         let kept = self.capture_losses(true);
         let mut gone = Vec::new();
+        let mut gone_heading = Vec::new();
         for u in self.units.iter_mut().flatten().filter(|u| u.owner == from) {
             if Map::dist((u.x, u.y), pos) <= 1 && !self.map.is_ocean(u.x, u.y) {
                 // deleted and re-created for the new owner (o 0x1de40 / 0x1de6e)
                 self.players[from as usize].unit_counter[u.kind as usize % 28] -= 1;
                 self.players[to as usize].unit_counter[u.kind as usize % 28] += 1;
-                u.owner = to;
-                u.order = UnitOrder::None;
-                // re-created for the new owner, seen by the old one (o 0x1e3af)
-                u.seen_by = 1 << to | 1 << from;
-                if u.home != Some(c) {
-                    u.home = None;
-                }
+                // re-created for the new owner by create_unit (0x8b51: no veteran status,
+                // orders or goto), seen by the old owner and homed to the city (o 0x1e3af,
+                // 0x1e3b6); its moves are left alone
+                let fresh = super::Unit::new(u.id, to, u.kind, u.x, u.y, self.turn);
+                *u = super::Unit { moves_left: u.moves_left, home: Some(c), seen_by: 1 << to | 1 << from, ..fresh };
+                gone_heading.push(u.id);
             } else if u.home == Some(c) {
                 gone.push(u.id);
             }
         }
         for id in gone {
             self.remove_unit(id);
+        }
+        for id in gone_heading {
+            self.ai_memory.heading.remove(&id);
+            self.barbarian_memory.heading.remove(&id);
         }
         // the trade routes stay, both ways (capture_city 0x13d76 leaves the route bytes)
         let unrest = self.captured_in_disorder(to);
