@@ -326,8 +326,14 @@ impl Game {
                 }
             }
         }
-        // aircraft landing in a city / carrier refuels
+        // aircraft landing in a city / carrier refuels; landing ends the aircraft's turn and its
+        // goto (CIV.EXE 0x6c71..0x6d00)
         if u.is_air() {
+            let lands = self.city_at(tx, ty).is_some() || self.units_at(tx, ty).into_iter().any(|s| s != id && self.unit(s).kind == unit_ids::CARRIER && self.unit(s).owner == slot);
+            if lands {
+                self.unit_mut(id).moves_left = 0;
+                self.clear_goto(id);
+            }
             // a Carrier takes up to 8 air units, Nuclear included
             let carrier = self.units_at(tx, ty).into_iter().find(|s| {
                 *s != id && self.unit(*s).kind == unit_ids::CARRIER && self.unit(*s).owner == slot && self.cargo_count(*s) < self.unit(*s).info().capacity as usize
@@ -709,7 +715,12 @@ mod tests {
             let f = g.add_unit(slot, unit_ids::FIGHTER, x + 1, y);
             assert_eq!(g.try_move(f, Dir8::W), Ok(MoveOutcome::Moved));
             assert_eq!(g.unit(f).carried_by.is_some(), n < 8, "fighter {n}");
+            // landing on a Carrier ends the aircraft's turn (CIV.EXE 0x6cea)
+            assert_eq!(g.unit(f).moves_left, 0);
         }
+        let f = g.add_unit(slot, unit_ids::FIGHTER, x + 1, y + 1);
+        assert_eq!(g.try_move(f, Dir8::N), Ok(MoveOutcome::Moved));
+        assert_eq!(g.unit(f).moves_left, g.unit(f).full_moves() - 3, "flying on over the sea");
         assert_eq!(g.cargo_count(carrier), 8);
     }
 
