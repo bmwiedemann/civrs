@@ -150,6 +150,12 @@ impl Game {
                 if u.carried_by.is_some() && u.is_land() {
                     return Err(RuleError::Amphib);
                 }
+                // below one full move the human is asked to confirm the weakened attack, and
+                // a computer's unit attacks only with two thirds of a move or more (CIV.EXE
+                // 0x5fb2..0x603a)
+                if !self.is_human(slot) && u.moves_left < 2 {
+                    return Ok(MoveOutcome::Blocked);
+                }
                 // move_units counts the units lost in the fight (ds:0x70d8, o 0x6075..0x60ae)
                 self.counting_losses = true;
                 let out = if u.kind == unit_ids::NUCLEAR {

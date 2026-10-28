@@ -555,22 +555,22 @@ impl Game {
         self.all_units().find(|u| u.x == x && u.y == y).map(|u| u.owner)
     }
 
-    /// The best defender on a tile (highest defence value after modifiers).
+    /// The defender of a tile.
     pub fn best_defender(&self, x: i32, y: i32, attacker: Option<&Unit>) -> Option<UnitId> {
+        // move_units picks it with best_defender_stack (CIV.EXE 0x111e): the highest
+        // `defence_value`, the first of equals, else the square's first unit; the attacker,
+        // walls and fortresses play no part
+        let _ = attacker;
+        let here = self.units_at(x, y);
         let mut best: Option<(UnitId, i32)> = None;
-        for id in self.units_at(x, y) {
-            let u = self.unit(id);
-            if let Some(a) = attacker {
-                if a.is_air() && u.is_air() && a.info().att > 0 {
-                    // fighters can engage air units
+        for &id in &here {
+            if let Some(d) = self.defence_value(id) {
+                if best.map(|(_, bd)| d > bd).unwrap_or(true) {
+                    best = Some((id, d));
                 }
             }
-            let d = self.defense_strength(u, attacker);
-            if best.map(|(_, bd)| d > bd).unwrap_or(true) {
-                best = Some((id, d));
-            }
         }
-        best.map(|(id, _)| id)
+        best.map(|(id, _)| id).or(here.first().copied())
     }
 
     /// Units or a city at (x, y) whose owner `slot` may fight (`Game::may_fight`).
@@ -789,7 +789,17 @@ impl Game {
         if let Some(t) = self.map.get_mut(x, y) {
             t.city = None;
         }
-        // units homed here lose their home
+        // destroy_city (CIV.EXE 0xa76a) disbands the owner's units homed here (0x7e6:0xf0c)
+        // and the ships and aircraft on the square (kill_nonland_cb 0x949f); others homed
+        // here lose their home
+        let doomed: Vec<UnitId> = self
+            .all_units()
+            .filter(|u| u.owner == owner && (u.home == Some(id) || ((u.x, u.y) == (x, y) && !u.is_land())))
+            .map(|u| u.id)
+            .collect();
+        for u in doomed {
+            self.remove_unit(u);
+        }
         for u in self.units.iter_mut().flatten() {
             if u.home == Some(id) {
                 u.home = None;

@@ -1056,6 +1056,7 @@ mod tests {
         let mut g = game();
         g.set_relation(1, 2, Relation::Peace);
         let c = g.add_city(2, "A".into(), 20, 10);
+        g.city_mut(c).size = 3;
         g.add_unit(2, unit_ids::MILITIA, 20, 10);
         // a road next to the city: the partner's land
         g.map.get_mut(19, 11).unwrap().set(crate::game::tile_flags::ROAD, true);

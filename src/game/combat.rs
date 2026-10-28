@@ -1,15 +1,16 @@
 //! Combat, nuclear attacks, city capture, civil war and civilisation destruction.
 //!
 //! Strengths are expressed x8 so that the integer modifiers (x1.5, x2, x3, terrain halves)
-//! stay exact. Resolution rolls `rng.below(A)` against `rng.below(D)` until one side is
-//! strictly higher (Civ1's single-round combat).
+//! stay exact. Resolution rolls `rng.below(D)` then `rng.below(A)` once; the attacker wins
+//! only when its roll is higher (CIV.EXE 0x19724).
 
 use super::map::{tile_flags, CityId, Map, Slot, UnitId};
 use super::{EndReason, Game, GameEvent, MoveOutcome, Player, Unit, UnitOrder};
 use crate::rules::{self, improvement_ids as imp, unit_ids, Govt};
 
 impl Game {
-    /// Attack strength x8 (veteran bonus included).
+    /// Attack strength x8 (veteran bonus included), before `combat`'s barbarian, difficulty and
+    /// partial-move factors.
     pub fn attack_strength(&self, u: &Unit) -> i32 {
         let mut a = u.info().att as i32 * 8;
         if u.veteran {
@@ -18,71 +19,48 @@ impl Game {
         a
     }
 
-    /// Defence strength x8 including terrain, fortification, fortress, walls and veteran status.
-    ///
-    /// `attacker` selects the walls rule: City Walls triple the defence (terrain included,
-    /// instead of the fortification bonus) of every unit but aircraft, except against the
-    /// units with attack 12, Artillery and Bombers (CIV.EXE 0x198ca).
+    /// Defence strength x8 as `combat` (CIV.EXE 0x19724) computes it: land units defence x
+    /// terrain (in halves) x 8 in a fortress, x 6 fortified (unit flag 0x08: neither a unit
+    /// still fortifying nor one merely standing in a city), else x 4; aircraft and ships
+    /// defence x 8 whatever the square; City Walls (0x198ca) defence x terrain x 12 for every
+    /// unit but aircraft, except against the units with attack 12, Artillery and Bombers;
+    /// then +50% veteran. `attacker` None counts the walls.
     pub fn defense_strength(&self, u: &Unit, attacker: Option<&Unit>) -> i32 {
         let t = self.map.tile(u.x, u.y);
-        let mut d = u.info().def as i32 * 8;
-        if u.veteran {
-            d += d / 2;
-        }
-        let walls = t.city.and_then(|c| self.city_opt(c)).map(|c| self.city_has_walls(c)).unwrap_or(false)
-            && !u.is_air()
-            && attacker.map(|a| a.info().att != 12).unwrap_or(true);
-        if walls {
-            return d * t.terrain.info().defense as i32 / 2 * 3;
-        }
-        // terrain multiplier in halves (Grassland 2 = x1, Forest 3 = x1.5, Hills 4 = x2 ...)
-        if u.is_land() {
-            d = d * t.terrain.info().defense as i32 / 2;
-        }
-        let in_city = t.city.is_some();
-        let fortified = matches!(u.order, UnitOrder::Fortified | UnitOrder::Fortify);
-        if (fortified || in_city) && u.is_land() {
-            d += d / 2;
-        }
-        if t.has(tile_flags::FORTRESS) && !in_city {
-            d *= 2;
-        }
-        d
-    }
-
-    /// The odds CIV.EXE's `combat` (0x19724) returns with `resolve` = 0, as the computer's
-    /// move scoring asks for them (0x1826e): attack * 8 / (defence + 1) with the routine's
-    /// strengths, x8 fixed point. Attack: attack * 8, for a barbarian attacker x (difficulty
-    /// + 1) / 4 against the human and / 2 against others, none against a civilization with
-    /// one city and halved against a Palace; +50% veteran; x moves / 3 below one full move.
-    /// Defence: defence x terrain (in halves) x 8 in a fortress (tile bit 0x20), x 6 fortified,
-    /// else x 4; aircraft and ships defence * 8; City Walls defence x terrain x 12 unless the
-    /// attacker has attack 12 or the defender flies; +50% veteran. The difficulty factors of the
-    /// resolution (0x199c2..) are not part of the odds.
-    pub fn combat_odds(&self, attacker: UnitId, defender: UnitId) -> i32 {
-        let a = self.unit(attacker);
-        let d = self.unit(defender);
-        let t = self.map.tile(d.x, d.y);
         let terrain = t.terrain.info().defense as i32;
-        let def = d.info().def as i32;
-        let mut att = a.info().att as i32 * 8;
-        let mut dv = if t.has(tile_flags::FORTRESS) {
+        let def = u.info().def as i32;
+        let mut d = if !u.is_land() {
+            def * 8
+        } else if t.has(tile_flags::FORTRESS) {
             def * terrain * 8
-        } else if d.order == UnitOrder::Fortified {
+        } else if u.order == UnitOrder::Fortified {
             def * terrain * 12 / 2
         } else {
             def * terrain * 4
         };
+        let walls = t.city.and_then(|c| self.city_opt(c)).is_some_and(|c| self.city_has_walls(c));
+        if walls && !u.is_air() && attacker.map(|a| a.info().att != 12).unwrap_or(true) {
+            d = terrain * def * 12;
+        }
+        if u.veteran {
+            d += d / 2;
+        }
+        d
+    }
+
+    /// `combat`'s (CIV.EXE 0x19724) attack and defence before the resolution, x8 fixed point,
+    /// and whether the attacker must win a second roll (a barbarian attacking a city). Attack:
+    /// attack * 8, for a barbarian attacker x (difficulty + 1) / 4 against the human and / 2
+    /// against others, none against a civilization with one city and halved against a
+    /// Palace; +50% veteran; x moves / 3 below one full move. Defence: `defense_strength`.
+    fn combat_strengths(&self, a: &Unit, d: &Unit) -> (i32, i32, bool) {
+        let t = self.map.tile(d.x, d.y);
+        let mut att = a.info().att as i32 * 8;
         if a.owner == 0 {
             att = if d.owner == self.human_slot { att * (self.setup.difficulty as i32 + 1) / 4 } else { att / 2 };
         }
-        if !d.is_land() {
-            dv = def * 8;
-        }
+        let mut second_roll = false;
         if let Some(c) = t.city.and_then(|c| self.city_opt(c)) {
-            if self.city_has_walls(c) && a.info().att != 12 && !d.is_air() {
-                dv = terrain * def * 12;
-            }
             if a.owner == 0 {
                 if self.cities_of(d.owner).len() == 1 {
                     att = 0;
@@ -90,18 +68,42 @@ impl Game {
                 if c.has_improvement(imp::PALACE) {
                     att /= 2;
                 }
+                second_roll = true;
             }
         }
         if a.veteran {
             att += att / 2;
         }
-        if d.veteran {
-            dv += dv / 2;
-        }
         if a.moves_left < 3 {
             att = att * a.moves_left as i32 / 3;
         }
+        (att, self.defense_strength(d, Some(a)), second_roll)
+    }
+
+    /// The odds CIV.EXE's `combat` (0x19724) returns with `resolve` = 0, as the computer's
+    /// move scoring asks for them (0x1826e): attack * 8 / (defence + 1) with the routine's
+    /// strengths (`combat_strengths`), x8 fixed point. The difficulty factors of the
+    /// resolution (0x199c2..) are not part of the odds.
+    pub fn combat_odds(&self, attacker: UnitId, defender: UnitId) -> i32 {
+        let (att, dv, _) = self.combat_strengths(self.unit(attacker), self.unit(defender));
         att * 8 / (dv + 1)
+    }
+
+    /// `defence_value_cb` (CIV.EXE 0x8fc5), how a stack picks its defender: land units
+    /// defence x (3 fortified, else 2) x terrain << 3, others defence << 4, +50% veteran;
+    /// land units at sea do not count (None). Walls and fortresses play no part.
+    pub fn defence_value(&self, id: UnitId) -> Option<i32> {
+        let u = self.unit(id);
+        let t = self.map.terrain(u.x, u.y);
+        if t == rules::Terrain::Ocean && !u.is_sea() {
+            return None;
+        }
+        let def = u.info().def as i32;
+        let mut v = if u.is_land() { def * if u.order == UnitOrder::Fortified { 3 } else { 2 } * t.info().defense as i32 * 8 } else { def << 4 };
+        if u.veteran {
+            v += v / 2;
+        }
+        Some(v)
     }
 
     /// City Walls (the Great Wall is a diplomatic wonder in CIV.EXE, not walls).
@@ -132,44 +134,26 @@ impl Game {
         }
         let Some(def_id) = self.best_defender(x, y, Some(&attacker)) else { return MoveOutcome::Blocked };
         let defender = self.unit(def_id).clone();
-        let mut a = self.attack_strength(&attacker);
-        let d = self.defense_strength(&defender, Some(&attacker)).max(1) as u32;
-        // barbarian attackers (CIV.EXE 0x1981e, 0x19908; applied there before the veteran
-        // bonus): (difficulty + 1) quarters against the human, half against the computer; at a
-        // city nothing against its owner's only city, half again against a Palace, and the
-        // attack must win a second roll (0x19a4b)
-        let mut second_roll = false;
-        if attacker.owner == 0 {
-            a = if defender.owner == self.human_slot { a * (self.setup.difficulty as i32 + 1) / 4 } else { a / 2 };
-            if let Some(c) = self.city_at(x, y) {
-                if self.cities_of(defender.owner).len() == 1 {
-                    a = 0;
-                }
-                if self.city(c).has_improvement(imp::PALACE) {
-                    a /= 2;
-                }
-                second_roll = true;
+        let (mut a, d, second_roll) = self.combat_strengths(&attacker, &defender);
+        // the resolution's difficulty factors (CIV.EXE 0x199c2..): a civilization's attack is
+        // halved against the human below Prince and doubled for the human at Chieftain
+        if attacker.owner != 0 {
+            if (self.setup.difficulty as i32) < 2 && defender.owner == self.human_slot {
+                a /= 2;
+            }
+            if self.setup.difficulty as i32 == 0 && attacker.owner == self.human_slot {
+                a *= 2;
             }
         }
-        let won = if attacker.owner == 0 && a <= 0 {
-            false
-        } else {
-            let a = a.max(1) as u32;
-            let won = loop {
-                let ra = self.rng.below(a);
-                let rd = self.rng.below(d);
-                if ra > rd {
-                    break true;
-                }
-                if rd > ra {
-                    break false;
-                }
-            };
-            won && !(second_roll && {
-                let rd = self.rng.below(d);
-                self.rng.below(a) < rd
-            })
-        };
+        // one roll each, the defence first; a tie goes to the defender, and a barbarian at a
+        // city must win a second roll (0x19a2f..0x19a6e)
+        let (a, d) = (a.max(0) as u32, d.max(0) as u32);
+        let rd = self.rng.below(d);
+        let mut won = rd < self.rng.below(a);
+        if won && second_roll {
+            let rd = self.rng.below(d);
+            won = self.rng.below(a) >= rd;
+        }
         self.last_combat = Some(((attacker.x, attacker.y), (x, y), won));
         self.fight_diplomacy(attacker.owner, defender.owner);
         // a computer city that is attacked, whoever wins, goes on alert (city status 0x10,
@@ -204,13 +188,28 @@ impl Game {
                 }
             }
             self.players[attacker.owner as usize].stats.units_killed += 1;
+            // a city without walls shrinks when its defender loses, unless the attack came from
+            // the sea, or at Chieftain from anyone against the human (CIV.EXE 0x615d..0x618a);
+            // only the size drops: the extra worker goes at the city's next turn, the human's
+            // with "Population decrease" (0xd70d). At size 0 the city is destroyed (0x61a6).
             if let Some(c) = t.city {
-                if let Some(city) = self.city_opt(c) {
-                    if !self.city_has_walls(city) && city.size > 1 {
-                        // only the size drops (CIV.EXE 0x618a): the extra worker goes at the
-                        // city's next turn, the human's with "Population decrease" (0xd70d)
+                if let Some(city) = self.city_opt(c).cloned() {
+                    let shrinks = !self.city_has_walls(&city)
+                        && !self.map.is_ocean(attacker.x, attacker.y)
+                        && !(self.setup.difficulty as i32 == 0 && defender.owner == self.human_slot);
+                    if shrinks && city.size > 1 {
                         self.city_mut(c).size -= 1;
                         self.push_event(GameEvent::CityShrank(c));
+                    } else if shrinks {
+                        let from = city.owner;
+                        self.remove_city(c);
+                        self.push_event(GameEvent::CityDestroyed { name: city.name.clone(), at: (x, y), by: attacker.owner, from });
+                        self.players[from as usize].stats.cities_lost += 1;
+                        if !losers.contains(&from) {
+                            losers.push(from);
+                        }
+                        self.refresh_vision(from);
+                        self.city_lost_check(from, attacker.owner);
                     }
                 }
             }
@@ -765,21 +764,15 @@ mod tests {
         g
     }
 
-    #[test]
-    fn attack_3_vs_2_on_grassland_wins_55_to_70_percent() {
-        let mut g = flat_game();
+    /// Share of `trials` attacks by a fresh `att` of slot 1 on a fresh `def` of slot 2 on
+    /// grassland that the attacker wins.
+    fn win_share(g: &mut Game, att: u8, def: u8, trials: usize) -> usize {
         let mut wins = 0;
-        let trials = 10_000;
         for _ in 0..trials {
-            let a = g.add_unit(1, unit_ids::LEGION, 10, 10);
-            let d = g.add_unit(2, unit_ids::PHALANX, 11, 10);
-            assert_eq!(g.defense_strength(g.unit(d), Some(g.unit(a))), 16);
+            let a = g.add_unit(1, att, 10, 10);
+            g.add_unit(2, def, 11, 10);
             match g.attack(a, 11, 10) {
-                MoveOutcome::Attacked { won, .. } => {
-                    if won {
-                        wins += 1;
-                    }
-                }
+                MoveOutcome::Attacked { won, .. } => wins += won as usize,
                 o => panic!("unexpected {o:?}"),
             }
             for id in g.units_at(10, 10).into_iter().chain(g.units_at(11, 10)) {
@@ -787,8 +780,45 @@ mod tests {
             }
             g.events.clear();
         }
-        let pct = wins * 100 / trials;
-        assert!((55..=70).contains(&pct), "attacker won {pct}%");
+        wins * 100 / trials
+    }
+
+    #[test]
+    fn attack_3_vs_2_on_grassland_wins_55_to_70_percent() {
+        let mut g = flat_game();
+        g.setup.difficulty = crate::rules::Difficulty::Prince;
+        let a = g.add_unit(1, unit_ids::LEGION, 10, 10);
+        let d = g.add_unit(2, unit_ids::PHALANX, 11, 10);
+        assert_eq!(g.defense_strength(g.unit(d), Some(g.unit(a))), 16);
+        g.remove_unit(a);
+        g.remove_unit(d);
+        // one roll each, ties to the defender (CIV.EXE 0x19a2f): 24 vs 16 wins 64.6%
+        let pct = win_share(&mut g, unit_ids::LEGION, unit_ids::PHALANX, 10_000);
+        assert!((60..=69).contains(&pct), "attacker won {pct}%");
+    }
+
+    #[test]
+    fn difficulty_and_partial_moves_weigh_on_the_attack() {
+        // CIV.EXE 0x199c2..: below Prince the computer's attack on the human is halved, at
+        // Chieftain the human's attack doubled; 0x199a6: x moves / 3 below a full move
+        let mut g = flat_game();
+        let h = g.human_slot;
+        assert!(h == 1 || h == 2, "the tests fight between slots 1 and 2");
+        g.setup.difficulty = crate::rules::Difficulty::Chieftain;
+        let pct = win_share(&mut g, unit_ids::LEGION, unit_ids::PHALANX, 10_000);
+        if h == 1 {
+            // 48 vs 16: 82.3%
+            assert!((78..=86).contains(&pct), "doubled attack won {pct}%");
+        } else {
+            // 12 vs 16: 34.4%
+            assert!((30..=39).contains(&pct), "halved attack won {pct}%");
+        }
+        g.setup.difficulty = crate::rules::Difficulty::King;
+        let a = g.add_unit(1, unit_ids::LEGION, 10, 10);
+        let d = g.add_unit(2, unit_ids::PHALANX, 11, 10);
+        g.unit_mut(a).moves_left = 1;
+        // 24 / 3 = 8 attack against 16 defence, x8 / 17
+        assert_eq!(g.combat_odds(a, d), 8 * 8 / 17);
     }
 
     #[test]
@@ -798,20 +828,96 @@ mod tests {
         let d = g.add_unit(2, unit_ids::PHALANX, 20, 20);
         let a = g.add_unit(1, unit_ids::LEGION, 21, 20);
         let plain = g.defense_strength(g.unit(d), Some(g.unit(a)));
-        assert_eq!(plain, 24, "in-city bonus x1.5");
+        assert_eq!(plain, 16, "no bonus for merely standing in a city (CIV.EXE 0x197d2)");
+        g.unit_mut(d).order = UnitOrder::Fortified;
+        let fortified = g.defense_strength(g.unit(d), Some(g.unit(a)));
+        assert_eq!(fortified, 24, "fortified x1.5");
         g.city_mut(c).add_improvement(imp::CITY_WALLS);
-        // x3 of the base defence, in place of the in-city bonus
+        // x3 of the base defence, in place of the fortification bonus
         assert_eq!(g.defense_strength(g.unit(d), Some(g.unit(a))), 48);
         let ship = g.add_unit(1, unit_ids::FRIGATE, 22, 22);
         assert_eq!(g.defense_strength(g.unit(d), Some(g.unit(ship))), 48);
         for k in [unit_ids::ARTILLERY, unit_ids::BOMBER] {
             let ignores = g.add_unit(1, k, 21, 21);
-            assert_eq!(g.defense_strength(g.unit(d), Some(g.unit(ignores))), plain);
+            assert_eq!(g.defense_strength(g.unit(d), Some(g.unit(ignores))), fortified);
         }
-        // fortress doubles outside cities
+        // fortress doubles outside cities, in place of fortification; ships ignore it
         g.map.get_mut(12, 12).unwrap().set(tile_flags::FORTRESS, true);
         let f = g.add_unit(2, unit_ids::PHALANX, 12, 12);
         assert_eq!(g.defense_strength(g.unit(f), Some(g.unit(a))), 32);
+        g.unit_mut(f).order = UnitOrder::Fortified;
+        assert_eq!(g.defense_strength(g.unit(f), Some(g.unit(a))), 32);
+    }
+
+    #[test]
+    fn the_stack_defender_is_chosen_without_walls_or_fortress() {
+        // best_defender_stack (CIV.EXE 0x111e/0x8fc5): fortified x3 against x2, ships def << 4
+        let mut g = flat_game();
+        let p = g.add_unit(2, unit_ids::PHALANX, 15, 15);
+        let l = g.add_unit(2, unit_ids::PHALANX, 15, 15);
+        let first = g.units_at(15, 15)[0];
+        assert_eq!(g.best_defender(15, 15, None), Some(first), "first of equals");
+        g.unit_mut(l).order = UnitOrder::Fortified;
+        assert_eq!(g.best_defender(15, 15, None), Some(l));
+        g.unit_mut(p).veteran = true;
+        g.unit_mut(p).order = UnitOrder::Fortify;
+        assert_eq!(g.best_defender(15, 15, None), Some(first), "veteran 2*2*2*8*1.5 = 96 = fortified 2*3*2*8");
+        // in a walled port a Phalanx (2*2*2*8 = 64) defends before a Frigate (2 << 4 = 32)
+        let c = g.add_city(2, "Walls".into(), 16, 16);
+        g.city_mut(c).add_improvement(imp::CITY_WALLS);
+        g.add_unit(2, unit_ids::FRIGATE, 16, 16);
+        let m = g.add_unit(2, unit_ids::PHALANX, 16, 16);
+        assert_eq!(g.best_defender(16, 16, None), Some(m));
+    }
+
+    #[test]
+    fn a_city_losing_its_last_defender_at_size_one_is_destroyed() {
+        // CIV.EXE 0x615d..0x61a6: the size drops (not with walls, not from the sea) and at 0
+        // the city is gone
+        let mut g = flat_game();
+        g.setup.difficulty = crate::rules::Difficulty::King;
+        g.add_city(2, "Other".into(), 26, 26);
+        let c = g.add_city(2, "Tiny".into(), 20, 20);
+        loop {
+            let d = g.add_unit(2, unit_ids::MILITIA, 20, 20);
+            let a = g.add_unit(1, unit_ids::ARMOR, 21, 20);
+            g.unit_mut(a).veteran = true;
+            if matches!(g.attack(a, 20, 20), MoveOutcome::Attacked { won: true, .. }) {
+                break;
+            }
+            let _ = d;
+        }
+        assert!(g.city_opt(c).is_none(), "destroyed");
+        assert!(g.events.iter().any(|e| matches!(e, GameEvent::CityDestroyed { .. })));
+    }
+
+    #[test]
+    fn a_destroyed_city_takes_its_units_and_its_ships_along() {
+        // destroy_city (CIV.EXE 0xa76a): the owner's units homed there are disbanded, ships on
+        // the square sink, the land units there stay
+        let mut g = flat_game();
+        let c = g.add_city(2, "Gone".into(), 20, 20);
+        let homed = g.add_unit(2, unit_ids::SETTLERS, 8, 8);
+        g.unit_mut(homed).home = Some(c);
+        let ship = g.add_unit(2, unit_ids::TRIREME, 20, 20);
+        let guard = g.add_unit(2, unit_ids::PHALANX, 20, 20);
+        g.remove_city(c);
+        assert!(g.unit_opt(homed).is_none() && g.unit_opt(ship).is_none());
+        assert!(g.unit_opt(guard).is_some());
+    }
+
+    #[test]
+    fn a_computer_attacks_only_with_two_thirds_of_a_move() {
+        // CIV.EXE 0x6023: below 2 thirds the computer's attack is not made
+        let mut g = flat_game();
+        let h = g.human_slot;
+        let (me, foe) = if h == 1 { (2, 1) } else { (1, 2) };
+        g.add_unit(foe, unit_ids::PHALANX, 11, 10);
+        let a = g.add_unit(me, unit_ids::LEGION, 10, 10);
+        g.unit_mut(a).moves_left = 1;
+        assert_eq!(g.try_move(a, crate::game::Dir8::E), Ok(MoveOutcome::Blocked));
+        g.unit_mut(a).moves_left = 2;
+        assert!(matches!(g.try_move(a, crate::game::Dir8::E), Ok(MoveOutcome::Attacked { .. })));
     }
 
     #[test]

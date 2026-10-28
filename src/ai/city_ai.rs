@@ -263,12 +263,15 @@ mod tests {
         let (x, y) = g.city(c).pos();
         let h = g.human_slot;
         g.set_relation(h, slot, crate::game::Relation::War);
+        // big enough to survive the loss of its defender (CIV.EXE 0x618e)
+        g.city_mut(c).size = 3;
         g.add_unit(slot, unit_ids::PHALANX, x, y);
         let a = g.add_unit(h, unit_ids::LEGION, x + 1, y);
         g.attack(a, x, y);
         assert!(g.city(c).auto_build, "set win or lose");
         // the human's own city keeps its AUTO setting
         let hc = g.add_city(h, "Mine".into(), x + 6, y);
+        g.city_mut(hc).size = 3;
         g.add_unit(h, unit_ids::PHALANX, x + 6, y);
         let b = g.add_unit(slot, unit_ids::LEGION, x + 5, y);
         g.attack(b, x + 6, y);
