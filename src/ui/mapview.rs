@@ -161,8 +161,8 @@ enum BarAction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
     Normal,
-    /// Choosing a goto destination for the active unit.
-    Goto { cursor: (i32, i32) },
+    /// Choosing a goto destination for the active unit (move_units [bp-0x36]).
+    Goto,
     /// Waiting for the player to confirm end of turn / nothing to do.
     EndOfTurn,
     /// Processing the end of the turn (AI moves etc.).
@@ -850,10 +850,14 @@ impl MapView {
                 self.activate_next(ctx);
                 Transition::None
             }
+            // 'g' (0x4e83) starts the goto choice: a click picks the square; in the keyboard-only
+            // mode the look cursor does, switched on at the unit if it is off (0x4e99)
             Key::Char('g') => {
                 if let Some(id) = active {
-                    let (x, y) = ctx.game().unit(id).pos();
-                    self.mode = Mode::Goto { cursor: (x, y) };
+                    if ctx.keyboard_only && self.look.is_none() {
+                        self.look = Some(ctx.game().unit(id).pos());
+                    }
+                    self.mode = Mode::Goto;
                 }
                 Transition::None
             }
@@ -977,7 +981,7 @@ impl MapView {
     fn left_click_tile(&mut self, ctx: &mut UiContext, tx: i32, ty: i32) -> Transition {
         let g = ctx.game();
         let me = g.human_slot;
-        if let Mode::Goto { .. } = self.mode {
+        if self.mode == Mode::Goto {
             // 0x4913: the target must be explored and suit the unit: land
             // units no ocean, ships ocean or a city, aircraft anything
             self.mode = Mode::Normal;
@@ -1006,36 +1010,20 @@ impl MapView {
         Transition::None
     }
 
-    fn handle_goto_key(&mut self, ctx: &mut UiContext, key: Key) -> Transition {
-        let Mode::Goto { cursor } = self.mode else { return Transition::None };
-        let d = match key {
-            Key::Up => Some(Dir8::N),
-            Key::Down => Some(Dir8::S),
-            Key::Left => Some(Dir8::W),
-            Key::Right => Some(Dir8::E),
-            Key::Home => Some(Dir8::NW),
-            Key::PageUp => Some(Dir8::NE),
-            Key::End => Some(Dir8::SW),
-            Key::PageDown => Some(Dir8::SE),
-            Key::Kp(n) => Dir8::from_keypad(n),
-            _ => None,
-        };
-        if let Some(d) = d {
-            let (dx, dy) = d.delta();
-            let nx = Map::wrap_x(cursor.0 + dx);
-            let ny = (cursor.1 + dy).clamp(0, MAP_H as i32 - 1);
-            self.mode = Mode::Goto { cursor: (nx, ny) };
-            self.ensure_visible(nx, ny);
-            return Transition::None;
+    /// A key while the goto's square is chosen: 'g' again ends the choice (0x4f21 flips
+    /// [bp-0x36]), and in the keyboard-only mode switches the look cursor off (0x4ec0). Any
+    /// other key does what it does outside the choice (None): Esc nothing with a mouse
+    /// (0x72d3), the keypad moves the unit, or the look cursor, whose Enter clicks the square
+    /// (0x4605 -> 0x4909).
+    fn goto_key(&mut self, ctx: &mut UiContext, key: Key, mods: crate::platform::Mods) -> Option<Transition> {
+        if key != Key::Char('g') || mods.alt || mods.ctrl || mods.shift {
+            return None;
         }
-        match key {
-            Key::Enter | Key::Char('g') => self.confirm_goto(ctx, cursor),
-            Key::Esc => {
-                self.mode = Mode::Normal;
-                Transition::None
-            }
-            _ => Transition::None,
+        if ctx.keyboard_only {
+            self.look = None;
         }
+        self.mode = Mode::Normal;
+        Some(Transition::None)
     }
 
     fn confirm_goto(&mut self, ctx: &mut UiContext, dest: (i32, i32)) -> Transition {
@@ -1149,8 +1137,11 @@ impl MapView {
                 }
             }
         }
-        if let Mode::Goto { cursor } = self.mode {
-            let (px, py) = (VIEW_X + Map::wrap_x(cursor.0 - self.vx) * TILE, VIEW_Y + (cursor.1 - self.vy) * TILE);
+        // the goto choice with a mouse: civrs marks the unit's square (CIV.EXE changes the
+        // pointer, 0x4f11); the keyboard-only mode shows the look cursor only
+        if let (Mode::Goto, false, Some(id)) = (self.mode, ctx.keyboard_only, ctx.game().active_unit) {
+            let (x, y) = ctx.game().unit(id).pos();
+            let (px, py) = (VIEW_X + Map::wrap_x(x - self.vx) * TILE, VIEW_Y + (y - self.vy) * TILE);
             tilerender::blit_sprite(fb, &ctx.sp.surf, tilerender::cell(tilerender::sp::CURSOR_GO.0, tilerender::sp::CURSOR_GO.1), px, py);
         }
         // the look cursor: draw_outline(x, y, 15, 15, col), a 16x16 frame, white while the
@@ -1672,8 +1663,10 @@ impl Screen for MapView {
         }
         match ev {
             Event::Key { key, mods, down: true, .. } => {
-                if let Mode::Goto { .. } = self.mode {
-                    return self.handle_goto_key(ctx, *key);
+                if self.mode == Mode::Goto {
+                    if let Some(t) = self.goto_key(ctx, *key, *mods) {
+                        return t;
+                    }
                 }
                 if ctx.keyboard_only {
                     if let Some(t) = self.look_key(ctx, *key, *mods) {
@@ -1736,7 +1729,8 @@ impl Screen for MapView {
                             Err(e) => format!("Save failed: {e}"),
                         })))
                     }
-                    Key::Char('q') if mods.ctrl || mods.alt => {
+                    // Alt-Q only (0x1000 -> 0x728c); Ctrl-Q is no key of move_units
+                    Key::Char('q') if mods.alt => {
                         self.pending = Pending::QuitConfirm;
                         Transition::Push(Box::new(YesNo::new(vec!["Are you sure you".into(), "want to Quit?".into()], "Keep Playing", "Yes, Quit").with_pos(100, 80)))
                     }
@@ -1999,6 +1993,7 @@ mod tests {
     const SHIFT: Mods = Mods { shift: true, ctrl: false, alt: false };
     const ALT: Mods = Mods { shift: false, ctrl: false, alt: true };
     const NONE: Mods = Mods { shift: false, ctrl: false, alt: false };
+    const CTRL: Mods = Mods { shift: false, ctrl: true, alt: false };
 
     fn press(button: MouseButton, x: i32, y: i32) -> Event {
         Event::MouseButton { button, x, y, down: true }
@@ -2151,6 +2146,39 @@ mod tests {
         assert_eq!(mv.look, Some((Map::wrap_x(mv.vx + 7), mv.vy + 6)));
         mv.handle(&key(Key::Tab, NONE), &mut ctx);
         assert_eq!(mv.look, None);
+    }
+
+    #[test]
+    fn goto_keys_with_a_mouse_and_with_the_keyboard_only() {
+        let Some((mut ctx, mut mv, id)) = view() else { return };
+        // Ctrl-Q is no key (only Alt-Q, 0x1000 -> 0x728c)
+        assert!(matches!(mv.handle(&key(Key::Char('q'), CTRL), &mut ctx), Transition::None));
+        assert!(matches!(mv.handle(&key(Key::Char('q'), ALT), &mut ctx), Transition::Push(_)));
+        mv.pending = Pending::None;
+        // with a mouse Esc keeps the goto choice (0x72d3), 'g' again ends it (0x4f21)
+        mv.handle(&key(Key::Char('g'), NONE), &mut ctx);
+        assert_eq!(mv.mode, Mode::Goto);
+        mv.handle(&key(Key::Esc, NONE), &mut ctx);
+        assert_eq!(mv.mode, Mode::Goto);
+        mv.handle(&key(Key::Char('g'), NONE), &mut ctx);
+        assert_eq!(mv.mode, Mode::Normal);
+        assert_eq!(mv.look, None);
+        // keyboard only: 'g' puts the look cursor on the unit (0x4e99), the keypad moves it,
+        // 'g' again switches both off (0x4ec0)
+        ctx.keyboard_only = true;
+        let (ux, uy) = ctx.game().unit(id).pos();
+        mv.center_on(ux, uy);
+        mv.handle(&key(Key::Char('g'), NONE), &mut ctx);
+        assert_eq!((mv.mode, mv.look), (Mode::Goto, Some((ux, uy))));
+        mv.handle(&key(Key::Right, NONE), &mut ctx);
+        assert_eq!(mv.look, Some((Map::wrap_x(ux + 1), uy)));
+        assert_eq!(ctx.game().unit(id).pos(), (ux, uy));
+        mv.handle(&key(Key::Char('g'), NONE), &mut ctx);
+        assert_eq!((mv.mode, mv.look), (Mode::Normal, None));
+        // Enter clicks the cursor's square, which ends the choice (0x4605 -> 0x4909)
+        mv.handle(&key(Key::Char('g'), NONE), &mut ctx);
+        mv.handle(&key(Key::Enter, NONE), &mut ctx);
+        assert_eq!(mv.mode, Mode::Normal);
     }
 
     #[test]
