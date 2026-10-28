@@ -298,6 +298,19 @@ impl Game {
         if u.carried_by.is_some() && target.is_land() {
             self.unit_mut(id).carried_by = None;
         }
+        // a unit reaching its goto square forgets it, and a computer's unit stops there
+        // (CIV.EXE 0x6848..0x6878); coming ashore from the sea ends the move of all but
+        // aircraft, a ship's into port too (0x687d..0x68a8)
+        if u.goto == Some((tx, ty)) {
+            self.clear_goto(id);
+            self.set_heading(id, 0xff);
+            if !self.is_human(slot) {
+                self.unit_mut(id).moves_left = 0;
+            }
+        }
+        if self.map.is_ocean(u.x, u.y) && target.is_land() && !u.is_air() {
+            self.unit_mut(id).moves_left = 0;
+        }
         // units aboard move with ship; in port they are units of the city again, to be
         // activated, and go along only when sentried
         if u.is_sea() {
@@ -883,6 +896,33 @@ mod zoc_tests {
         coast.map.get_mut(41, 26).unwrap().terrain = Terrain::Ocean;
         coast.add_unit(other, unit_ids::TRIREME, 41, 26);
         assert_eq!(coast.try_move(id, Dir8::E), Ok(MoveOutcome::Moved));
+    }
+
+    #[test]
+    fn coming_ashore_ends_the_move_and_a_reached_goto_is_dropped() {
+        // CIV.EXE 0x687d: from the sea onto land the moves are gone
+        let (mut g, id) = open_field();
+        let slot = g.human_slot;
+        g.map.get_mut(41, 25).unwrap().terrain = Terrain::Ocean;
+        let ship = g.add_unit(slot, unit_ids::TRIREME, 41, 25);
+        let l = g.add_unit(slot, unit_ids::LEGION, 41, 25);
+        g.unit_mut(l).carried_by = Some(ship);
+        g.unit_mut(l).moves_left = 3;
+        assert_eq!(g.try_move(l, Dir8::E), Ok(MoveOutcome::Moved));
+        assert_eq!(g.unit(l).moves_left, 0);
+        // 0x6848: the goto square reached, the goto goes; a computer's unit stops there
+        for y in [24, 25] {
+            g.map.get_mut(40, y).unwrap().set(crate::game::tile_flags::ROAD, true);
+        }
+        g.unit_mut(id).goto = Some((40, 24));
+        assert_eq!(g.try_move(id, Dir8::N), Ok(MoveOutcome::Moved));
+        assert_eq!(g.unit(id).goto, None);
+        assert_eq!(g.unit(id).moves_left, 2);
+        let other = if slot == 2 { 3 } else { 2 };
+        let c = g.add_unit(other, unit_ids::LEGION, 44, 30);
+        g.unit_mut(c).goto = Some((44, 29));
+        assert_eq!(g.try_move(c, Dir8::N), Ok(MoveOutcome::Moved));
+        assert_eq!(g.unit(c).moves_left, 0);
     }
 
     #[test]
