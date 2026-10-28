@@ -804,8 +804,9 @@ impl Game {
             }
         }
         // a Democracy falls in the city loop (0x127ba), so the cities after this one work
-        // under Anarchy
-        if self.city(c).disorder_turns >= 2 && self.player(slot).govt == Govt::Democracy {
+        // under Anarchy: disorder again while the status bit of the last turn's is set
+        // (0x12701 tests +6 bit 0, also for a city loaded in disorder)
+        if h.disorder && was_disorder && self.player(slot).govt == Govt::Democracy {
             self.player_mut(slot).senate_blocks = self.player(slot).senate_blocks.saturating_add(1);
             self.government_collapse(slot, c);
         }
@@ -2858,7 +2859,8 @@ mod tests {
         let (mut g, c) = fixture();
         let slot = g.human_slot;
         g.player_mut(slot).govt = Govt::Democracy;
-        g.city_mut(c).disorder_turns = 1;
+        // only the status bit of the last turn's disorder counts (0x12701), as after a load
+        g.city_mut(c).disorder = true;
         g.city_mut(c).size = 8;
         g.player_mut(slot).lux = 0;
         g.player_mut(slot).tax = 0;
