@@ -855,7 +855,7 @@ impl CityScreen {
             // and the order letters show as on the map
             // the 'a' selection blinks: background, 10 ticks, the unit, 10 ticks (0x1197e)
             if self.unit_cursor != Some(i) || (ctx.frame / 16) % 2 == 0 {
-                crate::ui::tilerender::draw_unit(fb, ctx, g, *id, x - 1, y - 1, false);
+                crate::ui::tilerender::draw_unit(fb, ctx, g, *id, x, y, false);
             }
             let home = u.home.and_then(|h| g.city_opt(h)).map(|c| c.name.to_ascii_uppercase()).unwrap_or_else(|| "NONE".into());
             let abbrev: String = home.chars().take(3).chain(std::iter::once('.')).collect();

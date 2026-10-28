@@ -85,6 +85,12 @@ pub mod sp {
     pub fn unit(kind: u8) -> Rect {
         cell((kind % 20) as i32, 10 + (kind / 20) as i32)
     }
+    /// Map icon 0x40 + 0x20 civ + kind: the 15x15 inside of the unit's cell, cut at
+    /// (16 (kind % 20) + 1, 16 (kind / 20) + 161) (load_sprite_sheets o 0x5ae2..) and drawn at
+    /// the square's corner, so the cell's guide row and column never show.
+    pub fn unit_icon(kind: u8) -> Rect {
+        Rect::new(16 * (kind % 20) as i32 + 1, 161 + 16 * (kind / 20) as i32, 15, 15)
+    }
     pub fn explosion(frame: u8) -> Rect {
         cell((frame % 8) as i32, 6)
     }
@@ -171,7 +177,9 @@ pub fn draw_terrain(fb: &mut Surface, ctx: &UiContext, game: &Game, x: i32, y: i
             if irrigation() {
                 blit_sprite(fb, sp, cell(sp::IRRIGATION.0, sp::IRRIGATION.1), px, py);
             }
-            let mask = map.same_terrain_mask(x, y);
+            // load_sprite_sheets (o 0x569a) cuts the 16 neighbour variants only for Desert ..
+            // Mountains: Tundra, Arctic, Swamp and Jungle get the lone sprite for every mask
+            let mask = if (land as u8) < Terrain::Tundra as u8 { map.same_terrain_mask(x, y) } else { 0 };
             blit_sprite(fb, ter, cell(mask as i32, land as i32), px, py);
         }
     }
@@ -252,22 +260,56 @@ pub fn draw_city(fb: &mut Surface, ctx: &UiContext, game: &Game, city: crate::ga
     }
 }
 
+/// The colours of a civ's unit icons, as load_sprite_sheets (o 0x5a9c..0x5ae0) recolours the
+/// unit rows for each civ: 15 -> 11 for a civ whose light colour is 15, 7 -> 3 for one whose
+/// light colour is 7, then 10 -> light and 2 -> dark.
+pub fn unit_icon_remap(slot: Slot) -> [u8; 256] {
+    let mut m = [0u8; 256];
+    for (i, v) in m.iter_mut().enumerate() {
+        *v = i as u8;
+    }
+    let c = SLOT_COLOURS[(slot & 7) as usize];
+    if c.light == 15 {
+        m[15] = 11;
+    }
+    if c.light == 7 {
+        m[7] = 3;
+    }
+    m[10] = c.light;
+    m[2] = c.dark;
+    m
+}
+
+/// A unit icon (`sp::unit_icon`) in `owner`'s colours at (px, py), colour 0 transparent.
+fn blit_unit_icon(fb: &mut Surface, ctx: &UiContext, kind: u8, owner: Slot, px: i32, py: i32) {
+    let map = unit_icon_remap(owner);
+    let r = sp::unit_icon(kind);
+    let sheet = &ctx.sp.surf;
+    for yy in 0..r.h {
+        for xx in 0..r.w {
+            let v = sheet.get(r.x + xx, r.y + yy);
+            if v != 0 {
+                fb.put(px + xx, py + yy, map[v as usize]);
+            }
+        }
+    }
+}
+
 /// A unit type's sprite in `owner`'s colours, without status marks (a city's stashed garrison,
 /// drawn through a scratch record in CIV.EXE).
 pub fn draw_unit_kind(fb: &mut Surface, ctx: &UiContext, kind: u8, owner: u8, px: i32, py: i32) {
-    blit_sprite_remap(fb, &ctx.sp.surf, sp::unit(kind), px, py, &civ_remap(owner));
+    blit_unit_icon(fb, ctx, kind, owner, px, py);
 }
 
 /// Draw a unit sprite (with civ colours) at pixel (px,py).
 pub fn draw_unit(fb: &mut Surface, ctx: &UiContext, game: &Game, id: crate::game::UnitId, px: i32, py: i32, stacked: bool) {
     let u = game.unit(id);
-    let map = civ_remap(u.owner);
     let kind = if u.leader { rules::unit_ids::DIPLOMAT } else { u.kind };
     if stacked {
-        // second copy offset to indicate a stack
-        blit_sprite_remap(fb, &ctx.sp.surf, sp::unit(kind), px + 1, py + 1, &map);
+        // a stack: a second copy at (+1, +1) under it (draw_unit_at_map 0x1b4af)
+        blit_unit_icon(fb, ctx, kind, u.owner, px + 1, py + 1);
     }
-    blit_sprite_remap(fb, &ctx.sp.surf, sp::unit(kind), px, py, &map);
+    blit_unit_icon(fb, ctx, kind, u.owner, px, py);
     // status marks as CIV.EXE 0x1b639 draws them: the fortification over a fortified unit,
     // "F" while fortifying, "G" on the human's units with a goto, and the settlers' job letter
     // in a grey frame; letters at (+4, +7) with a black shadow below, light blue on slot 1's
@@ -319,14 +361,30 @@ pub fn draw_tile(fb: &mut Surface, ctx: &UiContext, game: &Game, slot: Slot, x: 
     // foreign units only when the viewer has seen them since their last step (unit +9,
     // draw_tile_with_units 0x1b85a); they stay in view while they stand still
     if game.units_shown_to(slot, x, y) && !blinking {
-        let units: Vec<_> = game.units_at(x, y).into_iter().filter(|u| game.unit(*u).carried_by.is_none() || game.unit(*u).carried_by.map(|c| game.unit_opt(c).is_none()).unwrap_or(false)).collect();
-        if let Some(&top) = units.first() {
+        if let Some(top) = top_unit(game, x, y) {
             // In a city only show units when there are no city sprites? Civ1 shows the city only.
             if game.city_at(x, y).is_none() || game.city(game.city_at(x, y).unwrap()).owner != game.unit(top).owner {
-                draw_unit(fb, ctx, game, top, px, py, units.len() > 1);
+                draw_unit(fb, ctx, game, top, px, py, game.units_at(x, y).len() > 1);
             }
         }
     }
+}
+
+/// The unit that shows on top of the stack at (x, y), as draw_tile_with_units (0x1b85a) and
+/// draw_top_unit (0x1b8e1) pick it: from the square's first unit by record (unit_at 0x1bade),
+/// on Ocean a land or air unit gives way to the first ship of the stack after it; otherwise a
+/// stack shows its best defender (best_defender_stack 0x111e), a ship's cargo included.
+pub fn top_unit(game: &Game, x: i32, y: i32) -> Option<crate::game::UnitId> {
+    let mut units = game.units_at(x, y);
+    units.sort_by_key(|u| game.unit(*u).record);
+    let first = *units.first()?;
+    if units.len() == 1 {
+        return Some(first);
+    }
+    if game.map.get(x, y).is_some_and(|t| t.terrain == Terrain::Ocean) && !game.unit(first).is_sea() {
+        return Some(units.iter().copied().find(|u| game.unit(*u).is_sea()).unwrap_or(first));
+    }
+    game.best_defender(x, y, None).or(Some(first))
 }
 
 /// The square without its units (`draw_tile` 0x1aa40; the map's 't' view draws only this,
@@ -362,5 +420,39 @@ pub fn draw_polar_edge(fb: &mut Surface, ctx: &UiContext, y: i32, px: i32, py: i
         blit_sprite(fb, sp, cell(11, 8), px, py - 8);
     } else if y == rules::MAP_H as i32 - 1 {
         blit_sprite(fb, sp, cell(11, 8), px, py + 8);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::GameSetup;
+    use crate::rules::unit_ids;
+
+    #[test]
+    fn unit_icons_recolour_as_load_sprite_sheets() {
+        // the white civ's 15 turns cyan, the grey civ's 7 turns 3; 10/2 take the civ colours
+        let white = unit_icon_remap(1);
+        assert_eq!((white[15], white[10], white[2], white[7]), (11, 15, 7, 7));
+        let green = unit_icon_remap(2);
+        assert_eq!((green[15], green[10], green[2], green[3]), (15, 10, 2, 3));
+        let grey = unit_icon_remap(7);
+        assert_eq!((grey[7], grey[10], grey[2]), (3, 7, 8));
+        assert_eq!(sp::unit_icon(21), Rect::new(17, 177, 15, 15));
+    }
+
+    #[test]
+    fn a_ship_shows_over_its_cargo_and_a_land_stack_its_defender() {
+        let mut g = Game::new(GameSetup { seed: 3, ..Default::default() }, None);
+        let find = |g: &Game, t: Terrain| (0..80).flat_map(|x| (2..48).map(move |y| (x, y))).find(|&(x, y)| g.map.tile(x, y).terrain == t && g.units_at(x, y).is_empty()).unwrap();
+        let (x, y) = find(&g, Terrain::Ocean);
+        let s = g.add_unit(5, unit_ids::SETTLERS, x, y);
+        let t = g.add_unit(5, unit_ids::TRIREME, x, y);
+        assert!(g.unit(s).record < g.unit(t).record);
+        assert_eq!(top_unit(&g, x, y), Some(t), "the first unit is no ship: the first ship");
+        let (lx, ly) = find(&g, Terrain::Grassland);
+        g.add_unit(6, unit_ids::SETTLERS, lx, ly);
+        let p = g.add_unit(6, unit_ids::PHALANX, lx, ly);
+        assert_eq!(top_unit(&g, lx, ly), Some(p));
     }
 }
