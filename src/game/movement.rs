@@ -610,15 +610,8 @@ impl Game {
                 self.stash_garrison(c);
             }
         }
-        // sentried units wake up when an enemy unit comes adjacent
-        let ids: Vec<UnitId> = self.all_units().filter(|u| u.owner == slot && u.order == UnitOrder::Sentry && u.carried_by.is_none()).map(|u| u.id).collect();
-        for id in ids {
-            let (x, y) = self.unit(id).pos();
-            let enemy_near = Map::neighbours8(x, y).any(|(nx, ny)| self.is_enemy_at(slot, nx, ny));
-            if enemy_near {
-                self.unit_mut(id).order = UnitOrder::None;
-            }
-        }
+        // a sentried unit wakes only when a foreign unit looks around next to it, treaty or
+        // not (unit_look 0x835f, 0x85cd): its own civ's turn start wakes nothing
     }
 }
 
@@ -1038,5 +1031,19 @@ mod zoc_tests {
         let walker = g.add_unit(me, unit_ids::LEGION, 39, 22);
         g.unit_look_goals(walker);
         assert!(g.ai_memory.goals[other as usize].iter().any(|q| q.kind == goal::ATTACK && (q.x as i32, q.y as i32) == g.city(c).pos()));
+    }
+
+    #[test]
+    fn a_sentry_wakes_when_the_foreigner_looks_not_at_its_own_turn() {
+        // unit_look 0x835f wakes the stack next to the looker; nothing else clears sentry
+        let (mut g, id) = open_field();
+        let me = g.human_slot;
+        let other = if me == 2 { 3 } else { 2 };
+        g.unit_mut(id).order = crate::game::UnitOrder::Sentry;
+        g.add_unit(other, unit_ids::MILITIA, 41, 25);
+        g.reset_moves(me);
+        assert_eq!(g.unit(id).order, crate::game::UnitOrder::Sentry);
+        g.reset_moves(other);
+        assert_eq!(g.unit(id).order, crate::game::UnitOrder::None);
     }
 }
