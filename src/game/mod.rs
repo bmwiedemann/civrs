@@ -168,6 +168,11 @@ pub struct Game {
     pub turn: u32,
     pub human_slot: Slot,
     pub active_unit: Option<UnitId>,
+    /// The origin of the human's map view as CIV.EXE keeps it (ds:0xd4cc, ds:0xd75e), which
+    /// steers the choice of the next unit (`next_active_unit`); the map view keeps it in step
+    /// with its own. None (a loaded game) puts no unit on screen.
+    #[serde(skip)]
+    pub view: Option<(i32, i32)>,
     pub rng: Rng,
     pub setup: GameSetup,
     pub options: Options,
@@ -419,6 +424,7 @@ impl Game {
             turn: 0,
             human_slot,
             active_unit: None,
+            view: None,
             rng,
             setup: setup.clone(),
             // Instant Advice is on only for a Chieftain (o 0x4576)
@@ -1002,8 +1008,12 @@ impl Game {
         self.cities[id as usize] = None;
     }
 
-    /// Cycle to the next unit of the human player that wants orders: the records after the
-    /// active unit's, then from the first (move_units 0x4144, record order).
+    /// The next unit of the human player that wants orders (move_units 0x4144..0x43d8): the
+    /// records from the one after the active unit, wrapping, first those inside the map view
+    /// (columns vx+1..vx+14, rows vy+1..vy+9, 0x434f..0x437f), and only after a whole round
+    /// without one the first of the others, on which the view is centred (0x43c9).
+    /// CIV.EXE compares the columns without the east-west wrap, so near x = 0 it takes
+    /// visible units for hidden ones; civrs wraps.
     pub fn next_active_unit(&mut self) -> Option<UnitId> {
         let slot = self.human_slot;
         let ids = self.units_of(slot);
@@ -1011,13 +1021,20 @@ impl Game {
             return None;
         }
         let start = self.active_unit.and_then(|a| ids.iter().position(|id| *id == a)).map(|i| i + 1).unwrap_or(0);
-        for k in 0..ids.len() {
-            let u = self.unit(ids[(start + k) % ids.len()]);
-            if u.moves_left > 0 && u.order == UnitOrder::None && u.carried_by.map(|c| self.unit_opt(c).is_none()).unwrap_or(true) {
-                return Some(u.id);
-            }
+        let wants = |u: &Unit| u.moves_left > 0 && u.order == UnitOrder::None && u.carried_by.map(|c| self.unit_opt(c).is_none()).unwrap_or(true);
+        let shown = |u: &Unit| self.view.is_some_and(|(vx, vy)| (1..=14).contains(&Map::wrap_x(u.x - vx)) && (1..=9).contains(&(u.y - vy)));
+        let order = (0..ids.len()).map(|k| self.unit(ids[(start + k) % ids.len()]));
+        let pick = order.clone().find(|u| wants(u) && shown(u)).or_else(|| order.clone().find(|u| wants(u))).map(|u| (u.id, shown(u), u.pos()));
+        let (id, on_screen, (x, y)) = pick?;
+        if !on_screen {
+            self.view = Some(Self::view_centred_on(x, y));
         }
-        None
+        Some(id)
+    }
+
+    /// The view origin that puts (x, y) at column 7, row 6 (0x1a68:0xe).
+    pub fn view_centred_on(x: i32, y: i32) -> (i32, i32) {
+        (Map::wrap_x(x - 7), (y - 6).clamp(0, crate::rules::MAP_H as i32 - 12))
     }
 
     /// Any human unit still able to act this turn?

@@ -306,14 +306,17 @@ impl MapView {
     }
 
     fn activate_next(&mut self, ctx: &mut UiContext) {
+        // the choice prefers the units in the view and centres the view on any other
+        // (Game::next_active_unit, move_units 0x434f..0x43c9)
         let g = ctx.game_mut();
+        g.view = Some((self.vx, self.vy));
         g.active_unit = g.next_active_unit();
+        if let Some((vx, vy)) = g.view {
+            self.vx = vx;
+            self.vy = vy;
+        }
         if let Some(id) = g.active_unit {
-            let (x, y) = g.unit(id).pos();
-            if self.last_centered != Some(id) {
-                self.ensure_visible(x, y);
-                self.last_centered = Some(id);
-            }
+            self.last_centered = Some(id);
             self.mode = Mode::Normal;
         } else {
             self.mode = Mode::EndOfTurn;
@@ -389,6 +392,8 @@ impl MapView {
             let _ = crate::save::save_game(&path, ctx.game());
         }
         self.last_centered = None;
+        // the turn's units start again from the first record (move_units 0x4149)
+        ctx.game_mut().active_unit = None;
         self.activate_next(ctx);
     }
 
@@ -733,14 +738,15 @@ impl MapView {
             // it switches the keyboard look cursor, which civrs does not have)
             Key::Char('w') => {
                 if let Some(id) = active {
+                    ctx.game_mut().view = Some((self.vx, self.vy));
                     ctx.game_mut().wait_unit(id);
                     let g = ctx.game_mut();
                     if g.active_unit == Some(id) || g.active_unit.is_none() {
                         g.active_unit = Some(id);
                     }
-                    if let Some(a) = ctx.game().active_unit {
-                        let (x, y) = ctx.game().unit(a).pos();
-                        self.ensure_visible(x, y);
+                    if let Some((vx, vy)) = g.view {
+                        self.vx = vx;
+                        self.vy = vy;
                     }
                 }
                 Transition::None

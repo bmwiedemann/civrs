@@ -667,6 +667,26 @@ mod tests {
     }
 
     #[test]
+    fn the_next_unit_is_one_in_the_map_view_else_the_view_moves_to_it() {
+        // move_units 0x434f: a first round only takes units in columns vx+1..vx+14 and rows
+        // vy+1..vy+9 of the view; then the first other one, with the view centred on it
+        let mut g = Game::new(GameSetup { seed: 5, ..Default::default() }, None);
+        let slot = g.human_slot;
+        for u in g.units_of(slot) {
+            g.unit_mut(u).moves_left = 0;
+        }
+        let a = g.add_unit(slot, unit_ids::MILITIA, 20, 20);
+        let b = g.add_unit(slot, unit_ids::MILITIA, 40, 30);
+        g.active_unit = None;
+        g.view = Some((30, 21));
+        assert_eq!(g.next_active_unit(), Some(b), "b is in the view, a is not");
+        assert_eq!(g.view, Some((30, 21)));
+        g.view = Some((30, 20));
+        assert_eq!(g.next_active_unit(), Some(a), "row vy+10 is outside: a comes first by record");
+        assert_eq!(g.view, Some((13, 14)));
+    }
+
+    #[test]
     fn one_full_move_point_always_enters_mountains() {
         for seed in 0..20 {
             let (mut g, id) = militia_before_mountains(seed, 3);
