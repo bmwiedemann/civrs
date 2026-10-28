@@ -22,7 +22,6 @@ use crate::gfx::{Rect, Surface, TextStyle};
 use crate::platform::Event;
 use crate::rules;
 use crate::ui::context::UiContext;
-use crate::ui::eventpics::PicScreen;
 use crate::ui::newspaper::newspaper;
 use crate::ui::replay::{PowerGraph, Replay};
 use crate::ui::screen::{DialogResult, Screen, Transition};
@@ -165,54 +164,85 @@ pub fn arch_screen(ctx: &UiContext) -> Box<dyn Screen> {
         .unwrap_or_else(|| "Irrigation".to_string());
     let v = Vars { rplc1: evidence, us: g.map(|g| g.human().leader.to_ascii_uppercase()).unwrap_or_default(), ..Default::default() };
     let lines = ctx.texts.king.section("ARCH").map(|l| l.to_vec()).unwrap_or_default();
-    let text = paragraphs(&substitute(&lines, &v));
-    let pic = PicScreen::new("ARCH", text).with_caption_pos(6, 4).with_caption_width(200);
-    Box::new(Arch { pic: Box::new(pic), coda: None })
+    let mut lines = paragraphs(&substitute(&lines, &v));
+    while lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+    Box::new(Arch { lines, line: 0, wait: 0, skip: false, coda: None })
 }
 
+/// Ticks each line of the ARCH text stays alone in the strip (o 0x22cb `wait_ticks(200)`).
+const ARCH_LINE: u32 = 200;
 /// Ticks the human's jingle plays at the end of `archaeology_screen` (o 0x2309).
 const ARCH_CODA: u32 = 300;
+/// Window font 6 (civrs FontSet index 5), set at o 0x21cb.
+const ARCH_FONT: usize = 5;
 
-/// The music of `archaeology_screen`: tune 35 as the screen clears (o 0x20db); after the
-/// text, a fade, the human's jingle for 300 ticks and a fade again (o 0x22e6..0x2319).
+/// Wait after showing a line: none after a line that ends in '!' (o 0x22bb), else 200 ticks.
+fn arch_wait(line: &str) -> u32 {
+    if line.ends_with('!') {
+        0
+    } else {
+        ARCH_LINE
+    }
+}
+
+/// `archaeology_screen` (o 0x209f): the screen goes black, tune 35 starts (o 0x20db) and
+/// ARCH.PIC appears at once. The `*ARCH` text then runs one line at a time in the strip
+/// y 6..25 at the top (restored from the picture for each line, o 0x221a), centred on x 160
+/// in font 6 with a shadow (VGA: 15 at y 7, 13 at y 9, then 14 at y 8, o 0x2240); each line
+/// stays 200 ticks unless it ends in '!' or a key is waiting (`kbhit` 0x1fc3:0x209e, which
+/// leaves the key unread, so every later line skips its wait too). No key ends the screen:
+/// after the last line come a fade, the human's jingle for 300 ticks and a fade again
+/// (o 0x22e2..0x2319).
 struct Arch {
-    pic: Box<dyn Screen>,
+    lines: Vec<String>,
+    /// The line in the strip.
+    line: usize,
+    /// Ticks left before the next line.
+    wait: u32,
+    /// A key is waiting: the remaining lines don't wait.
+    skip: bool,
     coda: Option<u32>,
 }
 
 impl Screen for Arch {
     fn on_enter(&mut self, ctx: &mut UiContext) {
         ctx.audio.play(Sound::Lose);
-        self.pic.on_enter(ctx);
+        self.wait = self.lines.first().map(|l| arch_wait(l)).unwrap_or(0);
     }
     fn update(&mut self, ctx: &mut UiContext) -> Transition {
-        match self.coda.as_mut() {
-            Some(t) => {
-                *t = t.saturating_sub(1);
-                if *t == 0 || ctx.instant {
-                    ctx.audio.fade_out();
-                    return Transition::Pop(DialogResult::Done);
-                }
-                Transition::None
+        if let Some(t) = self.coda.as_mut() {
+            *t = t.saturating_sub(1);
+            if *t == 0 || ctx.instant {
+                ctx.audio.fade_out();
+                return Transition::Pop(DialogResult::Done);
             }
-            None => {
-                let t = self.pic.update(ctx);
-                self.forward(t, ctx)
-            }
-        }
-    }
-    fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
-        if self.coda.is_some() {
             return Transition::None;
         }
-        let t = self.pic.handle(ev, ctx);
-        self.forward(t, ctx)
+        self.wait = self.wait.saturating_sub(1);
+        if self.wait == 0 || self.skip || ctx.instant {
+            self.advance(ctx);
+        }
+        Transition::None
+    }
+    fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
+        if matches!(ev, Event::Key { down: true, .. }) {
+            self.skip = true;
+        }
+        Transition::None
     }
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
-        self.pic.draw(fb, ctx);
+        let pic = ctx.pic("ARCH");
+        fb.blit(&pic.surf, 0, 0);
+        if let Some(l) = self.lines.get(self.line) {
+            for (y, c) in [(7, 15), (9, 13), (8, 14)] {
+                draw_text_centered(fb, &ctx.fonts, &TextStyle::new(ARCH_FONT, c), 160, y, l);
+            }
+        }
     }
     fn palette(&self, ctx: &UiContext) -> Palette {
-        self.pic.palette(ctx)
+        ctx.pic_pal("ARCH")
     }
     fn draws_parent(&self) -> bool {
         false
@@ -223,18 +253,18 @@ impl Screen for Arch {
 }
 
 impl Arch {
-    fn forward(&mut self, t: Transition, ctx: &mut UiContext) -> Transition {
-        match t {
-            Transition::Pop(_) => {
-                ctx.audio.fade_out();
-                if let Some(g) = ctx.game.as_ref() {
-                    ctx.audio.play_tune(Tune::Theme { civ: g.human().civ, long: false });
-                }
-                self.coda = Some(ARCH_CODA);
-                Transition::None
-            }
-            other => other,
+    /// The next line, or after the last one the coda: fade, the human's jingle, fade.
+    fn advance(&mut self, ctx: &mut UiContext) {
+        if self.line + 1 < self.lines.len() {
+            self.line += 1;
+            self.wait = arch_wait(&self.lines[self.line]);
+            return;
         }
+        ctx.audio.fade_out();
+        if let Some(g) = ctx.game.as_ref() {
+            ctx.audio.play_tune(Tune::Theme { civ: g.human().civ, long: false });
+        }
+        self.coda = Some(ARCH_CODA);
     }
 }
 
@@ -384,5 +414,16 @@ impl Screen for Exit {
     fn draw(&mut self, _fb: &mut Surface, _ctx: &mut UiContext) {}
     fn palette(&self, ctx: &UiContext) -> Palette {
         ctx.game_palette()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arch_lines_wait_unless_they_end_in_a_bang() {
+        assert_eq!(arch_wait("Centuries later,"), 200);
+        assert_eq!(arch_wait("CAESAR WILL RETURN!"), 0);
     }
 }
