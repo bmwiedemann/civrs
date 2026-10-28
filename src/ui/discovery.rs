@@ -21,7 +21,7 @@ const DISSOLVE: u32 = 20;
 
 pub struct DiscoveryScreen {
     adv: AdvanceId,
-    /// Civilisation adjective ("Roman").
+    /// First caption line ("Roman wise men").
     civ: String,
     modern: bool,
     dismiss: Dismiss,
@@ -29,7 +29,12 @@ pub struct DiscoveryScreen {
 }
 
 pub fn discovery_screen(ctx: &UiContext, adv: AdvanceId) -> Box<dyn Screen> {
-    let civ = ctx.game.as_ref().map(|g| g.human().adjective().to_string()).unwrap_or_default();
+    // scientists once the human knows Invention (0xbd70: knows(human, 0x14))
+    let civ = ctx
+        .game
+        .as_ref()
+        .map(|g| format!("{} {}", g.human().adjective(), if g.human().knows(rules::advance_ids::INVENTION) { "scientists" } else { "wise men" }))
+        .unwrap_or_default();
     Box::new(DiscoveryScreen { adv, civ, modern: modern_era(ctx), dismiss: Dismiss::new(), reveal: Reveal::new(ctx, DISSOLVE) })
 }
 
@@ -67,7 +72,8 @@ impl DiscoveryScreen {
         // advance name in the board (bold serif if it fits, else the small font)
         let font = if text_width(&ctx.fonts, 5, advance) <= board.w - 8 { 5 } else { 0 };
         draw_text_centered(fb, &ctx.fonts, &TextStyle::new(font, ink), board.x + board.w / 2, text_y, advance);
-        let lines = vec![format!("{} wise men discover", self.civ), format!("the secret of {advance}.")];
+        // "ADJ wise men|scientists\ndiscover the secret\nof ADV!" (CIV.EXE 0xbd52..0xbdfa)
+        let lines = vec![self.civ.clone(), "discover the secret".into(), format!("of {advance}!")];
         let y = if self.modern { 130 } else { 2 };
         draw_caption_centred(fb, ctx, pal, y, 240, &lines, 0);
     }

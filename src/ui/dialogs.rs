@@ -175,7 +175,21 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             vec![format!("'We love the {}'", g.human().title()), "celebration canceled".into(), format!("in {}.", city_name(*c))],
             Some(*c),
         ),
-        GameEvent::AdvanceDiscovered { slot, adv } if *slot == me => with_pedia(Some(crate::ui::discovery::discovery_screen(ctx, *adv)), *adv),
+        // the discovery picture with Animations on (and VGA), except for Future Technology;
+        // else "ADJ wise men|scientists\ndiscover the secret\nof ADV!" in the newspaper
+        // (CIV.EXE 0xbc84..0xbe22 -> 0xbf6b)
+        GameEvent::AdvanceDiscovered { slot, adv } if *slot == me => {
+            let first = if *adv != rules::advance_ids::FUTURE_TECH && g.options.animations {
+                crate::ui::discovery::discovery_screen(ctx, *adv)
+            } else {
+                let p = g.human();
+                let who = if p.knows(rules::advance_ids::INVENTION) { "scientists" } else { "wise men" };
+                let name = rules::ADVANCES[*adv as usize].name;
+                let what = if *adv == rules::advance_ids::FUTURE_TECH { format!("of {name} {}!", p.future_techs) } else { format!("of {name}!") };
+                crate::ui::newspaper::newspaper(vec![format!("{} {who}", p.adjective()), "discover the secret".into(), what], None)
+            };
+            with_pedia(Some(first), *adv)
+        }
         // the hut's own message (HutEntered) announces it and adds the Civilopedia page
         GameEvent::AdvanceAcquired { source, .. } if source == "hut" => None,
         // "<Plural> acquire\n<adv> from\nthe Great Library!" (CIV.EXE 0xc394..0xc42a)
