@@ -292,7 +292,8 @@ impl PalaceScreen {
         Transition::None
     }
 
-    /// A section key ('1'..'7', 'a'..'c') or a click on the label rows (0x161a6..0x16243).
+    /// A section key ('1'..'7', 'a'..'c') or a click on the label rows (o 0x161a6..0x16243).
+    /// get_key gives keypad digits as cursor words (0x4f31..), which the range checks reject.
     fn section_choice(ev: &Event) -> Option<usize> {
         match ev {
             Event::Key { key: Key::Char(c), down: true, .. } => match c.to_ascii_lowercase() {
@@ -300,18 +301,17 @@ impl PalaceScreen {
                 c @ 'a'..='c' => Some(9 + c as usize - 'a' as usize),
                 _ => None,
             },
-            Event::Key { key: Key::Kp(n), down: true, .. } if (1..=7).contains(n) => Some(*n as usize),
             Event::MouseButton { x, y, down: true, .. } if *y < 154 => Some(((x + 12) / 48 + 1).clamp(1, 7) as usize),
             Event::MouseButton { x, down: true, .. } => Some((x / 107).clamp(0, 2) as usize + 9),
             _ => None,
         }
     }
 
-    /// A style key ('1'..'3') or a click on one of the three columns.
+    /// A style key ('1'..'3', not the keypad) or a click on one of the three columns
+    /// (o 0x16652..0x1667d).
     fn style_choice(ev: &Event) -> Option<u8> {
         match ev {
             Event::Key { key: Key::Char(c @ '1'..='3'), down: true, .. } => Some(*c as u8 - b'1'),
-            Event::Key { key: Key::Kp(n @ 1..=3), down: true, .. } => Some(n - 1),
             Event::MouseButton { x, down: true, .. } => Some((x / 107).clamp(0, 2) as u8),
             _ => None,
         }
