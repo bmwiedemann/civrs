@@ -439,20 +439,22 @@ impl Game {
     /// fourth turn when no city is in disorder or balanced (`flags` 0) and science + taxes are
     /// below 8, within 0..4; science is the leader's "civilized" trait + (10 - luxuries) / 2, one
     /// more with more gold than turn + 100, none at all once Robotics is known; taxes get the
-    /// rest. No government limit applies.
+    /// rest. No government limit applies. CIV.EXE processes a civ's cities before its politics
+    /// and units, civrs after them, so the turn CIV.EXE has at this point is civrs's turn + 1.
     pub fn ai_tax_rates(&mut self, slot: Slot, flags: u8) {
+        let turn = self.turn as i32 + 1;
         let p = self.player(slot);
         let (sci, tax) = ((100 - p.tax as i32 - p.lux as i32) / 10, p.tax as i32 / 10);
         let mut lux = 10 - (sci + tax);
         if flags & 2 != 0 && sci + tax > 6 {
             lux += 1;
         }
-        if self.turn & 3 == 0 && flags == 0 && sci + tax < 8 {
+        if turn & 3 == 0 && flags == 0 && sci + tax < 8 {
             lux -= 1;
         }
         let lux = lux.clamp(0, 4);
         let mut sci = p.civ().civilized as i32 + (10 - lux) / 2;
-        if p.gold > self.turn as i32 + 100 {
+        if p.gold > turn + 100 {
             sci += 1;
         }
         if p.knows(adv::ROBOTICS) {
@@ -2076,8 +2078,9 @@ mod tests {
         g.ai_tax_rates(ai, 2);
         let sci = civilized + (10 - 3) / 2;
         assert_eq!((g.player(ai).lux, g.player(ai).tax as i32), (30, (10 - sci - 3) * 10));
-        // every fourth turn without trouble, while sci + tax < 8: one less
-        g.set_turn(8);
+        // every fourth turn (CIV.EXE's turn = civrs's + 1) without trouble, while sci + tax < 8:
+        // one less
+        g.set_turn(7);
         g.ai_tax_rates(ai, 0);
         assert_eq!(g.player(ai).lux, 20);
         // rich: one more for science; Robotics: none
