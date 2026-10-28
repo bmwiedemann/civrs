@@ -160,7 +160,7 @@ pub fn import(sve: &Path) -> Result<Game, SaveError> {
     // load_game sets ds:0xdf60 = 2 for the slots from 4 on (o 0xf0bc, slot ds:0xe168), and
     // then move_units (0x40c0) gives the human's units their full moves again, as at the start
     // of a turn; slots 0..3 (ds:0xdf60 = 1) keep the saved moves. Its loop then completes
-    // the fortifications of the units that have moves (0x4215..0x4243), as `reset_moves`.
+    // the fortifications of the units it passes (0x4215..0x4243), as `next_active_unit` does.
     if slot_of(sve).is_some_and(|n| n >= 4) {
         let human = g.human_slot;
         g.reset_moves(human);
