@@ -275,12 +275,13 @@ Nearly every tune is followed by PlayTune(1) when its screen closes.
 Cells with a 1px L-shaped guide line (colour 3 or 9 on row 0/col 0) must mask that line.
 | Content | Cells | Confidence |
 |---|---|---|
-| Units (28) | row y=160 cells 0..19, row y=176 cells 0..7; civ colour placeholders idx 10 light / 2 dark | verified |
+| Units (28) | row y=160 cells 0..19, row y=176 cells 0..7, drawn as the 15x15 inside (cell + 1); idx 10 light / 2 dark, 15 -> 11 for the white civ, 7 -> 3 for the grey one (o 0x5a9c) | verified |
 | Roads 8 pieces N,NE,E,SE,S,SW,W,NW | y=48 cells 0..7 | verified |
 | Railroads same order | y=96 cells 8..15 | verified |
 | Rivers 16 variants mask N=1,E=2,S=4,W=8 | y=64 cells 0..15 (y=80 duplicate) | verified |
 | Specials in terrain order Desert..Ocean | y=112 cells 0..10 (Grassland empty) | partly verified |
-| Irrigation / Hut / Pollution / Mine / Fortress | y=32 cells 4 / 5 / 6 / 7 / 2 | visual, confirm at M1 |
+| Irrigation / Mine / map Pollution / city-screen smog | y=32 cells 4 / 5 / 6 / 3 (map icons 0..6 = y=32 cells, o 0x59d7) | verified |
+| Hut / Fortress / fortified, walls / city texture | 15x15 from (16i+1, 113), i = 15 / 14 / 13 / 12 | verified |
 | City sprites 9 sizes, no walls / walls | y=0 cells 10..18 / y=16 cells 10..18 (alt rows y=32, y=144) | probable |
 | Citizens (city screen figures) | y=128 cells 0..4 | probable |
 | Explosion 8 frames | y=96 cells 0..7 | probable |
@@ -602,3 +603,21 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   (0xbb4a), and the computer Settlers' goals. After such a divergence, its effects follow on, for
   example the human's Chieftain research bonus when another civ found the goal first (0x12c93). Two
   CIV.EXE runs from the same save differ in the same way.
+
+### Map screen pixel comparison (reference/tools/mapshot.py)
+- `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
+  CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
+  against `civrs --dump screen:map --load-sve CIVILn.SVE --out F.ppm`. The water and rivers turn
+  three palette rings every 15 ticks (`mapview::water_cycles`) and the active unit blinks every 16
+  frames, so compare a capture against the renders at `CIVRS_FRAMES` = 15k and 15k + 16 (k = 0..15)
+  and take the best. With that, captures of CIVIL0, 1, 3 and 4 match pixel for pixel, map and
+  sidebar. `reference/tools/sve_edit.py` `imp:` and `unit:...:SEEN` stage improvements (real and
+  as the human saw them) and foreign units next to the human's.
+- Known differences of a staged save: the squares around added human units are explored in civrs
+  (the import's vision pass) and not in CIV.EXE until the units look. draw_map_view draws the
+  squares in a random order (an LCG seeded with random(256), 0x1a68e), so a Settlers' job frame
+  (x - 1, y - 1) or a stack's second copy (+1, +1) may be covered by a neighbour drawn later;
+  civrs draws row by row.
+- What draw_tile (0x1aa40) shows of the improvements is the human's view of them, map page band
+  (x + 80, y + 100/150) (`Map::seen`, save v26): his units' looks, his own work, pollution,
+  his cities' captures and Apollo copy the real bits there (update_seen_improvements 0x1bc87).
