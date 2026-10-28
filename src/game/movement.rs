@@ -7,21 +7,22 @@ use crate::rules::{self, unit_ids, Domain};
 
 impl Game {
     /// Movement cost in thirds for `unit` moving from (fx,fy) to (tx,ty), ignoring legality.
+    ///
+    /// As move_units has it (CIV.EXE 0x62dd..0x6334): a road on both squares (a city square
+    /// has one, found_city 0x1b375) costs 1; it is free when the square left has a railroad
+    /// and the unit is the human's and not on a goto. Only the square left needs the railroad
+    /// (so rail into a city or onto a road is free, out of a city never, as cities get no
+    /// railroad); computer units and goto moves pay the road's 1 on railroads.
     pub fn move_cost(&self, unit: &super::Unit, from: (i32, i32), to: (i32, i32)) -> u8 {
         let ft = self.map.tile(from.0, from.1);
         let tt = self.map.tile(to.0, to.1);
         if unit.is_air() || unit.is_sea() {
             return 3;
         }
-        let from_rail = ft.has(tile_flags::RAILROAD) || ft.city.is_some();
-        let to_rail = tt.has(tile_flags::RAILROAD) || tt.city.is_some();
-        if from_rail && to_rail && !self.is_enemy_at(unit.owner, to.0, to.1) {
-            return 0;
-        }
-        let from_road = ft.has(tile_flags::ROAD) || from_rail;
-        let to_road = tt.has(tile_flags::ROAD) || to_rail;
-        if from_road && to_road {
-            return 1;
+        let road = |t: &super::map::Tile| t.has(tile_flags::ROAD) || t.has(tile_flags::RAILROAD) || t.city.is_some();
+        if road(&ft) && road(&tt) {
+            let free = ft.has(tile_flags::RAILROAD) && ft.city.is_none() && self.is_human(unit.owner) && unit.goto.is_none();
+            return if free { 0 } else { 1 };
         }
         if tt.is_ocean() {
             return 3;
@@ -861,5 +862,30 @@ mod zoc_tests {
         coast.map.get_mut(41, 26).unwrap().terrain = Terrain::Ocean;
         coast.add_unit(other, unit_ids::TRIREME, 41, 26);
         assert_eq!(coast.try_move(id, Dir8::E), Ok(MoveOutcome::Moved));
+    }
+
+    #[test]
+    fn railroads_are_free_for_the_human_off_a_goto_from_a_railroad_square() {
+        use crate::game::tile_flags as tf;
+        // CIV.EXE 0x62dd..0x6334: road on both squares, railroad on the square left
+        let (mut g, id) = open_field();
+        for x in 40..=42 {
+            g.map.get_mut(x, 25).unwrap().set(tf::ROAD, true);
+        }
+        g.map.get_mut(40, 25).unwrap().set(tf::RAILROAD, true);
+        let u = g.unit(id).clone();
+        assert_eq!(g.move_cost(&u, (40, 25), (41, 25)), 0, "rail onto a road");
+        assert_eq!(g.move_cost(&u, (41, 25), (40, 25)), 1, "road onto rail");
+        let mut on_goto = u.clone();
+        on_goto.goto = Some((45, 25));
+        assert_eq!(g.move_cost(&on_goto, (40, 25), (41, 25)), 1);
+        let other = if g.human_slot == 2 { 3 } else { 2 };
+        let mut computer = u.clone();
+        computer.owner = other;
+        assert_eq!(g.move_cost(&computer, (40, 25), (41, 25)), 1);
+        // a city square has a road but no railroad
+        g.add_city(g.human_slot, "Rome".into(), 42, 25);
+        assert_eq!(g.move_cost(&u, (42, 25), (41, 25)), 1);
+        assert_eq!(g.move_cost(&u, (41, 25), (42, 25)), 1);
     }
 }
