@@ -163,6 +163,21 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
         GameEvent::AdvanceAcquired { slot, adv, source } if *slot == me && source == "Great Library" => {
             with_pedia(msg(vec![format!("{} acquire", g.player(me).plural()), format!("{} from", rules::ADVANCES[*adv as usize].name), "the Great Library!".into()]), *adv)
         }
+        // grant_advance 0xc394..0xc507 at (100,80): what the advance allows follows, one
+        // line each with a leading space (ds:0x2404, 0x2408)
+        GameEvent::ForeignAdvance { slot, adv, source } if *slot != me => {
+            let name = rules::ADVANCES[*adv as usize].name;
+            let mut l = match *source {
+                s if s == 0 || s == *slot as i8 => vec![format!("{} develop", g.player(*slot).plural()), format!("{name}!")],
+                s => {
+                    let from = if s == -2 { "Great Library".to_string() } else { g.player(s as u8).plural().to_string() };
+                    vec![format!("{} acquire", g.player(*slot).plural()), format!("{name} from"), format!("the {from}!")]
+                }
+            };
+            l.extend(rules::IMPROVEMENTS.iter().take(24).filter(|i| i.prereq == Some(*adv)).map(|i| format!(" {}", i.name)));
+            l.extend(rules::UNITS.iter().filter(|u| u.prereq == Some(*adv)).map(|u| format!(" {}", u.name)));
+            Some(Box::new(MessageBox::new(l).with_pos(100, 80)))
+        }
         GameEvent::AdvanceAcquired { slot, adv, source } if *slot == me => {
             with_pedia(msg(vec![format!("You acquire {}", rules::ADVANCES[*adv as usize].name), format!("({source})")]), *adv)
         }

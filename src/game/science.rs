@@ -215,6 +215,11 @@ impl Game {
             return true;
         }
         self.player_mut(slot).research_count += 1;
+        // told to the human with an embassy there (0xc37f)
+        let human = self.human_slot;
+        if slot != human && self.player(human).has_embassy(slot) {
+            self.push_event(GameEvent::ForeignAdvance { slot, adv: a, source: source.code() });
+        }
         // wonders made obsolete by the first civilisation to learn this advance (CIV.EXE 0xc774)
         for w in 1..rules::WONDERS.len() as u8 {
             if !new_to_world || rules::WONDERS[w as usize].obsolete_by != Some(a) {
@@ -514,6 +519,21 @@ mod tests {
         let ev = g.take_events();
         assert!(ev.iter().any(|e| matches!(e, GameEvent::ScienceAdvice { slot, .. } if *slot == me)));
         assert!(ev.iter().any(|e| matches!(e, GameEvent::NeedsDecision(crate::game::Decision::ChooseResearch { .. }))));
+    }
+
+    #[test]
+    fn the_human_hears_of_advances_where_he_has_an_embassy() {
+        // 0xc37f: [human][civ] & 0x40
+        let (mut g, _, ai) = fixture();
+        let me = g.human_slot;
+        let (a, b) = (rules::advance_ids::CURRENCY, rules::advance_ids::WRITING);
+        g.player_mut(ai).forget(a);
+        g.player_mut(ai).forget(b);
+        g.grant_advance(ai, a, AdvanceSource::Discovered);
+        assert!(!g.take_events().iter().any(|e| matches!(e, GameEvent::ForeignAdvance { .. })));
+        g.raise_flag(me, ai, crate::game::diplomacy::flags::EMBASSY);
+        g.grant_advance(ai, b, AdvanceSource::From(me));
+        assert!(g.take_events().contains(&GameEvent::ForeignAdvance { slot: ai, adv: b, source: me as i8 }));
     }
 
     #[test]

@@ -232,6 +232,11 @@ pub enum GameEvent {
     /// a further turn of disorder (`first` false), or a first one after this turn's riot
     /// animation (`Disorder`).
     DisorderOngoing { city: CityId, first: bool },
+    /// "<Plural> develop\n<adv>!" (or "acquire\n<adv> from\nthe <Plural|Great Library>!"),
+    /// then the improvements and units it allows: a computer civilization the human has an
+    /// embassy with learned an advance from `source` (`AdvanceSource::code`; grant_advance
+    /// CIV.EXE 0xc37f..0xc50a).
+    ForeignAdvance { slot: Slot, adv: AdvanceId, source: i8 },
 }
 
 /// A choice the engine needs from the human player before continuing.
