@@ -224,6 +224,13 @@ pub struct Game {
     /// gold of the `game_turn` start at [bp-0x1a]); none after a load. Not saved.
     #[serde(skip)]
     pub taxes_mark: Option<i32>,
+    /// ds:0xb1e8 during a city's turn: the human's city opens its city screen after this turn
+    /// (`process_city` sets it for Population decrease 0xd769, Settlers, Diplomat or Caravan
+    /// built 0xe3f8, an improvement or wonder built 0xe604, new disorder 0x126dd; an AUTO
+    /// city's own choice clears it, 0xeb87). Its research is then not completed (0x12d53).
+    /// Not saved.
+    #[serde(skip)]
+    pub city_attention: bool,
     /// The global warming counter ds:0xb1ea (0..99): one step a turn towards twice the
     /// polluted squares minus four per warming so far (`global_warming_check`); stored after
     /// the game body in version-9 saves.
@@ -264,10 +271,6 @@ pub struct Game {
     /// ds:0x6b92: the riot animation ran this turn. Not saved.
     #[serde(skip)]
     pub riot_shown: bool,
-    /// The human city being processed called for attention: no research completion in it
-    /// (`process_city`, CIV.EXE 0x12d53). Not saved.
-    #[serde(skip)]
-    pub research_held: bool,
 }
 
 /// `wonders_built` entry of a wonder whose city was destroyed: built, owned by no one, listed
@@ -411,6 +414,7 @@ impl Game {
             treaty_break_ok: None,
             weak_attack_ok: false,
             taxes_mark: None,
+            city_attention: false,
             warming_counter: 0,
             first_discoverer: vec![0; 72],
             historian_timer: 80 + historian,
@@ -421,7 +425,6 @@ impl Game {
             opening: true,
             unit_limit_shown: false,
             riot_shown: false,
-            research_held: false,
         };
         game.place_starting_units(&slots, &world, &mut wr);
         game.refresh_all_vision();

@@ -103,7 +103,8 @@ impl Game {
     /// 0x12c5d). Then the beakers grow by `sci`, again by `sci` on Chieftain when someone
     /// else already found the human's goal (0x12c93, es:0x4b0 first-discoverer table), and by
     /// `sci / 2` with the SETI Program (0x12cc0). Full beakers are spent at once on the
-    /// advance (`choose_research`).
+    /// advance (`choose_research`), except in a human city that opens its city screen after
+    /// this turn (ds:0xb1e8, `city_attention`, 0x12d53): the next city completes it.
     pub fn city_science(&mut self, c: CityId, sci: i32) {
         let slot = self.city(c).owner;
         let sci = if self.player(slot).govt == rules::Govt::Anarchy { 0 } else { sci };
@@ -113,7 +114,7 @@ impl Game {
             let learned = goal.is_some_and(|a| a != rules::advance_ids::FUTURE_TECH && self.player(slot).knows(a));
             if learned || (goal.is_none() && self.player(slot).beakers != 0) {
                 self.player_mut(slot).researching = None;
-                self.pick_research(slot);
+                self.choose_research(slot);
                 self.player_mut(slot).beakers = 0;
             }
         }
@@ -127,15 +128,17 @@ impl Game {
         if self.owner_has_wonder(slot, won::SETI_PROGRAM) {
             self.player_mut(slot).beakers += sci / 2;
         }
-        if !self.research_held && self.research_complete(slot) {
+        if !(human && self.city_attention) && self.research_complete(slot) {
             self.player_mut(slot).beakers = 0;
             self.choose_research(slot);
         }
     }
 
     /// `choose_research` (CIV.EXE 0x0bb4a) when an advance is due: a computer player is
-    /// granted the advance `tech_ai::choose` draws (none on Chieftain half of the time); the
-    /// human is granted the goal, if any, with the discovery screen, and asked for the next.
+    /// granted the advance `tech_ai::choose` draws (none on Chieftain half of the time), and
+    /// then all its cities choose their production again (0xbc5d `ai_rechoose_production`(civ,
+    /// -1)); the human is granted the goal, if any, with the discovery screen, and asked for
+    /// the next.
     pub fn choose_research(&mut self, slot: Slot) {
         if slot == 0 || !self.player(slot).alive {
             return;
@@ -145,22 +148,26 @@ impl Game {
             if let Some(a) = crate::ai::tech_ai::choose(self, slot) {
                 self.grant_advance(slot, a, AdvanceSource::Discovered);
                 self.push_event(GameEvent::AdvanceDiscovered { slot, adv: a });
+                crate::ai::city_ai::rechoose(self, slot, None);
             }
             return;
         }
         if self.research_menu_queued(slot) {
             return;
         }
-        if let Some(a) = self.player(slot).researching {
-            // the science advisor's pick is drawn like a computer's before the advance is
-            // granted, leaving out the goal itself (choose_research 0x0bb5d, 0x0bfc1)
-            let advice = (self.setup.difficulty == rules::Difficulty::Chieftain && self.options.instant_advice).then(|| crate::ai::tech_ai::draw(self, slot, Some(a))).flatten();
+        // the science advisor's pick is drawn like a computer's every time, before the goal
+        // is granted and leaving it out (0x0bb5d); it is shown with the menu on Chieftain
+        // with the advisors on (0x0bfc1), also when there was no goal (0x12c4a)
+        let goal = self.player(slot).researching;
+        let drawn = crate::ai::tech_ai::draw(self, slot, goal);
+        let advice = drawn.filter(|_| self.setup.difficulty == rules::Difficulty::Chieftain && self.options.instant_advice);
+        if let Some(a) = goal {
             self.grant_advance(slot, a, AdvanceSource::Discovered);
             self.player_mut(slot).researching = None;
             self.push_event(GameEvent::AdvanceDiscovered { slot, adv: a });
-            if let Some(adv) = advice {
-                self.push_event(GameEvent::ScienceAdvice { slot, adv });
-            }
+        }
+        if let Some(adv) = advice {
+            self.push_event(GameEvent::ScienceAdvice { slot, adv });
         }
         self.pick_research(slot);
     }
@@ -452,6 +459,61 @@ mod tests {
         g.set_research(me, g.researchable(me)[0]);
         g.city_science(c, 4);
         assert_eq!(g.player(me).beakers, 4);
+    }
+
+    #[test]
+    fn a_computer_advance_makes_its_cities_choose_again() {
+        // 0xbc5d: ai_rechoose_production(civ, -1) after the grant
+        let (mut g, _, ai) = fixture();
+        let settler = g.units_of(ai).into_iter().find(|id| g.unit(*id).kind == crate::rules::unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        g.city_mut(c).production = crate::game::Production::Unit(crate::rules::unit_ids::NUCLEAR);
+        let before = g.player(ai).advance_count();
+        g.choose_research(ai);
+        assert_eq!(g.player(ai).advance_count(), before + 1);
+        assert_ne!(g.city(c).production, crate::game::Production::Unit(crate::rules::unit_ids::NUCLEAR));
+    }
+
+    #[test]
+    fn a_city_that_opens_its_screen_leaves_the_advance_to_the_next() {
+        // 0x12d53: ds:0xb1e8 skips the completion check for the human's city
+        let (mut g, c, _) = fixture();
+        let me = g.human_slot;
+        let goal = g.researchable(me)[0];
+        g.set_research(me, goal);
+        let need = g.player(me).research_count as i32 * g.research_multiplier(me, true);
+        g.player_mut(me).beakers = need;
+        g.city_attention = true;
+        g.city_science(c, 4);
+        assert!(!g.player(me).knows(goal));
+        assert_eq!(g.player(me).beakers, need + 4);
+        g.city_attention = false;
+        g.city_science(c, 4);
+        assert!(g.player(me).knows(goal));
+        // an improvement the human completes sets it for the city's turn
+        g.city_mut(c).shields = 999;
+        g.city_mut(c).production = crate::game::Production::Improvement(imp::BARRACKS);
+        g.process_city(c);
+        assert!(g.city(c).has_improvement(imp::BARRACKS));
+        assert!(g.city_attention);
+    }
+
+    #[test]
+    fn the_advisor_speaks_also_when_the_goal_was_learned_otherwise() {
+        // 0x12c4a -> choose_research with no goal: draw and Chieftain advice, then the menu
+        let (mut g, c, ai) = fixture();
+        let me = g.human_slot;
+        g.setup.difficulty = rules::Difficulty::Chieftain;
+        g.options.instant_advice = true;
+        let goal = g.researchable(me)[0];
+        g.set_research(me, goal);
+        g.player_mut(me).beakers = 5;
+        g.grant_advance(me, goal, AdvanceSource::From(ai));
+        g.take_events();
+        g.city_science(c, 1);
+        let ev = g.take_events();
+        assert!(ev.iter().any(|e| matches!(e, GameEvent::ScienceAdvice { slot, .. } if *slot == me)));
+        assert!(ev.iter().any(|e| matches!(e, GameEvent::NeedsDecision(crate::game::Decision::ChooseResearch { .. }))));
     }
 
     #[test]

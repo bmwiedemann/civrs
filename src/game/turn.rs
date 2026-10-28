@@ -593,7 +593,8 @@ impl Game {
     /// Returns happy − unhappy as the routine does (0x13223), `None` when the city is gone.
     pub fn process_city(&mut self, c: CityId) -> Option<i32> {
         let slot = self.city(c).owner;
-        let events_before = self.events.len();
+        // ds:0xb1e8 is cleared before every city (update_civ_tax_rates 0xa5fa)
+        self.city_attention = false;
         // a store out of 0..=999 (a shortage leaves it negative) starts again from 0 (0xc977)
         {
             let cm = self.city_mut(c);
@@ -640,12 +641,7 @@ impl Game {
         if slot != 0 && !h.disorder && self.player(slot).govt != Govt::Anarchy {
             self.player_mut(slot).gold += t.tax;
         }
-        // a human city whose turn called for the player's attention (ds:0xb1e8: a population
-        // decrease 0xd769, "builds" 0xe3f8, a building 0xe604, a first turn of disorder
-        // 0x126dd) checks no research completion (0x12d53); the next city does
-        self.research_held = self.player(slot).human && self.events.iter().skip(events_before).any(|e| self.calls_attention(e, c));
         self.city_science(c, t.sci);
-        self.research_held = false;
         // hazards and upkeep, the human's cities only (0x12ddd)
         self.pollution_roll(c);
         self.meltdown_roll(c);
@@ -693,6 +689,8 @@ impl Game {
             }
         }
         if h.disorder != was_disorder {
+            // a human city falling into disorder opens its city screen (0x126dd)
+            self.city_attention |= human && h.disorder;
             if !(h.disorder && human) {
                 self.push_event(if h.disorder { GameEvent::Disorder(c) } else { GameEvent::DisorderEnded(c) });
             }
@@ -1011,20 +1009,6 @@ impl Game {
         Some(id)
     }
 
-    /// Production after an improvement or wonder is finished: a human's city stays on it, so
-    /// the city screen's CHANGE button flashes until something else is chosen; the computer asks
-    /// its production advisor (CIV.EXE 0xe720), an AUTO city of the human takes the advisor's
-    /// improvement, and with none worth it AUTO goes off (0xeb15..0xec08).
-    /// Whether event `e` of the human's city `c` sets CIV.EXE's attention flag ds:0xb1e8.
-    fn calls_attention(&self, e: &GameEvent, c: CityId) -> bool {
-        match e {
-            GameEvent::PopulationDecrease(x) | GameEvent::Disorder(x) | GameEvent::DisorderOngoing { city: x, first: true } => *x == c,
-            GameEvent::ItemBuilt { city, item } => *city == c && !matches!(item, Production::Unit(k) if *k != unit_ids::SETTLERS && *k < unit_ids::DIPLOMAT),
-            GameEvent::WonderBuilt { city, .. } => *city == c,
-            _ => false,
-        }
-    }
-
     /// A wonder built elsewhere or an improvement the city has: nothing happens and nothing is
     /// said (0xe4e8, 0xe51d -> 0xeb15); only a human city on AUTO asks its chooser again
     /// (0xeb57). A computer city keeps the item; civrs's `city_ai::manage` re-chooses at its
@@ -1035,13 +1019,21 @@ impl Game {
         }
     }
 
+    /// Production after an improvement or wonder is finished: a human's city stays on it, so
+    /// the city screen's CHANGE button flashes until something else is chosen; the computer asks
+    /// its production advisor (CIV.EXE 0xe720), an AUTO city of the human takes the advisor's
+    /// improvement, and with none worth it AUTO goes off (0xeb15..0xec08).
     fn after_building(&mut self, c: CityId, human: bool) {
         if !human {
             let next = self.ai_production(c);
             self.city_mut(c).production = next;
         } else if self.city(c).auto_build {
             match self.auto_production(c) {
-                Some(next) => self.city_mut(c).production = next,
+                Some(next) => {
+                    // the advisor's own choice needs no city screen (0xeb87)
+                    self.city_attention = false;
+                    self.city_mut(c).production = next;
+                }
                 None => self.city_mut(c).auto_build = false,
             }
         }
@@ -1120,6 +1112,10 @@ impl Game {
                 }
                 self.refresh_vision(owner);
                 self.push_event(GameEvent::ItemBuilt { city: c, item: prod });
+                // the human is shown Settlers, Diplomats and Caravans (0xe3d4..0xe3f8)
+                if human && (k == unit_ids::SETTLERS || k >= unit_ids::DIPLOMAT) {
+                    self.city_attention = true;
+                }
                 // a computer city re-chooses after every unit (city_rechoose_production 0x18c4c,
                 // called at 0xe3b1)
                 if !human {
@@ -1136,6 +1132,8 @@ impl Game {
                 }
                 let cost = self.production_cost(c, prod);
                 self.city_mut(c).shields = if human { 0 } else { self.city(c).shields - cost };
+                // any improvement the human completes opens the city screen (0xe604)
+                self.city_attention |= human;
                 if matches!(i, imp::SS_STRUCTURAL | imp::SS_COMPONENT | imp::SS_MODULE) {
                     // the part goes on the ship after an AI city re-chose its production
                     // (CIV.EXE 0xe719 before 0xe766)
@@ -1175,6 +1173,7 @@ impl Game {
                 // the store is emptied after a wonder, whoever built it (0xe6f9)
                 cm.shields = 0;
                 cm.caravan_shields = 0;
+                self.city_attention |= human;
                 self.push_event(GameEvent::WonderBuilt { city: c, wonder: w, owner });
                 self.on_wonder_built(owner, w);
                 self.after_building(c, human);

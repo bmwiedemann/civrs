@@ -571,6 +571,7 @@ impl Game {
                 // "Population decrease in CITY." for the human's city in its turn (0xd70d..0xd769,
                 // ds:0x255f) and a fresh start
                 if turn && slot == self.human_slot {
+                    self.city_attention = true;
                     self.push_event(super::GameEvent::PopulationDecrease(c));
                 }
                 for idx in 1..21u8 {
