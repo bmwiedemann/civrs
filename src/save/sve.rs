@@ -165,6 +165,7 @@ pub fn import(sve: &Path) -> Result<Game, SaveError> {
             u.moves_left = u.full_moves() + if u.is_sea() && extra { 3 } else { 0 };
         }
         g.active_unit = None;
+        g.reset_unit_loop();
         g.active_unit = g.next_active_unit();
     }
     Ok(g)
@@ -652,6 +653,7 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
     g.reset_goals(human);
     g.units_look_around(human);
     g.active_unit = None;
+    g.reset_unit_loop();
     g.active_unit = g.next_active_unit();
     Ok(g)
 }

@@ -173,6 +173,13 @@ pub struct Game {
     /// with its own. None (a loaded game) puts no unit on screen.
     #[serde(skip)]
     pub view: Option<(i32, i32)>,
+    /// move_units' unit loop as it stands between two picks (locals of 0x4046, fresh at each
+    /// turn and after a load): the record of the last unit it took, the record before the
+    /// last one it took off the screen ([bp-0x46], 0x7f to begin with) and whether the loop
+    /// has come round to that record since ([bp-0x2e]), after which a unit outside the view
+    /// is taken too (`next_active_unit`).
+    #[serde(skip)]
+    pub unit_loop: UnitLoop,
     pub rng: Rng,
     pub setup: GameSetup,
     pub options: Options,
@@ -317,6 +324,23 @@ fn no_audience() -> i8 {
     -1
 }
 
+/// The state of move_units' unit loop between two picks (`Game::unit_loop`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnitLoop {
+    /// The record of the unit taken last.
+    pub last: u8,
+    /// The record before the last unit taken off the screen ([bp-0x46]).
+    pub mark: u8,
+    /// The loop has passed `mark` since ([bp-0x2e]).
+    pub round: bool,
+}
+
+impl Default for UnitLoop {
+    fn default() -> Self {
+        UnitLoop { last: 0, mark: 0x7f, round: false }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MoveOutcome {
     Moved,
@@ -425,6 +449,7 @@ impl Game {
             human_slot,
             active_unit: None,
             view: None,
+            unit_loop: UnitLoop::default(),
             rng,
             setup: setup.clone(),
             // Instant Advice is on only for a Chieftain (o 0x4576)
@@ -1021,7 +1046,12 @@ impl Game {
 
     /// `next_active_unit` going on from unit `from` itself, as the loop does after 'u'
     /// (0x4e64 sets the loop's unit to the one before `next_unit_in_stack`).
+    /// It also makes the record before `from` the loop's mark (0x4e78).
     pub fn next_active_unit_at(&mut self, from: UnitId) -> Option<UnitId> {
+        if let Some(u) = self.unit_opt(from) {
+            self.unit_loop.mark = u.record.wrapping_sub(1) & 127;
+            self.unit_loop.round = false;
+        }
         self.next_active_unit_from(Some(from), 0, true)
     }
 
@@ -1029,22 +1059,57 @@ impl Game {
     /// (0x41fb), passengers at sea included. `prefer_view` false is the loop's "whole round
     /// done" flag ([bp-0x2e]) set, as 'w' sets it (0x4dd7): the next unit is taken wherever
     /// it is.
+    ///
+    /// The loop runs over the records 0..127 again and again from the one after the unit it
+    /// took last (0x4174, 0x7691 -> 0x4144). At the record before the last unit it took off
+    /// the screen (127 at the start of the turn) it notes that it has come round (0x4150);
+    /// before that a unit outside the view is passed over (0x4381), after it one is taken,
+    /// the view centred on it, and that unit becomes the new mark (0x438f..0x43db). So once
+    /// no unit in the view wants orders, the next one off the screen is the first from that
+    /// mark on, not the first after the unit that just finished.
     fn next_active_unit_from(&mut self, from: Option<UnitId>, skip: usize, prefer_view: bool) -> Option<UnitId> {
         let slot = self.human_slot;
         let ids = self.units_of(slot);
-        if ids.is_empty() {
+        let wants = |u: &Unit| u.moves_left > 0 && u.order == UnitOrder::None;
+        if !ids.iter().any(|id| wants(self.unit(*id))) {
             return None;
         }
-        let start = from.and_then(|a| ids.iter().position(|id| *id == a)).map(|i| i + skip).unwrap_or(0);
-        let wants = |u: &Unit| u.moves_left > 0 && u.order == UnitOrder::None;
-        let shown = |u: &Unit| self.view.is_some_and(|(vx, vy)| (1..=14).contains(&Map::wrap_x(u.x - vx)) && (1..=9).contains(&(u.y - vy)));
-        let order = (0..ids.len()).map(|k| self.unit(ids[(start + k) % ids.len()]));
-        let pick = order.clone().find(|u| wants(u) && (shown(u) || !prefer_view)).or_else(|| order.clone().find(|u| wants(u))).map(|u| (u.id, shown(u), u.pos()));
-        let (id, on_screen, (x, y)) = pick?;
-        if !on_screen {
-            self.view = Some(Self::view_centred_on(x, y));
+        let mut by_record: [Option<UnitId>; 128] = [None; 128];
+        for id in &ids {
+            by_record[self.unit(*id).record as usize & 127] = Some(*id);
         }
-        Some(id)
+        // a unit deleted since (disbanded, a caravan's help) leaves the loop at its record
+        let at = from.and_then(|a| self.unit_opt(a)).filter(|u| u.owner == slot).map(|u| u.record).unwrap_or(self.unit_loop.last);
+        let mut i = if from.is_some() { (at as usize + skip) & 127 } else { 0 };
+        if !prefer_view {
+            self.unit_loop.round = true;
+        }
+        let shown = |u: &Unit| self.view.is_some_and(|(vx, vy)| (1..=14).contains(&Map::wrap_x(u.x - vx)) && (1..=9).contains(&(u.y - vy)));
+        for _ in 0..3 * 128 {
+            if i as u8 == self.unit_loop.mark {
+                self.unit_loop.round = true;
+            }
+            if let Some(id) = by_record[i].filter(|id| wants(self.unit(*id))) {
+                let u = self.unit(id);
+                let (on_screen, (x, y)) = (shown(u), u.pos());
+                if on_screen || self.unit_loop.round {
+                    if !on_screen {
+                        self.view = Some(Self::view_centred_on(x, y));
+                        self.unit_loop.mark = (i as u8).wrapping_sub(1) & 127;
+                        self.unit_loop.round = false;
+                    }
+                    self.unit_loop.last = i as u8;
+                    return Some(id);
+                }
+            }
+            i = (i + 1) & 127;
+        }
+        None
+    }
+
+    /// The loop starts afresh, as move_units does at each turn and after a load.
+    pub fn reset_unit_loop(&mut self) {
+        self.unit_loop = UnitLoop::default();
     }
 
     /// The view origin that puts (x, y) at column 7, row 6 (0x1a68:0xe).

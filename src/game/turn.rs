@@ -244,6 +244,7 @@ impl TurnRunner {
                     g.progress_work(slot);
                     g.refresh_all_vision();
                     g.active_unit = None;
+                    g.reset_unit_loop();
                     g.active_unit = g.next_active_unit();
                     self.drain_events(g);
                     self.phase = if std::mem::take(&mut self.then_turn) { Phase::HumanUnits } else { Phase::Done };

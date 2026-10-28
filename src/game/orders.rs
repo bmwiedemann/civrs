@@ -508,6 +508,11 @@ impl Game {
     /// Settlers job (flags 0xc2) gives back the full moves, then every order but the veteran
     /// bits is cleared (flags &= 0x30) and so is the goto.
     pub fn wake_picked_unit(&mut self, id: UnitId) {
+        // the loop goes on from the picked unit, which is the new mark (0x4b29..0x4b36)
+        let rec = self.unit(id).record & 127;
+        self.unit_loop.last = rec;
+        self.unit_loop.mark = rec.wrapping_sub(1) & 127;
+        self.unit_loop.round = false;
         let u = self.unit_mut(id);
         if matches!(u.order, UnitOrder::Road | UnitOrder::Irrigate | UnitOrder::Mine | UnitOrder::Fortress | UnitOrder::CleanPollution) {
             u.moves_left = u.full_moves();

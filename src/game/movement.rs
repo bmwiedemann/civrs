@@ -724,6 +724,35 @@ mod tests {
     }
 
     #[test]
+    fn off_the_screen_the_loop_goes_on_from_its_mark_not_from_the_last_unit() {
+        // move_units 0x4150 / 0x4381: with nobody left in the view, a unit outside it is
+        // only taken once the loop has passed its mark (127 at the turn's start, then the
+        // record before the last unit it took off the screen, 0x43d8): after the unit of
+        // record 1 the one of record 0 comes before the one of record 2 (as CIV.EXE did in a
+        // differential run from an edited CIVIL4)
+        let mut g = Game::new(GameSetup { seed: 5, ..Default::default() }, None);
+        let slot = g.human_slot;
+        for u in g.units_of(slot) {
+            g.remove_unit(u);
+        }
+        let a = g.add_unit(slot, unit_ids::MILITIA, 20, 10);
+        let b = g.add_unit(slot, unit_ids::MILITIA, 40, 30);
+        let c = g.add_unit(slot, unit_ids::MILITIA, 20, 20);
+        assert_eq!([a, b, c].map(|u| g.unit(u).record), [0, 1, 2]);
+        g.reset_unit_loop();
+        g.view = Some(Game::view_centred_on(40, 30));
+        g.active_unit = None;
+        assert_eq!(g.next_active_unit(), Some(b), "b is in the view");
+        g.active_unit = Some(b);
+        g.unit_mut(b).moves_left = 0;
+        assert_eq!(g.next_active_unit(), Some(a), "from the mark 127 on: record 0 first");
+        assert_eq!(g.unit_loop.mark, 127, "taken off the screen: the record before a, 0 - 1");
+        g.active_unit = Some(a);
+        g.unit_mut(a).moves_left = 0;
+        assert_eq!(g.next_active_unit(), Some(c));
+    }
+
+    #[test]
     fn a_moving_unit_keeps_two_squares_from_the_view_edge() {
         // scroll_to 0x9505: columns vx+2..vx+13 and rows vy+2..vy+9 keep the view, any other
         // square gets the origin (x - 8, y - 6)
