@@ -784,12 +784,14 @@ mod tests {
         assert_eq!(g.unit(id).moves_left, 0);
         g.reset_moves(slot);
         assert_eq!(g.unit(id).moves_left, 3);
-        // a computer's unit at its turn's start
+        // a computer's unit neither: its loop completes it (ai::unit_ai::move_units)
         let ai = (1..8).find(|s| *s != slot && g.player(*s).in_game).unwrap();
         let (x, y) = g.unit(id).pos();
         let b = g.add_unit(ai, unit_ids::MILITIA, x, y + 3);
         g.unit_mut(b).order = crate::game::UnitOrder::Fortify;
         g.reset_moves(ai);
+        assert_eq!((g.unit(b).order, g.unit(b).moves_left), (crate::game::UnitOrder::Fortify, 3));
+        g.complete_fortify(b);
         assert_eq!((g.unit(b).order, g.unit(b).moves_left), (crate::game::UnitOrder::Fortified, 0));
     }
 
