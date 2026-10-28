@@ -13,7 +13,8 @@
 //!                          message box in CIV.EXE (nothing in civrs)
 //! unit 12,28 k2:2          a move that opens a menu (a caravan at one of the human's cities:
 //!                          0 keep moving, 1 trade route, 2 help build the wonder; a treaty
-//!                          partner's unit or land: 0 cancel, 1 break the treaty) and its row;
+//!                          partner's unit or land: 0 cancel, 1 break the treaty, which a
+//!                          Senate overrules with a message box: add `ret`) and its row;
 //!                          a caravan entering a foreign city sets up its route, a move onto a
 //!                          foreign unit attacks
 //! select 7,23 Caesarea 9,25   FindCity, a click on the square and Return: its one unit
@@ -290,6 +291,9 @@ fn unit_key(g: &mut Game, id: crate::game::UnitId, k: &str) -> Result<(), String
             // treaty. (no Senate asks), and the move goes on
             MoveOutcome::BreakTreaty(o) => match row {
                 Some(0) => {}
+                // the Senate of a Republic or Democracy: "Overruled by the Senate. Action
+                // canceled." (0x1a42d), a message box the script answers with `ret`
+                Some(1) if g.senate_overrules(g.human_slot) => {}
                 Some(1) => {
                     g.treaty_break_ok = Some(o);
                     let out = g.try_move(id, d).map_err(|e| e.message().to_string());
