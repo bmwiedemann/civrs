@@ -311,10 +311,14 @@ fn human_knows(ctx: &UiContext, a: u8) -> bool {
 /// Civil disorder (CIV.EXE 0x12612): "Civil Disorder in / CITY! Mayor / flees in panic."
 /// with rioters from RIOT.PIC once the human knows University, RIOT2.PIC before.
 pub fn disorder_screen(ctx: &UiContext, city: CityId) -> Box<dyn Screen> {
-    let name = ctx.game().city(city).name.clone();
     let sheet = if human_knows(ctx, adv::UNIVERSITY) { "RIOT" } else { "RIOT2" };
-    let lines = vec!["Civil Disorder in".into(), format!("{name}! Mayor"), "flees in panic.".into()];
-    crowd_or_message(ctx, March::Riot, sheet, Some(city), lines)
+    crowd_or_message(ctx, March::Riot, sheet, Some(city), disorder_lines(ctx, city))
+}
+
+/// The lines of the civil disorder message (ds:0x26dc, 0x26ef).
+pub fn disorder_lines(ctx: &UiContext, city: CityId) -> Vec<String> {
+    let name = ctx.game().city(city).name.clone();
+    vec!["Civil Disorder in".into(), format!("{name}! Mayor"), "flees in panic.".into()]
 }
 
 /// "We love the King day" (CIV.EXE 0x129ee): "'We love the TITLE' / day celebrated in /

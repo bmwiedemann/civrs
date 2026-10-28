@@ -30,7 +30,10 @@ pub fn manage(g: &mut Game, c: CityId) {
         return;
     }
     // the advisor's item can no longer be built (a wonder finished elsewhere, an improvement
-    // the city got another way): CIV.EXE cancels it on completion and asks again (0xe4f1)
+    // the city got another way). Deviation: CIV.EXE has no such rule; the city keeps the item
+    // (completion does nothing, 0xe4e8 -> 0xeb15) until an alert (0xec34), a change of
+    // disorder (0x1275a), a capture (0x1462f) or a free advance (0xbc5d) asks the advisor;
+    // civrs asks at the city's next turn.
     if g.production_invalid(c) {
         let p = choose_production(g, c);
         g.city_mut(c).production = p;

@@ -19,7 +19,7 @@ pub fn sound_for_event(ctx: &UiContext, ev: &GameEvent) {
     let a = &ctx.audio;
     let mine = |c: &crate::game::CityId| g.city_opt(*c).map(|c| c.owner == me).unwrap_or(false);
     match ev {
-        GameEvent::Famine(c) | GameEvent::Disorder(c) if mine(c) => a.play(Sound::Disorder),
+        GameEvent::Famine(c) | GameEvent::Disorder(c) | GameEvent::DisorderOngoing { city: c, .. } if mine(c) => a.play(Sound::Disorder),
         GameEvent::FoodExhausted { owner, .. } if *owner == me => a.play(Sound::Disorder),
         GameEvent::Celebration(c) if mine(c) => a.play(Sound::Win),
         GameEvent::CelebrationEnded(c) if mine(c) => a.play(Sound::Lose),
@@ -153,6 +153,7 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             msg(vec![format!("Development of {}", rules::ADVANCES[*adv as usize].name), "makes existing Barracks".into(), "obsolete.".into()])
         }
         GameEvent::Disorder(c) if g.city(*c).owner == me => Some(eventpics::disorder_screen(ctx, *c)),
+        GameEvent::DisorderOngoing { city, .. } if g.city(*city).owner == me => msg(eventpics::disorder_lines(ctx, *city)),
         GameEvent::DisorderEnded(c) if g.city(*c).owner == me => msg(vec![format!("Order restored in {}.", city_name(*c))]),
         GameEvent::Celebration(c) if g.city(*c).owner == me => Some(eventpics::celebration_screen(ctx, *c)),
         GameEvent::AdvanceDiscovered { slot, adv } if *slot == me => with_pedia(Some(crate::ui::discovery::discovery_screen(ctx, *adv)), *adv),

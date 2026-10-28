@@ -261,6 +261,9 @@ pub struct Game {
     /// ds:0xd760: *UMAX was shown this turn (`GameEvent::UnitLimit`). Not saved.
     #[serde(skip)]
     pub unit_limit_shown: bool,
+    /// ds:0x6b92: the riot animation ran this turn. Not saved.
+    #[serde(skip)]
+    pub riot_shown: bool,
 }
 
 /// `wonders_built` entry of a wonder whose city was destroyed: built, owned by no one, listed
@@ -413,6 +416,7 @@ impl Game {
             free_research: 0,
             opening: true,
             unit_limit_shown: false,
+            riot_shown: false,
         };
         game.place_starting_units(&slots, &world, &mut wr);
         game.refresh_all_vision();

@@ -207,6 +207,7 @@ impl TurnRunner {
                 }
                 Phase::NewTurn => {
                     g.unit_limit_shown = false;
+                    g.riot_shown = false;
                     g.advance_calendar();
                     g.fifty_turn_block();
                     g.historian_check();
@@ -676,8 +677,19 @@ impl Game {
                 cm.disorder_turns = 0;
             }
         }
+        // the human hears of every turn of disorder (0x12600); the riot animation comes only
+        // with a city's first turn, and once a turn (ds:0x6b92), the other times a plain message
+        if h.disorder && human {
+            if !was_disorder && self.options.animations && !std::mem::replace(&mut self.riot_shown, true) {
+                self.push_event(GameEvent::Disorder(c));
+            } else {
+                self.push_event(GameEvent::DisorderOngoing { city: c, first: !was_disorder });
+            }
+        }
         if h.disorder != was_disorder {
-            self.push_event(if h.disorder { GameEvent::Disorder(c) } else { GameEvent::DisorderEnded(c) });
+            if !(h.disorder && human) {
+                self.push_event(if h.disorder { GameEvent::Disorder(c) } else { GameEvent::DisorderEnded(c) });
+            }
             if !human {
                 let next = self.ai_production(c);
                 self.city_mut(c).production = next;
@@ -997,6 +1009,16 @@ impl Game {
     /// the city screen's CHANGE button flashes until something else is chosen; the computer asks
     /// its production advisor (CIV.EXE 0xe720), an AUTO city of the human takes the advisor's
     /// improvement, and with none worth it AUTO goes off (0xeb15..0xec08).
+    /// A wonder built elsewhere or an improvement the city has: nothing happens and nothing is
+    /// said (0xe4e8, 0xe51d -> 0xeb15); only a human city on AUTO asks its chooser again
+    /// (0xeb57). A computer city keeps the item; civrs's `city_ai::manage` re-chooses at its
+    /// next turn.
+    fn production_blocked(&mut self, c: CityId, human: bool) {
+        if human {
+            self.after_building(c, true);
+        }
+    }
+
     fn after_building(&mut self, c: CityId, human: bool) {
         if !human {
             let next = self.ai_production(c);
@@ -1093,7 +1115,7 @@ impl Game {
                 // still set to an improvement the city has: nothing is built, the shields
                 // wait for a new choice (CIV.EXE 0xe4f1)
                 if self.city(c).has_improvement(i) {
-                    self.after_building(c, human);
+                    self.production_blocked(c, human);
                     return;
                 }
                 let cost = self.production_cost(c, prod);
@@ -1127,8 +1149,7 @@ impl Game {
             }
             Production::Wonder(w) => {
                 if self.wonders_built[w as usize].is_some() {
-                    self.push_event(GameEvent::ProductionBlocked { city: c, item: prod });
-                    self.after_building(c, human);
+                    self.production_blocked(c, human);
                     return;
                 }
                 self.wonders_built[w as usize] = Some(c);
@@ -1993,6 +2014,16 @@ mod tests {
         assert!(g.player(slot).beakers >= beakers + t.sci);
         assert_eq!(g.units_of(slot).len(), units);
         assert!(g.city(c).disorder);
+        // every turn of disorder is reported (0x12600), the riot animation only on the first
+        // and once a turn (ds:0x6b92)
+        assert!(g.take_events().contains(&GameEvent::DisorderOngoing { city: c, first: false }));
+        g.options.animations = true;
+        for (shown, want) in [(false, GameEvent::Disorder(c)), (true, GameEvent::DisorderOngoing { city: c, first: true })] {
+            g.city_mut(c).disorder = false;
+            g.riot_shown = shown;
+            g.process_city(c);
+            assert!(g.take_events().contains(&want), "{want:?}");
+        }
     }
 
     #[test]
@@ -2199,6 +2230,20 @@ mod tests {
         assert!(!ai.1.is_empty() && ai.1.iter().all(|s| *s == 1), "{:?}", ai.1);
         assert!(g.city(c).size > 1);
         assert_eq!(g.turn, 1);
+    }
+
+    #[test]
+    fn a_wonder_built_elsewhere_completes_nothing_and_says_nothing() {
+        // 0xe4ac..0xe4e8 -> 0xeb15: no message, no new choice, the shields stay
+        let (mut g, c) = fixture();
+        let other = g.add_city(g.human_slot, "Veii".into(), 30, 30);
+        g.wonders_built[won::COLOSSUS as usize] = Some(other);
+        g.city_mut(c).production = Production::Wonder(won::COLOSSUS);
+        g.city_mut(c).shields = 300;
+        g.take_events();
+        g.complete_production(c, Production::Wonder(won::COLOSSUS));
+        assert!(g.take_events().is_empty());
+        assert_eq!((g.city(c).production, g.city(c).shields), (Production::Wonder(won::COLOSSUS), 300));
     }
 
     #[test]

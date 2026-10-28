@@ -228,6 +228,10 @@ pub enum GameEvent {
     /// KING.TXT *UMAX, once a turn (ds:0xd760): the human's city finished a unit while the
     /// civilization had all its 127 unit slots in use (create_unit 0x8d24).
     UnitLimit(Slot),
+    /// "Civil Disorder in\nCITY! Mayor\nflees in panic." as a plain message (CIV.EXE 0x126a5):
+    /// a further turn of disorder (`first` false), or a first one after this turn's riot
+    /// animation (`Disorder`).
+    DisorderOngoing { city: CityId, first: bool },
 }
 
 /// A choice the engine needs from the human player before continuing.

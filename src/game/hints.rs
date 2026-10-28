@@ -51,7 +51,7 @@ impl Game {
             {
                 after.extend(self.hint("MONARCHY"))
             }
-            GameEvent::Disorder(c) if self.city(*c).owner == me => after.extend(self.hint("DISORDER")),
+            GameEvent::Disorder(c) | GameEvent::DisorderOngoing { city: c, first: true } if self.city(*c).owner == me => after.extend(self.hint("DISORDER")),
             _ => {}
         }
         (before, after)
