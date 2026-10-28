@@ -232,31 +232,20 @@ impl Game {
         }
 
         // Terrain legality.
+        let mut boarded = None;
         match u.info().domain {
             Domain::Land => {
                 if target.is_ocean() {
-                    // board a ship with room
-                    let ship = self.units_at(tx, ty).into_iter().find(|s| {
-                        let su = self.unit(*s);
-                        su.owner == slot && su.carries_land_units() && self.cargo_count(*s) < su.info().capacity as usize
-                    });
-                    match ship {
-                        Some(s) => {
-                            if u.moves_left < 3 && u.moves_left < self.move_cost(&u, (u.x, u.y), (tx, ty)) {
-                                // partial move allowed
-                            }
-                            self.place_unit(id, tx, ty, 3);
-                            self.unit_mut(id).carried_by = Some(s);
-                            self.unit_mut(id).order = UnitOrder::Sentry;
-                            self.unit_mut(id).moves_left = 0;
-                            self.refresh_vision(slot);
-                            self.mark_sightings(id);
-                            return Ok(MoveOutcome::Boarded(s));
-                        }
-                        None => return Ok(MoveOutcome::Blocked),
-                    }
-                }
-                if self.zoc_blocks(&u, (u.x, u.y), (tx, ty)) {
+                    // board a ship with room (0x5e0d): the unit is sentried, loses the fortify
+                    // bits and gets exactly one move (moves = 3, 0x5e2c), which the step to the
+                    // sea then costs without a roll (0x634a), and the move goes on as any other
+                    let Some(s) = self.boarding_ship(&u, (tx, ty)) else { return Ok(MoveOutcome::Blocked) };
+                    let um = self.unit_mut(id);
+                    um.carried_by = Some(s);
+                    um.order = UnitOrder::Sentry;
+                    um.moves_left = 3;
+                    boarded = Some(s);
+                } else if self.zoc_blocks(&u, (u.x, u.y), (tx, ty)) {
                     return Err(RuleError::Zoc);
                 }
             }
@@ -275,7 +264,8 @@ impl Game {
         // CIV.EXE 0x634a: a land unit with exactly one full move point always gets through;
         // with any other amount short of the cost the move fails (and ends the unit's turn)
         // when random(cost) exceeds the points left
-        if cost > u.moves_left && u.is_land() && u.moves_left != 3 && self.rng.below(cost as u32) > u.moves_left as u32 {
+        let moves = self.unit(id).moves_left;
+        if cost > moves && u.is_land() && moves != 3 && self.rng.below(cost as u32) > moves as u32 {
             self.unit_mut(id).moves_left = 0;
             return Ok(MoveOutcome::Blocked);
         }
@@ -329,15 +319,25 @@ impl Game {
             self.unit_mut(id).moves_left = 0;
         }
         // units aboard move with ship; in port they are units of the city again, to be
-        // activated, and go along only when sentried
+        // activated, and go along only when sentried. Each one carried loses its heading
+        // (+8, 0x69b9), is sentried aboard a transport but not a Carrier (0x69d6..0x69e5) and,
+        // with a range, gets a full tank (+5 = range - 1, 0x6a02: civrs's 0 turns flown)
         if u.is_sea() {
             let cargo: Vec<UnitId> = self.all_units().filter(|c| c.carried_by == Some(id)).map(|c| c.id).collect();
             let port = target.is_land();
+            let transport = u.carries_land_units();
             for c in cargo {
+                self.set_heading(c, 0xff);
                 let cu = self.unit_mut(c);
                 cu.x = tx;
                 cu.y = ty;
                 cu.seen_by = 0;
+                if transport {
+                    cu.order = UnitOrder::Sentry;
+                }
+                if cu.info().range != 0 {
+                    cu.fuel = 0;
+                }
                 if port {
                     cu.carried_by = None;
                 }
@@ -386,7 +386,16 @@ impl Game {
             self.enter_hut(id);
             return Ok(MoveOutcome::EnteredHut);
         }
-        Ok(MoveOutcome::Moved)
+        Ok(boarded.map_or(MoveOutcome::Moved, MoveOutcome::Boarded))
+    }
+
+    /// The ship a land unit of `u`'s owner boards stepping onto the sea square `to`: one of
+    /// the owner's transports there with room (CIV.EXE 0x5e0d, `stack_free_capacity` 0x9231).
+    pub fn boarding_ship(&self, u: &super::Unit, to: (i32, i32)) -> Option<UnitId> {
+        self.units_at(to.0, to.1).into_iter().find(|s| {
+            let su = self.unit(*s);
+            su.owner == u.owner && su.carries_land_units() && self.cargo_count(*s) < su.info().capacity as usize
+        })
     }
 
     /// Move a unit to a tile and deduct movement cost (thirds).
@@ -859,6 +868,44 @@ mod tests {
         assert_eq!(g.unit(sentried).pos(), (x + 1, y));
         assert_eq!(g.unit(sentried).carried_by, Some(ship));
         assert_eq!(g.unit(idle).pos(), (x, y));
+    }
+
+    #[test]
+    fn boarding_takes_the_one_move_it_is_given_and_a_moving_ship_resentries_its_cargo() {
+        // 0x5e22: sentried, moves = 3, the step to the sea costs them; 0x69e5: a transport's
+        // cargo is sentried on every move, woken or not
+        use crate::game::UnitOrder;
+        let mut g = Game::new(GameSetup { seed: 1, ..Default::default() }, None);
+        let slot = g.human_slot;
+        let (x, y) = (40, 25);
+        g.map.get_mut(x, y).unwrap().terrain = Terrain::Grassland;
+        g.map.get_mut(x + 1, y).unwrap().terrain = Terrain::Ocean;
+        g.map.get_mut(x + 2, y).unwrap().terrain = Terrain::Ocean;
+        let ship = g.add_unit(slot, unit_ids::SAIL, x + 1, y);
+        let c = g.add_unit(slot, unit_ids::CAVALRY, x, y);
+        g.unit_mut(c).goto = Some((x + 1, y));
+        assert_eq!(g.try_move(c, Dir8::E), Ok(MoveOutcome::Boarded(ship)));
+        let u = g.unit(c);
+        assert_eq!((u.pos(), u.moves_left, u.order, u.carried_by, u.goto), ((x + 1, y), 0, UnitOrder::Sentry, Some(ship), None));
+        g.unit_mut(c).order = UnitOrder::None;
+        assert_eq!(g.try_move(ship, Dir8::E), Ok(MoveOutcome::Moved));
+        assert_eq!((g.unit(c).pos(), g.unit(c).order), ((x + 2, y), UnitOrder::Sentry));
+    }
+
+    #[test]
+    fn a_moving_carrier_fills_its_aircraft_s_tanks() {
+        // 0x6a02: +5 = range - 1 for every carried unit with a range
+        let mut g = Game::new(GameSetup { seed: 1, ..Default::default() }, None);
+        let slot = g.human_slot;
+        let (x, y) = (40, 25);
+        g.map.get_mut(x, y).unwrap().terrain = Terrain::Ocean;
+        g.map.get_mut(x + 1, y).unwrap().terrain = Terrain::Ocean;
+        let carrier = g.add_unit(slot, unit_ids::CARRIER, x, y);
+        let bomber = g.add_unit(slot, unit_ids::BOMBER, x, y);
+        g.unit_mut(bomber).carried_by = Some(carrier);
+        g.unit_mut(bomber).fuel = 1;
+        assert_eq!(g.try_move(carrier, Dir8::E), Ok(MoveOutcome::Moved));
+        assert_eq!((g.unit(bomber).pos(), g.unit(bomber).fuel), ((x + 1, y), 0));
     }
 
     #[test]

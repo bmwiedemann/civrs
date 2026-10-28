@@ -1405,19 +1405,27 @@ fn score_direction(g: &mut Game, c: &Ctx, k: usize, peaceful: bool) -> Option<(i
 /// unit with at most one other unit beside it ends its turn and its goto (0x63cc); a land unit
 /// (or an aircraft with fuel) does not join an own stack of four or more outside a city
 /// (0x6437, the move is simply not made). Returns whether a move was tried.
+///
+/// A land unit stepping onto a ship with room has been sentried with one move (0x5e22..0x5e2c)
+/// before these checks, so the step leaves it no points and a refused boarding leaves it
+/// sentried ashore.
 fn do_step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) -> bool {
     let k = d as i32 + 1;
+    let u = g.unit(id).clone();
+    let (dx, dy) = d.delta();
+    let (nx, ny) = (Map::wrap_x(u.x + dx), u.y + dy);
+    let boards = u.is_land() && Map::in_bounds(nx, ny) && g.map.is_ocean(nx, ny) && g.boarding_ship(&u, (nx, ny)).is_some();
     let heading = g.heading(id);
     if heading != 0xff && (heading as i32 ^ 4) == k && stack_count(g, id) <= 2 {
         g.set_heading(id, 0xff);
         g.clear_goto(id);
         g.unit_mut(id).moves_left = 0;
+        if boards {
+            g.unit_mut(id).order = UnitOrder::Sentry;
+        }
         return false;
     }
     g.set_heading(id, k as u8);
-    let u = g.unit(id).clone();
-    let (dx, dy) = d.delta();
-    let (nx, ny) = (Map::wrap_x(u.x + dx), u.y + dy);
     // the stack limit (0x6437..0x64b8), checked after the step's cost is taken (0x62b1..0x63c9):
     // no joining an own stack outside a city of 4 units, or of 2 when the step leaves no move
     // points; the refused step keeps its cost. (The stack is the mover's: ds:0xd20a is the
@@ -1426,9 +1434,12 @@ fn do_step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) ->
         let counts = u.is_land() || (u.is_air() && fuel_left(&u) != 0);
         if g.unit(first).owner == u.owner && g.city_at(nx, ny).is_none() && counts {
             // a partial move ends with no points whether its roll succeeds or not (0x634a)
-            let left = u.moves_left.saturating_sub(g.move_cost(&u, u.pos(), (nx, ny)));
+            let left = if boards { 0 } else { u.moves_left.saturating_sub(g.move_cost(&u, u.pos(), (nx, ny))) };
             if stack_count(g, first) >= if left != 0 { 4 } else { 2 } {
                 g.unit_mut(id).moves_left = left;
+                if boards {
+                    g.unit_mut(id).order = UnitOrder::Sentry;
+                }
                 return false;
             }
         }
@@ -1795,6 +1806,26 @@ mod tests {
         g.set_heading(c, 0xff);
         assert!(!do_step(&mut g, c, Dir8::E, &mut |_| {}), "a stack of 4");
         assert_eq!((g.unit(c).pos(), g.unit(c).moves_left), ((10, 10), 3));
+    }
+
+    #[test]
+    fn a_computer_unit_boarding_has_no_move_left_and_a_refused_boarding_leaves_it_sentried() {
+        // 0x5e22..0x5e2c: sentry bit and moves = 3 before the cost, so the stack limit is 2
+        let mut g = arena();
+        let s = ai(&g);
+        let ship = g.add_unit(s, unit_ids::SAIL, 40, 10);
+        let m = g.add_unit(s, unit_ids::MILITIA, 40, 10);
+        g.unit_mut(m).carried_by = Some(ship);
+        let c = g.add_unit(s, unit_ids::CAVALRY, 39, 10);
+        assert_eq!(g.unit(c).moves_left, 6);
+        assert!(!do_step(&mut g, c, Dir8::E, &mut |_| {}));
+        assert_eq!((g.unit(c).pos(), g.unit(c).moves_left, g.unit(c).order), ((39, 10), 0, UnitOrder::Sentry));
+        g.remove_unit(m);
+        g.unit_mut(c).moves_left = 6;
+        g.unit_mut(c).order = UnitOrder::None;
+        g.set_heading(c, 0xff);
+        assert!(do_step(&mut g, c, Dir8::E, &mut |_| {}));
+        assert_eq!((g.unit(c).pos(), g.unit(c).moves_left, g.unit(c).order, g.unit(c).carried_by), ((40, 10), 0, UnitOrder::Sentry, Some(ship)));
     }
 
     #[test]
