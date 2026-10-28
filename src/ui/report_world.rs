@@ -7,24 +7,6 @@ use crate::ui::context::UiContext;
 use crate::ui::reports::*;
 use crate::ui::tilerender::{blit_sprite, sp};
 
-/// Row of citizen figures (8x16 cells on a 7-px pitch, alternating male/female): `happy`, then `content`, then
-/// `unhappy`; squeezed when they do not fit in `max_w`.
-pub fn citizens_row(fb: &mut Surface, ctx: &UiContext, x: i32, y: i32, happy: i32, content: i32, unhappy: i32, max_w: i32) {
-    let n = happy + content + unhappy;
-    if n <= 0 {
-        return;
-    }
-    let step = if n * 7 <= max_w { 7 } else { (max_w / n).max(2) };
-    let mut i = 0;
-    for (count, base) in [(happy, 0u8), (content, 2u8), (unhappy, 4u8)] {
-        for _ in 0..count {
-            let idx = base + (i % 2) as u8;
-            blit_sprite(fb, &ctx.sp.surf, sp::citizen(idx), x + i * step, y);
-            i += 1;
-        }
-    }
-}
-
 // ---- F7 Wonders of the World --------------------------------------------------------------
 
 /// F7 `wonders_of_the_world` (ovl 12 +0x80d). Nothing is drawn until the first built wonder: with
