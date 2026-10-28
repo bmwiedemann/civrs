@@ -1151,7 +1151,8 @@ impl Game {
     /// One-off revenue of a caravan of `slot` from `home` arriving in `target` (CIV.EXE
     /// 0x146be): `(distance + 10) * (trade of both) / 24`, halved on the same continent and
     /// halved again between cities of one civilization; a third less each when the target's
-    /// owner knows the Railroad, then Flight.
+    /// owner knows the Railroad, then Flight. CIV.EXE looks up the home city's continent at
+    /// (x, x) (0x14738 pushes x twice); civrs uses the home city's real tile.
     pub fn trade_route_revenue(&self, slot: Slot, home: CityId, target: CityId) -> i32 {
         let (a, b) = (self.city(home), self.city(target));
         let mut v = (Map::dist(a.pos(), b.pos()) + 10) * (self.visible_trade(home) + self.visible_trade(target)) / 24;
