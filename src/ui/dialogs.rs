@@ -240,7 +240,8 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
         GameEvent::CityDefected { city, admired, from } if *from == me || g.city_opt(*city).is_some_and(|c| g.visible_to(me, c.x, c.y)) => {
             msg(vec![format!("Residents of {}", city_name(*city)), format!("admire the prosperity of {}.", city_name(*admired))])
         }
-        GameEvent::Revolution { slot } if *slot == me => msg(vec!["Revolution!".into(), "Your government falls into anarchy.".into()]),
+        // "The <Plural> are\nrevolting! Citizens\ndemand new govt." (CIV.EXE 0x6f88, newspaper)
+        GameEvent::Revolution { slot } if *slot == me => msg(vec![format!("The {} are", g.player(*slot).plural()), "revolting! Citizens".into(), "demand new govt.".into()]),
         GameEvent::GovernmentCollapsed { slot, city } if *slot == me => msg(vec!["Discontented citizens of".into(), format!("{} revolt:", city_name(*city)), "Government Collapses!".into()]),
         GameEvent::AnarchyEnded { slot } if *slot == me => None,
         GameEvent::GovernmentChanged { slot, govt } if *slot == me => Some(crate::ui::govtscreen::govt_screen(ctx, *govt)),
