@@ -33,7 +33,9 @@ fn axis_year(year: i32) -> String {
 /// second one in font 2; in font 1 the adjective of each civilization in the game (active, or
 /// one of the first ds:0xd2f4 + 1) at (8, 8 * civ + 4) in its colour, "CIVILIZATION POWER"
 /// shadowed at (100, 2), and each one's power history as a line 2 px per row, scaled so the
-/// highest value of all (at least 50) is 180 px. Any key returns.
+/// highest value of all (at least 50) is 180 px. Any key returns. (CIV.EXE takes that maximum
+/// over turn / 4 rows, past the 150 rows of the history after turn 600, o 0x1080d..0x10842;
+/// civrs stops at the last row.)
 pub struct PowerGraph;
 
 impl PowerGraph {
