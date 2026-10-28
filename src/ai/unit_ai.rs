@@ -511,8 +511,8 @@ fn fighter(g: &mut Game, slot: Slot, id: UnitId) -> Option<Command> {
 /// The Nuclear (0x1677e): the city of a civilization that has used nuclear weapons on this
 /// one (diplomacy bit 0x80, no treaty) and is either clearly stronger, or a vendetta enemy,
 /// or without Nuclear units and stronger by less than half, of size 5 or more, without SDI
-/// Defense and within 16 of an own city, scored size / 2 + 1 per unit of such a civ around it,
-/// -2 per own unit, -99 per unit of anyone else. With a score of 10 or more and more than one
+/// Defense and within 16 of an own city, scored size / 2 + 1 per unit of such a civ on it or
+/// around it, -2 per own unit, -99 per unit of anyone else. With a score of 10 or more and more than one
 /// Nuclear unit, the unit appears on the first free square next to the city and "moves" into
 /// it (direction ^ 4, as CIV.EXE computes it: 0 for south-east, no key for north-west).
 fn nuclear(g: &mut Game, c: &Ctx) -> Command {
@@ -535,8 +535,9 @@ fn nuclear(g: &mut Game, c: &Ctx) -> Command {
         if !candidate || !nuked_us(g, o) || city.size <= 4 {
             continue;
         }
+        // the city square and its 8 neighbours (the loop at 0x1693b starts at 0)
         let mut score = 0;
-        for k in 1..=8 {
+        for k in 0..=8 {
             let (nx, ny) = (city.x + DX[k], city.y + DY[k]);
             match g.unit_owner_at(nx, ny) {
                 None => {}
@@ -1229,9 +1230,9 @@ fn military(g: &mut Game, c: &mut Ctx) -> Command {
 ///
 /// Excluded: off the map; water for land units; for a land unit off a ship, an empty square
 /// when it would break the zone of control (both squares next to foreign units, not into a
-/// city, for units below the Diplomat), foreign units from a ship; for defenders a land square
-/// unless an enemy is there and the defender is at sea (and not as a Submarine); own stacks of
-/// two or more.
+/// city, for units below the Diplomat), foreign units from a ship; for ships a land square
+/// unless an enemy is there and the ship is at sea (and not a Submarine); own stacks of two or
+/// more.
 ///
 /// Base: Settlers 0 (and no square next to an enemy from a ship); a unit nobody else can see,
 /// on land: random(3) - 2 x the terrain's move cost (attackers) or defence (others); else
@@ -1276,7 +1277,8 @@ fn score_direction(g: &mut Game, c: &Ctx, k: usize, peaceful: bool) -> Option<(i
     if here_ocean && land_unit && s.is_some() && owner != slot {
         return None;
     }
-    if c.role == AiRole::Defend && t != Terrain::Ocean && (s.is_none() || owner == slot || c.kind == unit_ids::SUBMARINE || !here_ocean) {
+    // ships (domain 2, unit type +0xe, 0x17fb1) go ashore only to attack
+    if u.is_sea() && t != Terrain::Ocean && (s.is_none() || owner == slot || c.kind == unit_ids::SUBMARINE || !here_ocean) {
         return None;
     }
     if let Some(first) = s {
@@ -1846,6 +1848,47 @@ mod tests {
         // in a city the odds count three times: 12 > 6, it attacks
         g.add_city(e, "Hill".into(), 31, 20);
         assert_eq!(unit_command(&mut g, s, w), Command::Step(Dir8::E));
+    }
+
+    #[test]
+    fn ships_keep_to_the_sea_and_defenders_walk_on_land() {
+        let mut g = arena();
+        let s = ai(&g);
+        // a city of the civ on the continent keeps the ship from taking a random land goto
+        g.ai_memory.census.cities[s as usize][1] = 1;
+        // an Ironclad west of the land (x = 5..39): east, north-east and south-east are land
+        let ship = g.add_unit(s, unit_ids::IRONCLAD, 4, 20);
+        for _ in 0..20 {
+            let c = unit_command(&mut g, s, ship);
+            assert!(!matches!(c, Command::Step(Dir8::E | Dir8::NE | Dir8::SE)), "{c:?}");
+            g.clear_goto(ship);
+        }
+        // a Phalanx far from any city scores the land squares around it (0x17fb1 tests the
+        // domain, not the role)
+        let p = g.add_unit(s, unit_ids::PHALANX, 20, 20);
+        assert!(matches!(unit_command(&mut g, s, p), Command::Step(_)));
+    }
+
+    #[test]
+    fn a_nuclear_counts_the_defenders_in_the_target_city() {
+        use crate::game::diplomacy::flags::{NUCLEAR, VENDETTA};
+        let mut g = arena();
+        let s = ai(&g);
+        let e = (2..5).find(|o| *o != s && *o != g.human_slot).unwrap();
+        g.set_relation(s, e, crate::game::Relation::War);
+        g.set_diplo_flag(s, e, NUCLEAR | VENDETTA);
+        g.add_city(s, "Silo".into(), 10, 20);
+        let target = g.add_city(e, "Target".into(), 20, 20);
+        g.city_mut(target).size = 16;
+        let n = g.add_unit(s, unit_ids::NUCLEAR, 10, 20);
+        g.add_unit(s, unit_ids::NUCLEAR, 10, 20);
+        // size / 2 = 8, one unit next to the city: 9, below 10
+        g.add_unit(e, unit_ids::PHALANX, 21, 20);
+        assert_eq!(unit_command(&mut g, s, n), Command::Skip);
+        // one in the city square makes 10 (0x1693b counts the square itself)
+        g.add_unit(e, unit_ids::PHALANX, 20, 20);
+        assert_ne!(unit_command(&mut g, s, n), Command::Skip);
+        assert_eq!(g.unit(n).goto, Some((20, 20)));
     }
 
     #[test]
