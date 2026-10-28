@@ -663,7 +663,7 @@ impl MapView {
                             add(&mut items, "Clean up Pollution \u{8f}p", key('p'), false);
                         }
                         let construction = g.player(u.owner).knows(rules::advance_ids::CONSTRUCTION);
-                        add(&mut items, "Build Fortress \u{8f}f", BarAction::Key(Key::Char('f'), true), !construction);
+                        add(&mut items, "Build Fortress \u{8f}f", key('f'), !construction);
                     } else if kind.domain == rules::Domain::Land {
                         add(&mut items, "Fortify \u{8f}f", key('f'), false);
                     }
@@ -761,13 +761,10 @@ impl MapView {
                 }
                 Transition::None
             }
-            Key::Char('f') => {
-                if mods.shift {
-                    self.unit_order(ctx, UnitOrder::Fortress)
-                } else {
-                    self.unit_order(ctx, UnitOrder::Fortify)
-                }
-            }
+            // 'f' fortifies, or builds a fortress with Settlers (0x5137); 'F' is no key of
+            // move_units (0x4c1d, 0x583b)
+            Key::Char('f') if mods.shift => Transition::None,
+            Key::Char('f') => self.unit_order(ctx, UnitOrder::Fortify),
             Key::Char('s') => self.unit_order(ctx, UnitOrder::Sentry),
             Key::Char('r') => self.unit_order(ctx, UnitOrder::Road),
             Key::Char('i') => self.unit_order(ctx, UnitOrder::Irrigate),
