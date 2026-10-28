@@ -19,6 +19,9 @@ pub mod tile_flags {
     /// A River square drawn with the second set of river sprites (bit 0x80 of the improvement
     /// nibbles, set by the world generator's river walk, o 0x09497; read by 0x1aedd).
     pub const RIVER_ALT: u16 = 1 << 7;
+    /// The improvements the map shows (`tile_improvements_seen` 0x1bc47 holds them for the
+    /// human: irrigation, mine, road, railroad, fortress, pollution).
+    pub const SEEN: u16 = ROAD | RAILROAD | IRRIGATION | MINE | FORTRESS | POLLUTION;
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -95,6 +98,13 @@ pub struct Map {
     /// appends it), empty for maps made otherwise.
     #[serde(skip)]
     pub site: Vec<u8>,
+    /// The human's view of each square's improvements (`tile_flags::SEEN` bits), the map
+    /// page's band (x+80, y+100/150) that draw_tile (0x1aa40) reads with
+    /// `tile_improvements_seen` (0x1bc47) and `update_seen_improvements` (0x1bc87) copies
+    /// from the real bands. Empty: the real ones (a map the human has not looked at yet).
+    /// Not part of the bincode body (the save appends it).
+    #[serde(skip)]
+    pub seen: Vec<u16>,
 }
 
 /// 8 compass directions in the order used for keypad moves and sprite sheets.
@@ -159,7 +169,28 @@ impl Dir8 {
 
 impl Map {
     pub fn empty(params: WorldParams, seed: u32) -> Map {
-        Map { tiles: vec![Tile::default(); MAP_W * MAP_H], params, earth: false, seed, site: Vec::new() }
+        Map { tiles: vec![Tile::default(); MAP_W * MAP_H], params, earth: false, seed, site: Vec::new(), seen: Vec::new() }
+    }
+
+    /// The improvements of (x, y) as the human last saw them.
+    pub fn seen_flags(&self, x: i32, y: i32) -> u16 {
+        match self.seen.get(Map::idx(x, y)).filter(|_| Map::in_bounds(x, y)) {
+            Some(f) => *f,
+            None => self.tile(x, y).flags & tile_flags::SEEN,
+        }
+    }
+
+    /// The human sees the improvements of (x, y) as they are (`update_seen_improvements`
+    /// 0x1bc87).
+    pub fn update_seen(&mut self, x: i32, y: i32) {
+        if !Map::in_bounds(x, y) {
+            return;
+        }
+        if self.seen.len() != self.tiles.len() {
+            self.seen = self.tiles.iter().map(|t| t.flags & tile_flags::SEEN).collect();
+        }
+        let i = Map::idx(x, y);
+        self.seen[i] = self.tiles[i].flags & tile_flags::SEEN;
     }
 
     /// 0 <= x < 80 and 0 <= y < 50 (`in_map` 0x1a68:0x132c), for the passes of the world

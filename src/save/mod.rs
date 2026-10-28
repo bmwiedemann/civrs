@@ -60,7 +60,10 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// empty slot); older saves number each civ's units in slot order.
 /// 25: then by the population milestone (`Game::pop_milestone`, u16 LE); older saves take the
 /// one their population reaches from the start (`Game::derive_pop_milestone`).
-pub const VERSION: u16 = 25;
+/// 26: then by the length of the human's view of the improvements (`Map::seen`, u32 LE, 0
+/// before he has looked at any square) and its words (u16 LE, `tile_flags::SEEN` bits); older
+/// saves show the improvements as they are.
+pub const VERSION: u16 = 26;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -170,6 +173,10 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     data.extend_from_slice(&(g.units.len() as u32).to_le_bytes());
     data.extend(g.units.iter().map(|u| u.as_ref().map(|u| u.record).unwrap_or(0)));
     data.extend_from_slice(&g.pop_milestone.to_le_bytes());
+    data.extend_from_slice(&(g.map.seen.len() as u32).to_le_bytes());
+    for f in &g.map.seen {
+        data.extend_from_slice(&f.to_le_bytes());
+    }
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -281,6 +288,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     let mut name_index: Option<Vec<u8>> = None;
     let mut records: Option<Vec<u8>> = None;
     let mut milestone: Option<u16> = None;
+    let mut seen_layer: Option<Vec<u16>> = None;
     // version 14: the tribe names, after the counters
     if ver >= 14 {
         let mut at = counters + 112 * g.players.len();
@@ -347,6 +355,11 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
                                 records = rest.get(at + 4..at + 4 + n).map(|b| b.to_vec());
                                 at += 4 + n;
                                 milestone = rest.get(at..at + 2).filter(|_| ver >= 25).map(|b| u16::from_le_bytes([b[0], b[1]]));
+                                at += 2;
+                                if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 26) {
+                                    let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
+                                    seen_layer = rest.get(at + 4..at + 4 + 2 * n).map(|b| b.chunks(2).map(|w| u16::from_le_bytes([w[0], w[1]])).collect());
+                                }
                             }
                         }
                     }
@@ -459,6 +472,8 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     }
     // the load routine (o 0xf0ce): the next two turn changes pass the milestone in silence
     g.milestone_quiet = -3;
+    // older saves: the human sees every square's improvements as they are
+    g.map.seen = seen_layer.filter(|s| s.len() == g.map.tiles.len()).unwrap_or_default();
     Ok(g)
 }
 
@@ -918,6 +933,39 @@ mod tests {
         let old = super::load_game(&path).unwrap();
         let _ = std::fs::remove_dir_all(dir);
         assert_eq!(old.pop_milestone, 2, "from 1, as CIV.EXE after loading");
+    }
+
+    #[test]
+    fn the_human_view_of_improvements_survives_a_save() {
+        use crate::game::tile_flags;
+        let mut g = Game::new(GameSetup { seed: 6, ..Default::default() }, None);
+        let h = g.human_slot;
+        let ai = (1..8u8).find(|s| *s != h && g.players[*s as usize].alive).unwrap();
+        let (x, y) = (0..80).flat_map(|x| (1..49).map(move |y| (x, y))).find(|&(x, y)| g.map.is_land(x, y) && !g.explored(h, x, y)).unwrap();
+        g.map.update_seen(x, y);
+        g.map.get_mut(x, y).unwrap().set(tile_flags::ROAD, true);
+        assert_eq!(g.map.seen_flags(x, y), 0, "a road the human has not seen yet");
+        // a computer's unit there shows the human nothing; his own one does
+        let u = g.add_unit(ai, crate::rules::unit_ids::MILITIA, x, y);
+        g.refresh_vision(ai);
+        assert_eq!(g.map.seen_flags(x, y), 0);
+        let dir = std::env::temp_dir().join(format!("civrs-seen-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        let mut l = super::load_game(&path).unwrap();
+        assert_eq!(l.map.seen, g.map.seen);
+        l.remove_unit(u);
+        l.add_unit(h, crate::rules::unit_ids::MILITIA, x, y);
+        l.refresh_vision(h);
+        assert_eq!(l.map.seen_flags(x, y), tile_flags::ROAD);
+        // older saves see everything as it is
+        let mut data = std::fs::read(&path).unwrap();
+        data[4..6].copy_from_slice(&25u16.to_le_bytes());
+        std::fs::write(&path, &data).unwrap();
+        let old = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        assert!(old.map.seen.is_empty());
+        assert_eq!(old.map.seen_flags(x, y), tile_flags::ROAD);
     }
 
     #[test]

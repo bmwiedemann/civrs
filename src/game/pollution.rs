@@ -66,6 +66,8 @@ impl Game {
             return;
         }
         self.map.get_mut(x, y).unwrap().set(tile_flags::POLLUTION, true);
+        // add_pollution (0x13639) shows it on the map at once
+        self.map.update_seen(x, y);
         self.polluted_tiles += 1;
         self.push_event(GameEvent::Pollution { city: c, at: (x, y) });
     }
@@ -106,6 +108,8 @@ impl Game {
                 hit_cities.push(hit);
             } else if self.rng.below(3) != 0 && t.is_land() && !t.has(tile_flags::POLLUTION) {
                 self.map.get_mut(x, y).unwrap().set(tile_flags::POLLUTION, true);
+                // add_pollution (0x13639) shows it on the map at once
+                self.map.update_seen(x, y);
                 self.polluted_tiles += 1;
             }
         }

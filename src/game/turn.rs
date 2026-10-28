@@ -1312,6 +1312,7 @@ impl Game {
         let sites: Vec<(i32, i32)> = self.all_cities().map(|c| c.pos()).collect();
         for (x, y) in sites {
             self.map.explore(slot, x, y, 0);
+            self.map.update_seen(x, y);
         }
     }
 
@@ -1327,6 +1328,8 @@ impl Game {
                     let foreign: Vec<CityId> = self.all_cities().filter(|c| c.owner != owner).map(|c| c.id).collect();
                     for c in foreign {
                         self.note_city_size(c);
+                        let (x, y) = self.city(c).pos();
+                        self.map.update_seen(x, y);
                     }
                 }
             }

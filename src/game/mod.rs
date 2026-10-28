@@ -799,6 +799,10 @@ impl Game {
                         let centre = (xx, yy) == (x, y);
                         if look && slot != 0 && (human || !centre) {
                             self.map.tiles[i].explored |= bit;
+                            // the human's looks show him the squares' improvements (0x8078)
+                            if human {
+                                self.map.update_seen(xx, yy);
+                            }
                         }
                     }
                 }
@@ -991,6 +995,10 @@ impl Game {
                 t.set(tile_flags::IRRIGATION, true);
             }
         }
+        // add_improvement (0x1bcd9) shows the human's own city's road at once
+        if owner == self.human_slot {
+            self.map.update_seen(x, y);
+        }
         self.auto_assign(id);
         // a city sees only its 3x3 block (14_city_screen / 26_turn_12 captures)
         self.map.explore(owner, x, y, 1);
@@ -1042,6 +1050,10 @@ impl Game {
         }
         if let Some(t) = self.map.get_mut(x, y) {
             t.city = None;
+        }
+        // a human who knows the square sees what is left (destroy_city 0xa80a)
+        if self.explored(self.human_slot, x, y) {
+            self.map.update_seen(x, y);
         }
         // destroy_city (CIV.EXE 0xa76a) disbands the owner's units homed here (0x7e6:0xf0c)
         // and the ships and aircraft on the square (kill_nonland_cb 0x949f); others homed

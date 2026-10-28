@@ -16,8 +16,8 @@
 //! ds:0xd308, the per-civ and per-continent AI statistics (ds:0x6cac, 0x807a, 0x6b96,
 //! 0xdcfe, 0xe16a, 0x8068, 0xd2f8, 0x6e82, 0x803c, 0xb1ee), the coarse block tables
 //! (far 0x1f88, ds:0xdb44), the unit type table copy, the kills matrix ds:0xe418, the
-//! historian's scores ds:0x6c9c, the colonist counts ds:0xdeec, the human's view of the tile
-//! improvements, the city trade byte +0xa (recomputed), the unit flag 0x10, the world
+//! historian's scores ds:0x6c9c, the colonist counts ds:0xdeec, the human's view of the
+//! squares with a city (bit 0x01, civrs draws the cities it knows), the city trade byte +0xa (recomputed), the unit flag 0x10, the world
 //! parameters and the founding turn of cities (not saved by CIV.EXE), the human-player mask
 //! ds:0x7f36 (civrs has one human: offset 2).
 
@@ -299,6 +299,10 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
         }
     }
     map.site = (0..MAP_H as i32).flat_map(|y| (0..MAP_W as i32).map(move |x| (x, y))).map(|(x, y)| px(x + 80, y)).collect();
+    map.seen = (0..MAP_H as i32)
+        .flat_map(|y| (0..MAP_W as i32).map(move |x| (x, y)))
+        .map(|(x, y)| tile_bits(px(x + 80, y + 100) & 15 | (px(x + 80, y + 150) & 15) << 4) & tile_flags::SEEN)
+        .collect();
     g.barbarian_memory.occupant = (0..MAP_H as i32).flat_map(|y| (0..MAP_W as i32).map(move |x| (x, y))).map(|(x, y)| px(x + 160, y) & 7).collect();
     g.map = map;
 

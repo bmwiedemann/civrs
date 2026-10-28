@@ -159,9 +159,12 @@ pub fn draw_terrain(fb: &mut Surface, ctx: &UiContext, game: &Game, x: i32, y: i
     let ter = &ctx.ter.surf;
     let sp = &ctx.sp.surf;
     // drawing order of CIV.EXE 0x1aa40: the land base, irrigation (not under a city), the
-    // river or terrain sprite, the grassland shield, fortress, roads, mine, special
-    // resource, hut and pollution, so irrigation never covers rivers or resources
-    let irrigation = || t.has(tile_flags::IRRIGATION) && t.city.is_none();
+    // river or terrain sprite, the grassland shield, pollution, roads, mine, special
+    // resource, hut and fortress, so irrigation never covers rivers or resources; the
+    // improvements as the human last saw them (`Map::seen_flags`, 0x1bc47)
+    let seen = map.seen_flags(x, y);
+    let has = |f: u16| seen & f != 0;
+    let irrigation = || has(tile_flags::IRRIGATION) && t.city.is_none();
     match t.terrain {
         Terrain::Ocean => draw_ocean(fb, ctx, map, x, y, px, py),
         Terrain::River => {
@@ -187,32 +190,34 @@ pub fn draw_terrain(fb: &mut Surface, ctx: &UiContext, game: &Game, x: i32, y: i
     if t.terrain == Terrain::Grassland && t.shield {
         fb.blit_part(sp, Rect::new(153, 41, 7, 7), px + 4, py + 4, Some(0));
     }
-    if t.has(tile_flags::FORTRESS) {
-        fb.blit_part(sp, sp::icon7(sp::FORTRESS.0), px, py, Some(0));
+    if has(tile_flags::POLLUTION) {
+        blit_sprite(fb, sp, cell(sp::POLLUTION.0, sp::POLLUTION.1), px, py);
     }
-    // roads / railroads: one piece per neighbour that also has one (or a city)
-    if t.has(tile_flags::ROAD) || t.has(tile_flags::RAILROAD) {
-        let rail_here = t.has(tile_flags::RAILROAD);
-        let rmask = map.road_mask8(x, y, false);
-        let railmask = map.road_mask8(x, y, true);
+    // roads (0x1b0c6): a piece towards each neighbour the human saw a road on, a railroad
+    // piece where both squares have a railroad or a city, else a dot in the centre, black
+    // on a railroad, brown on a road
+    if has(tile_flags::ROAD) {
+        let rail_or_city = |f: u16, x: i32, y: i32| f & tile_flags::RAILROAD != 0 || map.get(x, y).is_some_and(|t| t.city.is_some());
+        let here = rail_or_city(seen, x, y);
         let mut any = false;
-        for d in 0..8usize {
-            if rmask & (1 << d) != 0 {
+        for (d, dir) in crate::game::map::Dir8::ALL.iter().enumerate() {
+            let (nx, ny) = (x + dir.delta().0, y + dir.delta().1);
+            if !Map::in_bounds(nx, ny) {
+                continue;
+            }
+            let nf = map.seen_flags(nx, ny);
+            if nf & tile_flags::ROAD != 0 {
                 any = true;
-                if rail_here && railmask & (1 << d) != 0 {
-                    blit_sprite(fb, sp, sp::rail(d), px, py);
-                } else {
-                    blit_sprite(fb, sp, sp::road(d), px, py);
-                }
+                let piece = if here && rail_or_city(nf, nx, ny) { sp::rail(d) } else { sp::road(d) };
+                blit_sprite(fb, sp, piece, px, py);
             }
         }
         if !any {
-            // isolated road: small dot in the centre
-            let c = if rail_here { 8 } else { 6 };
+            let c = if seen & tile_flags::RAILROAD != 0 { 0 } else { 6 };
             fb.fill_rect(Rect::new(px + 7, py + 7, 2, 2), c);
         }
     }
-    if t.has(tile_flags::MINE) {
+    if has(tile_flags::MINE) {
         blit_sprite(fb, sp, cell(sp::MINE.0, sp::MINE.1), px, py);
     }
     if t.special {
@@ -221,8 +226,8 @@ pub fn draw_terrain(fb: &mut Surface, ctx: &UiContext, game: &Game, x: i32, y: i
     if t.has(tile_flags::HUT) {
         fb.blit_part(sp, sp::icon7(sp::HUT.0), px, py, Some(0));
     }
-    if t.has(tile_flags::POLLUTION) {
-        blit_sprite(fb, sp, cell(sp::POLLUTION.0, sp::POLLUTION.1), px, py);
+    if has(tile_flags::FORTRESS) {
+        fb.blit_part(sp, sp::icon7(sp::FORTRESS.0), px, py, Some(0));
     }
 }
 

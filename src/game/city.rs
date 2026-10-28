@@ -299,6 +299,11 @@ impl Game {
         } else if from == h {
             self.note_city_size(c);
         }
+        // and he sees the square's improvements (0x1402a)
+        if to == h || from == h {
+            let (x, y) = self.city(c).pos();
+            self.map.update_seen(x, y);
+        }
     }
 
     /// CIV.EXE 0x7e6:0x18cc `foreign_unit_adjacent(civ, x, y)`: a unit of another civilization

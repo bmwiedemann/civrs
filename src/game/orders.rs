@@ -164,6 +164,12 @@ impl Game {
         um.order = UnitOrder::None;
         um.order_turns = 0;
         self.finish_work(x, y, o);
+        // add_improvement (0x1bcd9) shows the human his own work at once; cleaning pollution
+        // shows anyone's (0x5101); a new terrain's lost irrigation and mine wait for a look
+        let terraform = matches!(o, UnitOrder::Irrigate | UnitOrder::Mine) && self.map.tile(x, y).terrain != t.terrain;
+        if o == UnitOrder::CleanPollution || (u.owner == self.human_slot && !terraform) {
+            self.map.update_seen(x, y);
+        }
         Ok(())
     }
 
@@ -237,6 +243,10 @@ impl Game {
         if let (Some(c), _) = self.nearest_city_exe(u.x, u.y) {
             let owner = self.city(c).owner;
             let human = self.human_slot;
+            // the map shows the loss when the nearest city is the human's (0x4d58)
+            if owner == human {
+                self.map.update_seen(u.x, u.y);
+            }
             self.clear_diplo_flag(human, owner, super::diplomacy::flags::PEACE);
             // the owner of the nearest city wants the pillager attacked (0x4db2)
             if owner != u.owner {
