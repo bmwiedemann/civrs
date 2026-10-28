@@ -1195,6 +1195,13 @@ impl Game {
                 cm.shields = 0;
                 cm.caravan_shields = 0;
                 self.city_attention |= human;
+                // a computer's wonder city becomes known to every civilization: its square
+                // of the seen plane far ds:0x63f2 +0x740 is set to 0xff (0xe60d)
+                if !human {
+                    if let Some(t) = self.map.get_mut(x, y) {
+                        t.explored = 0xff;
+                    }
+                }
                 self.push_event(GameEvent::WonderBuilt { city: c, wonder: w, owner });
                 self.on_wonder_built(owner, w);
                 self.after_building(c, human);
@@ -2309,6 +2316,15 @@ mod tests {
         g.city_mut(c).shields = 0;
         g.process_city(c);
         assert!(g.player(me).knows(goal));
+    }
+
+    #[test]
+    fn a_computer_wonder_city_becomes_known_to_all() {
+        let (mut g, _) = fixture();
+        let ai = (1..8u8).find(|s| *s != g.human_slot && g.player(*s).alive).unwrap();
+        let c = g.add_city(ai, "Ur".into(), 40, 30);
+        g.complete_production(c, Production::Wonder(won::COLOSSUS));
+        assert_eq!(g.map.tile(40, 30).explored, 0xff);
     }
 
     #[test]
