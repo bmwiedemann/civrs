@@ -821,6 +821,24 @@ mod tests {
     }
 
     #[test]
+    fn a_city_that_builds_settlers_pays_taxes_on_the_squares_it_worked() {
+        // CIVIL4's Caesarea (size 2): 0xdfe3 lowers the size but the trade totals of the turn stay
+        // (ds:0x70de), so the taxes are those of both squares; the city screen the human is
+        // shown then puts the workers in order
+        let Some(mut g) = sample(4) else { return };
+        let caesarea = 4;
+        g.city_mut(caesarea).production = Production::Unit(rules::unit_ids::SETTLERS);
+        g.city_mut(caesarea).shields = 39;
+        let tax = g.city_yield_raw(caesarea).tax;
+        let gold = g.human().gold;
+        g.process_city(caesarea);
+        assert_eq!(g.city(caesarea).size, 1);
+        assert_eq!(g.human().gold - gold, tax);
+        assert_eq!(g.city(caesarea).workers(), 1);
+        assert!(g.city_yield_raw(caesarea).tax < tax, "one square makes less");
+    }
+
+    #[test]
     fn the_state_dump_lists_the_saved_fields() {
         let Some(mut g) = sample(3) else { return };
         let text = state_text(&g);

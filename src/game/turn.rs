@@ -675,6 +675,12 @@ impl Game {
             cm.bought = false;
         }
         self.restash_garrison(c);
+        // a human city that wants attention (ds:0xb1e8) is run again in mode 1 to show its
+        // screen (update_civ_tax_rates 0xa5e2), whose worker assignment puts a city that
+        // shrank for its Settlers in order; a computer city waits for its next turn
+        if self.city_attention && self.player(slot).human {
+            self.fix_workers(c);
+        }
         Some(h.happy - h.unhappy)
     }
 
@@ -1121,6 +1127,8 @@ impl Game {
                 // city; the last citizen of a city leaves it empty: the city is destroyed and
                 // the Settlers start anew on its square, homed by create_unit 0x8b51 like any new unit
                 // (0xdfa7..0xe04e)
+                // (0xdfe3 only lowers the size: the squares stay worked, and the city's trade
+                // totals with them, until the next worker assignment, see `process_city`)
                 if k == unit_ids::SETTLERS && (self.city(c).size > 1 || self.cities_of(owner).len() > 1) {
                     self.city_mut(c).size -= 1;
                     if self.city(c).size == 0 {
@@ -1129,7 +1137,6 @@ impl Game {
                         self.refresh_vision(owner);
                         return;
                     }
-                    self.fix_workers(c);
                 }
                 self.refresh_vision(owner);
                 self.push_event(GameEvent::ItemBuilt { city: c, item: prod });
