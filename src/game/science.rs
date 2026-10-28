@@ -183,15 +183,12 @@ impl Game {
     /// obsolete by the first civilization to learn it is announced (0xc774), Gunpowder and
     /// Combustion make the civ's Barracks obsolete (0xc69a: all are sold off, the human is
     /// told), and the Great Library's owner gets the advance free once two civs 1..7 know it
-    /// (0xc7fa, a recursive grant from -2).
+    /// (0xc7fa, a recursive grant from -2). The research goal is left alone.
     pub fn grant_advance(&mut self, slot: Slot, a: AdvanceId, source: AdvanceSource) -> bool {
         if a == rules::advance_ids::FUTURE_TECH {
             self.player_mut(slot).future_techs += 1;
             if self.turn > 0 {
                 self.player_mut(slot).research_count += 1;
-            }
-            if self.player(slot).researching == Some(a) {
-                self.player_mut(slot).researching = None;
             }
             return true;
         }
@@ -207,9 +204,8 @@ impl Game {
         }
         let new_to_world = self.first_discoverer(a) == 0;
         self.player_mut(slot).learn(a);
-        if self.player(slot).researching == Some(a) {
-            self.player_mut(slot).researching = None;
-        }
+        // the goal stays (ds:0x19be): the human's next city sees it learned and asks for
+        // another, even with no beakers stored (0x12bf1); `choose_research` drops it itself
         // advances given at the start change nothing else (0xc364)
         if self.turn == 0 {
             return true;
@@ -353,6 +349,23 @@ mod tests {
         let ai = g.alive_slots().into_iter().find(|s| *s != me).unwrap();
         assert!(!g.pick_research(ai));
         assert_eq!(g.player(ai).researching, None);
+    }
+
+    #[test]
+    fn a_goal_learned_otherwise_is_kept_and_asked_again_with_no_beakers() {
+        // grant_advance leaves ds:0x19be; the next city sees it known (0x12bf1)
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        let me = g.human_slot;
+        let settler = g.units_of(me).into_iter().find(|id| g.unit(*id).kind == crate::rules::unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        let goal = g.researchable(me)[0];
+        g.set_research(me, goal);
+        g.player_mut(me).beakers = 0;
+        g.grant_advance(me, goal, AdvanceSource::From(0));
+        assert_eq!(g.player(me).researching, Some(goal));
+        g.take_events();
+        g.city_science(c, 0);
+        assert!(g.take_events().iter().any(|e| matches!(e, GameEvent::NeedsDecision(crate::game::Decision::ChooseResearch { .. }))));
     }
 
     #[test]
