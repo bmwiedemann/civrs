@@ -177,6 +177,10 @@ pub enum GameEvent {
     /// "Population decrease\nin CITY.": the human's city has more working squares than
     /// citizens at its turn and places its workers anew (CIV.EXE 0xd70d, ds:0x255f).
     PopulationDecrease(CityId),
+    /// "The population of the\nfertile <Adj> empire now\nexceeds <figure>00,000 citizens."
+    /// from the Domestic Advisor at (100, 80) (`draw_sidebar_status` 0x37ee..0x3818); `figure`
+    /// is "N" below a million, "N,0" from a million on.
+    PopulationMilestone { figure: String },
     /// "Science Advisor: I recommend we develop ADV." before the human's research menu on
     /// Chieftain with Instant Advice (CIV.EXE 0x0bfc1).
     ScienceAdvice { slot: Slot, adv: AdvanceId },

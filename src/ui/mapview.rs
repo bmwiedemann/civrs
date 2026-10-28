@@ -1398,6 +1398,10 @@ impl Screen for MapView {
             return self.process(ctx);
         }
         if matches!(self.pending, Pending::None) && self.runner.is_none() {
+            // the sidebar is drawn with every map view (draw_map_view 0x1a6a5) and after the
+            // city screen, the rates and a caravan (0x4ab8, 0x70b7, 0x14894): its population
+            // milestone (0x370a)
+            ctx.game_mut().population_milestone();
             // what the loop's looks brought (an audience, 0x41e3 -> civs_meet), then the unit
             // it came to moves if it moves by itself (0x44b3)
             if !ctx.game().events.is_empty() {

@@ -252,6 +252,15 @@ pub struct Game {
     /// the game body in version-9 saves.
     #[serde(skip)]
     pub warming_counter: u16,
+    /// The population milestone ds:0x1c24 of `draw_sidebar_status` (1 when the program
+    /// starts, `Game::population_milestone`): hundreds of thousands below 10, millions + 9 from
+    /// there; stored after the game body in version-25 saves (CIV.EXE does not save it).
+    #[serde(skip)]
+    pub pop_milestone: u16,
+    /// ds:0x3484: -1 in a new game, -3 after loading one, -2 and then 0 at the next two turn
+    /// changes (0x2939..0x2960); below -1 the milestone moves on without a word. Not saved.
+    #[serde(skip)]
+    pub milestone_quiet: i16,
     /// The first discoverer of each advance, far 0x26f1:[0x4b0 + 2 * adv] & 7 (0 = none yet):
     /// set by `grant_advance` after turn 0 (0xc743) and kept when that civ is destroyed; stored
     /// after the game body in version-15 saves.
@@ -490,6 +499,8 @@ impl Game {
             taxes_mark: None,
             city_attention: false,
             warming_counter: 0,
+            pop_milestone: 1,
+            milestone_quiet: -1,
             first_discoverer: vec![0; 72],
             historian_timer: 80 + historian,
             history: replay::History::default(),

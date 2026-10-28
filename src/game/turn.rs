@@ -102,6 +102,25 @@ impl Default for TurnRunner {
     }
 }
 
+/// The milestone ds:0x1c24 for `pop` citizens in 10,000s (CIV.EXE 0x3750..0x37e3), and the
+/// figure of its message: below 100 it becomes pop / 10 once pop exceeds 10 x milestone ("N"
+/// hundred thousand), from 100 on pop / 100 + 9 once pop exceeds 100 x (milestone - 9) ("N,0"
+/// hundred thousand). It never falls.
+pub fn milestone_step(t: u16, pop: i32) -> (u16, String) {
+    let t = t as i32;
+    if pop < 100 {
+        if 10 * t >= pop {
+            return (t as u16, String::new());
+        }
+        ((pop / 10) as u16, (pop / 10).to_string())
+    } else {
+        if 100 * (t - 9) >= pop {
+            return (t as u16, String::new());
+        }
+        ((pop / 100 + 9) as u16, format!("{},0", pop / 100))
+    }
+}
+
 impl TurnRunner {
     pub fn new() -> TurnRunner {
         TurnRunner { phase: Phase::HumanUnits, ai_index: 0, pending: Default::default(), waiting: None, then_turn: false }
@@ -215,7 +234,10 @@ impl TurnRunner {
                     g.advance_calendar();
                     g.fifty_turn_block();
                     g.historian_check();
+                    g.milestone_quiet_step();
                     g.palace_growth_check();
+                    // the sidebar again (0x29ef)
+                    g.population_milestone();
                     self.drain_events(g);
                     self.phase = Phase::EarlierCivs;
                     self.ai_index = 0;
@@ -237,6 +259,8 @@ impl TurnRunner {
                     // ai_civ_turn for the human (0x2536): his census and continent policies,
                     // which his AUTO cities and the computer players read
                     crate::ai::unit_ai::civ_turn(g, slot);
+                    // the human's sidebar after his cities (0x256f)
+                    g.population_milestone();
                     g.reset_goals(slot);
                     // move_units (0x4046): the GENERAL PRINCIPLES notes, then the moves
                     g.principles_hints();
@@ -571,6 +595,36 @@ impl Game {
         let p = self.player_mut(slot);
         p.tax = (tax * 10) as u8;
         p.lux = ((10 - sci - tax).max(0) * 10) as u8;
+    }
+
+    /// The population milestone of `draw_sidebar_status` (CIV.EXE 0x370a..0x381b), at every
+    /// redraw of the sidebar: the human's citizens in 10,000s (0x1d43:0x2c3, the sizes'
+    /// triangular numbers) move `pop_milestone` on (`milestone_step`), and when it rises while
+    /// `milestone_quiet` >= -1 the Domestic Advisor tells of it.
+    pub fn population_milestone(&mut self) {
+        let pop = (self.total_population(self.human_slot) / 10_000) as i32;
+        let old = self.pop_milestone;
+        let (t, figure) = milestone_step(old, pop);
+        self.pop_milestone = t;
+        if old < t && self.milestone_quiet >= -1 {
+            self.push_event(GameEvent::PopulationMilestone { figure });
+        }
+    }
+
+    /// ds:0x3484 at the turn change (CIV.EXE 0x2939..0x2960): -3 (just loaded) -> -2 -> 0.
+    pub fn milestone_quiet_step(&mut self) {
+        match self.milestone_quiet {
+            -3 => self.milestone_quiet = -2,
+            -2 => self.milestone_quiet = 0,
+            _ => {}
+        }
+    }
+
+    /// The milestone a freshly started CIV.EXE (ds:0x1c24 = 1) reaches at its first sidebar of
+    /// this game, for a save that does not hold it.
+    pub fn derive_pop_milestone(&mut self) {
+        let pop = (self.total_population(self.human_slot) / 10_000) as i32;
+        self.pop_milestone = milestone_step(1, pop).0;
     }
 
     /// The *TAXES warning (CIV.EXE 0x268a): while the game goes on, a human with more than one
@@ -2669,6 +2723,47 @@ mod tests {
         g.set_government(ai, Govt::Monarchy);
         assert_eq!(g.player(ai).govt, Govt::Monarchy);
         assert!(g.history.log.len() > log);
+    }
+
+    #[test]
+    fn the_population_milestone_steps_by_hundred_thousands_then_millions() {
+        // draw_sidebar_status 0x3750..0x37e3 (pop in 10,000s)
+        assert_eq!(milestone_step(1, 15), (1, "1".into()));
+        assert_eq!(milestone_step(1, 25), (2, "2".into()));
+        assert_eq!(milestone_step(2, 20), (2, String::new()));
+        assert_eq!(milestone_step(9, 99), (9, "9".into()));
+        assert_eq!(milestone_step(9, 100), (10, "1,0".into()));
+        assert_eq!(milestone_step(10, 100), (10, String::new()));
+        assert_eq!(milestone_step(10, 200), (11, "2,0".into()), "200 exceeds 100 x (10 - 9)");
+        assert_eq!(milestone_step(11, 299), (11, "2,0".into()));
+        assert_eq!(milestone_step(12, 50), (12, String::new()), "it never falls");
+    }
+
+    #[test]
+    fn the_domestic_advisor_tells_of_the_milestone_unless_just_loaded() {
+        let (mut g, c) = fixture();
+        let said = |g: &mut Game| g.take_events().into_iter().filter_map(|e| if let GameEvent::PopulationMilestone { figure } = e { Some(figure) } else { None }).collect::<Vec<_>>();
+        g.take_events();
+        g.city_mut(c).size = 6; // 21
+        g.population_milestone();
+        assert_eq!(said(&mut g), vec!["2".to_string()]);
+        g.population_milestone();
+        assert!(said(&mut g).is_empty());
+        // after loading (ds:0x3484 = -3) two turn changes pass in silence
+        g.milestone_quiet = -3;
+        g.city_mut(c).size = 8; // 36
+        g.population_milestone();
+        assert!(said(&mut g).is_empty());
+        assert_eq!(g.pop_milestone, 3);
+        g.milestone_quiet_step();
+        g.city_mut(c).size = 9; // 45
+        g.population_milestone();
+        assert!(said(&mut g).is_empty());
+        g.milestone_quiet_step();
+        assert_eq!(g.milestone_quiet, 0);
+        g.city_mut(c).size = 10; // 55
+        g.population_milestone();
+        assert_eq!(said(&mut g), vec!["5".to_string()]);
     }
 
     #[test]

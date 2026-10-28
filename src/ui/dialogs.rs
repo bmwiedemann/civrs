@@ -191,6 +191,11 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
         GameEvent::FoodExhausted { city, name, owner, settlers_lost } if *owner == me => {
             paper(vec!["Food storage exhausted".into(), format!("in {name}!"), if *settlers_lost { "Settlers lost." } else { "Famine feared." }.into()], Some(*city))
         }
+        // the Domestic Advisor at (100, 80) (draw_sidebar_status 0x370a..0x3818)
+        GameEvent::PopulationMilestone { figure } => speaker(
+            SPEAKER_DOMESTIC,
+            vec!["The population of the".into(), format!("fertile {} empire now", g.player(me).adjective()), format!("exceeds {figure}00,000 citizens.")],
+        ),
         // the Domestic Advisor at (100, 80) (CIV.EXE 0xd221..0xd258)
         GameEvent::AqueductNeeded(c) if g.city_opt(*c).map(|c| c.owner == me).unwrap_or(false) => {
             speaker(SPEAKER_DOMESTIC, vec![format!("{} requires an AQUEDUCT", city_name(*c)), "for further growth.".into()])

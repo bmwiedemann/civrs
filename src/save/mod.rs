@@ -58,7 +58,9 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// city.
 /// 24: then by the number of unit slots (u32 LE) and each slot's `Unit::record` byte (0 for an
 /// empty slot); older saves number each civ's units in slot order.
-pub const VERSION: u16 = 24;
+/// 25: then by the population milestone (`Game::pop_milestone`, u16 LE); older saves take the
+/// one their population reaches from the start (`Game::derive_pop_milestone`).
+pub const VERSION: u16 = 25;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -167,6 +169,7 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     data.extend(g.cities.iter().map(|c| c.as_ref().map_or(crate::game::city::NO_NAME_INDEX, |c| c.name_index)));
     data.extend_from_slice(&(g.units.len() as u32).to_le_bytes());
     data.extend(g.units.iter().map(|u| u.as_ref().map(|u| u.record).unwrap_or(0)));
+    data.extend_from_slice(&g.pop_milestone.to_le_bytes());
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -277,6 +280,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     let mut hydro: Option<Vec<u8>> = None;
     let mut name_index: Option<Vec<u8>> = None;
     let mut records: Option<Vec<u8>> = None;
+    let mut milestone: Option<u16> = None;
     // version 14: the tribe names, after the counters
     if ver >= 14 {
         let mut at = counters + 112 * g.players.len();
@@ -341,6 +345,8 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
                             if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 24) {
                                 let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
                                 records = rest.get(at + 4..at + 4 + n).map(|b| b.to_vec());
+                                at += 4 + n;
+                                milestone = rest.get(at..at + 2).filter(|_| ver >= 25).map(|b| u16::from_le_bytes([b[0], b[1]]));
                             }
                         }
                     }
@@ -447,6 +453,12 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
             None => crate::game::city::name_table_index(&c.name),
         };
     }
+    match milestone {
+        Some(t) => g.pop_milestone = t,
+        None => g.derive_pop_milestone(),
+    }
+    // the load routine (o 0xf0ce): the next two turn changes pass the milestone in silence
+    g.milestone_quiet = -3;
     Ok(g)
 }
 
@@ -874,6 +886,28 @@ mod tests {
         let old = super::load_game(&path).unwrap();
         let _ = std::fs::remove_dir_all(dir);
         assert_eq!(old.city(c).name_index, crate::game::city::NO_NAME_INDEX, "a renamed city's name is not in the table");
+    }
+
+    #[test]
+    fn the_population_milestone_survives_a_save_and_old_saves_derive_it() {
+        let mut g = Game::new(GameSetup { seed: 6, ..Default::default() }, None);
+        let h = g.human_slot;
+        let settler = g.units_of(h).into_iter().find(|id| g.unit(*id).kind == crate::rules::unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        g.city_mut(c).size = 7; // 28 x 10,000
+        g.pop_milestone = 5;
+        let dir = std::env::temp_dir().join(format!("civrs-milestone-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        let l = super::load_game(&path).unwrap();
+        assert_eq!((l.pop_milestone, l.milestone_quiet), (5, -3));
+        let mut data = std::fs::read(&path).unwrap();
+        data[4..6].copy_from_slice(&24u16.to_le_bytes());
+        data.truncate(data.len() - 2);
+        std::fs::write(&path, &data).unwrap();
+        let old = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(old.pop_milestone, 2, "from 1, as CIV.EXE after loading");
     }
 
     #[test]

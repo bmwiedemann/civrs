@@ -651,6 +651,10 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
     // `Game::next_active_unit`)
     g.process_player_turn_start(human);
     crate::ai::unit_ai::civ_turn(&mut g, human);
+    // the save has no ds:0x1c24: the sidebar (0x256f) takes it from the program's start
+    // value 1 in silence (ds:0x3484 = -3, o 0xf0ce)
+    g.derive_pop_milestone();
+    g.milestone_quiet = -3;
     g.reset_goals(human);
     g.active_unit = None;
     g.reset_unit_loop();
