@@ -491,3 +491,28 @@ M8 polish: fades, animations, tuning, release build.
   every order key + ERROR messages; city screen fully interactive; techs/governments/revolution; combat incl. walls/fortress/veterans/capture/civil war;
   diplomacy audiences with correct backgrounds/portraits/advisor counts; barbarians; pollution/global warming; spaceship to arrival; save/load/autosave/hall
   of fame; civilopedia complete; `--scale 1..6`, resize letterboxing, fullscreen.
+
+### Differential test against CIV.EXE (reference/tools/sve_diff.py)
+CIV.EXE and civrs play on from the same original save and their states are diffed field by field.
+- `python3 -I reference/tools/sve_diff.py play GAME_DIR SLOT TURNS OUT_DIR` runs CIV.EXE in dosbox-staging
+  under a private Xvfb (`reference/tools/dosciv.py`; display `CIVDISPLAY`, default :79; it kills only the
+  processes it started). GAME_DIR is a writable copy of the game directory. The script answers the
+  start-up questions (VGA, no sound, keyboard), loads CIVIL<SLOT>.SVE, and then for each turn presses
+  Space (skip the active unit: the human's units keep their orders) and saves to slot 2. It finds the
+  GAME menu and the slot cursor from the screen colours, and answers any dialog with Return. Each new
+  turn's save goes to OUT_DIR/t<TURN>.SVE/.MAP, and the screenshots go to OUT_DIR/shot*.png.
+- `python3 -I reference/tools/sve_diff.py diff target/release/civrs START.SVE OUT_DIR/t*.SVE` runs
+  `civrs --load-sve START --dump state:N` (N = turns since START, the human doing nothing, decisions
+  answered with their first choice). It diffs the result against `--dump state:0` of each CIV.EXE save,
+  and prints `field: CIV.EXE | civrs` (`save::sve::state_text`: turn, year, gold, beakers, rates and
+  advances per civ, city stores, production, worked squares, yields, units by owner/type, tile improvements).
+- The state dump makes the goto use the land block links stored in the save (SVE 0x8aa6 = ds:0xdb44,
+  `Game::use_exe_land_links`). Overlay 7 0x9edd builds them from map page 2 while the new world is
+  still on page 1, so in CIV.EXE they do not fit the world (all four sample saves); civrs computes
+  sane links for play.
+  With the saved links the AI's goto steps match CIV.EXE.
+- No RNG state is saved: CIV.EXE seeds rand() from the clock when it starts. Divergences behind
+  random() are expected: hut outcomes (0x978d random(4)), the Chieftain computer's skipped advance
+  (0xbb4a), and the computer Settlers' goals. After such a divergence, its effects follow on, for
+  example the human's Chieftain research bonus when another civ found the goal first (0x12c93). Two
+  CIV.EXE runs from the same save differ in the same way.

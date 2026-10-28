@@ -158,6 +158,20 @@ impl Game {
         self.ai_memory.links.as_ref().unwrap()
     }
 
+    /// Use CIV.EXE's own land links (ds:0xdb44, SVE 0x8aa6, 20 x 13 bytes x-major) instead of
+    /// links worked out from the map; the sea links are computed, as overlay 11 recomputes them
+    /// on loading (0xa17a). For the differential test only: 0x9edd builds the land grid from
+    /// map page 2 while the new world is still on page 1, so the grid does not fit the world
+    /// (in all four sample saves); civrs keeps its sane links for play.
+    pub fn use_exe_land_links(&mut self, land: &[u8]) {
+        let mut links = self.compute_block_links();
+        if land.len() == links.land.len() {
+            links.land = land.to_vec();
+        }
+        self.ai_memory.links = Some(links);
+        self.ai_memory.goto_cache = Default::default();
+    }
+
     fn block_mask(&mut self, bx: i32, by: i32, sea: bool) -> u8 {
         if !(0..BW).contains(&bx) || !(0..BH).contains(&by) {
             return 0;

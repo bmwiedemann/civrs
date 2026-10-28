@@ -10,6 +10,7 @@ fn usage() -> ! {
                 civrs --dump TARGET --out FILE.ppm [--assets DIR] [--zoom N] [--load-sve CIVILn.SVE]\n\
          dump targets: pic:NAME | sheet:NAME | fonts | pal:NAME | all-pics:DIR\n\
                        sound:ID[:LEVEL[:SECONDS]] (WAV) | sound-regs:ID[:LEVEL[:TICKS]] (OPL2 register log)\n\
+                       state:TURNS[:SEED] (text, with --load-sve; reference/tools/sve_diff.py)\n\
          --load-sve: start from (or, with screen:NAME, render) an original CIVILn.SVE + .MAP"
     );
     std::process::exit(2);
@@ -55,6 +56,31 @@ fn parse_cli() -> Cli {
 fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(spec) = target.strip_prefix("sound:") {
         return dump_sound(assets, spec, out, false);
+    }
+    if let Some(turns) = target.strip_prefix("state:") {
+        // state:TURNS[:SEED]: the stored state of the --load-sve game after TURNS turns in
+        // which the human does nothing (save::sve::state_text, reference/tools/sve_diff.py);
+        // the goto uses CIV.EXE's own land links of the save
+        let mut it = turns.split(':');
+        let turns: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let seed: u64 = it.next().and_then(|s| s.parse().ok()).unwrap_or(1);
+        let sve = sve.ok_or("state: needs --load-sve")?;
+        let mut game = civrs::save::sve::import(sve)?;
+        game.use_exe_land_links(&civrs::save::sve::exe_land_links(sve)?);
+        let mut ai = civrs::ai::Ai::new(seed);
+        for _ in 0..turns {
+            let mut r = game.end_turn();
+            loop {
+                match r.step(&mut game, &mut ai) {
+                    civrs::game::turn::TurnStep::Done => break,
+                    civrs::game::turn::TurnStep::Decision(_) => r.resolve(&mut game, civrs::game::DecisionReply::Choice(0)),
+                    _ => {}
+                }
+            }
+            let _ = game.take_events();
+        }
+        std::fs::write(out, civrs::save::sve::state_text(&game))?;
+        return Ok(());
     }
     if let Some(spec) = target.strip_prefix("sound-regs:") {
         return dump_sound(assets, spec, out, true);

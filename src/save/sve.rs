@@ -78,6 +78,7 @@ mod off {
     pub const WARMING_COUNTER: usize = 0x8aa0;
     pub const WARMINGS: usize = 0x8aa2;
     pub const OPTIONS: usize = 0x8aa4;
+    pub const LAND_LINKS: usize = 0x8aa6;
     pub const FUTURE_TECHS: usize = 0x8bac;
     pub const SCIENCE: usize = 0x8bb0;
     pub const HISTORIAN: usize = 0x8bc0;
@@ -607,6 +608,78 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
     Ok(g)
 }
 
+/// CIV.EXE's goto land links of a save (ds:0xdb44, `Game::use_exe_land_links`).
+pub fn exe_land_links(sve: &Path) -> Result<Vec<u8>, SaveError> {
+    let data = std::fs::read(sve)?;
+    data.get(off::LAND_LINKS..off::LAND_LINKS + 260).map(|l| l.to_vec()).ok_or_else(|| SaveError::Format("short save".into()))
+}
+
+/// The stored game state as `key value` lines, for the differential test against CIV.EXE
+/// (`civrs --load-sve F --dump state:TURNS`, reference/tools/sve_diff.py): the same lines
+/// from civrs's turns and from the import of CIV.EXE's own save after those turns diff field
+/// by field. Units are keyed by owner, type and their order of position, cities by record id.
+pub fn state_text(g: &Game) -> String {
+    use std::fmt::Write;
+    let mut o = String::new();
+    let _ = writeln!(o, "turn {}\nyear {}", g.turn, g.year);
+    for p in g.players.iter().filter(|p| p.alive) {
+        let k = format!("civ{}", p.slot);
+        let _ = writeln!(o, "{k}.gold {}\n{k}.beakers {}\n{k}.rates tax{} lux{} sci{}", p.gold, p.beakers, p.tax, p.lux, p.sci());
+        let _ = writeln!(o, "{k}.govt {:?}\n{k}.advances {:018x}\n{k}.research_count {}", p.govt, p.advances, p.research_count);
+        if p.human {
+            let _ = writeln!(o, "{k}.researching {:?}", p.researching);
+        }
+        let _ = writeln!(o, "{k}.units_per_type {:?}", &p.unit_counter[..]);
+        let _ = writeln!(o, "{k}.cities {}", g.all_cities().filter(|c| c.owner == p.slot).count());
+    }
+    for c in g.all_cities() {
+        let k = format!("city{}", c.id);
+        let y = g.city_yield(c.id);
+        let _ = writeln!(o, "{k}.name {} owner {} at {},{}", c.name, c.owner, c.x, c.y);
+        let _ = writeln!(o, "{k}.size {}\n{k}.food {}\n{k}.shields {}\n{k}.production {:?}", c.size, c.food, c.shields, c.production);
+        let _ = writeln!(o, "{k}.improvements {:08x} wonders {:08x}", c.improvements, c.wonders);
+        let _ = writeln!(o, "{k}.worked {:08x} specialists {:?}", c.worked, c.specialists);
+        let _ = writeln!(o, "{k}.flags disorder {} celebrating {} known_size {}", c.disorder, c.celebrating, c.known_size);
+        let _ = writeln!(o, "{k}.yield food {}-{} shields {}-{} trade {}-{} tax {} lux {} sci {}", y.food, y.food_upkeep, y.shields, y.shield_upkeep, y.trade, y.corruption, y.tax, y.lux, y.sci);
+    }
+    let mut units: Vec<&Unit> = g.all_units().collect();
+    units.sort_by_key(|u| (u.owner, u.kind, u.x, u.y, u.id));
+    let mut last = (u8::MAX, u8::MAX);
+    let mut n = 0;
+    for u in units {
+        n = if (u.owner, u.kind) == last { n + 1 } else { 0 };
+        last = (u.owner, u.kind);
+        let _ = writeln!(
+            o,
+            "unit{}.{}.{} at {},{} moves {} order {:?} turns {} fuel {} vet {} home {:?} goto {:?} heading {}",
+            u.owner,
+            u.info().name,
+            n,
+            u.x,
+            u.y,
+            u.moves_left,
+            u.order,
+            u.order_turns,
+            u.fuel,
+            u.veteran,
+            u.home,
+            u.goto,
+            g.heading(u.id)
+        );
+    }
+    for y in 0..MAP_H as i32 {
+        for x in 0..MAP_W as i32 {
+            let t = g.map.tile(x, y);
+            let f = t.flags & !tile_flags::RIVER_ALT;
+            if f != 0 {
+                let _ = writeln!(o, "tile{x},{y} {f:04x}");
+            }
+        }
+    }
+    let _ = writeln!(o, "polluted {}\nwarming {}", g.polluted_tiles, g.warming_counter);
+    o
+}
+
 /// The turn of each slot's DESTROYED record in a replay log.
 fn destroyed_turns(log: &[u8]) -> [Option<u32>; 8] {
     let mut out = [None; 8];
@@ -709,6 +782,19 @@ mod tests {
             }
         }
         assert!(seen[0] + seen[1] == 0 || seen.iter().all(|n| *n > 0), "both kinds among the samples: {seen:?}");
+    }
+
+    #[test]
+    fn the_state_dump_lists_the_saved_fields() {
+        let Some(mut g) = sample(3) else { return };
+        let text = state_text(&g);
+        assert!(text.starts_with("turn 73\nyear -2540\n"));
+        assert!(text.contains("\ncity0.name Rome owner 1 at 12,29\n"));
+        assert!(text.contains("\nciv1.gold 147\n"));
+        let dir = crate::assets::AssetDir::locate(None).unwrap();
+        let land = exe_land_links(&slot_file(dir.root(), 3).unwrap()).unwrap();
+        g.use_exe_land_links(&land);
+        assert_eq!(g.ai_memory.links.as_ref().unwrap().land, land);
     }
 
     #[test]
