@@ -594,6 +594,19 @@ impl Game {
         self.owner_has_wonder(slot, rules::wonder_ids::LIGHTHOUSE) || self.owner_has_wonder(slot, rules::wonder_ids::MAGELLANS_EXPEDITION)
     }
 
+    /// Every unit of `slot` looks around (unit_look 0x41e3), as move_units' loop does each
+    /// time it is entered: at the start of the civilization's turn, and for the human after a
+    /// saved game is loaded.
+    pub fn units_look_around(&mut self, slot: super::Slot) {
+        let looking: Vec<(UnitId, (i32, i32))> = self.all_units().filter(|u| u.owner == slot).map(|u| (u.id, u.pos())).collect();
+        for (id, (x, y)) in looking {
+            self.reveal_garrisons_near(slot, x, y);
+            self.mark_sightings(id);
+            self.look_for_contacts(id);
+            self.unit_look_goals(id);
+        }
+    }
+
     /// Reset movement points at the start of a player's turn; handles fortify completion.
     ///
     /// CIV.EXE's unit loop at the start of a civilization's turn (0x4174..0x4327) also looks
@@ -623,13 +636,7 @@ impl Game {
                 u.order = UnitOrder::None;
             }
         }
-        let looking: Vec<(UnitId, (i32, i32))> = self.all_units().filter(|u| u.owner == slot).map(|u| (u.id, u.pos())).collect();
-        for (id, (x, y)) in looking {
-            self.reveal_garrisons_near(slot, x, y);
-            self.mark_sightings(id);
-            self.look_for_contacts(id);
-            self.unit_look_goals(id);
-        }
+        self.units_look_around(slot);
         for id in fortified {
             // an earlier stash may have taken the unit off the map already
             let Some((x, y)) = self.unit_opt(id).map(|u| u.pos()) else { continue };

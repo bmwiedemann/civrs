@@ -395,7 +395,10 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
             }
         }
         let size = r[7];
-        let spare = (size as i32 - worked.count_ones() as i32).max(0) as usize;
+        // the specialists are counted in the top 6 bits of the worked word (process_city
+        // 0xcce3: ds:0xe8b8 = worked >> 26); citizens neither working nor counted there are
+        // placed by the next worker assignment
+        let spare = ((size as i32 - worked.count_ones() as i32).max(0) as usize).min((worked_exe >> 26) as usize);
         // 2-bit codes at +0x14 (0xc91:0x6d97: 1 taxman, 2 scientist, 3 entertainer; past the
         // eighth always 1)
         let specialists = (0..spare)
@@ -639,6 +642,15 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
 
     g.refresh_all_vision();
     g.update_research_catch_up();
+    // a loaded game resumes game_turn at the human's civ (ds:0xdf60 != 0 skips the civs
+    // before him and his cities, 0x2614, 0x2503): his politics (0x252b), ai_civ_turn with his
+    // census and policies (0x2536), ai_reset_goals (0x2541), the peaceful turns (0x259a),
+    // then move_units, whose loop has each of his units look around (unit_look 0x41e3: a
+    // foreign city next to one shows him its size, city +8)
+    g.process_player_turn_start(human);
+    crate::ai::unit_ai::civ_turn(&mut g, human);
+    g.reset_goals(human);
+    g.units_look_around(human);
     g.active_unit = None;
     g.active_unit = g.next_active_unit();
     Ok(g)
@@ -883,6 +895,42 @@ mod tests {
         assert_eq!(g.human().gold - gold, tax);
         assert_eq!(g.city(caesarea).workers(), 1);
         assert!(g.city_yield_raw(caesarea).tax < tax, "one square makes less");
+    }
+
+    fn sample_bytes(n: u8) -> Option<(Vec<u8>, Vec<u8>)> {
+        let dir = crate::assets::AssetDir::locate(None).ok()?;
+        let path = slot_file(dir.root(), n)?;
+        Some((std::fs::read(&path).ok()?, std::fs::read(map_file(&path)).ok()?))
+    }
+
+    #[test]
+    fn the_specialists_are_the_count_in_the_worked_word() {
+        // CIVIL4's Rome (record 0) made size 6 with its 2 squares and four entertainer codes:
+        // only the count in bits 26.. of the worked word (0xcce3) makes them specialists
+        let Some((mut data, map)) = sample_bytes(4) else { return };
+        let r = off::CITIES;
+        data[r + 7] = 6;
+        data[r + 0x14] = 0xff;
+        let g = import_bytes(&data, &map).unwrap();
+        assert_eq!((g.city(0).size, g.city(0).workers(), g.city(0).specialists.len()), (6, 2, 0));
+        data[r + 0x13] |= 4 << 2;
+        let g = import_bytes(&data, &map).unwrap();
+        assert_eq!(g.city(0).specialists, vec![Specialist::Entertainer; 4]);
+    }
+
+    #[test]
+    fn the_human_units_look_around_when_a_save_is_loaded() {
+        // CIVIL4's Militia (civ 1, record 0) put next to Berlin (11,20): its look at the load
+        // shows the human Berlin's size (unit_look 0x41e3 -> 0x82a9)
+        let Some((mut data, map)) = sample_bytes(4) else { return };
+        let u = off::UNITS + 0x600;
+        data[u + 1] = 11;
+        data[u + 2] = 21;
+        let g = import_bytes(&data, &map).unwrap();
+        let berlin = g.city_at(11, 20).unwrap();
+        assert_eq!(g.city(berlin).known_size, g.city(berlin).size);
+        let Some(g) = sample(4) else { return };
+        assert_eq!(g.city(berlin).known_size, 0);
     }
 
     #[test]
