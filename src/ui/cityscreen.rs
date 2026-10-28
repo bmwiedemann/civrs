@@ -287,6 +287,8 @@ impl CityScreen {
                         let u = &rules::UNITS[*k as usize];
                         format!("{} ({}, ADM:{}/{}/{})", p.name(), turns, u.att, u.def, u.moves)
                     }
+                    // an obsolete wonder is offered with a "*" (0xae52)
+                    Production::Wonder(w) if g.wonder_marked_obsolete(*w) => format!("*{} ({})", p.name(), turns),
                     _ => format!("{} ({})", p.name(), turns),
                 }
             })

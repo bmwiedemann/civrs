@@ -112,7 +112,7 @@ pub fn city_turn_purchase(g: &mut Game, c: CityId, net_shields: i32) {
 /// the tests are the same).
 fn exe_status(g: &Game, c: CityId) -> u8 {
     let city = g.city(c);
-    let hydro = Map::neighbours8(city.x, city.y).chain(std::iter::once((city.x, city.y))).any(|(x, y)| matches!(g.map.terrain(x, y), Terrain::River | Terrain::Mountains));
+    let hydro = Map::neighbours8(city.x, city.y).any(|(x, y)| matches!(g.map.terrain(x, y), Terrain::River | Terrain::Mountains));
     let bits = [
         city.disorder,
         g.map.is_coastal(city.x, city.y),

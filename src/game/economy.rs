@@ -829,21 +829,21 @@ impl Game {
             }
         }
         // the production menu's rules (CIV.EXE 0xacd7..0xadbc): no Courthouse in the capital, no
-        // Factory beside a Mfg. Plant, a Bank needs a Marketplace, a University a Library, a Power
-        // Plant a Factory, and no plant at all where a Hoover Dam on the continent supplies power
+        // Factory beside a Mfg. Plant, a Bank needs a Marketplace and a University a Library
+        // once the civ knows their advance (0xad06, 0xad31), a Power Plant a Factory, and no
+        // plant at all where a Hoover Dam on the continent supplies power. The Palace has no
+        // rule: any city without it may build it (0xac89).
         let hoover = self.owner_has_wonder(city.owner, won::HOOVER_DAM) && self.same_continent_as_wonder(c, won::HOOVER_DAM);
         let plant = city.has_improvement(imp::POWER_PLANT) || city.has_improvement(imp::HYDRO_PLANT) || city.has_improvement(imp::NUCLEAR_PLANT);
+        let needs = |b: ImprovementId| city.has_improvement(b) || rules::IMPROVEMENTS[b as usize].prereq.map(|a| !p.knows(a)).unwrap_or(false);
         match i {
-            imp::PALACE => p.capital.and_then(|cap| self.city_opt(cap)).is_none(),
             imp::COURTHOUSE => !city.has_improvement(imp::PALACE),
             imp::FACTORY => !city.has_improvement(imp::MFG_PLANT),
-            imp::BANK => city.has_improvement(imp::MARKETPLACE),
-            imp::UNIVERSITY => city.has_improvement(imp::LIBRARY),
-            imp::HYDRO_PLANT => {
-                !hoover
-                    && !plant
-                    && Map::neighbours8(city.x, city.y).chain(std::iter::once((city.x, city.y))).any(|(x, y)| matches!(self.map.terrain(x, y), Terrain::River | Terrain::Mountains))
-            }
+            imp::BANK => needs(imp::MARKETPLACE),
+            imp::UNIVERSITY => needs(imp::LIBRARY),
+            // the city's Hydro Plant site bit (+6 bit 3, 0xad64), set at its founding when one
+            // of the eight squares around is River or Mountains (o 0x1b6be)
+            imp::HYDRO_PLANT => !hoover && !plant && Map::neighbours8(city.x, city.y).any(|(x, y)| matches!(self.map.terrain(x, y), Terrain::River | Terrain::Mountains)),
             imp::POWER_PLANT => !hoover && !plant && city.has_improvement(imp::FACTORY),
             imp::NUCLEAR_PLANT => !hoover && !plant,
             // Apollo built and the ship not launched, however full it is (CIV.EXE 0xac63)
@@ -852,7 +852,8 @@ impl Game {
         }
     }
 
-    /// Can the city start (or continue) building wonder `w`?
+    /// Can the city start (or continue) building wonder `w`? An obsolete wonder stays in the
+    /// menu (0xae0b..0xaeab), marked by `wonder_marked_obsolete`.
     pub fn can_build_wonder(&self, c: CityId, w: WonderId) -> bool {
         let city = self.city(c);
         let p = self.player(city.owner);
@@ -865,12 +866,13 @@ impl Game {
                 return false;
             }
         }
-        if let Some(o) = info.obsolete_by {
-            if p.knows(o) {
-                return false;
-            }
-        }
         true
+    }
+
+    /// The production menu puts a "*" before a wonder whose obsoleting advance anyone has
+    /// discovered after turn 0 (the first-discoverer table, 0xae39..0xae5f).
+    pub fn wonder_marked_obsolete(&self, w: WonderId) -> bool {
+        rules::WONDERS[w as usize].obsolete_by.map(|a| self.first_discoverer.get(a as usize).map(|d| d & 7 != 0).unwrap_or(false)).unwrap_or(false)
     }
 
     /// Everything the city may build now: units, then improvements, then wonders.
@@ -1109,7 +1111,7 @@ mod tests {
         assert!(v.contains(&Production::Unit(unit_ids::MILITIA)));
         assert!(v.contains(&Production::Unit(unit_ids::SETTLERS)));
         assert!(v.contains(&Production::Improvement(imp::BARRACKS)));
-        assert!(!v.contains(&Production::Improvement(imp::PALACE)), "capital exists");
+        assert!(!v.contains(&Production::Improvement(imp::PALACE)), "the capital has it");
         assert!(!v.contains(&Production::Improvement(imp::GRANARY)), "needs Pottery");
         assert!(!v.contains(&Production::Improvement(imp::SS_STRUCTURAL)));
         assert!(!v.iter().any(|p| matches!(p, Production::Wonder(_))), "no wonder without advances");
@@ -1379,6 +1381,14 @@ mod tests {
         // the capital needs no Courthouse
         assert!(g.city(c).has_improvement(imp::PALACE));
         assert!(!g.can_build_improvement(c, imp::COURTHOUSE));
+        // a Bank and a University without Currency and Writing need no Marketplace or Library
+        // (0xad06, 0xad31)
+        g.player_mut(slot).forget(crate::rules::advance_ids::CURRENCY);
+        g.player_mut(slot).forget(crate::rules::advance_ids::WRITING);
+        assert!(g.can_build_improvement(c, imp::BANK));
+        assert!(g.can_build_improvement(c, imp::UNIVERSITY));
+        g.player_mut(slot).learn(crate::rules::advance_ids::CURRENCY);
+        g.player_mut(slot).learn(crate::rules::advance_ids::WRITING);
         assert!(!g.can_build_improvement(c, imp::BANK));
         g.city_mut(c).add_improvement(imp::MARKETPLACE);
         assert!(g.can_build_improvement(c, imp::BANK));
@@ -1391,6 +1401,26 @@ mod tests {
         g.city_mut(c).add_wonder(won::HOOVER_DAM);
         g.wonders_built[won::HOOVER_DAM as usize] = Some(c);
         assert!(!g.can_build_improvement(c, imp::POWER_PLANT));
+    }
+
+    #[test]
+    fn any_city_may_build_a_palace_and_obsolete_wonders_stay_marked() {
+        // 0xac89: no Palace rule; 0xae0b..0xaeab: no obsolescence rule, a "*" instead
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        let (x, y) = g.city(c).pos();
+        let other = g.add_city(slot, "Veii".into(), Map::wrap_x(x + 6), y);
+        g.player_mut(slot).learn(crate::rules::advance_ids::MASONRY);
+        g.player_mut(slot).learn(crate::rules::advance_ids::BRONZE_WORKING);
+        assert!(!g.can_build_improvement(c, imp::PALACE));
+        assert!(g.can_build_improvement(other, imp::PALACE));
+        let w = won::COLOSSUS;
+        let o = rules::WONDERS[w as usize].obsolete_by.unwrap();
+        g.player_mut(slot).learn(o);
+        assert!(g.available_production(other).contains(&Production::Wonder(w)));
+        assert!(!g.wonder_marked_obsolete(w), "known from the start");
+        g.first_discoverer[o as usize] = slot;
+        assert!(g.wonder_marked_obsolete(w));
     }
 
     #[test]
