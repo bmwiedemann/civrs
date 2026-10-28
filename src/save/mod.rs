@@ -669,6 +669,12 @@ pub struct FameEntry {
     pub title: String,
     #[serde(default)]
     pub population: i64,
+    /// The final `civ_score`'s achievement (wonder) and citizen points, ds:0xd764 / ds:0xd766
+    /// (record +8 / +0xa, o 0x2d45); FAME.DTA keeps them, the list does not show them.
+    #[serde(default)]
+    pub achievements: i32,
+    #[serde(default)]
+    pub citizens: i32,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -721,6 +727,8 @@ impl HallOfFame {
                     difficulty,
                     title: String::new(),
                     population: word(r, 0xc) as i64 * 10_000,
+                    achievements: word(r, 8),
+                    citizens: word(r, 0xa),
                 }
             })
             .collect();
@@ -737,6 +745,8 @@ impl HallOfFame {
                     r[0..2].copy_from_slice(&(e.score as i16).to_le_bytes());
                     r[2..4].copy_from_slice(&(e.difficulty as i16).to_le_bytes());
                     r[6..8].copy_from_slice(&(e.year as i16).to_le_bytes());
+                    r[8..10].copy_from_slice(&(e.achievements as i16).to_le_bytes());
+                    r[0xa..0xc].copy_from_slice(&(e.citizens as i16).to_le_bytes());
                     r[0xc..0xe].copy_from_slice(&((e.population / 10_000).min(i16::MAX as i64) as i16).to_le_bytes());
                     for (dst, src) in [(0xe, &e.leader), (0x1e, &e.civ_plural)] {
                         let b = src.as_bytes();
@@ -1059,7 +1069,7 @@ mod tests {
 
     #[test]
     fn a_game_below_six_entries_takes_the_sixth_place() {
-        let e = |score| super::FameEntry { leader: String::new(), civ_plural: String::new(), score, percent: 0, year: 0, difficulty: 0, title: String::new(), population: 0 };
+        let e = |score| super::FameEntry { leader: String::new(), civ_plural: String::new(), score, percent: 0, year: 0, difficulty: 0, title: String::new(), population: 0, achievements: 0, citizens: 0 };
         let mut h = super::HallOfFame::default();
         for s in [600, 500, 400, 300, 200, 100] {
             h.add(e(s));
@@ -1079,6 +1089,8 @@ mod tests {
         rec[2..4].copy_from_slice(&4i16.to_le_bytes());
         rec[6..8].copy_from_slice(&(-1700i16).to_le_bytes());
         rec[0xc..0xe].copy_from_slice(&26i16.to_le_bytes());
+        rec[8..10].copy_from_slice(&40i16.to_le_bytes());
+        rec[0xa..0xc].copy_from_slice(&33i16.to_le_bytes());
         rec[0xe..0xe + 11].copy_from_slice(b"Ray Maloney");
         rec[0x1e..0x1e + 9].copy_from_slice(b"Egyptians");
         let mut empty = vec![0u8; super::FAME_RECORD];
@@ -1088,6 +1100,7 @@ mod tests {
         assert_eq!(h.entries.len(), 1);
         let e = &h.entries[0];
         assert_eq!((e.leader.as_str(), e.civ_plural.as_str(), e.score, e.difficulty, e.year, e.population, e.percent), ("Ray Maloney", "Egyptians", 12, 4, -1700, 260_000, 1));
+        assert_eq!((e.achievements, e.citizens), (40, 33));
         assert_eq!(super::HallOfFame::from_dta(&h.to_dta()), h);
     }
 

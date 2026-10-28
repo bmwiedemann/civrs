@@ -97,7 +97,9 @@ fn end_game_scores(ctx: &UiContext, retired: bool) -> Vec<Box<dyn Screen>> {
     }
     if let Some(g) = ctx.game.as_ref() {
         let me = g.human_slot;
-        let score = g.player(me).final_score.unwrap_or_else(|| g.score(me).total);
+        // civ_score(human) of end_game_scores (0x2c4e) leaves its parts for fame_insert
+        let parts = g.score(me);
+        let score = g.player(me).final_score.unwrap_or(parts.total);
         s.extend(rating_screen_for(ctx, score));
         let e = crate::save::FameEntry {
             leader: g.human().leader.clone(),
@@ -108,6 +110,8 @@ fn end_game_scores(ctx: &UiContext, retired: bool) -> Vec<Box<dyn Screen>> {
             difficulty: g.setup.difficulty.as_u8(),
             title: g.human().title().trim().to_string(),
             population: g.total_population(me),
+            achievements: 20 * parts.wonders,
+            citizens: 2 * parts.happy + parts.content,
         };
         s.push(crate::ui::halloffame::hall_of_fame_with(e));
     }
