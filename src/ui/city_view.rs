@@ -157,7 +157,8 @@ impl Layout {
     fn build(g: &Game, city: CityId) -> Layout {
         let c = g.city(city);
         let owner = g.player(c.owner);
-        let tech = owner.advance_count() as i32 / 2;
+        // half the owner's research count (ds:0xe898, o 0x19193), not the advances known
+        let tech = owner.research_count as i32 / 2;
         let size = c.size as i32;
         let seed: u32 = c.name.bytes().map(|b| b as i8 as i32).sum::<i32>() as u16 as u32;
         let mut rng = MsRand(seed);
@@ -588,18 +589,10 @@ impl Screen for CityView {
             return Transition::None;
         }
         match ev {
-            Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } => {
-                // a key during the wait shows the finished view at once
-                if let Kind::Built(_) = self.kind {
-                    if self.reveal.is_none() {
-                        let mut r = Reveal::new(ctx, DISSOLVE);
-                        r.finish();
-                        self.reveal = Some(r);
-                        return Transition::None;
-                    }
-                }
-                self.close(ctx)
-            }
+            // a key before the new building appears closes the view without it: city_view
+            // leaves its loop when a key is waiting after the first drawing or after the
+            // second's delay (o 0x1a09a, 0x1a0ba) and then only flushes it
+            Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } => self.close(ctx),
             _ => Transition::None,
         }
     }
@@ -636,5 +629,29 @@ impl Screen for CityView {
 
     fn wants_cursor(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::GameSetup;
+
+    #[test]
+    fn houses_grow_with_the_research_count_not_the_advances() {
+        let mut g = Game::new(GameSetup { seed: 4, ..Default::default() }, None);
+        let h = g.human_slot;
+        let c = g.add_city(h, "Rome".into(), 20, 20);
+        g.city_mut(c).size = 8;
+        let houses = |g: &Game| Layout::build(g, c).cells.iter().filter(|v| **v < 10).map(|v| *v as i32).sum::<i32>();
+        g.player_mut(h).research_count = 1;
+        let plain = houses(&g);
+        for a in 0..40 {
+            g.player_mut(h).learn(a);
+        }
+        g.player_mut(h).research_count = 1;
+        assert_eq!(houses(&g), plain, "the advances known do not count");
+        g.player_mut(h).research_count = 60;
+        assert!(houses(&g) > plain);
     }
 }
