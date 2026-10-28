@@ -444,7 +444,8 @@ impl Screen for Replay {
                 if p.waiting {
                     match ev {
                         Event::Key { key: Key::Esc, down: true, .. } => p.next = p.records.len(),
-                        Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } => {}
+                        // the Complete replay reads keys only (getch, o 0xd3a5)
+                        Event::Key { down: true, key, .. } if *key != Key::Unknown => {}
                         _ => return Transition::None,
                     }
                     p.waiting = false;

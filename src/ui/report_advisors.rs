@@ -213,13 +213,23 @@ impl Screen for Intelligence {
         if self.guard > 0 {
             return Transition::None;
         }
-        match ev {
-            Event::Key { down: true, key: Key::Char(c @ '1'..='7'), .. } => self.open(*c as i32 - '1' as i32, ctx),
-            Event::Key { down: true, key, .. } if !matches!(key, Key::Unknown) => Transition::Pop(DialogResult::Done),
-            // C division truncates: rows reach up from y 5
-            Event::MouseButton { down: true, x, y, .. } if *x > 281 => self.open((*y - 28) / 24, ctx),
-            Event::MouseButton { down: true, .. } => Transition::Pop(DialogResult::Done),
-            _ => Transition::None,
+        // o 0x13e0d..0x13e3f: '1'..'7' pick a row; any other key falls through to the pointer
+        // test like a click; C division truncates, so rows reach up from y 5
+        let (px, py) = match ev {
+            Event::Key { down: true, key: Key::Char(c @ '1'..='7'), .. } => {
+                ctx.warp_mouse = Some((270, ctx.mouse.1));
+                return self.open(*c as i32 - '1' as i32, ctx);
+            }
+            Event::Key { down: true, key, .. } if !matches!(key, Key::Unknown) => ctx.mouse,
+            Event::MouseButton { down: true, x, y, .. } => (*x, *y),
+            _ => return Transition::None,
+        };
+        // after every input the pointer is parked at x 270 (mouse_set_pos, o 0x13ea1)
+        ctx.warp_mouse = Some((270, py));
+        if px > 281 {
+            self.open((py - 28) / 24, ctx)
+        } else {
+            Transition::Pop(DialogResult::Done)
         }
     }
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
