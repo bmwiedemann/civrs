@@ -1247,7 +1247,8 @@ impl MapView {
             fb.fill_rect(Rect::new(3, 60, (2 * peace).min(60), 2), theme::WHITE);
         }
         fb.hline(3, 76, 71, theme::GREEN);
-        if p.capital.is_some() {
+        // draw_palace (0x3823) draws it while the civ has a city (ds:0x6b66), Palace or not
+        if !g.cities_of(g.human_slot).is_empty() {
             crate::ui::palace::draw_small_palace(fb, ctx, &p.palace(), 8, 58);
         }
         let st = TextStyle::new(0, theme::TEXT);
