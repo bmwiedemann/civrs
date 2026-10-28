@@ -126,8 +126,10 @@ impl TurnRunner {
                     g.process_city(c);
                 }
             }
-            // ai_civ_turn(0) (0x2536): the barbarians' census, goals and policies
+            // ai_civ_turn(0) (0x2536): the barbarians' census, goals and policies, then
+            // ai_reset_goals (0x2541)
             crate::ai::unit_ai::civ_turn(g, 0);
+            g.reset_goals(0);
             self.run_ai(g, ai, 0);
             g.process_unit_hazards(0);
             self.drain_events(g);
@@ -235,6 +237,7 @@ impl TurnRunner {
                     // ai_civ_turn for the human (0x2536): his census and continent policies,
                     // which his AUTO cities and the computer players read
                     crate::ai::unit_ai::civ_turn(g, slot);
+                    g.reset_goals(slot);
                     g.reset_moves(slot);
                     g.progress_work(slot);
                     g.refresh_all_vision();
