@@ -36,6 +36,9 @@ const LINE_STEPS: i32 = 22;
 const PAGE_TICKS: u32 = 80;
 /// Colour cycles of the human's colony (o 0x1e16..0x1ea3, cycle_define(slot, period, first,
 /// last)): (first, last, period in ticks).
+/// Before the human's colony the approach fades to black (VGA, fade_to_colour(5, 0, 0, 0),
+/// o 0x1d97), after the theme is stopped (PlayTune(1), o 0x1d84).
+const COLONY_FADE: u32 = 5;
 const COLONY_CYCLES: [(u8, u8, u64); 6] = [(0x10, 0x1f, 15), (0x20, 0x22, 100), (0x23, 0x28, 42), (0x29, 0x2f, 300), (0x30, 0x35, 60), (0x36, 0x3f, 37)];
 
 #[derive(PartialEq, Clone, Copy)]
@@ -43,6 +46,8 @@ enum Phase {
     /// The starfield and the planet slide in while the ship's dot crosses and the first lines
     /// of the text appear in the strip at y 32.
     Approach,
+    /// The human's ship: the last approach frame fades to black before the colony.
+    FadeOut,
     /// The rest of the text, a line at a time, at the top of the ending picture.
     Lines,
     /// All shown: a key or a click ends it.
@@ -198,7 +203,17 @@ impl ArrivalScreen {
     }
 
     /// The end of the approach (o 0x1d14..0x1ef0): the rest of the text, and the ending
-    /// picture on page 1 and the screen.
+    /// picture on page 1 and the screen. The human's colony waits for the fade to black.
+    fn approach_end(&mut self, ctx: &UiContext) {
+        if self.human_ship && !ctx.instant {
+            ctx.audio.play(crate::audio::Sound::FadeOut);
+            self.phase = Phase::FadeOut;
+            self.ticks = 0;
+        } else {
+            self.ending(ctx);
+        }
+    }
+
     fn ending(&mut self, ctx: &UiContext) {
         let rest = self.text.get((self.pos + 1).max(0) as usize..).unwrap_or(&[]);
         let end = rest.iter().position(|b| *b == 0).unwrap_or(rest.len());
@@ -254,9 +269,10 @@ impl Screen for ArrivalScreen {
                 if self.step < STEPS {
                     self.approach_step(ctx);
                 } else {
-                    self.ending(ctx);
+                    self.approach_end(ctx);
                 }
             }
+            Phase::FadeOut if self.ticks > COLONY_FADE => self.ending(ctx),
             Phase::Lines => {
                 self.t += 1;
                 if self.ticks == PAGE_TICKS {
@@ -287,6 +303,7 @@ impl Screen for ArrivalScreen {
     fn palette(&self, ctx: &UiContext) -> Palette {
         match self.phase {
             Phase::Approach => ctx.pic_pal("PLANET1"),
+            Phase::FadeOut => ctx.pic_pal("PLANET1").dimmed((255 * (COLONY_FADE - self.ticks.min(COLONY_FADE)) / COLONY_FADE) as u8),
             _ if !self.human_ship => ctx.pic_pal("SAD"),
             _ => {
                 let base = ctx.pic_pal("SPACEST");
@@ -834,6 +851,25 @@ mod tests {
         assert_eq!(a.next_piece().as_deref(), Some(" In the year 2010"));
         assert_eq!(a.next_piece().as_deref(), Some(" voyagers"));
         assert_eq!(a.next_piece(), None);
+    }
+
+    #[test]
+    fn the_approach_fades_to_black_before_the_colony() {
+        let Some(dir) = crate::assets::AssetDir::locate(None).ok() else { return };
+        let Ok(mut ctx) = UiContext::new(dir, std::env::temp_dir().join("civrs-shipui-fade")) else { return };
+        let mut a = ArrivalScreen::new(b"^ In the year 2010^ voyagers^ ".to_vec(), true);
+        a.on_enter(&mut ctx);
+        a.step = STEPS - 1;
+        a.ticks = STEP_TICKS - 1;
+        a.update(&mut ctx);
+        assert!(a.phase == Phase::FadeOut);
+        for _ in 0..COLONY_FADE {
+            a.update(&mut ctx);
+            assert!(a.phase == Phase::FadeOut);
+        }
+        assert_eq!(a.palette(&ctx).0[15], [0, 0, 0]);
+        a.update(&mut ctx);
+        assert!(a.phase == Phase::Lines);
     }
 
     #[test]
