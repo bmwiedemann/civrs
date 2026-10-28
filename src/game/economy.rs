@@ -839,7 +839,7 @@ impl Game {
             imp::UNIVERSITY => needs(imp::LIBRARY),
             // the city's Hydro Plant site bit (+6 bit 3, 0xad64), set at its founding when one
             // of the eight squares around is River or Mountains (o 0x1b6be)
-            imp::HYDRO_PLANT => !hoover && !plant && Map::neighbours8(city.x, city.y).any(|(x, y)| matches!(self.map.terrain(x, y), Terrain::River | Terrain::Mountains)),
+            imp::HYDRO_PLANT => !hoover && !plant && city.hydro_site,
             imp::POWER_PLANT => !hoover && !plant && city.has_improvement(imp::FACTORY),
             imp::NUCLEAR_PLANT => !hoover && !plant,
             // Apollo built and the ship not launched, however full it is (CIV.EXE 0xac63)

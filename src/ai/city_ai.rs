@@ -1,8 +1,8 @@
 //! City management for computer players: production choice, purchases and tax rates. Workers
 //! and entertainers are the city turn's business (`Game::assign_workers`), as in CIV.EXE.
 
-use crate::game::{CityId, Game, Map, Production, Slot};
-use crate::rules::{self, improvement_ids as imp, unit_ids, Terrain};
+use crate::game::{CityId, Game, Production, Slot};
+use crate::rules::{self, improvement_ids as imp, unit_ids};
 
 /// What the city should build next: CIV.EXE's production advisor (0xa5e:0x41d), see
 /// `game::production`. The computer asks it when a city is founded, after every unit,
@@ -111,16 +111,14 @@ pub fn city_turn_purchase(g: &mut Game, c: CityId, net_shields: i32) {
 /// CIV.EXE's city status byte (+6) as far as civrs keeps its bits: 0x1 disorder, 0x2 coastal,
 /// 0x4 garrison out, 0x8 Hydro Plant site, 0x10 AUTO / alert, 0x20 advance stolen, 0x40
 /// celebration, 0x80 improvement sold this turn. CIV.EXE sets the coastal and hydro bits when
-/// the city is founded (o 0x1b6b9, 0x1b6d2); civrs keeps the coastal one (`City::coastal`)
-/// and derives the hydro one from the map.
+/// the city is founded (o 0x1b6b9, 0x1b6d2): `City::coastal` and `City::hydro_site`.
 fn exe_status(g: &Game, c: CityId) -> u8 {
     let city = g.city(c);
-    let hydro = Map::neighbours8(city.x, city.y).any(|(x, y)| matches!(g.map.terrain(x, y), Terrain::River | Terrain::Mountains));
     let bits = [
         city.disorder,
         city.coastal,
         city.garrison_out,
-        hydro,
+        city.hydro_site,
         city.auto_build,
         city.tech_stolen,
         city.celebrating,

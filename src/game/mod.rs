@@ -838,8 +838,10 @@ impl Game {
             garrison_out: false,
             known_size: 0,
             coastal: false,
+            hydro_site: false,
         };
         c.coastal = self.founding_coastal(owner, x, y);
+        c.hydro_site = self.founding_hydro_site(x, y);
         if first_city {
             c.add_improvement(rules::improvement_ids::PALACE);
             self.players[owner as usize].capital = Some(id);
@@ -891,6 +893,12 @@ impl Game {
     pub fn founding_coastal(&mut self, owner: Slot, x: i32, y: i32) -> bool {
         let human = owner == self.human_slot;
         Map::neighbours8(x, y).any(|(nx, ny)| self.map.is_ocean(nx, ny) && (human || self.ocean_size(nx, ny) > 256))
+    }
+
+    /// The Hydro Plant site bit a city founded at (x,y) gets (o 0x1b6be..0x1b6d2): a River or
+    /// Mountains square among the eight around.
+    pub fn founding_hydro_site(&self, x: i32, y: i32) -> bool {
+        Map::neighbours8(x, y).any(|(nx, ny)| matches!(self.map.terrain(nx, ny), Terrain::River | Terrain::Mountains))
     }
 
     /// Remove a city from the map (destroyed).

@@ -50,7 +50,9 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// every civilization and the power ranking as things stand.
 /// 21: then by the number of city slots (u32 LE) and each slot's `City::coastal` byte (0/1, 0
 /// for an empty slot); older saves give each city the bit its owner would get founding it now.
-pub const VERSION: u16 = 21;
+/// 22: then by the number of city slots (u32 LE) and each slot's `City::hydro_site` byte (0/1,
+/// 0 for an empty slot); older saves derive it from the squares around the city.
+pub const VERSION: u16 = 22;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -153,6 +155,8 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     data.extend_from_slice(&census_trailer(g));
     data.extend_from_slice(&(g.cities.len() as u32).to_le_bytes());
     data.extend(g.cities.iter().map(|c| c.as_ref().map(|c| c.coastal as u8).unwrap_or(0)));
+    data.extend_from_slice(&(g.cities.len() as u32).to_le_bytes());
+    data.extend(g.cities.iter().map(|c| c.as_ref().map(|c| c.hydro_site as u8).unwrap_or(0)));
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -260,6 +264,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     let mut known_sizes: Option<Vec<u8>> = None;
     let mut census: Option<&[u8]> = None;
     let mut coastal: Option<Vec<u8>> = None;
+    let mut hydro: Option<Vec<u8>> = None;
     // version 14: the tribe names, after the counters
     if ver >= 14 {
         let mut at = counters + 112 * g.players.len();
@@ -312,6 +317,11 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
                 if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 21) {
                     let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
                     coastal = rest.get(at + 4..at + 4 + n).map(|b| b.to_vec());
+                    at += 4 + n;
+                    if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 22) {
+                        let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
+                        hydro = rest.get(at + 4..at + 4 + n).map(|b| b.to_vec());
+                    }
                 }
             }
         }
@@ -389,6 +399,14 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
                 g.cities[i].as_mut().unwrap().coastal = bit;
             }
         }
+    }
+    for i in 0..g.cities.len() {
+        let Some((x, y)) = g.cities[i].as_ref().map(|c| (c.x, c.y)) else { continue };
+        let bit = match &hydro {
+            Some(b) => b.get(i).is_some_and(|k| *k != 0),
+            None => g.founding_hydro_site(x, y),
+        };
+        g.cities[i].as_mut().unwrap().hydro_site = bit;
     }
     Ok(g)
 }
@@ -772,6 +790,28 @@ mod tests {
         let old = super::load_game(&path).unwrap();
         let _ = std::fs::remove_dir_all(dir);
         assert_eq!(old.city(c).coastal, bit, "derived as at founding");
+    }
+
+    #[test]
+    fn the_hydro_site_bit_survives_a_save_and_old_saves_derive_it() {
+        let mut g = Game::new(GameSetup { seed: 6, ..Default::default() }, None);
+        let h = g.human_slot;
+        let settler = g.units_of(h).into_iter().find(|id| g.unit(*id).kind == crate::rules::unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        let bit = g.city(c).hydro_site;
+        assert_eq!(bit, g.founding_hydro_site(g.city(c).x, g.city(c).y));
+        g.city_mut(c).hydro_site = !bit;
+        let dir = std::env::temp_dir().join(format!("civrs-hydro-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        assert_eq!(super::load_game(&path).unwrap().city(c).hydro_site, !bit);
+        let mut data = std::fs::read(&path).unwrap();
+        data[4..6].copy_from_slice(&21u16.to_le_bytes());
+        data.truncate(data.len() - 4 - g.cities.len());
+        std::fs::write(&path, &data).unwrap();
+        let old = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(old.city(c).hydro_site, bit, "derived as at founding");
     }
 
     #[test]

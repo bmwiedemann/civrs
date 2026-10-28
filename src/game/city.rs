@@ -107,6 +107,12 @@ pub struct City {
     /// version 21).
     #[serde(skip)]
     pub coastal: bool,
+    /// CIV.EXE city status bit 0x8 (+6), set once at founding (o 0x1b6be..0x1b6d2) when one of
+    /// the eight squares around is River or Mountains; a capture keeps it. Only this bit lets
+    /// the city build a Hydro Plant (0xad64). See [`Game::founding_hydro_site`]. Saved after
+    /// the game body (save version 22).
+    #[serde(skip)]
+    pub hydro_site: bool,
 }
 
 /// A free garrison slot (CIV.EXE writes 0xff at city founding, o 0x1b5cd).

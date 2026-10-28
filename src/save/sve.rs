@@ -412,6 +412,8 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
             known_size: r[8],
             // +6 bit 0x2: set at founding next to a big ocean (o 0x1b6b9)
             coastal: st & 0x02 != 0,
+            // +6 bit 0x8: set at founding next to River or Mountains (o 0x1b6d2)
+            hydro_site: st & 0x08 != 0,
         };
         if st & 0x80 != 0 {
             g.players[owner as usize].sold_cities.push(i as u16);
@@ -694,6 +696,19 @@ mod tests {
                 assert_eq!(coastal, g.founding_coastal(owner, x, y), "CIVIL{n} {name}");
             }
         }
+    }
+
+    #[test]
+    fn the_hydro_site_bits_civ_exe_saved_follow_civrs_founding_rule() {
+        let mut seen = [0; 2];
+        for n in [0u8, 1, 3, 4] {
+            let Some(g) = sample(n) else { continue };
+            for c in g.all_cities() {
+                assert_eq!(c.hydro_site, g.founding_hydro_site(c.x, c.y), "CIVIL{n} {}", c.name);
+                seen[c.hydro_site as usize] += 1;
+            }
+        }
+        assert!(seen[0] + seen[1] == 0 || seen.iter().all(|n| *n > 0), "both kinds among the samples: {seen:?}");
     }
 
     #[test]
