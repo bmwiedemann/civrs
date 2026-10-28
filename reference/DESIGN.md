@@ -503,20 +503,57 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
 - `python3 -I reference/tools/sve_diff.py play GAME_DIR SLOT TURNS OUT_DIR` runs CIV.EXE in dosbox-staging
   under a private Xvfb (`reference/tools/dosciv.py`; display `CIVDISPLAY`, default :79; it kills only the
   processes it started). GAME_DIR is a writable copy of the game directory. The script answers the
-  start-up questions (VGA, no sound, keyboard), loads CIVIL<SLOT>.SVE, and then for each turn presses
+  start-up questions (VGA, no sound, mouse and keyboard), loads CIVIL<SLOT>.SVE, turns Instant Advice
+  off and End of Turn on in the Options (a note would take a key; without the End of Turn prompt the
+  turn ends by itself after the last unit's move), and then for each turn presses
   Space (skip the active unit: the human's units keep their orders) and saves to slot 2. It finds the
   GAME menu and the slot cursor from the screen colours, and answers any dialog with Return. Each new
   turn's save goes to OUT_DIR/t<TURN>.SVE/.MAP, and the screenshots go to OUT_DIR/shot*.png.
 - `python3 -I reference/tools/sve_diff.py diff target/release/civrs START.SVE OUT_DIR/t*.SVE` runs
   `civrs --load-sve START --dump state:N` (N = turns since START, the human doing nothing, decisions
   answered with their first choice). It diffs the result against `--dump state:0` of each CIV.EXE save,
-  and prints `field: CIV.EXE | civrs` (`save::sve::state_text`: turn, year, gold, beakers, rates and
-  advances per civ, city stores, production, worked squares, yields, units by owner/type, tile improvements).
+  and prints `field: CIV.EXE | civrs` (`save::sve::state_text`: turn, year, gold, beakers, rates,
+  government and revolution flag and advances per civ, city stores, production, worked squares,
+  specialists, AUTO and sold flags, yields, units by owner/type with orders and work counters, tile
+  improvements, the terrain of every row).
 - The state dump makes the goto use the land block links stored in the save (SVE 0x8aa6 = ds:0xdb44,
   `Game::use_exe_land_links`). Overlay 7 0x9edd builds them from map page 2 while the new world is
   still on page 1, so in CIV.EXE they do not fit the world (all four sample saves); civrs computes
   sane links for play.
   With the saved links the AI's goto steps match CIV.EXE.
+- Scripted human actions: `play ... --actions SCRIPT` and `diff ... --actions SCRIPT` run the same
+  script in both games (format in `src/save/actions.rs`; `civrs --dump state:N --actions SCRIPT`).
+  Each `turn T` block runs at the start of the human's turn T, right after the harness saved
+  t<T>.SVE, so its effects show in the later saves. Unit lines name the square of the active unit
+  and send map keys (keypad moves k1..k9, r i m f s b w space, F fortress, P pillage); `tax`/`lux`
+  move the cursor of the rate menus ('=' / '-', which start on the current rate); `revolution` uses
+  the GAME menu; `city NAME X,Y change ROW | buy | sell ROW | spec N | tile DX,DY` opens the city
+  screen with FindCity ('/' and the name, which centres the map: the city at column 7, row
+  y - clamp(y - 6, 0, 38)) and a mouse click, then uses the city screen keys and Escape (the CHANGE
+  menu starts on row 0); `select X,Y CITY CX,CY` centres on the city the same way and clicks the
+  unit's square, then Return in the "which unit" box (pick_unit_from_stack 0x9dc5). civrs refuses
+  an action it cannot do as written (another active unit, another menu item, an error message that
+  would need a key in CIV.EXE), so script and games agree before the states are compared. Put the
+  unit lines last in a turn and leave no error: a message box would take the next key. Scripts for
+  CIVIL0/3/4 are in reference/tools/actions/.
+- Which unit comes next depends on the map view (move_units 0x434f: units in columns vx+1..vx+14
+  and rows vy+1..vy+9 first, `Game::next_active_unit`), so the civrs side keeps `Game::view` as
+  CIV.EXE's view moves: FindCity centres it, a unit taken from outside it centres it, a moving unit
+  scrolls it (scroll_to 0x9505). CIV.EXE compares those columns without the east-west wrap: with
+  the view origin past x = 64 it sees no unit on screen and takes the next one anywhere. civrs
+  wraps, so near x = 0 a script `select`s the unit when the two would differ. A save loaded from
+  slot 4 on gives the human's units their moves back (ds:0xdf60 = 2), the slots 0..3 do not.
+- Results (2026-10-28, scripts above): CIVIL0 10 turns and CIVIL4 12 turns with every field equal;
+  then only the computers' random advances (and in CIVIL3 the AI Settlers' goals and the human's
+  research bonus that follows from them) differ. The runs found and fixed: the CHANGE menu's first
+  row, the unit records and their order, the view-dependent next unit, scroll_to, the click on a
+  lone unit, the moves after a load from slot 4, and the taxes and workers of a city that builds
+  Settlers. CIV.EXE accepts 70% tax under Despotism from the rate menu (o 0x6fd9), as civrs does.
+- dosbox's captured mouse only moves relatively, one 640x400 picture pixel per host pixel, and the
+  picture sits letterboxed at y = 40 of the 640x480 window: `dosciv.click` pushes the pointer into
+  the top-left corner, where the driver clamps it, and then moves it by (2x + 1, 2y + 1).
+- A land unit short of the move cost rolls random(cost) (0x634a), except with exactly 3 points
+  left, which always get through; scripts avoid the roll.
 - No RNG state is saved: CIV.EXE seeds rand() from the clock when it starts. Divergences behind
   random() are expected: hut outcomes (0x978d random(4)), the Chieftain computer's skipped advance
   (0xbb4a), and the computer Settlers' goals. After such a divergence, its effects follow on, for

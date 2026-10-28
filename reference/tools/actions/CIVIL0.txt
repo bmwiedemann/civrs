@@ -1,0 +1,22 @@
+# CIVIL0 (Romans, turn 35): rates, production, buy, sell (the Palace), workers (a worker made
+# an entertainer, then put on another square), revolution, Settlers irrigation (the Settlers is
+# then lost to the famine of Rome, turn 41)
+turn 35
+tax +1
+city Rome 12,29 change 1 Militia
+unit 3,20 k8
+turn 36
+city Rome 12,29 buy
+unit 3,19 s
+unit 10,25 i
+unit 12,29 f
+turn 37
+city Rome 12,29 change 3 Barracks
+turn 38
+city Rome 12,29 sell 0 Palace
+lux +1
+turn 39
+city Rome 12,29 tile 0,-1
+city Rome 12,29 tile -1,0
+turn 40
+revolution

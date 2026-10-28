@@ -1,0 +1,22 @@
+# CIVIL4 (Romans, turn 50): two Settlers (one bought) build a road and a mine and found a
+# city; the Militia fortifies where it stands (its walks met random German units: Leipzig
+# founded on its way, an emissary's audience that moved the map view)
+turn 50
+city Rome 12,29 change 0 Settlers
+city Caesarea 9,25 change 0 Settlers
+city Caesarea 9,25 buy
+turn 51
+unit 9,25 k7
+unit 14,14 f
+unit 12,29 k8 k8 space
+turn 52
+unit 12,27 k4
+unit 8,24 k7
+turn 53
+# CIV.EXE's unit choice takes no unit for one in view when the view origin is past x = 64
+# (no wrap in 0x434f): select the Settlers by a click instead
+select 11,27 Rome 12,29
+unit 11,27 r
+unit 7,23 b
+turn 57
+unit 11,27 m

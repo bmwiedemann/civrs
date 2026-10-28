@@ -647,7 +647,7 @@ pub fn state_text(g: &Game) -> String {
     for p in g.players.iter().filter(|p| p.alive) {
         let k = format!("civ{}", p.slot);
         let _ = writeln!(o, "{k}.gold {}\n{k}.beakers {}\n{k}.rates tax{} lux{} sci{}", p.gold, p.beakers, p.tax, p.lux, p.sci());
-        let _ = writeln!(o, "{k}.govt {:?}\n{k}.advances {:018x}\n{k}.research_count {}", p.govt, p.advances, p.research_count);
+        let _ = writeln!(o, "{k}.govt {:?} revolution_flag {}\n{k}.advances {:018x}\n{k}.research_count {}", p.govt, p.anarchy_turns, p.advances, p.research_count);
         if p.human {
             let _ = writeln!(o, "{k}.researching {:?}", p.researching);
         }
@@ -661,7 +661,8 @@ pub fn state_text(g: &Game) -> String {
         let _ = writeln!(o, "{k}.size {}\n{k}.food {}\n{k}.shields {}\n{k}.production {:?}", c.size, c.food, c.shields, c.production);
         let _ = writeln!(o, "{k}.improvements {:08x} wonders {:08x}", c.improvements, c.wonders);
         let _ = writeln!(o, "{k}.worked {:08x} specialists {:?}", c.worked, c.specialists);
-        let _ = writeln!(o, "{k}.flags disorder {} celebrating {} known_size {}", c.disorder, c.celebrating, c.known_size);
+        let sold = g.player(c.owner).sold_cities.contains(&c.id);
+        let _ = writeln!(o, "{k}.flags disorder {} celebrating {} known_size {} auto {} sold {sold}", c.disorder, c.celebrating, c.known_size, c.auto_build);
         let _ = writeln!(o, "{k}.yield food {}-{} shields {}-{} trade {}-{} tax {} lux {} sci {}", y.food, y.food_upkeep, y.shields, y.shield_upkeep, y.trade, y.corruption, y.tax, y.lux, y.sci);
     }
     let mut units: Vec<&Unit> = g.all_units().collect();
@@ -688,6 +689,11 @@ pub fn state_text(g: &Game) -> String {
             u.goto,
             g.heading(u.id)
         );
+    }
+    // the terrain, a letter per square (Terrain order: Desert .. River)
+    for y in 0..MAP_H as i32 {
+        let row: String = (0..MAP_W as i32).map(|x| b"dpgfhmtasjor"[g.map.tile(x, y).terrain as usize] as char).collect();
+        let _ = writeln!(o, "terrain.y{y} {row}");
     }
     for y in 0..MAP_H as i32 {
         for x in 0..MAP_W as i32 {

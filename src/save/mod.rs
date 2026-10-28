@@ -1,5 +1,6 @@
 //! Saved games (own format) and the hall of fame.
 
+pub mod actions;
 pub mod sve;
 
 use crate::game::Game;

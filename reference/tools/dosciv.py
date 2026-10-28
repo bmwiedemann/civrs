@@ -3,7 +3,8 @@
 
     python3 -I dosciv.py start GAME_DIR          start Xvfb + dosbox running CIV.EXE in GAME_DIR
     python3 -I dosciv.py keys K1 K2 ...          send xdotool keys (sleepN.N pauses)
-    python3 -I dosciv.py shot FILE.png           screenshot of the 640x400 window
+    python3 -I dosciv.py shot FILE.png           screenshot of the 640x400 picture
+    python3 -I dosciv.py click X Y               mouse click at (X, Y) of the 320x200 screen
     python3 -I dosciv.py stop                    kill the dosbox and Xvfb this tool started
 
 Environment: CIVDISPLAY (default :79). The pids of the started processes are kept in
@@ -36,7 +37,7 @@ def start(game, cycles='max'):
     with open(conf, 'w') as f:
         f.write(f"""[sdl]
 fullscreen = false
-output = texture
+output = surface
 texture_renderer = software
 window_size = 640x400
 [dosbox]
@@ -57,6 +58,9 @@ gus = false
 [speaker]
 pcspeaker = false
 tandy = off
+[mouse]
+mouse_capture = onstart
+mouse_raw_input = false
 [autoexec]
 mount c {game}
 c:
@@ -87,8 +91,29 @@ def keys(ks, delay=0.15):
         time.sleep(delay)
 
 
+def top():
+    """The y of the 640x400 picture in the window (dosbox letterboxes it in 640x480)."""
+    out = subprocess.run(['xdotool', 'getwindowgeometry', win()], env=ENV, capture_output=True, text=True).stdout
+    h = int(out.split('Geometry:')[1].split('x')[1].split()[0])
+    return max(0, (h - 400) // 2)
+
+
 def shot(path):
-    subprocess.run(['import', '-display', DISPLAY, '-window', 'root', '-crop', '640x400+0+0', path], env=ENV)
+    subprocess.run(['import', '-display', DISPLAY, '-window', 'root', '-crop', '640x400+0+%d' % top(), path], env=ENV)
+
+
+def click(x, y, button=1):
+    """A mouse click at (x, y) of CIV.EXE's 320x200 screen. The captured mouse only moves
+    relatively (one picture pixel per host pixel), so the pointer is first pushed into the
+    top-left corner, where the driver clamps it, and then moved by (2x, 2y)."""
+    for _ in range(6):
+        subprocess.run(['xdotool', 'mousemove_relative', '--', '-150', '-150'], env=ENV)
+        time.sleep(0.1)
+    time.sleep(0.3)
+    subprocess.run(['xdotool', 'mousemove_relative', '--', str(2 * x + 1), str(2 * y + 1)], env=ENV)
+    time.sleep(0.5)
+    subprocess.run(['xdotool', 'mousedown', str(button), 'sleep', '0.2', 'mouseup', str(button)], env=ENV)
+    time.sleep(0.5)
 
 
 def stop():
@@ -107,6 +132,8 @@ if __name__ == '__main__':
         start(*sys.argv[2:4])
     elif cmd == 'keys':
         keys(sys.argv[2:])
+    elif cmd == 'click':
+        click(int(sys.argv[2]), int(sys.argv[3]))
     elif cmd == 'shot':
         shot(sys.argv[2])
     elif cmd == 'stop':

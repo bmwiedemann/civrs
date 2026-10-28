@@ -1,0 +1,15 @@
+# CIVIL3 (Romans, turn 73): a tax rate above the Despotism limit (70%: the menu offers it,
+# nothing clamps it), buying and selling, the city square key, road moves with part of a
+# move, wait and sentry
+turn 73
+tax +2
+city Caesarea 9,25 buy
+unit 9,25 k6 k4
+turn 74
+city Rome 12,29 sell 1 Granary
+unit 9,25 w k6 k4 k6
+turn 75
+city Rome 12,29 tile 0,0
+unit 10,25 k6
+turn 76
+unit 11,25 s

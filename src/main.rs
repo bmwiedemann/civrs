@@ -10,7 +10,7 @@ fn usage() -> ! {
                 civrs --dump TARGET --out FILE.ppm [--assets DIR] [--zoom N] [--load-sve CIVILn.SVE]\n\
          dump targets: pic:NAME | sheet:NAME | fonts | pal:NAME | all-pics:DIR\n\
                        sound:ID[:LEVEL[:SECONDS]] (WAV) | sound-regs:ID[:LEVEL[:TICKS]] (OPL2 register log)\n\
-                       state:TURNS[:SEED] (text, with --load-sve; reference/tools/sve_diff.py)\n\
+                       state:TURNS[:SEED] (text, with --load-sve [--actions SCRIPT]; reference/tools/sve_diff.py)\n\
          --load-sve: start from (or, with screen:NAME, render) an original CIVILn.SVE + .MAP"
     );
     std::process::exit(2);
@@ -27,10 +27,12 @@ struct Cli {
     seed: Option<u64>,
     /// An original CIVILn.SVE to import (`save::sve`).
     load_sve: Option<PathBuf>,
+    /// Scripted human actions for `--dump state:N` (`save::actions`).
+    actions: Option<PathBuf>,
 }
 
 fn parse_cli() -> Cli {
-    let mut cli = Cli { assets: None, scale: None, fullscreen: false, dump: None, out: None, zoom: 1, skip_intro: false, seed: None, load_sve: None };
+    let mut cli = Cli { assets: None, scale: None, fullscreen: false, dump: None, out: None, zoom: 1, skip_intro: false, seed: None, load_sve: None, actions: None };
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -42,6 +44,7 @@ fn parse_cli() -> Cli {
             "--skip-intro" => cli.skip_intro = true,
             "--seed" => cli.seed = args.next().and_then(|s| s.parse().ok()),
             "--load-sve" => cli.load_sve = args.next().map(PathBuf::from),
+            "--actions" => cli.actions = args.next().map(PathBuf::from),
             "--zoom" => cli.zoom = args.next().and_then(|s| s.parse().ok()).unwrap_or(1),
             "-h" | "--help" => usage(),
             _ => {
@@ -53,32 +56,27 @@ fn parse_cli() -> Cli {
     cli
 }
 
-fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
+fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&Path>, actions: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(spec) = target.strip_prefix("sound:") {
         return dump_sound(assets, spec, out, false);
     }
     if let Some(turns) = target.strip_prefix("state:") {
         // state:TURNS[:SEED]: the stored state of the --load-sve game after TURNS turns in
-        // which the human does nothing (save::sve::state_text, reference/tools/sve_diff.py);
-        // the goto uses CIV.EXE's own land links of the save
+        // which the human does nothing but the actions of the --actions script
+        // (save::sve::state_text, save::actions, reference/tools/sve_diff.py); the goto uses
+        // CIV.EXE's own land links of the save
         let mut it = turns.split(':');
         let turns: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
         let seed: u64 = it.next().and_then(|s| s.parse().ok()).unwrap_or(1);
         let sve = sve.ok_or("state: needs --load-sve")?;
         let mut game = civrs::save::sve::import(sve)?;
         game.use_exe_land_links(&civrs::save::sve::exe_land_links(sve)?);
+        let script = match actions {
+            Some(p) => civrs::save::actions::parse(&std::fs::read_to_string(p)?)?,
+            None => Vec::new(),
+        };
         let mut ai = civrs::ai::Ai::new(seed);
-        for _ in 0..turns {
-            let mut r = game.end_turn();
-            loop {
-                match r.step(&mut game, &mut ai) {
-                    civrs::game::turn::TurnStep::Done => break,
-                    civrs::game::turn::TurnStep::Decision(_) => r.resolve(&mut game, civrs::game::DecisionReply::Choice(0)),
-                    _ => {}
-                }
-            }
-            let _ = game.take_events();
-        }
+        civrs::save::actions::play(&mut game, &mut ai, &script, turns)?;
         std::fs::write(out, civrs::save::sve::state_text(&game))?;
         return Ok(());
     }
@@ -603,7 +601,7 @@ fn main() {
     };
     if let Some(target) = &cli.dump {
         let out = cli.out.clone().unwrap_or_else(|| PathBuf::from("dump.ppm"));
-        if let Err(e) = dump(&assets, target, &out, cli.zoom, cli.load_sve.as_deref()) {
+        if let Err(e) = dump(&assets, target, &out, cli.zoom, cli.load_sve.as_deref(), cli.actions.as_deref()) {
             eprintln!("dump failed: {e}");
             std::process::exit(1);
         }
