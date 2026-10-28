@@ -340,32 +340,14 @@ pub fn terrain_picture(t: Terrain) -> (&'static str, Rect) {
 }
 
 /// City-view building of an improvement in CITYPIX2 (6x4 grid of 49x49 cells on black;
-/// background index 0). The Palace and the spaceship parts have no building picture.
+/// background index 0): improvement k (2..21) in column (k - 2) / 4, row (k - 2) % 4, as the
+/// entry page grabs it (o 0xb8e8) and the city view draws it. The Palace and the spaceship
+/// parts have no building picture.
 pub fn improvement_picture(id: ImprovementId) -> Option<(&'static str, Rect)> {
-    use rules::improvement_ids as i;
-    let (row, col) = match id {
-        i::BARRACKS => (0, 0),      // long brown barracks
-        i::LIBRARY => (0, 1),       // colonnade with a statue ?
-        i::BANK => (0, 2),          // verified against the capture
-        i::COLOSSEUM => (0, 3),     // arena
-        i::RECYCLING_CNTR => (0, 4), // recycling logo
-        i::GRANARY => (1, 0),       // beehive-shaped granary
-        i::UNIVERSITY => (1, 1),    // colonnade with a statue on top ?
-        i::CATHEDRAL => (1, 2),     // spired church
-        i::FACTORY => (1, 3),       // three-stack factory
-        i::POWER_PLANT => (1, 4),   // pylon and power lines ?
-        i::TEMPLE => (2, 0),        // domed temple
-        i::CITY_WALLS => (2, 1),    // wall segment with gate
-        i::COURTHOUSE => (2, 2),    // brick hall with clock tower ?
-        i::MFG_PLANT => (2, 3),     // plant with silo ?
-        i::HYDRO_PLANT => (2, 4),   // building with water channel ?
-        i::MARKETPLACE => (3, 0),   // market stalls ?
-        i::AQUEDUCT => (3, 1),      // arches with water ?
-        i::MASS_TRANSIT => (3, 2),  // bus
-        i::SDI_DEFENSE => (3, 3),   // radar on a tower
-        i::NUCLEAR_PLANT => (3, 4), // cooling tower
-        _ => return None,
-    };
+    if !(2..=21).contains(&id) {
+        return None;
+    }
+    let (col, row) = ((id as i32 - 2) / 4, (id as i32 - 2) % 4);
     Some(("CITYPIX2", Rect::new(1 + 50 * col, 1 + 50 * row, 49, 49)))
 }
 
@@ -414,5 +396,14 @@ mod tests {
         assert!(all.contains(&Entry::Advance(adv::UNIVERSITY)) && !all.contains(&Entry::Improvement(imp::UNIVERSITY)));
         assert!(entries(CAT_IMPROVEMENTS).contains(&Entry::Improvement(imp::UNIVERSITY)));
         assert_eq!(entries(CAT_MISC).len(), 21);
+    }
+
+    #[test]
+    fn improvement_pictures_follow_the_citypix_order() {
+        use crate::rules::improvement_ids as imp;
+        assert_eq!(improvement_picture(imp::COURTHOUSE), Some(("CITYPIX2", Rect::new(51, 51, 49, 49))));
+        assert_eq!(improvement_picture(imp::UNIVERSITY), Some(("CITYPIX2", Rect::new(101, 101, 49, 49))));
+        assert_eq!(improvement_picture(imp::NUCLEAR_PLANT), Some(("CITYPIX2", Rect::new(201, 151, 49, 49))));
+        assert_eq!((improvement_picture(imp::PALACE), improvement_picture(imp::SS_STRUCTURAL)), (None, None));
     }
 }
