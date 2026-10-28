@@ -347,35 +347,54 @@ impl EntryScreen {
         items.push(Item::Centred { cx: self.title_centre(), y: 48, colour: GREY, text: line });
     }
 
+    /// The terrain's stats page (o 0xc13f..0xc5ab): the terrain and, unless its food is 2
+    /// (Grassland, River), its special resource, each with its name and the lines "Food: N
+    /// (M with Irrigation) units.", "Production: N (M with Mining) units." and "Trade: N (M%
+    /// with Roads)" where they apply, "nothing" for plain Arctic; then the government notes,
+    /// the movement cost and the defence bonus.
     fn terrain_stats(&self, t: Terrain, items: &mut Vec<Item>) {
         let info = t.info();
-        let yields = |items: &mut Vec<Item>, y: &mut i32, food: u8, shields: u8, trade: u8| {
-            let mut any = false;
-            for (label, v, tr) in [("Food", food, false), ("Shields", shields, false), ("Trade", trade, true)] {
-                if v == 0 {
-                    continue;
-                }
-                any = true;
-                let mark = if v >= 3 { " *" } else if tr { " %" } else { "" };
-                items.push(text(BODY_X + 4, *y, LIGHT_BLUE, format!("{label}: {v} units.{mark}")));
-                *y += STAT_PITCH;
-            }
-            if !any {
-                items.push(text(BODY_X + 4, *y, LIGHT_BLUE, "nothing"));
-                *y += STAT_PITCH;
-            }
+        let bonus = |tf: Terraform| match tf {
+            Terraform::Bonus(n) => Some(n),
+            _ => None,
         };
-        let mut y = 84;
-        items.push(text(BODY_X, y, BLUE, info.name));
-        y += STAT_PITCH;
-        yields(items, &mut y, info.food, info.shields, info.trade);
-        if let Some(sp) = &info.special {
-            y += 4;
-            items.push(text(BODY_X, y, BLUE, sp.name));
-            y += STAT_PITCH;
-            yields(items, &mut y, sp.food, sp.shields, sp.trade);
+        let (irrigation, mining) = (bonus(info.irrigate), bonus(info.mine));
+        let star = |on: bool| if on { "*" } else { "" };
+        // CIV.EXE's table gives Grassland 1 shield, shown as "0/1" like River's (o 0xc22f)
+        let base_shields = if t == Terrain::Grassland { 1 } else { info.shields };
+        let mut variants = vec![(info.name, info.food, base_shields, info.trade)];
+        if info.food != 2 {
+            if let Some(sp) = &info.special {
+                variants.push((sp.name, sp.food, sp.shields, sp.trade));
+            }
         }
-        y += 4;
+        let mut y = 84;
+        for (k, (name, food, shields, trade)) in variants.into_iter().enumerate() {
+            items.push(text(BODY_X, y, BLUE, name));
+            y += STAT_PITCH;
+            if food != 0 || irrigation.is_some() {
+                let with = irrigation.map(|b| format!(" ({}{} with Irrigation)", food + b, star(food > 1))).unwrap_or_default();
+                items.push(text(BODY_X + 4, y, LIGHT_BLUE, format!("Food: {food}{}{with} units.", star(food > 2))));
+                y += STAT_PITCH;
+            }
+            if shields != 0 || mining.is_some() {
+                let resources = if matches!(t, Terrain::Grassland | Terrain::River) { "0/" } else { "" };
+                let with = mining.map(|b| format!(" ({}{} with Mining)", shields + b, star(shields + b > 2))).unwrap_or_default();
+                items.push(text(BODY_X + 4, y, LIGHT_BLUE, format!("Production: {resources}{shields}{with} units.")));
+                y += STAT_PITCH;
+            }
+            if trade != 0 || (t as u8) < 3 {
+                let roads = if (t as u8) < 3 { format!(" ({}% with Roads)", trade + 1) } else { String::new() };
+                let pct = if trade != 0 { "%" } else { "" };
+                items.push(text(BODY_X + 4, y, LIGHT_BLUE, format!("Trade: {trade}{pct}{}{roads}", star(trade > 2))));
+                y += STAT_PITCH;
+            }
+            if k == 0 && t == Terrain::Arctic {
+                items.push(text(BODY_X + 4, y, LIGHT_BLUE, "nothing"));
+                y += STAT_PITCH;
+            }
+            y += 4;
+        }
         items.push(text(BODY_X + 4, y, LIGHT_BLUE, "*  -1 if government is Despotism/Anarchy."));
         y += STAT_PITCH;
         items.push(text(BODY_X + 4, y, LIGHT_BLUE, "%  +1 if government is Republic/Democracy."));
@@ -383,21 +402,6 @@ impl EntryScreen {
         items.push(text(BODY_X, y, RED, format!("Movement cost: {} MP", info.move_cost)));
         y += STAT_PITCH;
         items.push(text(BODY_X, y, RED, format!("Defense bonus: +{}%", (info.defense as i32 - 2) * 50)));
-        y += STAT_PITCH;
-        let terraform = |what: &str, unit: &str, tf: Terraform, turns: u8| -> Option<String> {
-            match tf {
-                Terraform::No => None,
-                Terraform::Bonus(n) => Some(format!("{what}: +{n} {unit} ({turns} turns)")),
-                Terraform::Becomes(other) => Some(format!("{what}: becomes {} ({turns} turns)", other.name())),
-            }
-        };
-        if let Some(s) = terraform("Irrigation", "food", info.irrigate, info.irrigate_turns) {
-            items.push(text(BODY_X, y, RED, s));
-            y += STAT_PITCH;
-        }
-        if let Some(s) = terraform("Mining", "shields", info.mine, info.mine_turns) {
-            items.push(text(BODY_X, y, RED, s));
-        }
     }
 
     /// Picture of the entry: sheet, source rect, destination, transparent key.
@@ -565,5 +569,29 @@ impl Screen for EntryScreen {
 
     fn wants_cursor(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lines(t: Terrain) -> Vec<String> {
+        let mut items = Vec::new();
+        EntryScreen::new(Entry::Terrain(t), 0).terrain_stats(t, &mut items);
+        items.into_iter().filter_map(|i| if let Item::Text { text, .. } = i { Some(text) } else { None }).collect()
+    }
+
+    #[test]
+    fn terrain_pages_have_civ_exes_lines() {
+        let desert = lines(Terrain::Desert);
+        assert_eq!(&desert[..4], ["Desert", "Food: 0 (1 with Irrigation) units.", "Production: 1 (2 with Mining) units.", "Trade: 0 (1% with Roads)"]);
+        assert_eq!(desert[5], "Food: 3* (4* with Irrigation) units.");
+        let grass = lines(Terrain::Grassland);
+        assert_eq!(&grass[..4], ["Grassland", "Food: 2 (3* with Irrigation) units.", "Production: 0/1 units.", "Trade: 0 (1% with Roads)"]);
+        assert_eq!(grass[4], "*  -1 if government is Despotism/Anarchy.", "no resource variant for food 2");
+        let arctic = lines(Terrain::Arctic);
+        assert_eq!(&arctic[..4], ["Arctic", "nothing", "Seals", "Food: 2 units."]);
+        assert_eq!(lines(Terrain::Mountains)[4], "Trade: 6%*");
     }
 }
