@@ -1016,18 +1016,20 @@ impl Game {
     /// visible units for hidden ones; civrs wraps.
     pub fn next_active_unit(&mut self) -> Option<UnitId> {
         let after = self.active_unit;
-        self.next_active_unit_from(after, 1)
+        self.next_active_unit_from(after, 1, true)
     }
 
     /// `next_active_unit` going on from unit `from` itself, as the loop does after 'u'
     /// (0x4e64 sets the loop's unit to the one before `next_unit_in_stack`).
     pub fn next_active_unit_at(&mut self, from: UnitId) -> Option<UnitId> {
-        self.next_active_unit_from(Some(from), 0)
+        self.next_active_unit_from(Some(from), 0, true)
     }
 
     /// The loop looks at every unit with moves and without the sentry or fortified bits
-    /// (0x41fb), passengers at sea included.
-    fn next_active_unit_from(&mut self, from: Option<UnitId>, skip: usize) -> Option<UnitId> {
+    /// (0x41fb), passengers at sea included. `prefer_view` false is the loop's "whole round
+    /// done" flag ([bp-0x2e]) set, as 'w' sets it (0x4dd7): the next unit is taken wherever
+    /// it is.
+    fn next_active_unit_from(&mut self, from: Option<UnitId>, skip: usize, prefer_view: bool) -> Option<UnitId> {
         let slot = self.human_slot;
         let ids = self.units_of(slot);
         if ids.is_empty() {
@@ -1037,7 +1039,7 @@ impl Game {
         let wants = |u: &Unit| u.moves_left > 0 && u.order == UnitOrder::None;
         let shown = |u: &Unit| self.view.is_some_and(|(vx, vy)| (1..=14).contains(&Map::wrap_x(u.x - vx)) && (1..=9).contains(&(u.y - vy)));
         let order = (0..ids.len()).map(|k| self.unit(ids[(start + k) % ids.len()]));
-        let pick = order.clone().find(|u| wants(u) && shown(u)).or_else(|| order.clone().find(|u| wants(u))).map(|u| (u.id, shown(u), u.pos()));
+        let pick = order.clone().find(|u| wants(u) && (shown(u) || !prefer_view)).or_else(|| order.clone().find(|u| wants(u))).map(|u| (u.id, shown(u), u.pos()));
         let (id, on_screen, (x, y)) = pick?;
         if !on_screen {
             self.view = Some(Self::view_centred_on(x, y));
@@ -1046,6 +1048,13 @@ impl Game {
     }
 
     /// The view origin that puts (x, y) at column 7, row 6 (0x1a68:0xe).
+    /// The next unit after 'w' (0x4dd2): the loop goes on to the next unit in record order,
+    /// in the view or not.
+    pub fn next_active_unit_after_wait(&mut self) -> Option<UnitId> {
+        let after = self.active_unit;
+        self.next_active_unit_from(after, 1, false)
+    }
+
     pub fn view_centred_on(x: i32, y: i32) -> (i32, i32) {
         (Map::wrap_x(x - 7), (y - 6).clamp(0, crate::rules::MAP_H as i32 - 12))
     }

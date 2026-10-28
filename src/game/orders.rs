@@ -406,10 +406,11 @@ impl Game {
         Some(next.unwrap_or(id))
     }
 
+    /// 'w' (0x4dd2): the unit keeps its moves and the loop goes on to the next unit in record
+    /// order, without preferring the units in the map view.
     pub fn wait_unit(&mut self, id: UnitId) {
-        // just advance the active pointer; the unit keeps its moves
         self.active_unit = Some(id);
-        self.active_unit = self.next_active_unit();
+        self.active_unit = self.next_active_unit_after_wait();
     }
 
     /// Clear a unit's orders, as a click on it in the city screen does (CIV.EXE 0x122d3):
@@ -686,6 +687,27 @@ mod tests {
         let lone = g.add_unit(slot, unit_ids::SAIL, x + 2, y);
         assert_eq!(g.unload(lone), None);
         assert_eq!(g.unload(a), None);
+    }
+
+    #[test]
+    fn wait_goes_on_to_the_next_unit_in_or_out_of_the_view() {
+        // 'w' 0x4dd7 sets the loop's round-done flag: the next unit in record order is taken
+        // even outside the map view, which then centres on it
+        let mut g = Game::new(GameSetup { seed: 7, ..Default::default() }, None);
+        let slot = g.human_slot;
+        for u in g.units_of(slot) {
+            g.unit_mut(u).moves_left = 0;
+        }
+        let a = g.add_unit(slot, unit_ids::MILITIA, 30, 20);
+        let far = g.add_unit(slot, unit_ids::MILITIA, 60, 40);
+        let near = g.add_unit(slot, unit_ids::MILITIA, 31, 20);
+        g.view = Some((25, 15));
+        g.active_unit = Some(a);
+        assert_eq!(g.next_active_unit(), Some(near));
+        g.view = Some((25, 15));
+        g.wait_unit(a);
+        assert_eq!(g.active_unit, Some(far));
+        assert_eq!(g.view, Some(Game::view_centred_on(60, 40)));
     }
 
     #[test]
