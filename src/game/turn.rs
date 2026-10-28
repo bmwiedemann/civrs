@@ -1388,6 +1388,15 @@ impl Game {
         if g != Govt::Anarchy && g != self.player(slot).govt && !self.governments_available(slot).contains(&g) {
             return;
         }
+        self.set_government(slot, g);
+    }
+
+    /// `set_government` (CIV.EXE 0x14df7) with the government chosen, without asking whether
+    /// it is known (the coup of o 0x6973 and the computer's choice call it so): the replay
+    /// entry and the vendettas' end only when it changes (0x1504f), but for a computer the
+    /// report (`foreign_government_report`) and the rates of the government (0x1502c..0x15042)
+    /// on every call, the same government too.
+    pub fn set_government(&mut self, slot: Slot, g: Govt) {
         if !self.player(slot).human {
             self.foreign_government_report(slot, g);
         }
@@ -2639,6 +2648,27 @@ mod tests {
         assert_eq!(g.player(ai).anarchy_turns, 0);
         g.process_player_turn_start(ai);
         assert!(reports(&mut g).is_empty());
+    }
+
+    #[test]
+    fn the_same_computer_government_resets_its_rates_without_a_log_entry() {
+        // ai_civ_turn 0x1604f calls set_government with an unchanged government too: the
+        // rates (0x1502c..0x15042) are stored again, the replay entry (0x15060) is not
+        let (mut g, _) = fixture();
+        let me = g.human_slot;
+        let ai = g.alive_slots().into_iter().find(|s| *s != me).unwrap();
+        g.player_mut(ai).govt = Govt::Monarchy;
+        g.player_mut(ai).tax = 70;
+        g.player_mut(ai).lux = 0;
+        let log = g.history.log.len();
+        g.set_government(ai, Govt::Monarchy);
+        assert_eq!((g.player(ai).tax, g.player(ai).lux), (30, 40));
+        assert_eq!(g.history.log.len(), log);
+        // the coup (o 0x6973) needs no Monarchy known, and is logged
+        g.player_mut(ai).govt = Govt::Democracy;
+        g.set_government(ai, Govt::Monarchy);
+        assert_eq!(g.player(ai).govt, Govt::Monarchy);
+        assert!(g.history.log.len() > log);
     }
 
     #[test]

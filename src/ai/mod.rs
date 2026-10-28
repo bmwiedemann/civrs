@@ -118,7 +118,8 @@ pub fn government_sums(g: &mut Game, slot: Slot) -> (i32, i32) {
 /// else the Republic when known and its case is not negative, else Communism when known with
 /// more than 10 cities, else Monarchy when known; nothing otherwise. `set_government`
 /// (0x14df7) puts it in force at once for a computer player, without anarchy, and it ends
-/// one: the choice does not look at the government in force (0x15fdb).
+/// one: the choice does not look at the government in force (0x15fdb), so the same government
+/// is set again (0x1604f), which resets the rates and may report it (`Game::set_government`).
 pub fn govern(g: &mut Game, slot: Slot) {
     use crate::rules::advance_ids as adv;
     if (slot as u32 + g.turn) & 7 != 0 {
@@ -137,9 +138,7 @@ pub fn govern(g: &mut Game, slot: Slot) {
     } else {
         return;
     };
-    if want != g.player(slot).govt {
-        g.choose_government(slot, want);
-    }
+    g.set_government(slot, want);
 }
 
 #[cfg(test)]

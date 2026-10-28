@@ -291,17 +291,11 @@ fn evaluate(g: &mut Game, ai: Slot, at: (i32, i32), mode: u8) -> Meeting {
     m
 }
 
-/// CIV.EXE 0x14df7 `set_government(ai, 2)` for a computer player: no anarchy; the human with
-/// an embassy hears of it (`Game::foreign_government_report`).
+/// CIV.EXE 0x14df7 `set_government(ai, 2)` for a computer player (o 0x6973): no anarchy and
+/// no check that Monarchy is known; the replay log has it, and the human with an embassy
+/// hears of it (`Game::set_government`).
 fn set_monarchy(g: &mut Game, ai: Slot) {
-    if g.player(ai).govt == Govt::Monarchy {
-        return;
-    }
-    g.foreign_government_report(ai, Govt::Monarchy);
-    g.player_mut(ai).govt = Govt::Monarchy;
-    g.ai_government_rates(ai);
-    g.forget_vendettas(ai);
-    g.push_event(GameEvent::GovernmentChanged { slot: ai, govt: Govt::Monarchy });
+    g.set_government(ai, Govt::Monarchy);
 }
 
 /// The advances of the exchange (o 0x69c4..0x6a87): counts, the highest the leader can offer
