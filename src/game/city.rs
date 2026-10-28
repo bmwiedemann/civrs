@@ -442,7 +442,9 @@ mod tests {
             g.unit_mut(id).order = UnitOrder::Fortify;
             g.unit_mut(id).home = None;
         }
-        g.reset_moves(ai);
+        // when the computer's unit loop comes to them (0x4239)
+        crate::ai::unit_ai::move_units(&mut g, ai, &mut |_| {});
+        assert_eq!((g.unit(a).order, g.unit(a).moves_left), (UnitOrder::Fortified, 0));
         assert_eq!(g.unit(a).home, Some(big));
         assert_eq!(g.unit(b).home, None);
         let _ = small;

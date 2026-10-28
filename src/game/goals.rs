@@ -254,7 +254,8 @@ impl Game {
 
 impl Game {
     /// The goal and goto side of `unit_look` (0x8038), run where civrs's unit looks around
-    /// (after every move and at the start of its civilization's turn, with `look_for_contacts`).
+    /// (after every move and when its civilization's unit loop comes to it, with
+    /// `look_for_contacts`).
     ///
     /// For each of the 8 neighbours n:
     /// - a city of another civ o next to a land unit (0x82c5) whose civ has no treaty with o

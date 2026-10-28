@@ -594,16 +594,6 @@ impl Game {
         self.owner_has_wonder(slot, rules::wonder_ids::LIGHTHOUSE) || self.owner_has_wonder(slot, rules::wonder_ids::MAGELLANS_EXPEDITION)
     }
 
-    /// Every unit of `slot` looks around (unit_look 0x41e3), as move_units' loop does at the
-    /// start of a computer civilization's turn. The human's units look one by one as his
-    /// loop comes to them (`Game::next_active_unit`).
-    pub fn units_look_around(&mut self, slot: super::Slot) {
-        let looking: Vec<UnitId> = self.all_units().filter(|u| u.owner == slot).map(|u| u.id).collect();
-        for id in looking {
-            self.unit_look(id);
-        }
-    }
-
     /// `unit_look` (0x8038) of one unit: the garrisons of the foreign cities next to it come
     /// out, it sees and is seen, meets other civilizations and notes its civ's goals.
     pub fn unit_look(&mut self, id: UnitId) {
@@ -614,17 +604,15 @@ impl Game {
         self.unit_look_goals(id);
     }
 
-    /// Reset movement points at the start of a player's turn (move_units 0x40a9).
+    /// Give the units of `slot` their moves again at the start of its `move_units`
+    /// (CIV.EXE 0x40a4..0x412e, after the civ's `ai_civ_turn` and `ai_reset_goals`).
     ///
-    /// CIV.EXE's unit loop then passes every unit (0x4174..0x4327): it looks around (unit_look
-    /// 0x41e3, which lets out the garrison of a foreign city next to it) and a unit that is
-    /// fortifying becomes fortified (`complete_fortify`). For a computer civilization civrs
-    /// does both here; the human's units do it as his loop comes to them
-    /// (`next_active_unit`).
+    /// The units then look around and finish fortifying one by one as the unit loop comes
+    /// to them (0x41b7 unit_look, 0x4239 `complete_fortify`): the computer's and the
+    /// barbarians' in `ai::unit_ai::move_units`, the human's in his loop
+    /// (`Game::next_active_unit_from`).
     pub fn reset_moves(&mut self, slot: super::Slot) {
         let extra_sea_move = self.extra_sea_move(slot);
-        let human = slot == self.human_slot;
-        let mut fortifying = Vec::new();
         for u in self.units.iter_mut().flatten() {
             if u.owner != slot {
                 continue;
@@ -634,49 +622,25 @@ impl Game {
                 m += 3;
             }
             u.moves_left = m;
-            if u.order == UnitOrder::Fortify && !human {
-                fortifying.push(u.id);
-            }
             if u.order == UnitOrder::Skip {
                 u.order = UnitOrder::None;
-            }
-        }
-        if human {
-            return;
-        }
-        for &id in &fortifying {
-            let u = self.unit_mut(id);
-            u.order = UnitOrder::Fortified;
-            u.moves_left = 0;
-        }
-        self.units_look_around(slot);
-        for id in fortifying {
-            // an earlier stash may have taken the unit off the map already
-            if self.unit_opt(id).is_some() {
-                self.fortified_in_city(id);
             }
         }
         // a sentried unit wakes only when a foreign unit looks around next to it, treaty or
         // not (unit_look 0x835f, 0x85cd): its own civ's turn start wakes nothing
     }
 
-    /// The unit loop passes a unit that is fortifying (CIV.EXE 0x4239): it is fortified now,
-    /// its turn's moves spent, then `fortified_in_city`.
+    /// A fortifying unit the unit loop comes to with moves (CIV.EXE 0x4239..0x431f): the
+    /// fortification completes with the turn's moves spent; a computer's (or barbarian's)
+    /// unit in a city of size 3 or more makes it its home (0x425b..0x42ae), and a unit
+    /// fortified in its home city stashes the city's garrison when no foreign unit is next
+    /// to it (0x42b2..0x431f). The loop goes on to the next unit.
     pub fn complete_fortify(&mut self, id: UnitId) {
-        let u = self.unit_mut(id);
-        u.order = UnitOrder::Fortified;
-        u.moves_left = 0;
-        self.fortified_in_city(id);
-    }
-
-    /// A unit that has just become fortified in a city (0x4255..0x431f): a computer's unit is
-    /// rehomed to a city of size 3 or more (0x42a4), and a unit fortified in its home city
-    /// stashes the city's garrison when no foreign unit is next to it (0x42b2..0x431f).
-    fn fortified_in_city(&mut self, id: UnitId) {
-        let (slot, x, y) = {
-            let u = self.unit(id);
-            (u.owner, u.x, u.y)
-        };
+        let Some(u) = self.unit_opt(id) else { return };
+        let (slot, x, y) = (u.owner, u.x, u.y);
+        let um = self.unit_mut(id);
+        um.order = UnitOrder::Fortified;
+        um.moves_left = 0;
         let Some(c) = self.city_at(x, y) else { return };
         if slot != self.human_slot && self.city(c).size >= 3 {
             self.unit_mut(id).home = Some(c);
@@ -1410,10 +1374,13 @@ mod zoc_tests {
         let me = g.human_slot;
         let other = if me == 2 { 3 } else { 2 };
         g.unit_mut(id).order = crate::game::UnitOrder::Sentry;
-        g.add_unit(other, unit_ids::MILITIA, 41, 25);
+        let m = g.add_unit(other, unit_ids::MILITIA, 41, 25);
         g.reset_moves(me);
         assert_eq!(g.unit(id).order, crate::game::UnitOrder::Sentry);
-        g.reset_moves(other);
+        // the computer's loop looks with its sentried unit too, before passing it over
+        g.unit_mut(m).order = crate::game::UnitOrder::Sentry;
+        crate::ai::unit_ai::move_units(&mut g, other, &mut |_| {});
         assert_eq!(g.unit(id).order, crate::game::UnitOrder::None);
+        assert_eq!(g.unit(m).pos(), (41, 25));
     }
 }

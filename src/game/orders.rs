@@ -281,12 +281,18 @@ impl Game {
     pub fn progress_work(&mut self, slot: super::Slot) {
         let ids: Vec<UnitId> = self.all_units().filter(|u| u.owner == slot && u.order.is_work()).map(|u| u.id).collect();
         for id in ids {
-            let o = self.unit(id).order;
-            if self.work_step(id, o).is_err() {
-                let um = self.unit_mut(id);
-                um.order = UnitOrder::None;
-                um.order_turns = 0;
-            }
+            self.work_turn(id);
+        }
+    }
+
+    /// One turn of the work of unit `id` (its order's key pressed again, `progress_work`);
+    /// a job no longer possible is dropped.
+    pub fn work_turn(&mut self, id: UnitId) {
+        let o = self.unit(id).order;
+        if self.work_step(id, o).is_err() {
+            let um = self.unit_mut(id);
+            um.order = UnitOrder::None;
+            um.order_turns = 0;
         }
     }
 

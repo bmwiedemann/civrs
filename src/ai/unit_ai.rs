@@ -1399,7 +1399,7 @@ fn score_direction(g: &mut Game, c: &Ctx, k: usize, peaceful: bool) -> Option<(i
 
 // ---- carrying the commands out ----------------------------------------------------------
 
-/// A move key (0x5946 for the computer): a step back against the heading (heading ^ 4) by a
+/// A move key (0x5946 for the computer and the barbarians): a step back against the heading (heading ^ 4) by a
 /// unit with at most one other unit beside it ends its turn and its goto (0x63cc); a land unit
 /// (or an aircraft with fuel) does not join an own stack of four or more outside a city
 /// (0x6437, the move is simply not made). Returns whether a move was tried.
@@ -1444,6 +1444,9 @@ fn do_step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) ->
     }
     let slot = u.owner;
     match step(g, id, d, sink) {
+        // (CIV.EXE takes a barbarian leader into a foreign city through the Diplomat's
+        // overlay too, 0x5baa; civrs leaves the barbarians out)
+        _ if slot == 0 => {}
         Ok(MoveOutcome::EnteredForeignCity(c)) => {
             if u.kind == unit_ids::DIPLOMAT {
                 g.ai_diplomat_action(id, c);
@@ -1501,8 +1504,11 @@ fn execute(g: &mut Game, id: UnitId, cmd: Command, sink: &mut dyn FnMut(TurnStep
             }
         }
         Command::Fortify => {
-            // land units only (0x5137); a computer's unit in a city makes it its home (0x51b7)
-            if u.is_land() && u.kind != unit_ids::SETTLERS {
+            // land units only (0x5137); a computer's or barbarian's unit in a city makes it
+            // its home (0x51b7); Settlers build a fortress (0x5159 -> 0x51be)
+            if u.kind == unit_ids::SETTLERS {
+                let _ = g.give_order(id, UnitOrder::Fortress);
+            } else if u.is_land() {
                 let um = g.unit_mut(id);
                 um.order = UnitOrder::Fortify;
                 um.goto = None;
@@ -1571,36 +1577,20 @@ fn execute(g: &mut Game, id: UnitId, cmd: Command, sink: &mut dyn FnMut(TurnStep
     None
 }
 
-/// The computer's units move (0x403e for a computer civ): in unit order, skipping sentried
-/// and fortified units and those without moves; each is asked for commands while it has moves,
-/// five times at most, the fifth answer being ' ' (0x4464, dropping goto and heading). Any
-/// command but 0 drops the goto first; with a goto the key comes from `goto_direction` (an
-/// unreachable goto is dropped there), without one the heading is forgotten before the key is
-/// carried out. After 'u' the loop goes on in record order from the ship's first passenger
-/// (`Game::unload`, 0x4e64), and once through the units are gone through again (0x4e5a; civrs
-/// stops after three rounds).
+/// The computer's and the barbarians' unit loop (`move_units` 0x403e for a civ the human
+/// does not play). The units get their moves again (0x40a4, `Game::reset_moves`), then the
+/// loop runs over the civ's unit records 0..127 (0x4144..0x4177). Each unit it comes to looks
+/// around first (unit_look 0x41e3: contacts, and with them the audiences with the human,
+/// goals, garrisons), whatever its state; the latch that stops the human's looks ([bp-0x8])
+/// is never set for a computer, so every pass looks again. Then `visit_unit` gives it its
+/// turn. After 'u' the loop goes on from the ship's first passenger (0x4e64, which looks
+/// first too), and the records are gone through again from 0 (0x4e5a, 0x7691 -> 0x4144);
+/// civrs stops after three passes.
 pub fn move_units(g: &mut Game, slot: Slot, sink: &mut dyn FnMut(TurnStep)) {
+    g.reset_moves(slot);
     g.ai_memory.moving = Some(slot);
-    let mut passes = 0;
-    loop {
-        passes += 1;
-        let mut again = false;
-        let ids = g.units_of(slot);
-        let mut i = 0;
-        while i < ids.len() {
-            let id = ids[i];
-            i += 1;
-            if g.unit_opt(id).map(|u| u.owner != slot).unwrap_or(true) {
-                continue;
-            }
-            if let Some(next) = run_unit(g, slot, id, sink) {
-                if let Some(k) = ids.iter().position(|o| *o == next) {
-                    i = k;
-                }
-                again = true;
-            }
-        }
-        if !again || passes >= 3 {
+    for _ in 0..3 {
+        if !unit_pass(g, slot, sink) {
             break;
         }
     }
@@ -1608,25 +1598,99 @@ pub fn move_units(g: &mut Game, slot: Slot, sink: &mut dyn FnMut(TurnStep)) {
     g.refresh_vision(slot);
 }
 
+/// The barbarians' turn: `move_units` for civ 0, whose units are asked by the barbarian
+/// routine (`Game::barbarian_command`, 0x18dc3, which ai_unit_command 0x16433 calls for
+/// civ 0).
+pub fn play_barbarians(g: &mut Game, sink: &mut dyn FnMut(TurnStep)) {
+    move_units(g, 0, sink);
+}
+
+/// The unit of `slot` with the lowest record from `from` on.
+fn unit_from_record(g: &Game, slot: Slot, from: usize) -> Option<UnitId> {
+    g.all_units().filter(|u| u.owner == slot && u.record as usize >= from).min_by_key(|u| u.record).map(|u| u.id)
+}
+
+/// One pass of `move_units` over the records; true when a 'u' asks for another (0x4e5a).
+fn unit_pass(g: &mut Game, slot: Slot, sink: &mut dyn FnMut(TurnStep)) -> bool {
+    let mut again = false;
+    let mut from = 0;
+    // (a guard against ships unloading for ever; CIV.EXE has none)
+    for _ in 0..4 * 256 {
+        let Some(id) = unit_from_record(g, slot, from) else { break };
+        let record = g.unit(id).record as usize;
+        g.unit_look(id);
+        flush_events(g, sink);
+        match visit_unit(g, slot, id, sink) {
+            Some(next) => {
+                from = g.unit(next).record as usize;
+                again = true;
+            }
+            None => from = record + 1,
+        }
+    }
+    again
+}
+
+/// The turn of one unit the loop has come to, after its look. Sentried and fortified units
+/// and those without moves are passed over (0x41fb, 0x4215); a fortifying one completes its
+/// fortification (`Game::complete_fortify`, 0x4239). In civrs a unit at work presses its
+/// job's key again (a turn of work, `Game::work_turn`), where CIV.EXE asks the unit routine,
+/// which gives the same key on the square. The others take their commands (`run_unit`),
+/// and an aircraft that has used its moves counts its fuel (0x750f).
+fn visit_unit(g: &mut Game, slot: Slot, id: UnitId, sink: &mut dyn FnMut(TurnStep)) -> Option<UnitId> {
+    let u = g.unit(id);
+    if matches!(u.order, UnitOrder::Sentry | UnitOrder::Fortified) || u.moves_left == 0 {
+        return None;
+    }
+    if u.order == UnitOrder::Fortify {
+        g.complete_fortify(id);
+        return None;
+    }
+    if u.order.is_work() {
+        g.work_turn(id);
+        return None;
+    }
+    let next = run_unit(g, slot, id, sink);
+    if next.is_none() && g.unit_opt(id).is_some_and(|u| u.moves_left == 0) {
+        g.air_fuel_turn(id);
+        flush_events(g, sink);
+    }
+    next
+}
+
 fn trace() -> bool {
     static T: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *T.get_or_init(|| std::env::var("CIVRS_AI_TRACE").is_ok())
 }
 
-/// One unit's turn in `move_units`; returns the unit to go on with after a 'u'.
-fn run_unit(g: &mut Game, slot: Slot, id: UnitId, sink: &mut dyn FnMut(TurnStep)) -> Option<UnitId> {
-    let u = g.unit(id);
-    // sentried (0x01) and fortified (0x08) units are passed over (0x41fb), as are those that
-    // fortify (0x04 becomes 0x08 with no moves, 0x4239) and, in civrs, those at work
-    if matches!(u.order, UnitOrder::Sentry | UnitOrder::Fortified | UnitOrder::Fortify) || u.moves_left == 0 || u.order_turns > 0 {
-        return None;
+/// The next command for unit `id` (0x443a): ai_unit_command 0x16433, the barbarian routine
+/// for civ 0.
+fn next_command(g: &mut Game, slot: Slot, id: UnitId) -> Command {
+    use crate::game::barbarians::BarbarianCommand as B;
+    if slot != 0 {
+        return unit_command(g, slot, id);
     }
+    match g.barbarian_command(id) {
+        B::Step(d) => Command::Step(d),
+        B::Goto => Command::Goto,
+        B::Skip | B::Disband => Command::Skip,
+        B::Fortify => Command::Fortify,
+        B::Unload => Command::Unload,
+    }
+}
+
+/// The commands of one unit (0x442c..0x6daa): it is asked while it has moves, five times
+/// at most, the fifth answer being ' ' (0x4464, dropping goto and heading). Any command but
+/// 0 drops the goto first; with a goto the key comes from `goto_direction` (an unreachable
+/// goto is dropped there), without one the heading is forgotten before the key is carried
+/// out. Returns the unit the loop goes on with after a 'u'.
+fn run_unit(g: &mut Game, slot: Slot, id: UnitId, sink: &mut dyn FnMut(TurnStep)) -> Option<UnitId> {
     for call in 1..=5 {
         let Some(u) = g.unit_opt(id) else { break };
         if u.moves_left == 0 || u.owner != slot {
             break;
         }
-        let mut cmd = unit_command(g, slot, id);
+        let mut cmd = next_command(g, slot, id);
         if trace() {
             if let Some(u) = g.unit_opt(id) {
                 eprintln!("TRACE t{} s{} #{} {} at {:?} cmd {:?} goto {:?} order {:?} moves {} site {}", g.turn, slot, id, u.info().name, u.pos(), cmd, u.goto, u.order, u.moves_left, g.site_layer(u.x, u.y));
@@ -1663,80 +1727,6 @@ pub fn act(g: &mut Game, id: UnitId, sink: &mut dyn FnMut(TurnStep)) {
     g.ai_memory.moving = Some(slot);
     run_unit(g, slot, id, sink);
     g.ai_memory.moving = None;
-}
-
-/// Move the barbarians as CIV.EXE's `move_units` (0x403e) does for civ 0: units in record
-/// order, sentried and fortified ones skipped, each asked for orders by the barbarian routine
-/// (`Game::barbarian_command`, 0x18dc3) while it has moves, at most five times (0x4464).
-/// After 'u' the loop goes on from the ship's first passenger and the units are gone through
-/// again, as in `move_units`.
-pub fn play_barbarians(g: &mut Game, sink: &mut dyn FnMut(TurnStep)) {
-    for _ in 0..3 {
-        if !barbarian_pass(g, sink) {
-            break;
-        }
-    }
-    g.refresh_vision(0);
-}
-
-/// One round of `play_barbarians`; true when a 'u' asks for another.
-fn barbarian_pass(g: &mut Game, sink: &mut dyn FnMut(TurnStep)) -> bool {
-    use crate::game::barbarians::BarbarianCommand as Cmd;
-    let ids = g.units_of(0);
-    let mut again = false;
-    let mut i = 0;
-    'units: while i < ids.len() {
-        let id = ids[i];
-        i += 1;
-        if g.unit_opt(id).map(|u| u.owner != 0).unwrap_or(true) {
-            continue;
-        }
-        for _ in 0..5 {
-            let Some(u) = g.unit_opt(id) else { break };
-            if u.moves_left == 0 || matches!(u.order, UnitOrder::Sentry | UnitOrder::Fortified) {
-                break;
-            }
-            match g.barbarian_command(id) {
-                Cmd::Step(d) => {
-                    if g.unit_opt(id).is_some() {
-                        g.unit_mut(id).goto = None;
-                    }
-                    if step(g, id, d, sink).is_err() {
-                        break;
-                    }
-                }
-                Cmd::Goto => {
-                    let Some(d) = g.next_goto_step(id) else { break };
-                    if !matches!(step(g, id, d, sink), Ok(MoveOutcome::Moved) | Ok(MoveOutcome::EnteredHut)) {
-                        break;
-                    }
-                }
-                Cmd::Skip => {
-                    g.unit_mut(id).moves_left = 0;
-                    break;
-                }
-                Cmd::Fortify => {
-                    let um = g.unit_mut(id);
-                    um.order = UnitOrder::Fortify;
-                    um.moves_left = 0;
-                    break;
-                }
-                // the passengers wake up with full moves and move next (0x4dfc)
-                Cmd::Unload => {
-                    if let Some(next) = g.unload(id) {
-                        if let Some(k) = ids.iter().position(|o| *o == next) {
-                            i = k;
-                        }
-                        again = true;
-                        continue 'units;
-                    }
-                    break;
-                }
-                Cmd::Disband => break,
-            }
-        }
-    }
-    again
 }
 
 #[cfg(test)]
@@ -2081,5 +2071,44 @@ mod tests {
         update_policies(&mut g, &census, 3);
         assert_eq!(g.stored_policy(3, k), POLICY_THREATENED);
         assert_eq!(g.city(berlin).production, crate::game::Production::Improvement(imp::BARRACKS));
+    }
+
+    #[test]
+    fn the_loop_looks_with_every_unit_after_the_goals_are_reset() {
+        // move_units 0x41b7 -> unit_look 0x41e3 for every record, before the sentry test
+        // (0x41fb); game_turn resets the goals (0x2541) before move_units (0x25af)
+        let mut g = arena();
+        let s = ai(&g);
+        let h = g.human_slot;
+        g.add_unit(h, unit_ids::LEGION, 20, 20);
+        let m = g.add_unit(s, unit_ids::MILITIA, 21, 20);
+        g.unit_mut(m).order = UnitOrder::Sentry;
+        g.reset_goals(s);
+        move_units(&mut g, s, &mut |_| {});
+        assert!(g.player(s).has_contact(h) && g.player(h).has_contact(s), "the look met the human");
+        assert!(g.ai_memory.goals[s as usize].iter().any(|q| q.kind == goal::ATTACK && (q.x, q.y) == (20, 20)));
+        assert_eq!((g.unit(m).pos(), g.unit(m).order), ((21, 20), UnitOrder::Sentry));
+    }
+
+    #[test]
+    fn a_computer_settlers_told_to_fortify_builds_a_fortress() {
+        // 'f' 0x5159: Settlers go to the fortress handler 0x51be
+        let mut g = arena();
+        let s = ai(&g);
+        g.player_mut(s).learn(adv::CONSTRUCTION);
+        let id = g.add_unit(s, unit_ids::SETTLERS, 20, 20);
+        execute(&mut g, id, Command::Fortify, &mut |_| {});
+        assert_eq!((g.unit(id).order, g.unit(id).order_turns, g.unit(id).moves_left), (UnitOrder::Fortress, 1, 0));
+    }
+
+    #[test]
+    fn only_an_aircraft_that_took_its_turn_spends_fuel() {
+        // 0x750f follows the unit's commands; sentried units never get there (0x41fb)
+        let mut g = arena();
+        let s = ai(&g);
+        let f = g.add_unit(s, unit_ids::FIGHTER, 20, 20);
+        g.unit_mut(f).order = UnitOrder::Sentry;
+        move_units(&mut g, s, &mut |_| {});
+        assert_eq!(g.unit(f).fuel, 0);
     }
 }

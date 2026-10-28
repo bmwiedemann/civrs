@@ -135,13 +135,12 @@ impl TurnRunner {
 
     /// One computer civilization's turn in game_turn's civ loop: its cities and rates
     /// (0x250d), politics (0x252b), then `AiDriver::play_turn` (ai_civ_turn 0x2536,
-    /// ai_reset_goals 0x2541, move_units 0x25af) with the units' work and hazards.
+    /// ai_reset_goals 0x2541, move_units 0x25af).
     fn civ_turn(&mut self, g: &mut Game, ai: &mut dyn AiDriver, slot: Slot) {
         // the score accumulator of every civ 0..7 as its turn comes, alive or not (0x25f5)
         g.score_acc[slot as usize] = 0;
         if slot == 0 {
             // the barbarians' cities (0xa5e2 for civ 0), then their units
-            g.reset_moves(0);
             for c in g.cities_of(0) {
                 if g.city_opt(c).is_some() {
                     g.process_city(c);
@@ -152,8 +151,6 @@ impl TurnRunner {
             crate::ai::unit_ai::civ_turn(g, 0);
             g.reset_goals(0);
             self.run_ai(g, ai, 0);
-            g.process_unit_hazards(0);
-            self.drain_events(g);
             return;
         }
         if slot == g.human_slot || !g.player(slot).in_game || !g.player(slot).alive {
@@ -162,12 +159,9 @@ impl TurnRunner {
         g.process_player_cities(slot);
         self.drain_events(g);
         g.process_player_turn_start(slot);
-        g.reset_moves(slot);
-        g.progress_work(slot);
         self.drain_events(g);
+        // move_units gives the units their moves, and each one its work turn, look and fuel
         self.run_ai(g, ai, slot);
-        g.process_unit_hazards(slot);
-        self.drain_events(g);
     }
 
     fn drain_events(&mut self, g: &mut Game) {
@@ -1357,22 +1351,33 @@ impl Game {
                 self.push_event(GameEvent::UnitLost { slot, kind: u.kind, at: (u.x, u.y), reason: "lost at sea".into() });
                 continue;
             }
-            if u.is_air() {
-                let on_carrier = u.carried_by.map(|cr| self.unit_opt(cr).is_some()).unwrap_or(false);
-                if in_own_city || on_carrier {
-                    self.unit_mut(id).fuel = 0;
-                    continue;
-                }
-                let fuel = u.fuel + 1;
-                self.unit_mut(id).fuel = fuel;
-                let range = rules::UNITS[u.kind as usize].range.max(1);
-                if fuel >= range {
-                    self.remove_unit(id);
-                    self.push_event(GameEvent::UnitLost { slot, kind: u.kind, at: (u.x, u.y), reason: "ran out of fuel".into() });
-                }
-            }
+            self.air_fuel_turn(id);
         }
         self.refresh_vision(slot);
+    }
+
+    /// The fuel of an aircraft at the end of its turn (CIV.EXE 0x752e..0x75c7): in a city or
+    /// on a carrier it fills up, else one turn of it goes; with none left the unit crashes
+    /// (*FUEL). Nothing for other units.
+    pub fn air_fuel_turn(&mut self, id: UnitId) {
+        let Some(u) = self.unit_opt(id).cloned() else { return };
+        if !u.is_air() {
+            return;
+        }
+        let slot = u.owner;
+        let in_own_city = self.city_at(u.x, u.y).map(|c| self.city(c).owner == slot).unwrap_or(false);
+        let on_carrier = u.carried_by.map(|cr| self.unit_opt(cr).is_some()).unwrap_or(false);
+        if in_own_city || on_carrier {
+            self.unit_mut(id).fuel = 0;
+            return;
+        }
+        let fuel = u.fuel + 1;
+        self.unit_mut(id).fuel = fuel;
+        let range = rules::UNITS[u.kind as usize].range.max(1);
+        if fuel >= range {
+            self.remove_unit(id);
+            self.push_event(GameEvent::UnitLost { slot, kind: u.kind, at: (u.x, u.y), reason: "ran out of fuel".into() });
+        }
     }
 
     // ---- government -------------------------------------------------------------------------
