@@ -1633,10 +1633,10 @@ fn unit_pass(g: &mut Game, slot: Slot, sink: &mut dyn FnMut(TurnStep)) -> bool {
 
 /// The turn of one unit the loop has come to, after its look. Sentried and fortified units
 /// and those without moves are passed over (0x41fb, 0x4215); a fortifying one completes its
-/// fortification (`Game::complete_fortify`, 0x4239). In civrs a unit at work presses its
-/// job's key again (a turn of work, `Game::work_turn`), where CIV.EXE asks the unit routine,
-/// which gives the same key on the square. The others take their commands (`run_unit`),
-/// and an aircraft that has used its moves counts its fuel (0x750f).
+/// fortification (`Game::complete_fortify`, 0x4239). The others, Settlers at work among
+/// them, take their commands (`run_unit`): the human's loop presses a working unit's key by
+/// itself (0x4492..0x452f), the computer's asks the unit routine, whose key may go on with
+/// the job or leave it. An aircraft that has used its moves counts its fuel (0x750f).
 fn visit_unit(g: &mut Game, slot: Slot, id: UnitId, sink: &mut dyn FnMut(TurnStep)) -> Option<UnitId> {
     let u = g.unit(id);
     if matches!(u.order, UnitOrder::Sentry | UnitOrder::Fortified) || u.moves_left == 0 {
@@ -1644,10 +1644,6 @@ fn visit_unit(g: &mut Game, slot: Slot, id: UnitId, sink: &mut dyn FnMut(TurnSte
     }
     if u.order == UnitOrder::Fortify {
         g.complete_fortify(id);
-        return None;
-    }
-    if u.order.is_work() {
-        g.work_turn(id);
         return None;
     }
     let next = run_unit(g, slot, id, sink);
@@ -2129,5 +2125,18 @@ mod tests {
         g.turn = 16 - (record & 15);
         task_units(&mut g, s, 3);
         assert!(g.unit_opt(m).is_none());
+    }
+
+    #[test]
+    fn a_computer_settlers_at_work_asks_the_unit_routine() {
+        // 0x41fb passes over only sentried and fortified units; 0x442c asks ai_unit_command
+        // (the work keys of 0x44bd are the human's): on an empty continent it founds a city
+        let mut g = arena();
+        let s = ai(&g);
+        let id = g.add_unit(s, unit_ids::SETTLERS, 20, 20);
+        g.unit_mut(id).order = UnitOrder::Irrigate;
+        g.unit_mut(id).order_turns = 1;
+        move_units(&mut g, s, &mut |_| {});
+        assert!(g.city_at(20, 20).is_some() || g.unit_opt(id).is_some_and(|u| u.order != UnitOrder::Irrigate || u.order_turns != 2));
     }
 }

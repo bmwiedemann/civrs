@@ -15,7 +15,7 @@ use super::{AutoStop, Game, RuleError};
 use crate::rules::{self, unit_ids, Terraform, Terrain};
 
 impl UnitOrder {
-    /// Settlers jobs, which the turn loop repeats until they are done (`progress_work`).
+    /// Settlers jobs, which the unit loop repeats until they are done (`run_auto_unit`).
     pub fn is_work(self) -> bool {
         matches!(self, UnitOrder::Road | UnitOrder::Irrigate | UnitOrder::Mine | UnitOrder::Fortress | UnitOrder::CleanPollution)
     }
@@ -274,25 +274,20 @@ impl Game {
         })
     }
 
-    /// The turn loop's part of a computer's Settlers work (civrs: at the start of the slot's
-    /// turn, after the moves are restored): every working unit presses its order's key again
-    /// (0x4492), a turn of work that may finish the job; a job no longer possible is dropped.
-    /// The human's Settlers press it as his loop comes to them (`run_auto_unit`).
+    /// Settlers work for all of `slot`'s working units at once: each presses its order's key
+    /// again (0x4492), a turn of work that may finish the job; a job no longer possible is
+    /// dropped. In the game the human's Settlers do this as his loop comes to them
+    /// (`run_auto_unit`), and the computer's working units ask the unit routine instead
+    /// (`ai::unit_ai::move_units`); this form serves the tests.
     pub fn progress_work(&mut self, slot: super::Slot) {
         let ids: Vec<UnitId> = self.all_units().filter(|u| u.owner == slot && u.order.is_work()).map(|u| u.id).collect();
         for id in ids {
-            self.work_turn(id);
-        }
-    }
-
-    /// One turn of the work of unit `id` (its order's key pressed again, `progress_work`);
-    /// a job no longer possible is dropped.
-    pub fn work_turn(&mut self, id: UnitId) {
-        let o = self.unit(id).order;
-        if self.work_step(id, o).is_err() {
-            let um = self.unit_mut(id);
-            um.order = UnitOrder::None;
-            um.order_turns = 0;
+            let o = self.unit(id).order;
+            if self.work_step(id, o).is_err() {
+                let um = self.unit_mut(id);
+                um.order = UnitOrder::None;
+                um.order_turns = 0;
+            }
         }
     }
 
