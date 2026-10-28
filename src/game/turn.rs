@@ -15,6 +15,12 @@ use crate::ai::AiDriver;
 use crate::rules::{self, advance_ids as adv, improvement_ids as imp, unit_ids, wonder_ids as won, AdvanceId, Govt, ImprovementId, Terrain, UnitTypeId};
 use serde::{Deserialize, Serialize};
 
+/// `palace_threshold(n)` (CIV.EXE 0x3a67): the score that brings palace level `n`,
+/// `(sum of i * (7 - difficulty) for i in 0..=n) / 2 + 1`.
+pub fn palace_threshold(n: i32, difficulty: i32) -> i32 {
+    (0..=n).map(|i| i * (7 - difficulty)).sum::<i32>() / 2 + 1
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum TurnStep {
     Event(GameEvent),
@@ -173,6 +179,7 @@ impl TurnRunner {
                     g.advance_calendar();
                     g.fifty_turn_block();
                     g.historian_check();
+                    g.palace_growth_check();
                     let slot = g.human_slot;
                     g.reset_moves(slot);
                     g.progress_work(slot);
@@ -341,6 +348,10 @@ impl Game {
             self.revolution(slot);
         }
         self.process_unit_hazards(slot);
+        // the treasury holds at most 30000 gold, capped after the civ's cities (0x2515)
+        if self.player(slot).gold > 30000 {
+            self.player_mut(slot).gold = 30000;
+        }
         if !self.player(slot).human && self.player(slot).gold < 0 {
             self.player_mut(slot).gold = 0;
         }
@@ -365,17 +376,6 @@ impl Game {
             // frees games saved while the government choice was being lost
             self.push_event(GameEvent::AnarchyEnded { slot });
             self.offer_government(slot);
-        }
-        // palace additions: a growing, orderly empire gets to extend the palace now and then
-        if slot == self.human_slot && self.turn >= 40 && self.turn % 40 == 0 && self.options.palace {
-            let p = self.player(slot);
-            let cities = self.cities_of(slot);
-            let orderly = cities.iter().all(|c| !self.city(*c).disorder);
-            if p.palace().any_offered() && cities.len() >= 3 + p.palace_level as usize && orderly && p.capital.is_some() {
-                // the player picks the section on the palace screen
-                self.player_mut(slot).palace_level += 1;
-                self.push_event(GameEvent::PalaceAddition(slot));
-            }
         }
         // the peaceful turns ds:0xd808 (one count for the world): one more at the human's turn
         // from 1 AD on (0x259a); any fight between two civilizations resets them
@@ -422,6 +422,7 @@ impl Game {
         // the power ranking (0x3121): the power history, then the world against a leading human
         self.record_power();
         self.gang_up_on_leader();
+        self.treasury_warning();
         self.spaceship_arrivals();
         // the coming year is the one CIV.EXE compares after its advance (0x2a28, 0x2a98):
         // a warning 20 years ahead, the end in the year 2100 - 20 * difficulty itself
@@ -446,6 +447,39 @@ impl Game {
                 self.keep_playing_asked = true;
                 self.push_event(GameEvent::NeedsDecision(Decision::KeepPlaying { reason }));
             }
+        }
+    }
+
+    /// The *TAXES warning (CIV.EXE 0x268a): while the game goes on, a human with more than one
+    /// city, less than 100 gold and a treasury that would be empty within ten turns at this
+    /// turn's loss (`(gold - gold at the turn's start) * 10 + gold < 0`) is told. The turn's
+    /// start is this check's previous run (`taxes_mark`, not saved: a loaded game skips one).
+    pub fn treasury_warning(&mut self) {
+        let me = self.human_slot;
+        let gold = self.player(me).gold;
+        let Some(start) = self.taxes_mark.replace(gold) else { return };
+        if self.ended.is_none() && self.player(me).alive && self.cities_of(me).len() > 1 && gold < 100 && (gold - start) * 10 + gold < 0 {
+            self.push_event(GameEvent::LowFunds { slot: me });
+        }
+    }
+
+    /// Palace growth (CIV.EXE 0x2966..0x29ec), once a turn after the year advances: when the
+    /// human has a city with a Palace, the palace option is on and scoring goes on, a score
+    /// (`civ_score`) of at least `palace_threshold(level + 1)` raises the palace level
+    /// (ds:0x1c20), and the palace screen offers an addition up to level 37.
+    pub fn palace_growth_check(&mut self) {
+        let me = self.human_slot;
+        if !self.options.palace || self.scoring_over || !self.all_cities().any(|c| c.owner == me && c.has_improvement(imp::PALACE)) {
+            return;
+        }
+        let level = self.player(me).palace_level as i32;
+        if self.score(me).total < palace_threshold(level + 1, self.setup.difficulty as i32) {
+            return;
+        }
+        let p = self.player_mut(me);
+        p.palace_level = p.palace_level.saturating_add(1);
+        if p.palace_level <= 37 {
+            self.push_event(GameEvent::PalaceAddition(me));
         }
     }
 
@@ -1945,6 +1979,66 @@ mod tests {
         g.city_mut(c).add_wonder(won::PYRAMIDS);
         g.wonders_built[won::PYRAMIDS as usize] = Some(c);
         assert_eq!(g.governments_available(slot).len(), 5);
+    }
+
+    #[test]
+    fn gold_is_capped_at_30000_after_the_cities() {
+        // 0x2515: every civ, after update_civ_tax_rates
+        let (mut g, _c) = fixture();
+        let me = g.human_slot;
+        g.player_mut(me).gold = 31000;
+        g.process_player_turn_end(me);
+        assert_eq!(g.player(me).gold, 30000);
+    }
+
+    #[test]
+    fn treasury_warning_when_gold_would_run_out_in_ten_turns() {
+        // 0x268a: > 1 city, gold < 100, (gold - start) * 10 + gold < 0
+        let (mut g, c) = fixture();
+        let me = g.human_slot;
+        let (x, y) = g.city(c).pos();
+        let s = g.add_unit(me, unit_ids::SETTLERS, x + 3, y);
+        g.found_city(s).unwrap();
+        g.take_events();
+        let warned = |g: &mut Game| g.take_events().iter().any(|e| matches!(e, GameEvent::LowFunds { .. }));
+        g.player_mut(me).gold = 90;
+        g.treasury_warning();
+        assert!(!warned(&mut g), "no mark yet");
+        g.player_mut(me).gold = 80;
+        g.treasury_warning();
+        assert!(warned(&mut g), "-10 * 10 + 80 < 0");
+        g.player_mut(me).gold = 75;
+        g.treasury_warning();
+        assert!(!warned(&mut g), "-5 * 10 + 75 >= 0");
+        g.player_mut(me).gold = 10;
+        g.city_mut(c).owner = 0;
+        g.treasury_warning();
+        assert!(!warned(&mut g), "one city left");
+    }
+
+    #[test]
+    fn palace_grows_with_the_score() {
+        // 0x3a67: (sum i * (7 - d)) / 2 + 1
+        assert_eq!((palace_threshold(1, 0), palace_threshold(2, 0), palace_threshold(3, 4)), (4, 11, 10));
+        let (mut g, c) = fixture();
+        let me = g.human_slot;
+        assert!(g.city(c).has_improvement(imp::PALACE));
+        g.take_events();
+        let need = palace_threshold(g.player(me).palace_level as i32 + 1, g.setup.difficulty as i32);
+        let score = g.score(me).total;
+        g.palace_growth_check();
+        assert_eq!(g.player(me).palace_level > 0, score >= need);
+        g.player_mut(me).palace_level = 0;
+        g.player_mut(me).peace_turns = 30;
+        g.set_turn(250);
+        assert!(g.score(me).total >= need);
+        g.palace_growth_check();
+        assert_eq!(g.player(me).palace_level, 1);
+        assert!(g.take_events().contains(&GameEvent::PalaceAddition(me)));
+        g.options.palace = false;
+        g.player_mut(me).palace_level = 0;
+        g.palace_growth_check();
+        assert_eq!(g.player(me).palace_level, 0);
     }
 
     #[test]

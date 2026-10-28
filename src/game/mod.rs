@@ -220,6 +220,10 @@ pub struct Game {
     /// The human has confirmed an attack below full strength (`MoveOutcome::WeakAttack`).
     #[serde(skip)]
     pub weak_attack_ok: bool,
+    /// The human's gold when the last *TAXES check ran (`treasury_warning`; CIV.EXE keeps the
+    /// gold of the `game_turn` start at [bp-0x1a]); none after a load. Not saved.
+    #[serde(skip)]
+    pub taxes_mark: Option<i32>,
     /// The global warming counter ds:0xb1ea (0..99): one step a turn towards twice the
     /// polluted squares minus four per warming so far (`global_warming_check`); stored after
     /// the game body in version-9 saves.
@@ -389,6 +393,7 @@ impl Game {
             diplo_latch: -1,
             treaty_break_ok: None,
             weak_attack_ok: false,
+            taxes_mark: None,
             warming_counter: 0,
             first_discoverer: vec![0; 72],
             historian_timer: 80 + historian,

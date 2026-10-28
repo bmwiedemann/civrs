@@ -117,8 +117,7 @@ pub enum GameEvent {
     Revolution { slot: Slot },
     AnarchyEnded { slot: Slot },
     GovernmentChanged { slot: Slot, govt: Govt },
-    /// No longer produced (buildings that cannot be paid for are sold); kept so that older
-    /// saves with one pending still load.
+    /// The *TAXES warning: the treasury is low and shrinking (`Game::treasury_warning`).
     LowFunds { slot: Slot },
     ImprovementSold { city: CityId, improvement: u8, gold: i32 },
     SpaceshipLaunched(Slot),
