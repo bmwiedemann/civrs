@@ -594,25 +594,33 @@ impl Game {
         self.owner_has_wonder(slot, rules::wonder_ids::LIGHTHOUSE) || self.owner_has_wonder(slot, rules::wonder_ids::MAGELLANS_EXPEDITION)
     }
 
-    /// Every unit of `slot` looks around (unit_look 0x41e3), as move_units' loop does each
-    /// time it is entered: at the start of the civilization's turn, and for the human after a
-    /// saved game is loaded.
+    /// Every unit of `slot` looks around (unit_look 0x41e3), as move_units' loop does at the
+    /// start of a computer civilization's turn. The human's units look one by one as his
+    /// loop comes to them (`Game::next_active_unit`).
     pub fn units_look_around(&mut self, slot: super::Slot) {
-        let looking: Vec<(UnitId, (i32, i32))> = self.all_units().filter(|u| u.owner == slot).map(|u| (u.id, u.pos())).collect();
-        for (id, (x, y)) in looking {
-            self.reveal_garrisons_near(slot, x, y);
-            self.mark_sightings(id);
-            self.look_for_contacts(id);
-            self.unit_look_goals(id);
+        let looking: Vec<UnitId> = self.all_units().filter(|u| u.owner == slot).map(|u| u.id).collect();
+        for id in looking {
+            self.unit_look(id);
         }
+    }
+
+    /// `unit_look` (0x8038) of one unit: the garrisons of the foreign cities next to it come
+    /// out, it sees and is seen, meets other civilizations and notes its civ's goals.
+    pub fn unit_look(&mut self, id: UnitId) {
+        let Some((slot, x, y)) = self.unit_opt(id).map(|u| (u.owner, u.x, u.y)) else { return };
+        self.reveal_garrisons_near(slot, x, y);
+        self.mark_sightings(id);
+        self.look_for_contacts(id);
+        self.unit_look_goals(id);
     }
 
     /// Reset movement points at the start of a player's turn; handles fortify completion.
     ///
     /// CIV.EXE's unit loop at the start of a civilization's turn (0x4174..0x4327) also looks
     /// around with every unit (unit_look 0x41e3, which lets out the garrison of a foreign city
-    /// next to it) and, for a unit that finishes fortifying in a city: a computer's unit is
-    /// rehomed to a city of size 3 or more (0x42a4), and a unit fortified in its home city
+    /// next to it; the human's units look in his loop, `next_active_unit`) and, for a unit
+    /// that finishes fortifying in a city: a computer's unit is rehomed to a city of size 3
+    /// or more (0x42a4), and a unit fortified in its home city
     /// stashes the city's garrison when no foreign unit is next to it (0x42b2..0x431f).
     pub fn reset_moves(&mut self, slot: super::Slot) {
         let extra_sea_move = self.extra_sea_move(slot);
@@ -636,7 +644,10 @@ impl Game {
                 u.order = UnitOrder::None;
             }
         }
-        self.units_look_around(slot);
+        // the human's units look as his loop comes to them (0x41b7, `next_active_unit`)
+        if slot != self.human_slot {
+            self.units_look_around(slot);
+        }
         for id in fortified {
             // an earlier stash may have taken the unit off the map already
             let Some((x, y)) = self.unit_opt(id).map(|u| u.pos()) else { continue };
@@ -1059,7 +1070,7 @@ mod tests {
 #[cfg(test)]
 mod zoc_tests {
     use crate::game::map::Dir8;
-    use crate::game::{Game, GameSetup, MoveOutcome, RuleError};
+    use crate::game::{Game, GameSetup, MoveOutcome, RuleError, UnitOrder};
     use crate::rules::{unit_ids, Terrain};
 
     /// A human Legion at (40,25) on open grassland, the units of everyone else removed.
@@ -1205,6 +1216,66 @@ mod zoc_tests {
         let near = g.add_city(other, "Near".into(), 38, 22);
         assert_eq!(g.city_size_shown(near), Some(1));
         let _ = mine;
+    }
+
+    #[test]
+    fn the_human_s_loop_moves_gotos_and_looks_as_it_comes_to_each_unit() {
+        // move_units 0x41b7: each unit looks as the loop passes its record, until the first
+        // Settlers waits (0x45c9); a goto moves when the loop takes it (0x44b3 -> 0x4bbe)
+        let (mut g, a) = open_field();
+        let me = g.human_slot;
+        let other = if me == 2 { 3 } else { 2 };
+        let b = g.add_unit(me, unit_ids::MILITIA, 36, 22);
+        g.set_goto(b, 37, 22);
+        let c = g.add_unit(me, unit_ids::MILITIA, 43, 27);
+        g.unit_mut(c).order = UnitOrder::Fortified;
+        let d = g.add_unit(me, unit_ids::SETTLERS, 38, 24);
+        let e = g.add_unit(me, unit_ids::MILITIA, 37, 27);
+        assert_eq!([a, b, c, d, e].map(|u| g.unit(u).record), [0, 1, 2, 3, 4]);
+        let near_c = g.add_city(other, "Far".into(), 44, 27);
+        let near_e = g.add_city(other, "Near".into(), 36, 27);
+        g.city_mut(near_c).size = 4;
+        // (on turn 0 the first unit waiting closes the latch, FIRSTMOVE 0x4599)
+        g.turn = 1;
+        g.reset_unit_loop();
+        g.view = Some(Game::view_centred_on(40, 25));
+        g.active_unit = None;
+        assert_eq!(g.next_active_unit(), Some(a));
+        g.unit_mut(a).moves_left = 0;
+        g.active_unit = Some(a);
+        assert_eq!(g.next_active_unit(), Some(b), "the goto comes in record order");
+        assert!(g.is_auto_unit(b));
+        assert_eq!(g.unit(b).pos(), (36, 22), "and has not moved before");
+        assert_eq!(g.city_size_shown(near_c), None, "c has not looked yet");
+        assert_eq!(g.run_auto_unit(b), crate::game::AutoStop::Done);
+        assert_eq!((g.unit(b).pos(), g.unit(b).order), ((37, 22), UnitOrder::None));
+        g.unit_mut(b).moves_left = 0;
+        g.active_unit = Some(b);
+        assert_eq!(g.next_active_unit(), Some(d));
+        assert_eq!(g.city_size_shown(near_c), Some(4), "the fortified unit looked as the loop passed it");
+        assert!(g.unit_loop.looks_done, "the Settlers closed the latch");
+        g.unit_mut(d).moves_left = 0;
+        g.active_unit = Some(d);
+        assert_eq!(g.next_active_unit(), Some(e));
+        assert_eq!(g.city_size_shown(near_e), None, "no look after the Settlers waited");
+    }
+
+    #[test]
+    fn an_aircraft_returning_to_base_is_taken_outside_the_view() {
+        // bit 0x02 skips the view test (0x4345 -> 0x43f4): no centring, no new mark
+        let (mut g, a) = open_field();
+        let me = g.human_slot;
+        g.turn = 1;
+        let f = g.add_unit(me, unit_ids::FIGHTER, 45, 30);
+        g.unit_mut(f).order = UnitOrder::Home;
+        g.unit_mut(a).moves_left = 0;
+        g.reset_unit_loop();
+        let view = Game::view_centred_on(40, 25);
+        g.view = Some(view);
+        g.active_unit = None;
+        assert_eq!(g.next_active_unit(), Some(f));
+        assert!(g.is_auto_unit(f));
+        assert_eq!((g.view, g.unit_loop.mark), (Some(view), 127));
     }
 
     #[test]

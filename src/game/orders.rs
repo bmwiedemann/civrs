@@ -11,7 +11,7 @@
 
 use super::map::{tile_flags, Map, UnitId, CityId};
 use super::unit::UnitOrder;
-use super::{Game, RuleError};
+use super::{AutoStop, Game, RuleError};
 use crate::rules::{self, unit_ids, Terraform, Terrain};
 
 impl UnitOrder {
@@ -382,19 +382,76 @@ impl Game {
         Some(super::Dir8::ALL[k - 1])
     }
 
-    /// The human's aircraft in return-to-base mode flies on while it has moves: the unit loop
-    /// presses 'h' for it again after every step (0x4556) until it lands (0x6c96, 0x6cea),
-    /// runs out of moves or has no base left. The map view does this in `run_goto`.
-    pub fn fly_home(&mut self, id: UnitId) {
+    /// Move the human's unit `id` along its goto as far as its moves allow, or fly an aircraft
+    /// in return-to-base mode on, the unit loop pressing 'h' for it before every step (0x4528
+    /// ..0x4556, `press_home`), as the loop does when it comes to the unit (0x4bbe, 0x6d7f ->
+    /// 0x442c while it has moves). A goto ends at its square, when no step is left or a step
+    /// fails; a step that needs the player's answer (a caravan at one of his cities, a
+    /// Diplomat at a foreign city or unit) ends it too and comes back as `AutoStop::Menu`.
+    /// A unit stuck with its order and moves stops for the turn (civrs: CIV.EXE's loop would
+    /// press the key again, 0x6d7f -> 0x442c).
+    pub fn run_auto_unit(&mut self, id: UnitId) -> AutoStop {
+        use super::MoveOutcome as M;
+        let mut stop = AutoStop::Done;
         for _ in 0..40 {
             let Some(u) = self.unit_opt(id) else { break };
-            if u.order != UnitOrder::Home || u.moves_left == 0 {
+            if !matches!(u.order, UnitOrder::Goto | UnitOrder::Home) || u.moves_left == 0 {
                 break;
             }
-            let Some(d) = self.press_home(id) else { break };
-            if !matches!(self.try_move(id, d), Ok(super::MoveOutcome::Moved) | Ok(super::MoveOutcome::EnteredHut)) {
-                break;
+            let dest = u.goto;
+            if u.order == UnitOrder::Home {
+                let Some(dir) = self.press_home(id) else { break };
+                if !matches!(self.try_move(id, dir), Ok(M::Moved) | Ok(M::EnteredHut)) {
+                    break;
+                }
+                self.view_follows(id);
+                continue;
             }
+            let Some(dir) = self.next_goto_step(id) else {
+                self.clear_goto(id);
+                break;
+            };
+            match self.try_move(id, dir) {
+                Ok(M::Moved) | Ok(M::Boarded(_)) => {
+                    self.view_follows(id);
+                    if self.unit_opt(id).is_some_and(|u| Some(u.pos()) == dest) {
+                        self.clear_goto(id);
+                    }
+                }
+                Ok(M::EnteredHut) => self.view_follows(id),
+                // the move routine asks a Diplomat on goto as it asks one moved by hand, and
+                // cancels the goto (0x5c15 into o 0x1d575, 0x5dc1)
+                Ok(out @ (M::CaravanArrived(_) | M::EnteredForeignCity(_) | M::BribeOffer(_))) => {
+                    self.clear_goto(id);
+                    stop = AutoStop::Menu(out, dir);
+                    break;
+                }
+                Ok(_) | Err(_) => {
+                    if self.unit_opt(id).is_some() {
+                        self.clear_goto(id);
+                    }
+                    break;
+                }
+            }
+        }
+        // a unit that could not go on keeps its order for the next turn (the loop would only
+        // come back to it), but one on a city's square has arrived
+        if let Some(u) = self.unit_opt(id).filter(|u| matches!(u.order, UnitOrder::Goto | UnitOrder::Home) && u.moves_left > 0) {
+            if self.city_at(u.x, u.y).is_some() {
+                self.clear_goto(id);
+                self.unit_mut(id).order = UnitOrder::None;
+            } else {
+                self.unit_mut(id).moves_left = 0;
+            }
+        }
+        stop
+    }
+
+    /// The human's view keeps his moving unit in sight (`scroll_to` 0x9505 on the square it
+    /// moves to, 0x6761).
+    fn view_follows(&mut self, id: UnitId) {
+        if let (Some(u), Some(view)) = (self.unit_opt(id), self.view) {
+            self.view = Some(Self::view_scrolled_to(view, u.x, u.y));
         }
     }
 
@@ -508,11 +565,6 @@ impl Game {
     /// Settlers job (flags 0xc2) gives back the full moves, then every order but the veteran
     /// bits is cleared (flags &= 0x30) and so is the goto.
     pub fn wake_picked_unit(&mut self, id: UnitId) {
-        // the loop goes on from the picked unit, which is the new mark (0x4b29..0x4b36)
-        let rec = self.unit(id).record & 127;
-        self.unit_loop.last = rec;
-        self.unit_loop.mark = rec.wrapping_sub(1) & 127;
-        self.unit_loop.round = false;
         let u = self.unit_mut(id);
         if matches!(u.order, UnitOrder::Road | UnitOrder::Irrigate | UnitOrder::Mine | UnitOrder::Fortress | UnitOrder::CleanPollution) {
             u.moves_left = u.full_moves();
@@ -520,6 +572,17 @@ impl Game {
         u.order = UnitOrder::None;
         u.order_turns = 0;
         u.goto = None;
+        self.pick_unit(id);
+    }
+
+    /// The unit taken from the map's stack box becomes the loop's unit (0x4b29..0x4b36): the
+    /// loop goes on from it, it is the new mark, and it waits for orders (`unit_waits`).
+    pub fn pick_unit(&mut self, id: UnitId) {
+        let rec = self.unit(id).record & 127;
+        self.unit_loop.last = rec;
+        self.unit_loop.mark = rec.wrapping_sub(1) & 127;
+        self.unit_loop.round = false;
+        self.unit_waits(id);
     }
 
     pub fn skip_unit(&mut self, id: UnitId) {
@@ -675,7 +738,7 @@ mod tests {
         assert_eq!(g.unit(m).order, UnitOrder::None);
         assert!(g.press_home(f).is_some());
         assert_eq!(g.unit(f).order, UnitOrder::Home);
-        g.fly_home(f);
+        assert_eq!(g.run_auto_unit(f), crate::game::AutoStop::Done);
         assert_eq!((g.unit(f).pos(), g.unit(f).order, g.unit(f).moves_left), ((30, 20), UnitOrder::None, 0));
         g.unit_mut(f).home = None;
         g.press_home(f);

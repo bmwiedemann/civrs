@@ -1226,6 +1226,23 @@ mod tests {
     }
 
     #[test]
+    fn breaking_a_treaty_by_attacking_brings_the_foreign_ministers_note() {
+        // senate_check_attack 0x1a3b4 leaves the treaty; the fight ends it with "<D> cancel
+        // peace treaty with <A>." (0x19f2c, speaker 5)
+        let mut g = flat_game();
+        let h = g.human_slot;
+        let foe = if h == 1 { 2 } else { 1 };
+        g.set_relation(h, foe, Relation::Peace);
+        g.add_unit(foe, unit_ids::PHALANX, 11, 10);
+        let a = g.add_unit(h, unit_ids::LEGION, 10, 10);
+        g.treaty_break_ok = Some(foe);
+        let _ = g.take_events();
+        assert!(matches!(g.try_move(a, crate::game::Dir8::E), Ok(MoveOutcome::Attacked { .. })));
+        assert!(g.take_events().iter().any(|e| matches!(e, crate::game::GameEvent::TreatyBroken { by, victim } if *by == h && *victim == foe)));
+        assert!(!g.treaty(h, foe) && !g.treaty(foe, h));
+    }
+
+    #[test]
     fn a_city_losing_its_last_defender_wakes_the_computer_units_around() {
         // 0x1a13a..0x1a1c2: reset_unit (0x93ef) on every non-human stack of the 3x3 square
         let mut g = flat_game();

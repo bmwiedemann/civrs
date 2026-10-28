@@ -1,7 +1,7 @@
 //! The main map screen: viewport, menu bar, sidebar, unit orders and end-of-turn processing.
 
 use crate::game::turn::{TurnRunner, TurnStep};
-use crate::game::{tile_flags, Decision, Dir8, Map, MoveOutcome, UnitId, UnitOrder};
+use crate::game::{tile_flags, AutoStop, Decision, Dir8, Map, MoveOutcome, UnitId, UnitOrder};
 use crate::gfx::text::{draw_text, draw_text_centered};
 use crate::gfx::{Rect, Surface, TextStyle};
 use crate::platform::{Event, Key, MouseButton};
@@ -320,6 +320,19 @@ impl MapView {
         let g = ctx.game_mut();
         g.view = Some((self.vx, self.vy));
         g.active_unit = next(g);
+        self.adopt_active(ctx);
+    }
+
+    /// The active unit still has its turn: the human's, with moves, waiting for orders or
+    /// moving by itself.
+    fn active_takes_turn(&self, ctx: &UiContext) -> bool {
+        let g = ctx.game();
+        g.active_unit.and_then(|a| g.unit_opt(a)).is_some_and(|u| u.owner == g.human_slot && u.moves_left > 0 && matches!(u.order, UnitOrder::None | UnitOrder::Goto | UnitOrder::Home))
+    }
+
+    /// Follow the game's choice of the active unit and its view.
+    fn adopt_active(&mut self, ctx: &mut UiContext) {
+        let g = ctx.game_mut();
         if let Some((vx, vy)) = g.view {
             self.vx = vx;
             self.vy = vy;
@@ -351,6 +364,8 @@ impl MapView {
         for _ in 0..200 {
             let step = {
                 let g = ctx.game.as_mut().expect("game");
+                // the human's loop starts in the view as it stands (move_units 0x434f)
+                g.view = Some((self.vx, self.vy));
                 runner.step(g, &mut ctx.ai)
             };
             match step {
@@ -361,7 +376,7 @@ impl MapView {
                         self.pending = Pending::Event;
                         return Transition::Push(Box::new(crate::ui::loadgame::SlotPage::autosave(slot)));
                     }
-                    return self.continue_gotos(ctx);
+                    return Transition::None;
                 }
                 TurnStep::Decision(d) => {
                     self.current_decision = Some(d.clone());
@@ -407,9 +422,9 @@ impl MapView {
             let _ = crate::save::save_game(&path, ctx.game());
         }
         self.last_centered = None;
-        // the turn's units start again from the first record (move_units 0x4149)
-        ctx.game_mut().active_unit = None;
-        self.activate_next(ctx);
+        // the turn's loop has started from the first record (move_units 0x4149) and taken
+        // its first unit (`Phase::HumanStart`); one that moves by itself goes on in `update`
+        self.adopt_active(ctx);
     }
 
     fn unit_order(&mut self, ctx: &mut UiContext, o: UnitOrder) -> Transition {
@@ -1039,79 +1054,29 @@ impl MapView {
     /// Move a unit along its goto path as far as its moves allow; an aircraft returning to
     /// base flies on the same way, the unit loop pressing 'h' for it before every step
     /// (CIV.EXE 0x4528..0x4556, `Game::press_home`).
+    /// `Game::run_auto_unit` for the active unit `id`, with the menus a step may open; then
+    /// the unit keeps the focus when it has moves left without an order (0x6d7f -> 0x442c),
+    /// or the loop goes on.
     fn run_goto(&mut self, ctx: &mut UiContext, id: UnitId) -> Transition {
-        for _ in 0..40 {
-            let g = ctx.game();
-            let Some(u) = g.unit_opt(id) else { break };
-            if !matches!(u.order, UnitOrder::Goto | UnitOrder::Home) || u.moves_left == 0 {
-                break;
-            }
-            let dest = u.goto;
-            if u.order == UnitOrder::Home {
-                let Some(dir) = ctx.game_mut().press_home(id) else { break };
-                // a step that fails keeps the mode (bit 0x02 stays) for the next turn
-                if !matches!(ctx.game_mut().try_move(id, dir), Ok(MoveOutcome::Moved) | Ok(MoveOutcome::EnteredHut)) {
-                    break;
-                }
-                continue;
-            }
-            let Some(dir) = ctx.game_mut().next_goto_step(id) else {
-                let g = ctx.game_mut();
-                g.unit_mut(id).order = UnitOrder::None;
-                g.unit_mut(id).goto = None;
-                break;
-            };
-            let r = ctx.game_mut().try_move(id, dir);
-            match r {
-                Ok(MoveOutcome::Moved) | Ok(MoveOutcome::Boarded(_)) => {
-                    let g = ctx.game_mut();
-                    if let Some(u) = g.unit_opt(id) {
-                        if Some(u.pos()) == dest {
-                            g.unit_mut(id).order = UnitOrder::None;
-                            g.unit_mut(id).goto = None;
-                        }
-                    }
-                }
-                Ok(MoveOutcome::EnteredHut) => {}
-                Ok(MoveOutcome::CaravanArrived(c)) => {
-                    let g = ctx.game_mut();
-                    g.unit_mut(id).order = UnitOrder::None;
-                    g.unit_mut(id).goto = None;
-                    g.active_unit = Some(id);
-                    return self.caravan_menu(ctx, id, c, dir);
-                }
-                // the move routine asks a Diplomat on goto as it asks one moved by hand, and
-                // cancels the goto (0x5c15 into o 0x1d575, 0x5dc1)
-                Ok(MoveOutcome::EnteredForeignCity(c)) => {
-                    let g = ctx.game_mut();
-                    g.unit_mut(id).order = UnitOrder::None;
-                    g.unit_mut(id).goto = None;
-                    g.active_unit = Some(id);
-                    return self.foreign_city_menu(ctx, id, c);
-                }
-                Ok(MoveOutcome::BribeOffer(t)) => {
-                    let g = ctx.game_mut();
-                    g.unit_mut(id).order = UnitOrder::None;
-                    g.unit_mut(id).goto = None;
-                    g.active_unit = Some(id);
-                    return self.bribe_offer(ctx, id, t, dir);
-                }
-                Ok(_) | Err(_) => {
-                    let g = ctx.game_mut();
-                    if let Some(u) = g.unit_opt(id) {
-                        let _ = u;
-                        g.unit_mut(id).order = UnitOrder::None;
-                        g.unit_mut(id).goto = None;
-                    }
-                    break;
-                }
+        let g = ctx.game_mut();
+        g.active_unit = Some(id);
+        g.view = Some((self.vx, self.vy));
+        let stop = g.run_auto_unit(id);
+        if let Some((vx, vy)) = g.view {
+            (self.vx, self.vy) = (vx, vy);
+        }
+        if let AutoStop::Menu(out, dir) = stop {
+            match out {
+                MoveOutcome::CaravanArrived(c) => return self.caravan_menu(ctx, id, c, dir),
+                MoveOutcome::EnteredForeignCity(c) => return self.foreign_city_menu(ctx, id, c),
+                MoveOutcome::BribeOffer(t) => return self.bribe_offer(ctx, id, t, dir),
+                _ => {}
             }
         }
-        // a unit that ends its goto with moves left keeps the focus
         let g = ctx.game_mut();
         let keep = g.unit_opt(id).is_some_and(|u| u.owner == g.human_slot && u.order == UnitOrder::None && u.moves_left > 0);
         if keep {
-            g.active_unit = Some(id);
+            g.unit_waits(id);
         }
         if let Some(s) = self.next_event_screen(ctx) {
             self.pending = Pending::Event;
@@ -1123,24 +1088,7 @@ impl MapView {
             self.last_centered = Some(id);
             self.mode = Mode::Normal;
         } else {
-            // at the turn's start a unit kept by an earlier goto stays in focus
-            let g = ctx.game();
-            let idle = g.active_unit.and_then(|a| g.unit_opt(a)).is_some_and(|u| u.owner == g.human_slot && u.order == UnitOrder::None && u.moves_left > 0);
-            if !idle {
-                self.activate_next(ctx);
-            }
-        }
-        Transition::None
-    }
-
-    /// Continue goto orders and returns to base of all units at the start of the human turn.
-    fn continue_gotos(&mut self, ctx: &mut UiContext) -> Transition {
-        let ids: Vec<UnitId> = ctx.game().all_units().filter(|u| u.owner == ctx.game().human_slot && matches!(u.order, UnitOrder::Goto | UnitOrder::Home) && u.moves_left > 0).map(|u| u.id).collect();
-        for id in ids {
-            let t = self.run_goto(ctx, id);
-            if !matches!(t, Transition::None) {
-                return t;
-            }
+            self.activate_next(ctx);
         }
         Transition::None
     }
@@ -1454,12 +1402,24 @@ impl Screen for MapView {
                 return Transition::Push(s);
             }
         }
+        if self.mode == Mode::Processing {
+            return self.process(ctx);
+        }
+        if matches!(self.pending, Pending::None) && self.runner.is_none() {
+            // what the loop's looks brought (an audience, 0x41e3 -> civs_meet), then the unit
+            // it came to moves if it moves by itself (0x44b3)
+            if !ctx.game().events.is_empty() {
+                return self.show_events(ctx);
+            }
+            if self.mode == Mode::Normal {
+                if let Some(id) = ctx.game().active_unit.filter(|id| ctx.game().is_auto_unit(*id)) {
+                    return self.run_goto(ctx, id);
+                }
+            }
+        }
         if let Some(s) = self.settler_advice(ctx) {
             self.pending = Pending::Event;
             return Transition::Push(s);
-        }
-        if self.mode == Mode::Processing {
-            return self.process(ctx);
         }
         if ctx.quit_requested {
             ctx.quit_requested = false;
@@ -1516,15 +1476,12 @@ impl Screen for MapView {
                     self.pending = Pending::Event;
                     return Transition::Push(s);
                 }
-                if self.mode == Mode::Processing {
-                    Transition::None
-                } else {
-                    let t = self.continue_gotos(ctx);
-                    if matches!(t, Transition::None) && ctx.game().active_unit.is_none() {
-                        self.activate_next(ctx);
-                    }
-                    t
+                // the loop goes on once the active unit is done (a unit that moves by itself
+                // goes on in `update`)
+                if self.mode != Mode::Processing && !self.active_takes_turn(ctx) {
+                    self.activate_next(ctx);
                 }
+                Transition::None
             }
             Pending::BarMenu(i) => match result {
                 DialogResult::Choice(c) => self.bar_menu_choice(ctx, i, c),
@@ -1537,6 +1494,7 @@ impl Screen for MapView {
                     let id = i as UnitId;
                     let g = ctx.game_mut();
                     if g.unit_opt(id).is_some() && !matches!(g.unit(id).order, UnitOrder::Sentry | UnitOrder::Fortified) {
+                        g.pick_unit(id);
                         g.active_unit = Some(id);
                         self.mode = Mode::Normal;
                     }
@@ -1896,7 +1854,8 @@ impl MapView {
         }
         let id = ctx.game().active_unit?;
         let turn = ctx.game().turn;
-        if self.advice_turn == Some(turn) {
+        // only a unit that waits for orders (0x455e); one on goto moves first
+        if self.advice_turn == Some(turn) || ctx.game().unit_opt(id)?.order != UnitOrder::None {
             return None;
         }
         let e = if turn == 0 {

@@ -32,7 +32,7 @@
 //! item) is an error: the script and the two games disagree before any state is compared.
 
 use crate::game::turn::CaravanAction;
-use crate::game::{Dir8, Game, MoveOutcome, Specialist, UnitOrder};
+use crate::game::{AutoStop, Dir8, Game, MoveOutcome, Specialist, UnitOrder};
 use crate::rules;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -106,9 +106,39 @@ pub fn parse(text: &str) -> Result<Vec<(u32, Action)>, String> {
     Ok(out)
 }
 
-/// The next unit wanting orders, as the map view's `activate_next`.
-fn activate_next(g: &mut Game) {
+/// The next unit wanting orders, as the map view's `activate_next`; the units the loop meets
+/// on its way that move by themselves move (`run_autos`).
+fn activate_next(g: &mut Game) -> Result<(), String> {
     g.active_unit = g.next_active_unit();
+    run_autos(g)
+}
+
+/// While the loop's unit moves by itself (a goto, an aircraft returning to base), move it
+/// and go on, as the map view's `update` does (`MapView::run_goto`); the audiences the
+/// units' looks bring get their first answer, as `--dump state` answers the turn's
+/// decisions.
+fn run_autos(g: &mut Game) -> Result<(), String> {
+    loop {
+        settle(g);
+        let Some(id) = g.active_unit.filter(|id| g.is_auto_unit(*id)) else { return Ok(()) };
+        if let AutoStop::Menu(out, _) = g.run_auto_unit(id) {
+            return Err(format!("the goto of the unit at {:?} opens a menu: {out:?}", g.unit(id).pos()));
+        }
+        if g.unit_opt(id).is_some_and(|u| u.order == UnitOrder::None && u.moves_left > 0) {
+            g.unit_waits(id);
+        } else {
+            g.active_unit = g.next_active_unit();
+        }
+    }
+}
+
+/// Answer the decisions among the new events with their first choice; the rest go.
+fn settle(g: &mut Game) {
+    for e in g.take_events() {
+        if let crate::game::GameEvent::NeedsDecision(d) = e {
+            g.apply_decision(&d, crate::game::DecisionReply::Choice(0));
+        }
+    }
 }
 
 /// Perform one action for the human, as the map view and the city screen do on its keys.
@@ -227,8 +257,7 @@ fn check(name: &str, expect: &Option<String>) -> Result<(), String> {
 fn unit_key(g: &mut Game, id: crate::game::UnitId, k: &str) -> Result<(), String> {
     let order = |g: &mut Game, o: UnitOrder| -> Result<(), String> {
         g.give_order(id, o).map_err(|e| e.message().to_string())?;
-        activate_next(g);
-        Ok(())
+        activate_next(g)
     };
     if let Some(n) = k.strip_prefix('k') {
         // kN:ROW answers the menu the move opens with its row
@@ -279,22 +308,21 @@ fn unit_key(g: &mut Game, id: crate::game::UnitId, k: &str) -> Result<(), String
             g.view = Some(Game::view_scrolled_to(view, u.x, u.y));
         }
         if g.unit_opt(id).map(|u| u.moves_left == 0 || u.order != UnitOrder::None).unwrap_or(true) {
-            activate_next(g);
+            activate_next(g)?;
         }
         return Ok(());
     }
     match k {
         "space" => {
             g.skip_unit(id);
-            activate_next(g);
-            Ok(())
+            activate_next(g)
         }
         "w" => {
             g.wait_unit(id);
             if g.active_unit.is_none() {
                 g.active_unit = Some(id);
             }
-            Ok(())
+            run_autos(g)
         }
         "f" => order(g, UnitOrder::Fortify),
         "s" => order(g, UnitOrder::Sentry),
@@ -305,29 +333,28 @@ fn unit_key(g: &mut Game, id: crate::game::UnitId, k: &str) -> Result<(), String
         "P" => order(g, UnitOrder::Pillage),
         "b" => {
             g.found_city(id).map_err(|e| e.message().to_string())?;
-            activate_next(g);
-            Ok(())
+            activate_next(g)
         }
         "h" => {
+            // an aircraft elsewhere flies home at once (MapView::run_goto)
             if g.press_home(id).is_some() {
-                g.fly_home(id);
+                g.run_auto_unit(id);
             }
             if g.unit_opt(id).map(|u| u.moves_left == 0 || u.order != UnitOrder::None).unwrap_or(true) {
-                activate_next(g);
+                activate_next(g)?;
             }
             Ok(())
         }
         // 'D' deletes the unit at once (0x4c5a)
         "D" => {
             g.disband(id);
-            activate_next(g);
-            Ok(())
+            activate_next(g)
         }
         "u" => {
             if let Some(next) = g.unload(id) {
                 g.active_unit = g.next_active_unit_at(next);
             }
-            Ok(())
+            run_autos(g)
         }
         _ => Err(format!("unknown unit key {k}")),
     }
@@ -335,13 +362,20 @@ fn unit_key(g: &mut Game, id: crate::game::UnitId, k: &str) -> Result<(), String
 
 /// Play `turns` turns from an imported save with the script's actions at the start of the
 /// human's turns, the rest as `--dump state:N` plays them (decisions get their first choice).
+/// After the actions every unit still waiting gets a Space, as the harness presses it until
+/// the turn ends, so the loop goes through the units that move by themselves.
 pub fn play(g: &mut Game, ai: &mut crate::ai::Ai, actions: &[(u32, Action)], turns: u32) -> Result<(), String> {
     use crate::game::turn::TurnStep;
+    run_autos(g)?;
     for _ in 0..turns {
         let turn = g.turn;
         for (_, a) in actions.iter().filter(|(t, _)| *t == turn) {
             apply(g, a).map_err(|e| format!("turn {}: {a:?}: {e}", g.turn))?;
-            let _ = g.take_events();
+            settle(g);
+        }
+        while let Some(id) = g.active_unit {
+            g.skip_unit(id);
+            activate_next(g)?;
         }
         let mut r = g.end_turn();
         loop {
@@ -351,9 +385,8 @@ pub fn play(g: &mut Game, ai: &mut crate::ai::Ai, actions: &[(u32, Action)], tur
                 _ => {}
             }
         }
-        let _ = g.take_events();
-        g.active_unit = None;
-        activate_next(g);
+        // the turn's loop has taken its first unit (`Phase::HumanStart`)
+        run_autos(g)?;
     }
     Ok(())
 }

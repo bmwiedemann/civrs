@@ -646,12 +646,12 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
     // a loaded game resumes game_turn at the human's civ (ds:0xdf60 != 0 skips the civs
     // before him and his cities, 0x2614, 0x2503): his politics (0x252b), ai_civ_turn with his
     // census and policies (0x2536), ai_reset_goals (0x2541), the peaceful turns (0x259a),
-    // then move_units, whose loop has each of his units look around (unit_look 0x41e3: a
-    // foreign city next to one shows him its size, city +8)
+    // then move_units, whose loop has each of his units look around as it comes to them
+    // (unit_look 0x41e3: a foreign city next to one shows him its size, city +8;
+    // `Game::next_active_unit`)
     g.process_player_turn_start(human);
     crate::ai::unit_ai::civ_turn(&mut g, human);
     g.reset_goals(human);
-    g.units_look_around(human);
     g.active_unit = None;
     g.reset_unit_loop();
     g.active_unit = g.next_active_unit();
