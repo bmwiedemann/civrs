@@ -156,18 +156,11 @@ pub fn read_header(path: &Path) -> Option<SlotInfo> {
 pub fn import(sve: &Path) -> Result<Game, SaveError> {
     let data = std::fs::read(sve)?;
     let map = std::fs::read(map_file(sve))?;
-    let mut g = import_bytes(&data, &map)?;
     // load_game sets ds:0xdf60 = 2 for the slots from 4 on (o 0xf0bc, slot ds:0xe168), and
     // then move_units (0x40c0) gives the human's units their full moves again, as at the start
     // of a turn; slots 0..3 (ds:0xdf60 = 1) keep the saved moves. Its loop then completes
     // the fortifications of the units it passes (0x4215..0x4243), as `next_active_unit` does.
-    if slot_of(sve).is_some_and(|n| n >= 4) {
-        let human = g.human_slot;
-        g.reset_moves(human);
-        g.active_unit = None;
-        g.reset_unit_loop();
-        g.active_unit = g.next_active_unit();
-    }
+    let g = import_slot(&data, &map, slot_of(sve).is_some_and(|n| n >= 4))?;
     Ok(g)
 }
 
@@ -239,6 +232,13 @@ fn tile_bits(v: u8) -> u16 {
 }
 
 pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
+    import_slot(data, map_pic, false)
+}
+
+/// `import_bytes` for a save of a slot from 4 on when `moves_back`: the human's units get their
+/// full moves before the loop takes the first of them (0x40c0 runs for each unit as the loop
+/// starts, so a unit saved without moves can be the first).
+fn import_slot(data: &[u8], map_pic: &[u8], moves_back: bool) -> Result<Game, SaveError> {
     if data.len() < SVE_LEN {
         return Err(SaveError::Format(format!("a CIVILn.SVE has {SVE_LEN} bytes, this one {}", data.len())));
     }
@@ -275,9 +275,6 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
     g.year = s.w(off::YEAR) as i32;
     g.human_slot = human;
     g.opening = false;
-    // a loaded game starts with the map view at (capital x - 7, 19) (0x1bd4: ds:0xd4cc =
-    // ds:0xdcec[human] - 7, ds:0xd75e = 0x13), which decides the human's first unit (0x434f)
-    g.view = Some((Map::wrap_x(s.civ_w(off::CAPITAL_X, human as usize) as i32 - 7), 19));
     g.hints_shown = 0;
 
     // the map page
@@ -669,6 +666,10 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
     // a loaded game starts with the view at column ds:0xdcec[human] - 7 (the capital's x),
     // row 19 (0x1bd4..0x1bea), so the first unit is taken from that view
     g.view = Some((Map::wrap_x(s.civ_w(off::CAPITAL_X, human as usize) as i32 - 7), 19));
+    // the moves come back before the loop looks for the first unit (0x40c0)
+    if moves_back {
+        g.reset_moves(human);
+    }
     g.active_unit = None;
     g.reset_unit_loop();
     g.active_unit = g.next_active_unit();
@@ -906,6 +907,22 @@ mod tests {
         let Some(g0) = sample(0) else { return };
         let s = g0.all_units().find(|u| u.owner == g0.human_slot && u.kind == rules::unit_ids::SETTLERS).unwrap();
         assert_eq!(s.moves_left, 0, "slots 0..3 keep the saved moves");
+    }
+
+    #[test]
+    fn the_first_unit_after_a_load_counts_the_moves_given_back() {
+        // CIVIL4 with a Sail of the human's at 14,29 in record 1: 0x40c0 gives the Militia
+        // (record 0, saved without moves) its moves before the loop looks for a unit, so with
+        // neither in the view (5, 19) of the capital the loop's round takes the Militia
+        let Ok(dir) = crate::assets::AssetDir::locate(None) else { return };
+        let Some(path) = slot_file(dir.root(), 4) else { return };
+        let (mut data, map) = (std::fs::read(&path).unwrap(), std::fs::read(map_file(&path)).unwrap());
+        let at = off::UNITS + 0x600 + 12;
+        assert_eq!(data[at + 3], 0xff);
+        data[at..at + 12].copy_from_slice(&[0, 14, 29, rules::unit_ids::SAIL, 9, 0, 0xff, 0, 0xff, 0, 0xff, 0]);
+        let g = import_slot(&data, &map, true).unwrap();
+        let first = g.active_unit.map(|u| g.unit(u).kind);
+        assert_eq!(first, Some(rules::unit_ids::MILITIA));
     }
 
     #[test]
