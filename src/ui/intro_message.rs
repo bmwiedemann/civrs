@@ -43,9 +43,8 @@ fn advance_lines(names: &[&str]) -> Vec<String> {
 }
 
 impl Screen for LeaderIntro {
-    fn on_exit(&mut self, ctx: &mut UiContext) {
-        ctx.audio.fade_out();
-    }
+    /// The anthem plays on into the first map: game_turn fades it at turn 0 (0x24bf), after the
+    /// Chieftain screen-layout tutorial (see `MapView::update`).
     fn on_enter(&mut self, ctx: &mut UiContext) {
         ctx.audio.national_theme(ctx.game().human().civ, true);
         // random(2) in the original; the frame counter keeps headless renders repeatable

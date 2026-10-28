@@ -1324,13 +1324,15 @@ impl Screen for MapView {
             self.center_on(x, y);
         }
         // turn 0 on Chieftain: the screen-layout tutorial first (game_turn 0x2470 -> overlay 2
-        // +0x17d9), then the FIRSTMOVE note
+        // +0x17d9), then the FIRSTMOVE note. The leader's anthem fades after it (tune 1 at
+        // 0x24bf, on every level); on Chieftain the tutorial fades it as it closes.
         if self.first_turn_hint && !self.tutorial_shown {
             self.tutorial_shown = true;
             let g = ctx.game();
             if g.turn == 0 && g.setup.difficulty == crate::rules::Difficulty::Chieftain {
                 return Transition::Push(Box::new(LayoutTutorial::new(ctx, (Map::wrap_x(self.vx + 7), self.vy + 6))));
             }
+            ctx.audio.fade_out();
         }
         // then the civ loop of turn 0 up to the human (game_turn 0x24d7): the civilizations
         // before it move first
@@ -1924,6 +1926,10 @@ impl LayoutTutorial {
 }
 
 impl Screen for LayoutTutorial {
+    /// game_turn plays tune 1 (fade) once the tutorial returns (0x24bf).
+    fn on_exit(&mut self, ctx: &mut UiContext) {
+        ctx.audio.fade_out();
+    }
     fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
         match ev {
             Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } => Transition::Pop(DialogResult::Done),
