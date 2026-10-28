@@ -1342,9 +1342,10 @@ impl Game {
             p.govt = g;
             p.anarchy_turns = 0;
         }
-        if self.player(slot).human {
-            self.clamp_rates(slot);
-        } else {
+        // the human keeps its rates, above the new government's maximum too: set_government
+        // stores them for the computer only (0x14f3c skips 0x15042); the maximum is a rule of
+        // the rates dialog
+        if !self.player(slot).human {
             self.ai_government_rates(slot);
         }
         self.push_event(GameEvent::GovernmentChanged { slot, govt: g });
