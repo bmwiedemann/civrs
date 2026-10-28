@@ -97,7 +97,13 @@ pub fn draw_small_palace(fb: &mut Surface, ctx: &UiContext, palace: &Palace, x: 
 
 /// The whole picture: sky, road, palace and gardens (0x16761).
 pub fn draw_palace(fb: &mut Surface, ctx: &UiContext, p: &Palace) {
-    fb.blit(&ctx.pic("CBACK").surf, 0, 0);
+    draw_palace_on(fb, ctx, p, "CBACK");
+}
+
+/// The palace on the background `back`: CBACK.PIC, or SAD.PIC for palace_draw(1), the ruins a
+/// rival's spaceship arrival shows (o 0x16801).
+pub fn draw_palace_on(fb: &mut Surface, ctx: &UiContext, p: &Palace, back: &str) {
+    fb.blit(&ctx.pic(back).surf, 0, 0);
     if p.level[10] > 0 {
         fb.blit(&ctx.pic(&format!("CBACKS{}", p.level[10].min(3))).surf, 0, 135);
     }

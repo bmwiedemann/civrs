@@ -376,7 +376,16 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&P
                     None => civrs::ui::palace::palace_screen(&ctx, Vec::new()),
                 }
             }
-            "spaceship" => civrs::ui::spaceship_ui::arrival_screen(&ctx, 1),
+            // the arrival at Alpha Centauri (overlay 2 o 0x174c) of the human's ship
+            // (screen:spaceship) or a computer's (screen:arrival-ai): the approach takes 2560
+            // frames (CIVRS_FRAMES), then a line every 160
+            "spaceship" | "arrival-ai" => {
+                let g = ctx.game_mut();
+                let me = g.human_slot;
+                let slot = if parts[0] == "spaceship" { me } else { (1..8).find(|s| *s != me).unwrap() };
+                g.player_mut(slot).spaceship.launch_year = Some(g.year() - 15);
+                civrs::ui::spaceship_ui::arrival_screen(&ctx, slot)
+            }
             // the human's ship (a sample with every kind of part, one module unattached):
             // screen:ship:SEED:TURNS[:STEP] with STEP "confirm" (the launch question), "nation"
             // (the viewer's "Which nation?"), "launched", "notice" (ship_launch's text) or

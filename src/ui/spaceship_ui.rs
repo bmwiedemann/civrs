@@ -1,10 +1,11 @@
 //! Spaceship screens: the ship itself (CIV.EXE overlay 18: docker.pic parts on the grid, the
 //! statistics column, the LAUNCH button, the WORLD menu's "Which nation?" viewer and the
-//! launch / AI part notices), and the arrival: PLANET1.PIC starfield with the rotating planet
-//! (PLANET2.PIC frames), then the colony (SPACEST.PIC) with the KING.TXT SPACE (winner) /
-//! SPACE2 (rival) text.
+//! launch / AI part notices), and the arrival (overlay 2 o 0x174c): the PLANET1.PIC starfield
+//! sliding in with the rotating planet (PLANET2.PIC frames) and the KING.TXT SPACE (human) /
+//! SPACE2 (rival) text, ending on the colony (SPACEST.PIC) or, for a rival's ship, the
+//! human's palace in ruins (SAD.PIC).
 
-use crate::assets::text::{paragraphs, substitute, Vars};
+use crate::assets::text::{substitute_line, Vars};
 use crate::assets::Palette;
 use crate::game::spaceship::{self, PARTS, PLACEMENT};
 use crate::game::{Game, Slot};
@@ -13,119 +14,290 @@ use crate::gfx::{Rect, Surface, TextStyle};
 use crate::platform::{Event, Key};
 use crate::rules;
 use crate::ui::context::UiContext;
-use crate::ui::eventpics::{caption_colours, draw_caption_centred, Dismiss};
+use crate::ui::eventpics::Dismiss;
 use crate::ui::screen::{DialogResult, Screen, Transition};
 use crate::ui::widgets::MenuDialog;
 
-/// PLANET2.PIC: 6x4 frames of 49x49 in 50-px cells.
+/// PLANET2.PIC: 24 frames of 49x49 in 50-px cells, six to a row (o 0x1781..0x17c9).
 fn planet_frame(i: i32) -> Rect {
     Rect::new((i % 6) * 50 + 1, (i / 6) * 50 + 1, 49, 49)
 }
 
-#[derive(PartialEq)]
+/// Background colour of the approach on VGA (o 0x17d5..0x17e3; 0 on EGA).
+const VOID: u8 = 0xec;
+/// Ticks per scroll step (o 0x1c33).
+const STEP_TICKS: u32 = 8;
+/// Scroll steps: the scene slides in from the right one pixel per step (o 0x1c41).
+const STEPS: i32 = 320;
+/// A new line of the text every 22 steps (o 0x1cae).
+const LINE_STEPS: i32 = 22;
+/// The ending's lines: the marker pixel at (280, 32) is lit for 80 ticks, then dark for 80
+/// (o 0x1f8d..0x1fd1).
+const PAGE_TICKS: u32 = 80;
+/// Colour cycles of the human's colony (o 0x1e16..0x1ea3, cycle_define(slot, period, first,
+/// last)): (first, last, period in ticks).
+const COLONY_CYCLES: [(u8, u8, u64); 6] = [(0x10, 0x1f, 15), (0x20, 0x22, 100), (0x23, 0x28, 42), (0x29, 0x2f, 300), (0x30, 0x35, 60), (0x36, 0x3f, 37)];
+
+#[derive(PartialEq, Clone, Copy)]
 enum Phase {
+    /// The starfield and the planet slide in while the ship's dot crosses and the first lines
+    /// of the text appear in the strip at y 32.
     Approach,
-    Colony,
+    /// The rest of the text, a line at a time, at the top of the ending picture.
+    Lines,
+    /// All shown: a key or a click ends it.
+    Wait,
 }
 
+/// `spaceship_arrival(civ)` (overlay 2 o 0x174c), VGA path. The KING.TXT text (*SPACE for
+/// the human's ship, *SPACE2 for a rival's) is cut at its '^' marks: during the approach a
+/// new piece every 22 steps (the first is the empty line before the first '^'), the rest
+/// on the ending picture: the human's colony SPACEST.PIC with six colour cycles, or for a
+/// computer's ship the human's palace in ruins (palace_draw(1), o 0x16761: the palace on
+/// SAD.PIC, in SAD.PIC's palette). Neither phase reads the keyboard; the final key wait
+/// (0x13d7:0x91e) closes it.
 pub struct ArrivalScreen {
-    slot: Slot,
+    human_ship: bool,
     phase: Phase,
+    /// The original's page 1: PLANET1.PIC moved up 24 rows, with its stars at rows 56..79
+    /// copied to the strip at rows 176..199 that carries the text.
+    page: Surface,
+    screen: Surface,
+    /// The text (msgbuf) and the scan position in it.
+    text: Vec<u8>,
+    pos: i32,
+    start: i32,
+    step: i32,
+    ticks: u32,
+    /// [bp-0x242]: x of the ship's dot plus the step.
+    dot: i32,
+    /// [bp-0x208]: planet frame.
+    frame: i32,
+    /// Ticks since the colony's cycles started.
     t: u64,
-    title: Vec<String>,
-    story: Vec<String>,
     dismiss: Dismiss,
 }
 
 pub fn arrival_screen(ctx: &UiContext, slot: Slot) -> Box<dyn Screen> {
-    let mut title = vec!["A spaceship reaches Alpha Centauri!".to_string()];
-    let mut story = Vec::new();
+    let mut text = String::new();
+    let mut human_ship = true;
     if let Some(g) = ctx.game.as_ref() {
-        let me = g.human_slot;
-        title = vec![format!("The {} spaceship reaches Alpha Centauri!", g.civ_name(slot))];
+        human_ship = slot == g.human_slot;
         let s = g.player(slot).spaceship;
-        // launch year ds:0xe8a8, arrival year ds:0xde10, colonists ds:0xdeec (overlay 2 0x174c)
-        let launch = s.launch_year.unwrap_or_else(|| g.year());
-        let arrive = s.arrival_year.unwrap_or_else(|| g.year());
-        let habitation = g.spaceship_stats(slot).habitation();
+        // $US = the human's title and name (ds:0x19b2[govt], ds:0x19a2), $THEM the ship's
+        // nation's adjective, $BUCKS its colonists (habitation modules, ds:0xdeec), $RPLC1 the
+        // launch year ds:0xe8a8 and $RPLC2 this year ds:0xb220, as plain numbers (itoa)
         let v = Vars {
-            rplc1: crate::rules::year_text(launch),
-            rplc2: crate::rules::year_text(arrive),
-            us: g.human().leader.clone(),
+            rplc1: s.launch_year.unwrap_or_else(|| g.year()).to_string(),
+            rplc2: g.year().to_string(),
+            us: format!("{} {}", g.human().title().trim_end(), g.human().leader),
             them: g.player(slot).adjective().to_string(),
-            bucks: habitation.max(1),
+            bucks: g.spaceship_stats(slot).habitation(),
         };
-        let section = if slot == me { "SPACE" } else { "SPACE2" };
-        let lines = ctx.texts.king.section(section).map(|l| l.to_vec()).unwrap_or_default();
-        story = paragraphs(&substitute(&lines, &v)).into_iter().filter(|l| !l.is_empty()).collect();
+        let section = if human_ship { "SPACE" } else { "SPACE2" };
+        text = ctx.texts.king.entry_text(section).map(|t| substitute_line(&t, &v)).unwrap_or_default();
     }
-    Box::new(ArrivalScreen { slot, phase: Phase::Approach, t: 0, title, story, dismiss: Dismiss::new() })
+    // CIV.EXE clears msgbuf's first byte after copying it (o 0x1a3f) but goes on scanning and
+    // drawing msgbuf: that byte is the '^' of the text's empty first line, so its first piece
+    // runs on to "In the year ..." and shows as an empty string, and that line is never seen.
+    // civrs keeps the '^': an empty first piece, then "In the year ...".
+    Box::new(ArrivalScreen::new(text.into_bytes(), human_ship))
+}
+
+impl ArrivalScreen {
+    fn new(text: Vec<u8>, human_ship: bool) -> ArrivalScreen {
+        let mut screen = Surface::new(320, 200);
+        screen.fill(VOID);
+        ArrivalScreen {
+            human_ship,
+            phase: Phase::Approach,
+            page: Surface::new(320, 200),
+            screen,
+            text,
+            pos: -1,
+            start: -1,
+            step: 0,
+            ticks: 0,
+            dot: -10,
+            frame: 0,
+            t: 0,
+            dismiss: Dismiss::new(),
+        }
+    }
+}
+
+/// copy(src, sx, sy, w, h -> dst, dx, dy) (driver 0:0x7fb).
+fn copy(dst: &mut Surface, src: &Surface, sx: i32, sy: i32, w: i32, h: i32, dx: i32, dy: i32) {
+    dst.blit_part(src, Rect::new(sx, sy, w, h), dx, dy, None);
+}
+
+impl ArrivalScreen {
+    /// The next '^'-terminated piece of the text (o 0x1cbc..0x1ce4, 0x1ef3..0x1f21): None
+    /// once the scan runs off the end; the piece ends at the first 0 after its start.
+    fn next_piece(&mut self) -> Option<String> {
+        self.start = self.pos + 1;
+        let len = self.text.len() as i32;
+        loop {
+            self.pos += 1;
+            if self.pos >= len || self.text[self.pos as usize] == b'^' {
+                break;
+            }
+        }
+        if self.pos >= len {
+            return None;
+        }
+        self.text[self.pos as usize] = 0;
+        Some(self.piece())
+    }
+
+    fn piece(&self) -> String {
+        let s = &self.text[(self.start.max(0) as usize).min(self.text.len())..];
+        let end = s.iter().position(|b| *b == 0).unwrap_or(s.len());
+        String::from_utf8_lossy(&s[..end]).into_owned()
+    }
+
+    /// One step of the approach (o 0x1c4c..0x1c3d).
+    fn approach_step(&mut self, ctx: &UiContext) {
+        let i = self.step;
+        let snapshot = self.page.clone();
+        self.page.fill_rect(Rect::new(0, 176, 320 - i, 24), VOID);
+        if i != 0 {
+            copy(&mut self.page, &snapshot, 0, 20, i, 24, 320 - i, 176);
+        }
+        if i % LINE_STEPS == 0 {
+            // the piece shown stays while the scan has not run off the end
+            let _ = self.next_piece();
+        }
+        if (self.pos as usize) < self.text.len() {
+            let line = self.piece();
+            draw_text_centered(&mut self.page, &ctx.fonts, &TextStyle::new(5, 0x38), 160, 184, &line);
+            draw_text_centered(&mut self.page, &ctx.fonts, &TextStyle::new(5, 0x3c), 160, 183, &line);
+        }
+        self.frame += 1;
+        if self.frame > 22 {
+            self.frame = 0;
+        }
+        let planet = ctx.pic("PLANET2");
+        self.page.blit_part(&planet.surf, planet_frame(self.frame), 135, 51, Some(0));
+        let s = &mut self.screen;
+        s.fill_rect(Rect::new(0, 12, 319, 20), VOID);
+        if i != 0 {
+            copy(s, &self.page, 0, 0, i, 20, 320 - i, 12);
+        }
+        copy(s, &self.page, 0, 176, 320, 24, 0, 32);
+        s.fill_rect(Rect::new(0, 56, 320 - i, 132), VOID);
+        if i != 0 {
+            copy(s, &self.page, 0, 44, i, 132, 320 - i, 56);
+        }
+        // the ship: a dot at y 92 on odd steps, half a pixel further each step
+        if i & 1 != 0 {
+            self.dot += 1;
+            s.put(self.dot - i, 92, 15);
+        }
+        self.dot += 1;
+    }
+
+    /// The end of the approach (o 0x1d14..0x1ef0): the rest of the text, and the ending
+    /// picture on page 1 and the screen.
+    fn ending(&mut self, ctx: &UiContext) {
+        let rest = self.text.get((self.pos + 1).max(0) as usize..).unwrap_or(&[]);
+        let end = rest.iter().position(|b| *b == 0).unwrap_or(rest.len());
+        self.text = rest[..end].to_vec();
+        self.pos = -1;
+        self.page = Surface::new(320, 200);
+        if self.human_ship {
+            self.page.blit(&ctx.pic("SPACEST").surf, 0, 0);
+            ctx.audio.play(crate::audio::Sound::Win);
+        } else if let Some(g) = ctx.game.as_ref() {
+            crate::ui::palace::draw_palace_on(&mut self.page, ctx, &g.human().palace(), "SAD");
+        }
+        self.screen = self.page.clone();
+        self.phase = Phase::Lines;
+        self.ticks = 0;
+        self.next_line(ctx);
+    }
+
+    /// Show the next line of the ending (o 0x1f33..0x1fa2), or wait for the key.
+    fn next_line(&mut self, ctx: &UiContext) {
+        match self.next_piece() {
+            Some(line) => {
+                copy(&mut self.screen, &self.page, 0, 0, 320, 32, 0, 0);
+                draw_text_centered(&mut self.screen, &ctx.fonts, &TextStyle::new(5, 0xb), 160, 5, &line);
+                draw_text_centered(&mut self.screen, &ctx.fonts, &TextStyle::new(5, 0xf), 160, 4, &line);
+                self.screen.put(280, 32, 15);
+            }
+            None => {
+                self.phase = Phase::Wait;
+                self.dismiss = Dismiss::new();
+            }
+        }
+    }
 }
 
 impl Screen for ArrivalScreen {
-    fn update(&mut self, _ctx: &mut UiContext) -> Transition {
-        self.t += 1;
+    fn on_enter(&mut self, ctx: &mut UiContext) {
+        // PLANET1 moved up 24 rows, its rows 56..79 again at 176..199 (o 0x1800..0x1856)
+        let p1 = ctx.pic("PLANET1");
+        copy(&mut self.page, &p1.surf, 0, 24, 320, 176, 0, 0);
+        copy(&mut self.page, &p1.surf, 0, 56, 320, 24, 0, 176);
+        self.approach_step(ctx);
+    }
+    fn update(&mut self, ctx: &mut UiContext) -> Transition {
         self.dismiss.tick();
+        self.ticks += 1;
+        match self.phase {
+            Phase::Approach if self.ticks >= STEP_TICKS => {
+                self.ticks = 0;
+                self.step += 1;
+                if self.step < STEPS {
+                    self.approach_step(ctx);
+                } else {
+                    self.ending(ctx);
+                }
+            }
+            Phase::Lines => {
+                self.t += 1;
+                if self.ticks == PAGE_TICKS {
+                    self.screen.put(280, 32, 0);
+                } else if self.ticks >= 2 * PAGE_TICKS {
+                    self.ticks = 0;
+                    self.next_line(ctx);
+                }
+            }
+            Phase::Wait => self.t += 1,
+            _ => {}
+        }
         Transition::None
     }
-    fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
-        if !self.dismiss.closes(ev) {
-            return Transition::None;
-        }
-        match self.phase {
-            Phase::Approach => {
-                self.phase = Phase::Colony;
-                self.dismiss = Dismiss::new();
-                Transition::None
-            }
-            Phase::Colony => Transition::Pop(DialogResult::Done),
+    fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
+        if self.phase == Phase::Wait && self.dismiss.closes(ev) {
+            ctx.audio.play(crate::audio::Sound::FadeOut);
+            Transition::Pop(DialogResult::Done)
+        } else {
+            Transition::None
         }
     }
-    fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
-        match self.phase {
-            Phase::Approach => {
-                let bg = ctx.pic("PLANET1");
-                fb.blit(&bg.surf, 0, 0);
-                let pal = ctx.pic_pal("PLANET1");
-                let planet = ctx.pic("PLANET2");
-                let ppal = ctx.pic_pal("PLANET2");
-                let mut map = [0u8; 256];
-                for (i, m) in map.iter_mut().enumerate() {
-                    *m = pal.nearest(ppal.rgb(i as u8));
-                }
-                let f = planet_frame(((self.t / 4) % 24) as i32);
-                let key = planet.surf.get(f.x, f.y);
-                // the planet grows as the ship approaches
-                let scale = if self.t < 120 { 1 } else { 2 };
-                crate::ui::wonderscreen::blit_scaled(fb, &planet.surf, f, 160 - 25 * scale, 95 - 25 * scale, scale, Some(key), &map);
-                draw_caption_centred(fb, ctx, &pal, 170, 260, &self.title, 0);
-            }
-            Phase::Colony => {
-                let bg = ctx.pic("SPACEST");
-                fb.blit(&bg.surf, 0, 0);
-                let pal = ctx.pic_pal("SPACEST");
-                let cols = caption_colours(&pal);
-                let lh = ctx.fonts.get(1).line_height().max(7);
-                let h = 6 + self.story.len() as i32 * lh;
-                let r = Rect::new(4, 4, 150, h.min(192));
-                fb.fill_rect(r, cols.fill);
-                fb.rect_outline(r, cols.border);
-                let mut y = r.y + 3;
-                for l in &self.story {
-                    if y + lh > r.bottom() {
-                        break;
-                    }
-                    draw_text(fb, &ctx.fonts, &TextStyle::new(1, cols.text), r.x + 4, y, &l.to_ascii_uppercase());
-                    y += lh;
-                }
-                let _ = self.slot;
-            }
-        }
+    fn draw(&mut self, fb: &mut Surface, _ctx: &mut UiContext) {
+        fb.blit(&self.screen, 0, 0);
     }
+    /// PLANET1's palette for the approach (load_pic_pal 0x1f20:0x216; PLANET2's frames show in
+    /// it unconverted), then SPACEST's with its cycles turning, or SAD's.
     fn palette(&self, ctx: &UiContext) -> Palette {
         match self.phase {
             Phase::Approach => ctx.pic_pal("PLANET1"),
-            Phase::Colony => ctx.pic_pal("SPACEST"),
+            _ if !self.human_ship => ctx.pic_pal("SAD"),
+            _ => {
+                let base = ctx.pic_pal("SPACEST");
+                let mut pal = base;
+                for (first, last, period) in COLONY_CYCLES {
+                    let n = (last - first + 1) as u64;
+                    let k = (self.t / period) % n;
+                    for i in 0..n {
+                        pal.0[(first as u64 + i) as usize] = base.0[(first as u64 + (i + k) % n) as usize];
+                    }
+                }
+                pal
+            }
         }
     }
     fn draws_parent(&self) -> bool {
@@ -650,6 +822,16 @@ mod tests {
         st.handle(&key(Key::Enter), &mut ctx);
         assert_eq!(st.len(), 1);
         assert!(!ctx.game().player(h).spaceship.launched());
+    }
+
+    #[test]
+    fn arrival_text_pieces() {
+        // the text as load_text_entry gives *SPACE: an empty first line, '^' + blank after each
+        let mut a = ArrivalScreen::new(b"^ In the year 2010^ voyagers^ ".to_vec(), false);
+        assert_eq!(a.next_piece().as_deref(), Some(""));
+        assert_eq!(a.next_piece().as_deref(), Some(" In the year 2010"));
+        assert_eq!(a.next_piece().as_deref(), Some(" voyagers"));
+        assert_eq!(a.next_piece(), None);
     }
 
     #[test]
