@@ -104,7 +104,7 @@ pub struct City {
     /// the human's city; a capture keeps it. Only this bit lets a city build sea units
     /// (choose_production 0xaab2, for every civ) and makes it a port for the computer's
     /// transports (0x16f8d). See [`Game::founding_coastal`]. Saved after the game body (save
-    /// version 20).
+    /// version 21).
     #[serde(skip)]
     pub coastal: bool,
 }
