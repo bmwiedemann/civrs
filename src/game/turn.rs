@@ -1604,8 +1604,8 @@ impl Game {
 
     /// A city revolts to `to` (CIV.EXE o 0x1e06a, then 0x13d76 with `by_diplomat` set): the old
     /// owner's units next to it on land change sides, those homed there elsewhere are disbanded;
-    /// the city is plundered, an advance is taken and it loses one citizen (never the last),
-    /// but its improvements survive.
+    /// the city is plundered, an advance is taken (`capture_steal`) and it loses one citizen
+    /// (never the last) and its Palace, Temple, Courthouse and Cathedral (`capture_losses`).
     pub fn transfer_city(&mut self, c: CityId, to: Slot) {
         let from = self.city(c).owner;
         let (gold, adv) = self.revolt_city(c, to);
@@ -1629,11 +1629,7 @@ impl Game {
         }
         // capture_city logs the city as taken (0x13f97)
         self.replay_city(super::replay::kind::CAPTURE, to, c);
-        let known: Vec<AdvanceId> = self.player(from).known_advances().into_iter().filter(|a| !self.player(to).knows(*a)).collect();
-        let adv = self.rng.pick(&known).copied();
-        if let Some(a) = adv {
-            self.grant_advance(to, a, super::science::AdvanceSource::From(from));
-        }
+        let kept = self.capture_losses(true);
         let mut gone = Vec::new();
         for u in self.units.iter_mut().flatten().filter(|u| u.owner == from) {
             if Map::dist((u.x, u.y), pos) <= 1 && !self.map.is_ocean(u.x, u.y) {
@@ -1671,7 +1667,10 @@ impl Game {
             cm.production = Production::Unit(unit_ids::MILITIA);
             cm.shields = 0;
             cm.caravan_shields = 0;
+            cm.improvements &= kept;
         }
+        // steal_advance after the messages (0x14232), as for a city taken by force
+        let adv = self.capture_steal(to, from);
         self.players[to as usize].stats.cities_captured += 1;
         self.players[from as usize].stats.cities_lost += 1;
         self.auto_assign(c);

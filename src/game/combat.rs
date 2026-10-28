@@ -298,6 +298,39 @@ impl Game {
         (gold * city.size as i32 / (total + 1)).clamp(0, gold)
     }
 
+    /// The improvements a captured city keeps (CIV.EXE 0x13ef5, as a mask of `City::improvements`):
+    /// the Palace, Temple, Courthouse and Cathedral always go (`& 0xfbb6`); a city taken by
+    /// force keeps only every second one of improvements 1..16 (`& 0xaaaa >> random(2)`: the
+    /// even ones, or the odd ones) and none of 17..24. Wonders are kept.
+    pub fn capture_losses(&mut self, by_diplomat: bool) -> u32 {
+        let mut word0: u32 = 0xfbb6;
+        let mut rest: u32 = !0 << 17;
+        if !by_diplomat {
+            word0 &= 0xaaaa >> self.rng.below(2);
+            rest = 0;
+        }
+        // CIV.EXE bit k is improvement k + 1, civrs bit k + 1
+        (word0 << 1) | rest
+    }
+
+    /// `steal_advance(captor, victim)` (CIV.EXE 0x14468) after a city changed hands: a
+    /// computer captor takes the advance it values most, the human picks one from a menu;
+    /// nothing when either side is the barbarians. Returns a computer captor's advance.
+    pub fn capture_steal(&mut self, by: Slot, from: Slot) -> Option<rules::AdvanceId> {
+        if self.is_human(by) {
+            let options = crate::ai::tech_ai::stealable(self, by, from);
+            if !options.is_empty() {
+                self.push_event(GameEvent::NeedsDecision(super::Decision::StealAdvance { slot: by, from, options }));
+            }
+            None
+        } else {
+            let a = crate::ai::tech_ai::best_to_steal(self, by, from)?;
+            self.grant_advance(by, a, super::science::AdvanceSource::From(from));
+            self.push_event(GameEvent::AdvanceAcquired { slot: by, adv: a, source: "conquest".into() });
+            Some(a)
+        }
+    }
+
     /// Ground unit `id` enters undefended enemy city `c`.
     pub fn capture_city(&mut self, id: UnitId, c: CityId) -> MoveOutcome {
         // the captor next to the city has let its garrison out (unit_look 0x828f), so a
@@ -317,12 +350,24 @@ impl Game {
         if from == self.human_slot && by != 0 {
             self.player_mut(by).last_contact = -1;
         }
-        if city.size <= 1 || (by == 0 && attacker.info().att <= 2) {
-            // size-1 cities are destroyed, and so is any city a barbarian with attack 2 or less
-            // takes (CIV.EXE 0x13e89; ds:0x28bc is only set by a Diplomat's incite)
+        // the plunder is reckoned first and leaves the loser even when the city is destroyed
+        // or the barbarians take it (0x13e6c, 0x13f52)
+        let gold = self.plunder_value(c);
+        let weak_barbarian = by == 0 && attacker.info().att <= 2;
+        // any city a barbarian with attack 2 or less takes is destroyed (CIV.EXE 0x13e89;
+        // ds:0x28bc is only set by a Diplomat's incite); else it loses its improvements
+        // (`capture_losses`) and a citizen, and a size-1 city is destroyed (0x13f3b)
+        let kept = if weak_barbarian { 0 } else { self.capture_losses(false) };
+        self.player_mut(from).gold -= gold;
+        if by != 0 {
+            self.player_mut(by).gold += gold;
+        }
+        if city.size <= 1 || weak_barbarian {
             let name = city.name.clone();
             self.remove_city(c);
             self.push_event(GameEvent::CityDestroyed { name, at: (city.x, city.y), by, from });
+            // steal_advance runs for a destroyed city too (0x14232)
+            self.capture_steal(by, from);
             self.place_unit(id, city.x, city.y, 3);
             self.players[from as usize].stats.cities_lost += 1;
             if was_capital {
@@ -336,32 +381,9 @@ impl Game {
         }
         // the captor's city-site goals around it are dropped (0x13faf)
         self.remove_goals_near(by, super::goals::goal::SETTLE, city.x, city.y, 4);
-        // the plunder leaves the loser even when the barbarians take the city (0x13f52)
-        let gold = self.plunder_value(c);
-        self.player_mut(from).gold -= gold;
-        if by != 0 {
-            self.player_mut(by).gold += gold;
-        }
         // the replay records the city as taken (0x13f97)
         self.replay_city(super::replay::kind::CAPTURE, by, c);
-        // steal an advance (steal_advance 0x14468): a computer captor takes the one it values
-        // most, the human picks one from a menu
-        let mut adv = None;
-        if self.is_human(by) {
-            let options = crate::ai::tech_ai::stealable(self, by, from);
-            if !options.is_empty() {
-                self.push_event(GameEvent::NeedsDecision(super::Decision::StealAdvance { slot: by, from, options }));
-            }
-        } else if let Some(a) = crate::ai::tech_ai::best_to_steal(self, by, from) {
-            self.grant_advance(by, a, super::science::AdvanceSource::From(from));
-            adv = Some(a);
-            self.push_event(GameEvent::AdvanceAcquired { slot: by, adv: a, source: "conquest".into() });
-        }
-        // improvements (CIV.EXE 0x13ef5..0x13f1a; wonders survive): the Palace, Temple,
-        // Courthouse and Cathedral go (mask 0xfbb6), then every other one of the first 16 by
-        // a coin (0xaaaa >> random(2)) and all those from SDI Defense on
-        let mask = 0xfbb6u32 & (0xaaaa >> self.rng.below(2));
-        let doomed: Vec<u8> = city.improvement_list().into_iter().filter(|i| mask & (1 << (*i - 1)) == 0).collect();
+        let adv = self.capture_steal(by, from);
         {
             let cm = self.city_mut(c);
             cm.owner = by;
@@ -377,9 +399,7 @@ impl Game {
             cm.shields = 0;
             cm.caravan_shields = 0;
             cm.production = super::Production::Unit(unit_ids::MILITIA);
-            for i in doomed {
-                cm.remove_improvement(i);
-            }
+            cm.improvements &= kept;
         }
         // units supported by the city are disbanded (Civ1), units of the loser inside are gone
         let homed: Vec<UnitId> = self.all_units().filter(|u| (u.home == Some(c) && u.owner == from) || ((u.x, u.y) == (city.x, city.y) && u.owner == from)).map(|u| u.id).collect();
@@ -972,12 +992,37 @@ mod tests {
     }
 
     #[test]
+    fn a_city_taken_by_force_keeps_every_second_improvement() {
+        // 0x13ef5: & 0xfbb6, then & 0xaaaa >> random(2); improvements 17.. all go
+        let mut g = flat_game();
+        let all: u32 = (1..=21).map(|i| 1u32 << i).sum();
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..20 {
+            let kept = g.capture_losses(false) & all;
+            for i in [imp::PALACE, imp::TEMPLE, imp::COURTHOUSE, imp::CATHEDRAL, imp::SDI_DEFENSE, imp::NUCLEAR_PLANT] {
+                assert_eq!(kept & 1 << i, 0, "{i}");
+            }
+            assert!(kept == [2, 6, 8, 10, 12, 14, 16].iter().map(|i| 1u32 << i).sum::<u32>() || kept == [3, 5, 9, 13, 15].iter().map(|i| 1u32 << i).sum::<u32>(), "{kept:#x}");
+            seen.insert(kept);
+        }
+        assert_eq!(seen.len(), 2);
+    }
+
+    #[test]
     fn size_one_city_is_destroyed_and_weak_barbarians_raze() {
         let mut g = flat_game();
         let c = g.add_city(2, "Tiny".into(), 20, 20);
+        g.add_city(2, "Home".into(), 40, 30);
+        g.player_mut(2).gold = 100;
+        g.player_mut(2).learn(crate::rules::advance_ids::POTTERY);
+        g.player_mut(1).forget(crate::rules::advance_ids::POTTERY);
         let a = g.add_unit(1, unit_ids::LEGION, 19, 20);
         assert_eq!(g.try_move(a, crate::game::Dir8::E).unwrap(), MoveOutcome::DestroyedCity);
         assert!(g.city_opt(c).is_none());
+        // the plunder (100 * 1 / (2 + 1)) and an advance come with a destroyed city too
+        // (0x13f52, 0x14232)
+        assert_eq!(g.player(2).gold, 67);
+        assert!(g.player(1).knows(crate::rules::advance_ids::POTTERY) || g.events.iter().any(|e| matches!(e, GameEvent::NeedsDecision(crate::game::Decision::StealAdvance { .. }))));
         // a barbarian with attack 2 or less razes what it takes (CIV.EXE 0x13e89)
         let c2 = g.add_city(2, "Big".into(), 25, 25);
         g.city_mut(c2).size = 5;
@@ -1144,6 +1189,8 @@ mod tests {
         g.player_mut(1).gold = 2000;
         let guard = g.add_unit(2, unit_ids::PHALANX, 20, 20);
         g.city_mut(c).add_improvement(imp::TEMPLE);
+        g.city_mut(c).add_improvement(imp::MARKETPLACE);
+        g.city_mut(c).add_improvement(imp::SDI_DEFENSE);
         // CIV.EXE o 0x1d9b7: (300 + 1000) / (12 + 3) * 4 = 344, halved in disorder
         assert_eq!(g.incite_cost(c), Some(344));
         g.city_mut(c).disorder = true;
@@ -1154,7 +1201,9 @@ mod tests {
         let city = g.city(c);
         assert_eq!(city.owner, 1);
         assert_eq!(city.size, 3);
-        assert!(city.has_improvement(imp::TEMPLE), "improvements survive a revolt");
+        // 0x13ef5: only the Palace, Temple, Courthouse and Cathedral are lost
+        assert!(!city.has_improvement(imp::TEMPLE));
+        assert!(city.has_improvement(imp::MARKETPLACE) && city.has_improvement(imp::SDI_DEFENSE));
         assert_eq!(g.unit(guard).owner, 1, "the garrison changes sides");
         assert!(g.unit_opt(d).is_none());
         // plunder 300 * 4 / (5 + 1) = 200
