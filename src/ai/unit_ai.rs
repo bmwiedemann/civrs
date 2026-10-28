@@ -257,21 +257,19 @@ fn city_goals(g: &mut Game, slot: Slot) {
     }
 }
 
+/// The policies of 0x15cd1..0x15f5f: each continent's goes into ds:0xe698 as it is worked
+/// out, and a change re-chooses the production of the computer's cities there at once
+/// (0x15f26 -> 0x18bef), so the advisor reads the new policy (0xaf56).
 fn update_policies(g: &mut Game, census: &Census, slot: Slot) {
-    let mut now = [POLICY_NONE; 16];
-    for (k, p) in now.iter_mut().enumerate() {
-        *p = g.continent_policy(census, slot, k);
-    }
-    if let Some(old) = g.ai_memory.policies[slot as usize] {
-        if !g.is_human(slot) && slot != 0 {
-            for k in 0..16 {
-                if old[k] != now[k] {
-                    super::city_ai::rechoose(g, slot, Some(k));
-                }
-            }
+    let old = g.ai_memory.policies[slot as usize];
+    let mut now = old.unwrap_or([POLICY_NONE; 16]);
+    for k in 0..16 {
+        now[k] = g.continent_policy(census, slot, k);
+        g.ai_memory.policies[slot as usize] = Some(now);
+        if old.is_some_and(|o| o[k] != now[k]) && !g.is_human(slot) && slot != 0 {
+            super::city_ai::rechoose(g, slot, Some(k));
         }
     }
-    g.ai_memory.policies[slot as usize] = Some(now);
 }
 
 /// The unit tasking of 0x16057. Every unit but the Nuclear and those flagged 0x10:
@@ -2062,5 +2060,26 @@ mod tests {
         assert!(matches!(steps[1], TurnStep::AiMove { .. }), "{steps:?}");
         assert!(matches!(steps[2], TurnStep::Event(GameEvent::WarDeclared { .. } | GameEvent::PeaceTreaty { .. })), "{steps:?}");
         assert!(g.events.is_empty());
+    }
+
+    #[test]
+    fn a_changed_policy_rechooses_with_the_new_policy() {
+        // CIVIL4's Germans at peace with the Romans, whose army on their continent outweighs
+        // theirs: the continent turns threatened (0x15dd9..) and Berlin re-chooses at once
+        // (0x15f26), reading the new policy, which makes Barracks the best (as CIV.EXE did in
+        // a differential run from an edited CIVIL4)
+        let Ok(dir) = crate::assets::AssetDir::locate(None) else { return };
+        let Some(path) = crate::save::sve::slot_file(dir.root(), 4) else { return };
+        let mut g = crate::save::sve::import(&path).unwrap();
+        g.make_peace(1, 3);
+        let berlin = g.city_at(11, 20).unwrap();
+        let k = continent_index(g.map.tile(11, 20).continent);
+        let mut census = g.census();
+        census.attack[1][k] = 7;
+        assert_eq!(g.stored_policy(3, k), POLICY_NONE);
+        assert_eq!(g.city(berlin).production, crate::game::Production::Improvement(imp::GRANARY));
+        update_policies(&mut g, &census, 3);
+        assert_eq!(g.stored_policy(3, k), POLICY_THREATENED);
+        assert_eq!(g.city(berlin).production, crate::game::Production::Improvement(imp::BARRACKS));
     }
 }
