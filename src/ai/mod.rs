@@ -117,10 +117,11 @@ pub fn government_sums(g: &mut Game, slot: Slot) -> (i32, i32) {
 /// where (civ + turn) & 7 == 0: Despotism while the city routine's case for it is positive,
 /// else the Republic when known and its case is not negative, else Communism when known with
 /// more than 10 cities, else Monarchy when known; nothing otherwise. `set_government`
-/// (0x14df7) puts it in force at once for a computer player, without anarchy.
+/// (0x14df7) puts it in force at once for a computer player, without anarchy, and it ends
+/// one: the choice does not look at the government in force (0x15fdb).
 pub fn govern(g: &mut Game, slot: Slot) {
     use crate::rules::advance_ids as adv;
-    if g.player(slot).govt == Govt::Anarchy || (slot as u32 + g.turn) & 7 != 0 {
+    if (slot as u32 + g.turn) & 7 != 0 {
         return;
     }
     let (despot, republic) = government_sums(g, slot);
@@ -374,6 +375,17 @@ mod tests {
         let settled = counts.iter().filter(|o| **o > 0).count();
         let total: usize = counts.iter().sum();
         assert!(settled >= seeds.len() / 2 && total >= 12, "{settled} of {} seeds settle overseas, {total} overseas cities in all", seeds.len());
+    }
+
+    #[test]
+    fn the_eight_turn_government_choice_ends_anarchy() {
+        let mut g = Game::new(GameSetup { seed: 5, num_civs: 7, ..Default::default() }, None);
+        let s = (1..8u8).find(|s| *s != g.human_slot && g.player(*s).alive).unwrap();
+        g.player_mut(s).learn(crate::rules::advance_ids::MONARCHY);
+        g.player_mut(s).govt = Govt::Anarchy;
+        g.turn = (8 - s as u32 % 8) % 8 + 8;
+        govern(&mut g, s);
+        assert_ne!(g.player(s).govt, Govt::Anarchy);
     }
 
     #[test]
