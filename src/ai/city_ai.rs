@@ -18,7 +18,7 @@ pub fn rechoose(g: &mut Game, slot: Slot, k: Option<usize>) {
     for c in g.cities_of(slot) {
         let city = g.city(c);
         if k.map(|k| crate::game::production::continent_index(g.map.tile(city.x, city.y).continent) == k).unwrap_or(true) {
-            let p = choose_production(g, c);
+            let p = g.ai_rechoose(c);
             g.city_mut(c).production = p;
         }
     }
@@ -63,7 +63,7 @@ pub fn manage(g: &mut Game, c: CityId) {
 pub fn city_turn_purchase(g: &mut Game, c: CityId, net_shields: i32) {
     let slot = g.city(c).owner;
     if g.city(c).auto_build {
-        let p = choose_production(g, c);
+        let p = g.ai_rechoose(c);
         g.city_mut(c).production = p;
     }
     let city = g.city(c).clone();
@@ -230,7 +230,7 @@ mod tests {
         assert_eq!(g.city(c).shields, 4);
         // attacked: the advisor chooses again and the unit is bought, then the alert ends
         g.city_mut(c).auto_build = true;
-        let advice = g.ai_production(c);
+        let advice = g.ai_rechoose(c);
         city_turn_purchase(&mut g, c, 0);
         assert_eq!(g.city(c).production, advice);
         assert!(!g.city(c).auto_build);

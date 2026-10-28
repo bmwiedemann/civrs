@@ -214,13 +214,26 @@ impl Game {
     }
 
     /// The computer's choice (0xb841..0xb86e): the lowest value of all, but a city building a
-    /// Palace keeps it.
+    /// Palace keeps it. The Palace is tested after the valuation (0xb857), so the advisor's
+    /// early answers (Militia, barbarian troops) still replace it and its random draws happen.
     pub fn ai_production(&mut self, c: CityId) -> Production {
-        if self.city(c).production == Production::Improvement(imp::PALACE) {
-            return Production::Improvement(imp::PALACE);
-        }
-        match self.build_advice(c) {
-            Ok(a) => a.best.map(|b| b.0).unwrap_or(self.city(c).production),
+        self.ai_production_with(c, false)
+    }
+
+    /// `city_rechoose_production` 0x18c4c, the computer's choice after a unit is built (0xe3b1),
+    /// on alert (0xec34) and when a continent's policy changes (0x18bef): the city's own unit
+    /// is taken off the count of cities building it (ds:0xd308, 0x18c7c) before the advisor
+    /// runs.
+    pub fn ai_rechoose(&mut self, c: CityId) -> Production {
+        self.ai_production_with(c, true)
+    }
+
+    fn ai_production_with(&mut self, c: CityId, rechoose: bool) -> Production {
+        let advice = self.build_advice_with(c, rechoose);
+        let current = self.city(c).production;
+        match advice {
+            Ok(_) if current == Production::Improvement(imp::PALACE) => current,
+            Ok(a) => a.best.map(|b| b.0).unwrap_or(current),
             Err(p) => p,
         }
     }
@@ -232,7 +245,7 @@ impl Game {
             return;
         }
         for c in self.cities_of(captor) {
-            let p = self.ai_production(c);
+            let p = self.ai_rechoose(c);
             self.city_mut(c).production = p;
         }
     }
@@ -250,6 +263,11 @@ impl Game {
     /// any valuation: Militia for a computer civilization under Despotism or Anarchy that has no
     /// unit at all (0xb0e7), Legion or (once anybody knows Explosives) Knights for barbarians.
     pub fn build_advice(&mut self, c: CityId) -> Result<BuildAdvice, Production> {
+        self.build_advice_with(c, false)
+    }
+
+    /// `build_advice`; with `rechoose` the city's own unit does not count as in production.
+    fn build_advice_with(&mut self, c: CityId, rechoose: bool) -> Result<BuildAdvice, Production> {
         let city = self.city(c).clone();
         let slot = city.owner;
         let human = self.human_slot;
@@ -289,7 +307,7 @@ impl Game {
                 }
             }
             if let Production::Unit(u) = other.production {
-                in_production[u as usize] += 1;
+                in_production[u as usize] += !(rechoose && other.id == c) as i32;
                 if other.id != c && continent_index(self.map.tile(other.x, other.y).continent) == k {
                     building_here[u as usize] += 1;
                 }
@@ -568,6 +586,22 @@ mod tests {
             g.remove_unit(id);
         }
         assert_eq!(g.ai_production(c), Production::Unit(unit_ids::MILITIA));
+        // even a city building the Palace: the Palace test comes after the advisor (0xb857)
+        g.city_mut(c).production = Production::Improvement(imp::PALACE);
+        assert_eq!(g.ai_production(c), Production::Unit(unit_ids::MILITIA));
+    }
+
+    #[test]
+    fn rechoosing_does_not_count_the_citys_own_unit() {
+        let (mut g, c) = ai_city();
+        let slot = g.city(c).owner;
+        g.player_mut(slot).learn(adv::BRONZE_WORKING);
+        // 0x18c4c takes the city's unit off the count first: the advisor then values as if
+        // the city built no unit
+        g.city_mut(c).production = Production::Improvement(imp::BARRACKS);
+        let idle = g.build_advice_with(c, false);
+        g.city_mut(c).production = Production::Unit(unit_ids::PHALANX);
+        assert_eq!(g.build_advice_with(c, true), idle);
     }
 
     #[test]

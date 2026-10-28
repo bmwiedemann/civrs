@@ -796,7 +796,7 @@ impl Game {
                         self.refresh_vision(owner);
                         self.push_event(GameEvent::ItemBuilt { city: c, item: prod });
                     }
-                    let next = self.ai_production(c);
+                    let next = self.ai_rechoose(c);
                     self.city_mut(c).production = next;
                     return;
                 }
@@ -817,7 +817,7 @@ impl Game {
                 // a computer city re-chooses after every unit (city_rechoose_production 0x18c4c,
                 // called at 0xe3b1)
                 if !human {
-                    let next = self.ai_production(c);
+                    let next = self.ai_rechoose(c);
                     self.city_mut(c).production = next;
                 }
             }
@@ -1906,7 +1906,7 @@ mod diplomat_tests {
         assert_eq!(g.city(home).shields, cost, "the shields are given back");
         assert!(!g.all_units().any(|u| u.kind == unit_ids::DIPLOMAT));
         // and the city chooses again, as after any unit (0xe3b1)
-        let advice = g.ai_production(home);
+        let advice = g.ai_rechoose(home);
         assert_eq!(g.city(home).production, advice);
         g.city_mut(home).production = Production::Unit(unit_ids::DIPLOMAT);
         // near enough, but at peace with the human: none either
@@ -1918,7 +1918,7 @@ mod diplomat_tests {
         let d = g.all_units().find(|u| u.kind == unit_ids::DIPLOMAT).unwrap();
         assert_eq!((d.pos(), d.goto, d.home), ((16, 21), Some((20, 20)), Some(home)));
         assert_eq!(g.city(home).shields, 0);
-        let advice = g.ai_production(home);
+        let advice = g.ai_rechoose(home);
         assert_eq!(g.city(home).production, advice);
     }
 
