@@ -316,11 +316,21 @@ impl Game {
 
     /// City growth, production, science and gold for one player (end of its turn).
     pub fn process_player_turn_end(&mut self, slot: Slot) {
-        let cities = self.cities_of(slot);
-        for c in cities {
+        // update_civ_tax_rates 0xa5e2: the cities, then a computer civ's rates from what
+        // they showed: a city above size 5 with as many happy as unhappy citizens, a city in
+        // disorder
+        let (mut balanced, mut rioting) = (false, false);
+        for c in self.cities_of(slot) {
             if self.city_opt(c).is_some() {
-                self.process_city(c);
+                let mood = self.process_city(c);
+                if let Some(city) = self.city_opt(c) {
+                    balanced |= mood == Some(0) && city.size > 5;
+                    rioting |= city.disorder;
+                }
             }
+        }
+        if !self.player(slot).human {
+            crate::ai::city_ai::set_rates(self, slot, balanced, rioting);
         }
         // Democracy: two consecutive turns of disorder anywhere bring down the government
         if self.player(slot).govt == Govt::Democracy && self.all_cities().any(|c| c.owner == slot && c.disorder_turns >= 2) {
@@ -450,7 +460,8 @@ impl Game {
     /// (0x12955, 0x12bde), and for the human pollution, meltdown and upkeep (0x12de9..0x131d2).
     /// The disorder and celebration flags the city has during its turn are those of its last
     /// turn: they keep this turn's shields out of the store and decide the tile yields.
-    pub fn process_city(&mut self, c: CityId) {
+    /// Returns happy − unhappy as the routine does (0x13223), `None` when the city is gone.
+    pub fn process_city(&mut self, c: CityId) -> Option<i32> {
         let slot = self.city(c).owner;
         // a store out of 0..=999 (a shortage leaves it negative) starts again from 0 (0xc977)
         {
@@ -460,7 +471,7 @@ impl Game {
             }
         }
         if !self.process_food(c) {
-            return;
+            return None;
         }
         self.assign_workers(c, true);
         let y = self.city_yield_raw(c);
@@ -480,7 +491,7 @@ impl Game {
             self.complete_production(c, prod);
         }
         if self.city_opt(c).is_none() {
-            return;
+            return None;
         }
         // a computer city's purchases and alert (CIV.EXE 0xec0d..0xef79), before its taxes
         if !self.player(slot).human {
@@ -507,6 +518,7 @@ impl Game {
             cm.bought = false;
         }
         self.restash_garrison(c);
+        Some(h.happy - h.unhappy)
     }
 
     /// Disorder and celebration after the city's turn (CIV.EXE 0x125eb..0x12bd1; not for the

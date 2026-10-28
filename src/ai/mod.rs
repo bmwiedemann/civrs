@@ -46,7 +46,6 @@ impl AiDriver for Ai {
             return;
         }
         g.reset_goals(slot);
-        city_ai::set_rates(g, slot);
         for c in g.cities_of(slot) {
             if g.city_opt(c).is_some() {
                 city_ai::manage(g, c);

@@ -126,34 +126,37 @@ fn exe_status(g: &Game, c: CityId) -> u8 {
     bits.iter().enumerate().fold(0, |s, (i, b)| s | ((*b as u8) << i))
 }
 
-/// Tax 50 / lux 0 / sci 50 within the government's limit; luxuries rise while cities riot.
-pub fn set_rates(g: &mut Game, slot: Slot) {
+/// A computer civilization's rates after its cities' turn (update_civ_tax_rates CIV.EXE
+/// 0xa5e2, in tenths): luxuries are what tax and science leave, one more when some city is in
+/// disorder (`rioting`) and they leave less than 4, one less every fourth turn when no city
+/// is in disorder or `balanced` (above size 5 with as many happy as unhappy citizens) and they
+/// leave more than 2, kept to 0..4; taxes are the leader's "civilized" trait (ds:0x1516) plus
+/// half the rest, one more with more gold than the turn number + 100, none once Robotics is
+/// known; science gets the remainder. No government maximum applies. (Anarchy keeps civrs's
+/// 0/100/0.)
+pub fn set_rates(g: &mut Game, slot: Slot, balanced: bool, rioting: bool) {
     let p = g.player(slot);
     if p.govt == Govt::Anarchy {
         let _ = g.set_rates(slot, 0, 100);
         return;
     }
-    let disorder = g.all_cities().any(|c| c.owner == slot && c.disorder);
-    let cur_lux = p.lux as i32;
-    let mut lux = if disorder { (cur_lux + 10).min(30) } else { (cur_lux - 10).max(0) };
-    let broke = p.gold < 30 && g.income(slot) < 0;
-    let mut tax = if broke { 70 } else { 50 };
-    let max = g.max_rate(slot) as i32;
-    lux = lux.min(max);
-    // leaving Anarchy (0/100/0) the luxuries are still high: tax + lux must not exceed 100 or
-    // the request is refused and the rates never come down
-    tax = tax.min(max).min(100 - lux);
-    // science is the remainder and must respect the cap too
-    let mut sci = 100 - tax - lux;
-    while sci > max {
-        if tax < max {
-            tax += 10;
-        } else {
-            lux += 10;
-        }
-        sci = 100 - tax - lux;
+    let (tax, sci) = (p.tax as i32 / 10, (100 - p.tax as i32 - p.lux as i32) / 10);
+    let mut lux = 10 - (tax + sci);
+    if rioting && tax + sci > 6 {
+        lux += 1;
     }
-    let _ = g.set_rates(slot, tax as u8, lux as u8);
+    if g.turn & 3 == 0 && !balanced && !rioting && tax + sci < 8 {
+        lux -= 1;
+    }
+    let lux = lux.clamp(0, 4);
+    let mut tax = p.civ().civilized as i32 + (10 - lux) / 2;
+    if p.gold > g.turn as i32 + 100 {
+        tax += 1;
+    }
+    if p.knows(rules::advance_ids::ROBOTICS) {
+        tax = 0;
+    }
+    let _ = g.set_rates(slot, (tax * 10) as u8, (lux * 10) as u8);
 }
 
 #[cfg(test)]
@@ -162,20 +165,34 @@ mod tests {
     use crate::game::GameSetup;
 
     #[test]
-    fn rates_recover_after_anarchy() {
+    fn computer_rates_as_update_civ_tax_rates() {
         let mut g = Game::new(GameSetup { seed: 5, ..Default::default() }, None);
         let slot = 2;
         g.player_mut(slot).govt = Govt::Anarchy;
-        set_rates(&mut g, slot);
+        set_rates(&mut g, slot, false, false);
         assert_eq!((g.player(slot).tax, g.player(slot).lux), (0, 100));
-        // what clamp_rates leaves when Anarchy gives way to Monarchy (max 70)
+        // leaving Anarchy: luxuries 10 - 0 kept to 4, taxes "civilized" + 3
         g.player_mut(slot).govt = Govt::Monarchy;
-        g.clamp_rates(slot);
-        assert_eq!((g.player(slot).tax, g.player(slot).lux), (30, 70));
-        for _ in 0..10 {
-            set_rates(&mut g, slot);
-        }
-        assert_eq!((g.player(slot).tax, g.player(slot).lux), (50, 0));
+        g.player_mut(slot).gold = 0;
+        g.turn = 1;
+        let civilized = g.player(slot).civ().civilized as i32;
+        set_rates(&mut g, slot, false, false);
+        assert_eq!((g.player(slot).tax as i32, g.player(slot).lux), ((3 + civilized) * 10, 40));
+        // every fourth turn with no city in disorder or balanced the luxuries go down by one
+        g.turn = 4;
+        set_rates(&mut g, slot, false, false);
+        assert_eq!(g.player(slot).lux, 30);
+        set_rates(&mut g, slot, true, false);
+        assert_eq!(g.player(slot).lux, 30);
+        // a riot brings one back; rich: one more tax; Robotics: none
+        set_rates(&mut g, slot, false, true);
+        assert_eq!(g.player(slot).lux, 40);
+        g.player_mut(slot).gold = 200;
+        set_rates(&mut g, slot, false, true);
+        assert_eq!(g.player(slot).tax as i32, (4 + civilized) * 10);
+        g.player_mut(slot).learn(rules::advance_ids::ROBOTICS);
+        set_rates(&mut g, slot, false, false);
+        assert_eq!(g.player(slot).tax, 0);
     }
 
     /// A new computer city building Militia with 4 shields stored and nobody inside.
