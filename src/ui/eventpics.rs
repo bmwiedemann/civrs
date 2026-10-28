@@ -330,6 +330,10 @@ pub fn celebration_screen(ctx: &UiContext, city: CityId) -> Box<dyn Screen> {
     let title = g.human().title();
     let sheet = if human_knows(ctx, adv::INDUSTRIALIZATION) { "LOVE2" } else { "LOVE1" };
     let lines = vec![format!("'We love the {title}'"), "day celebrated in".into(), format!("{name}!")];
+    // without animations the city's newspaper (CIV.EXE 0x12a51 -> 0x12a8b)
+    if !g.options.animations {
+        return crate::ui::newspaper::newspaper(lines, Some(city));
+    }
     crowd_or_message(ctx, March::Love, sheet, Some(city), lines)
 }
 

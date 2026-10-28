@@ -1325,9 +1325,13 @@ impl Screen for MapView {
                 if result != DialogResult::No {
                     return Transition::None;
                 }
-                ctx.game_mut().retire();
+                let first = ctx.game_mut().retire();
                 self.pending = Pending::Retired;
-                Transition::Push(crate::ui::endgame::end_screen(ctx, crate::game::EndReason::Retired))
+                Transition::Push(if first {
+                    crate::ui::endgame::end_screen(ctx, crate::game::EndReason::Retired)
+                } else {
+                    crate::ui::endgame::end_again_screen(ctx, crate::game::EndReason::Retired)
+                })
             }
             Pending::Retired => Transition::Quit,
             Pending::Diplomat(id, c) => match result {

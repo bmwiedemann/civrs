@@ -688,10 +688,11 @@ impl HallOfFame {
     }
 
     /// Insert keeping the list sorted by `(difficulty + 2) * score` (desc, CIV.EXE o 0x2c88),
-    /// at most six entries. Returns the rank.
+    /// at most six entries. A game below all six takes the sixth place (the search stops at
+    /// index 5). Returns the rank.
     pub fn add(&mut self, e: FameEntry) -> usize {
         let weight = |x: &FameEntry| (x.difficulty as i32 + 2) * x.score;
-        let pos = self.entries.iter().position(|x| weight(x) < weight(&e)).unwrap_or(self.entries.len());
+        let pos = self.entries.iter().position(|x| weight(x) < weight(&e)).unwrap_or(self.entries.len()).min(FAME_RECORDS - 1);
         self.entries.insert(pos, e);
         self.entries.truncate(FAME_RECORDS);
         pos
@@ -918,6 +919,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
         assert!(old.ai_memory.persistent.iter().flatten().all(|p| p.is_free()));
         assert_eq!(old.player(2).diplo, g.player(2).diplo);
+    }
+
+    #[test]
+    fn a_game_below_six_entries_takes_the_sixth_place() {
+        let e = |score| super::FameEntry { leader: String::new(), civ_plural: String::new(), score, percent: 0, year: 0, difficulty: 0, title: String::new(), population: 0 };
+        let mut h = super::HallOfFame::default();
+        for s in [600, 500, 400, 300, 200, 100] {
+            h.add(e(s));
+        }
+        // fame_insert (o 0x2c88) stops its search at index 5
+        assert_eq!(h.add(e(50)), 5);
+        assert_eq!(h.entries.len(), 6);
+        assert_eq!(h.entries[5].score, 50);
+        assert_eq!(h.add(e(450)), 2);
+        assert_eq!(h.entries.iter().map(|x| x.score).collect::<Vec<_>>(), [600, 500, 450, 400, 300, 200]);
     }
 
     #[test]

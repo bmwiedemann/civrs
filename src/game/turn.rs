@@ -446,17 +446,20 @@ impl Game {
     }
 
     /// GAME > Retire answered "Yes, Quit" (ds:0xdc48 = 2): the game ends now and the human's
-    /// score is frozen for the end-of-game screens (0x2c20).
-    pub fn retire(&mut self) {
+    /// score is frozen for the end-of-game screens (0x2c20). False when the scores were
+    /// recorded by an earlier ending (ds:0x4cd8 bit 0x100).
+    pub fn retire(&mut self) -> bool {
         if self.ended.is_none() {
             self.ended = Some(EndReason::Retired);
         }
-        if !self.scoring_over {
-            self.scoring_over = true;
-            let human = self.human_slot;
-            let total = self.score(human).total;
-            self.player_mut(human).final_score = Some(total);
+        if self.scoring_over {
+            return false;
         }
+        self.scoring_over = true;
+        let human = self.human_slot;
+        let total = self.score(human).total;
+        self.player_mut(human).final_score = Some(total);
+        true
     }
 
     /// The game ends for `reason` unless it already has: the first ending shows the scores,
@@ -484,13 +487,14 @@ impl Game {
         self.treasury_warning();
         self.spaceship_arrivals();
         // the coming year is the one CIV.EXE compares after its advance (0x2a28, 0x2a98):
-        // a warning 20 years ahead, the end in the year 2100 - 20 * difficulty itself
+        // a warning 20 years ahead, the end in the year 2100 - 20 * difficulty itself, also
+        // after the human kept playing past another ending (then without the scores)
         let end_year = rules::DIFFICULTY[self.setup.difficulty as usize].end_year;
         let year = self.next_year();
         if year == end_year - 20 {
             self.push_event(GameEvent::RetirementWarning(self.human_slot));
         }
-        if !self.scoring_over && year >= end_year {
+        if year == end_year {
             self.end_game(EndReason::TimeLimit);
         }
         // the game is over: freeze the score once, and after the ending (0x2bd7) a conquest

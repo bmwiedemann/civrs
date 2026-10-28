@@ -1,72 +1,114 @@
-//! End-of-game screens: SAD.PIC when the civilisation is destroyed, the SLAM1.PIC score wall
-//! with the leader's portrait (score, rating, Hall of Fame entry) for retirement / the time
-//! limit / conquest, ARCH.PIC with the KING.TXT ARCH text afterwards, and the spaceship
-//! arrival (see `spaceship_ui`); a conquest first shows `conquest`'s trophy wall. `end_game_scores` (0x2c20) opens with the power graph and,
-//! unless the human retired (ds:0xdc48 = 2), the replay (see `replay`).
-//! A conquest, a retirement and "No, I'm done." to *FAME end the program on ADSCREEN.PIC
-//! (`AdScreen`, 0x2c8a).
+//! The end of the game as `game_turn` runs it (CIV.EXE 0x2a98..0x2c1f) and the screens it
+//! calls:
+//! - a conquest: the newspaper "Your civilization\nhas conquered\nthe entire planet!" and
+//!   `conquest_victory` (o 0xd953, see `conquest`);
+//! - a spaceship's arrival: `spaceship_arrival` (overlay 2, see `spaceship_ui`), then the
+//!   newspaper "<Adjective> spaceship\narrives at Alpha Centauri.";
+//! - the year 2100 - 20 * difficulty: the newspaper "<Leader> dynasty\nends after
+//!   glorious\n6000 year reign!" over the national anthem;
+//! - then, the first time only (ds:0x4cd8 bit 0x100), `end_game_scores` (0x2c20): the power
+//!   graph, the replay (not after a retirement), the rating (`rating_screen` o 0x2dd2) and the
+//!   Hall of Fame with the new entry. A conquest and a retirement end the program on
+//!   ADSCREEN.PIC (`AdScreen`, 0x2c8a); the other endings ask *FAME whether to keep playing.
+//! - The human destroyed (no cities, no Settlers): only ARCH.PIC with the KING.TXT ARCH text
+//!   (`archaeology_screen` o 0x209f), then the program ends (ds:0xdc48 = -1, 0x258f).
 
 use crate::assets::text::{paragraphs, substitute, Vars};
 use crate::assets::Palette;
 use crate::game::EndReason;
-use crate::gfx::text::{draw_text, draw_text_centered, text_width};
+use crate::gfx::text::draw_text_centered;
 use crate::gfx::{Rect, Surface, TextStyle};
 use crate::platform::Event;
 use crate::rules;
 use crate::ui::context::UiContext;
-use crate::ui::diplomacy_ui::{face_rect, king_index};
-use crate::ui::eventpics::{Dismiss, PicScreen};
+use crate::ui::eventpics::PicScreen;
+use crate::ui::newspaper::newspaper;
 use crate::ui::replay::{PowerGraph, Replay};
-use crate::ui::reveal::Reveal;
 use crate::ui::screen::{DialogResult, Screen, Transition};
-use crate::ui::wonderscreen::blit_scaled;
 
-/// Inner frame of the SLAM1 wall plaque.
-const PLAQUE: Rect = Rect::new(17, 148, 288, 37);
-/// Driver duration of the dissolve into the score wall (overlay call site, after the
-/// "... destroy the ... civilization!" plaque line: `push 30; push 1; call dissolve`).
-const DISSOLVE: u32 = 30;
-
-/// The screen (chain) for a game end reason.
+/// The screen (chain) for a game end reason, the first time the game ends.
 pub fn end_screen(ctx: &UiContext, reason: EndReason) -> Box<dyn Screen> {
-    let g = ctx.game.as_ref();
-    let (leader, civ) = g.map(|g| (g.human().leader.clone(), g.civ_name(g.human_slot).to_string())).unwrap_or_default();
     match reason {
-        EndReason::Destroyed => {
-            let lines = vec![format!("The {civ} civilization has been destroyed!"), format!("{leader}, your reign is over.")];
-            Box::new(Chain { screen: Box::new(PicScreen::new("SAD", lines).with_caption_pos(20, 20).with_dissolve(ctx, DISSOLVE)), next: Some(arch_screen(ctx)) })
-        }
-        EndReason::Spaceship(slot) => chain(vec![crate::ui::spaceship_ui::arrival_screen(ctx, slot), Box::new(PowerGraph), Box::new(Replay::new())]),
-        EndReason::Conquest => {
-            // the game-over newspaper (overlay 21 with ds:0x1c66), then conquest_victory
-            let news = crate::ui::widgets::MessageBox::new(vec!["Your civilization".into(), "has conquered".into(), "the entire planet!".into()]);
-            let wall = ScoreWall::new(ctx, vec![format!("{leader}, you have conquered the world!")]);
-            // no *FAME question: a conquest ends the game (ds:0xdc48 = 1, 0x2c09)
-            chain(vec![Box::new(news), Box::new(crate::ui::conquest::Conquest::new(ctx)), Box::new(PowerGraph), Box::new(Replay::new()), Box::new(wall), Box::new(AdScreen)])
-        }
-        EndReason::TimeLimit => {
-            let wall = ScoreWall::new(ctx, vec!["Your reign has reached the end of its allotted time.".to_string()]);
-            chain(vec![Box::new(PowerGraph), Box::new(Replay::new()), Box::new(wall), arch_screen(ctx)])
-        }
+        EndReason::Destroyed => chain(vec![arch_screen(ctx), Box::new(Exit)]),
         EndReason::Retired => {
-            let wall = ScoreWall::new(ctx, vec![format!("{leader} retires from the throne of the {civ}.")]);
-            chain(vec![Box::new(PowerGraph), Box::new(wall), arch_screen(ctx), Box::new(AdScreen)])
+            let mut s = end_game_scores(ctx, true);
+            s.push(Box::new(AdScreen));
+            chain(s)
+        }
+        EndReason::Conquest => {
+            let mut s = ending_news(ctx, reason);
+            s.extend(end_game_scores(ctx, false));
+            // no *FAME question: a conquest ends the program (ds:0xdc48 = 1, 0x2c09)
+            s.push(Box::new(AdScreen));
+            chain(s)
+        }
+        EndReason::Spaceship(_) | EndReason::TimeLimit => {
+            let mut s = ending_news(ctx, reason);
+            s.extend(end_game_scores(ctx, false));
+            chain(s)
         }
     }
 }
 
 /// An ending after the human kept playing (ds:0x4cd8 bit 0x100): the same ending without
-/// `end_game_scores` (0x2bc1); a conquest still quits.
+/// its scores (0x2bc1); a retirement still shows the power graph (0x2c20 tests the bit only
+/// after it), a conquest still quits.
 pub fn end_again_screen(ctx: &UiContext, reason: EndReason) -> Box<dyn Screen> {
     match reason {
-        EndReason::Spaceship(slot) => crate::ui::spaceship_ui::arrival_screen(ctx, slot),
+        EndReason::Destroyed => end_screen(ctx, reason),
+        EndReason::Retired => chain(vec![Box::new(PowerGraph), Box::new(AdScreen)]),
         EndReason::Conquest => {
-            let news = crate::ui::widgets::MessageBox::new(vec!["Your civilization".into(), "has conquered".into(), "the entire planet!".into()]);
-            chain(vec![Box::new(news), Box::new(crate::ui::conquest::Conquest::new(ctx)), Box::new(AdScreen)])
+            let mut s = ending_news(ctx, reason);
+            s.push(Box::new(AdScreen));
+            chain(s)
         }
-        // the time limit only ends a game once, and a destroyed civilization has no scores
-        other => end_screen(ctx, other),
+        EndReason::Spaceship(_) | EndReason::TimeLimit => chain(ending_news(ctx, reason)),
     }
+}
+
+/// What game_turn shows for an ending before the scores (0x2abb..0x2ba7).
+fn ending_news(ctx: &UiContext, reason: EndReason) -> Vec<Box<dyn Screen>> {
+    let Some(g) = ctx.game.as_ref() else { return Vec::new() };
+    match reason {
+        EndReason::Conquest => vec![
+            newspaper(vec!["Your civilization".into(), "has conquered".into(), "the entire planet!".into()], None),
+            Box::new(crate::ui::conquest::Conquest::new(ctx)),
+        ],
+        EndReason::Spaceship(slot) => vec![
+            crate::ui::spaceship_ui::arrival_screen(ctx, slot),
+            newspaper(vec![format!("{} spaceship", g.player(slot).adjective()), "arrives at Alpha Centauri.".into()], None),
+        ],
+        EndReason::TimeLimit => {
+            vec![newspaper(vec![format!("{} dynasty", g.human().leader), "ends after glorious".into(), "6000 year reign!".into()], None)]
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// `end_game_scores` (0x2c20): the power graph, the replay unless the human retired
+/// (ds:0xdc48 = 2), the rating of the final score and the Hall of Fame.
+fn end_game_scores(ctx: &UiContext, retired: bool) -> Vec<Box<dyn Screen>> {
+    let mut s: Vec<Box<dyn Screen>> = vec![Box::new(PowerGraph)];
+    if !retired {
+        s.push(Box::new(Replay::new()));
+    }
+    if let Some(g) = ctx.game.as_ref() {
+        let me = g.human_slot;
+        let score = g.player(me).final_score.unwrap_or_else(|| g.score(me).total);
+        s.extend(rating_screen_for(ctx, score));
+        let e = crate::save::FameEntry {
+            leader: g.human().leader.clone(),
+            civ_plural: g.civ_name(me).to_string(),
+            score,
+            percent: score * (g.setup.difficulty as i32 + 1) / 50,
+            year: g.year(),
+            difficulty: g.setup.difficulty.as_u8(),
+            title: g.human().title().trim().to_string(),
+            population: g.total_population(me),
+        };
+        s.push(crate::ui::halloffame::hall_of_fame_with(e));
+    }
+    s
 }
 
 /// `show_ad_screen_and_exit` (0x2c8a): the music stops, ADSCREEN.PIC until a key, and the
@@ -109,16 +151,15 @@ fn chain(screens: Vec<Box<dyn Screen>>) -> Box<dyn Screen> {
     next.expect("an empty chain")
 }
 
-/// ARCH.PIC with the "Centuries later, archeologists discover..." text.
+/// ARCH.PIC with the "Centuries later, archeologists discover..." text (`archaeology_screen`
+/// o 0x209f): $US is the leader's name in capitals, $RPLC1 the last advance in table order the
+/// human knows (`knows_advance`, so never Future Technology), "Irrigation" when none.
 pub fn arch_screen(ctx: &UiContext) -> Box<dyn Screen> {
     let g = ctx.game.as_ref();
     let evidence = g
-        .and_then(|g| {
-            let me = g.human_slot;
-            g.wonders_built.iter().enumerate().find(|(_, c)| c.and_then(|c| g.city_opt(c)).map(|c| c.owner == me).unwrap_or(false)).map(|(w, _)| format!("the {}", rules::WONDERS[w].name))
-        })
-        .unwrap_or_else(|| "temples".to_string());
-    let v = Vars { rplc1: evidence, us: g.map(|g| g.civ_name(g.human_slot).to_ascii_uppercase()).unwrap_or_default(), ..Default::default() };
+        .and_then(|g| (0..72u8).rev().find(|a| g.knows_advance(g.human_slot, *a)).map(|a| rules::ADVANCES[a as usize].name.to_string()))
+        .unwrap_or_else(|| "Irrigation".to_string());
+    let v = Vars { rplc1: evidence, us: g.map(|g| g.human().leader.to_ascii_uppercase()).unwrap_or_default(), ..Default::default() };
     let lines = ctx.texts.king.section("ARCH").map(|l| l.to_vec()).unwrap_or_default();
     let text = paragraphs(&substitute(&lines, &v));
     Box::new(PicScreen::new("ARCH", text).with_caption_pos(6, 4).with_caption_width(200))
@@ -174,71 +215,76 @@ impl Chain {
     }
 }
 
-/// SLAM1 score wall: the leader's portrait on the panelled wall, score and rating on the
-/// plaque; records a Hall of Fame entry on entry.
-pub struct ScoreWall {
-    lines: Vec<String>,
-    king: u8,
-    dismiss: Dismiss,
-    recorded: bool,
-    reveal: Reveal,
+/// `rating_screen(level, score)` (ovl 3 +0x65d, o 0x2dd2) for the final `score`: the rating
+/// is score * (difficulty + 1) / 50 percent and the level the largest i - 1 of i in 1..=20
+/// with i * i / 3 below it (`score::rating_index`); with no score the level is the palace's
+/// (ds:0x1c20 / 2 - 1, the argument of 0x2c5a). Nothing below level 0.
+pub fn rating_screen_for(ctx: &UiContext, score: i32) -> Option<Box<dyn Screen>> {
+    let g = ctx.game.as_ref()?;
+    let (level, percent) = if score != 0 {
+        let percent = score * (g.setup.difficulty as i32 + 1) / 50;
+        ((1..=20).filter(|i| i * i / 3 < percent).max().map(|i| i - 1)?, Some(percent))
+    } else {
+        (g.human().palace_level as i32 / 2 - 1, None)
+    };
+    (level >= 0).then(|| Box::new(RatingScreen { level: level.min(19) as usize, percent, border: (ctx.frame.wrapping_mul(0x9e37_79b9) >> 13) as u8 & 1, guard: 2 }) as Box<dyn Screen>)
 }
 
-impl ScoreWall {
-    pub fn new(ctx: &UiContext, mut lines: Vec<String>) -> ScoreWall {
-        let mut king = 10;
-        if let Some(g) = ctx.game.as_ref() {
-            let me = g.human_slot;
-            king = king_index(g.player(me).civ);
-            let s = g.score(me);
-            lines.push(format!("Civilization score: {} ({}%)", s.total, s.percent));
-            lines.push(format!("Your rating: {}.", g.rating_name(me)));
-            lines.push("Your final score has been entered into the Hall of Fame.".into());
-        }
-        ScoreWall { lines, king, dismiss: Dismiss::new(), recorded: false, reveal: Reveal::new(ctx, DISSOLVE) }
-    }
+/// The rating screen of a score (for the screen dump).
+pub fn rating_screen(ctx: &UiContext, score: i32) -> Box<dyn Screen> {
+    rating_screen_for(ctx, score).unwrap_or_else(|| Box::new(Exit))
 }
 
-impl Screen for ScoreWall {
+/// The page of `rating_screen`: tune 0x22, colour 15 with the random SP299 page border, the
+/// SP299 pictures (200, 140) and (240, 140) (40x60) at (10, 10) and (270, 10), a stone panel
+/// (80, 4, 160, 27) with a 11/8 bevel and three lines in font 7, colour 15, centred at y 6, 14
+/// and 22: "Sire, your Civilization" / "Rating of N% exceeds even" / "<ruler>!" (with no
+/// score "Sire, your fame now" / "exceeds even that of" / "<ruler>!"); then the rulers of
+/// levels 0..=level (far 0x2653:(19 - i) * 25, `rules::RATINGS`) centred at y 184 - 8 i, in 7
+/// and the reached one in 0 with its colour 15 turned 14 over (80, 183 - 8 level, 160, 8).
+struct RatingScreen {
+    level: usize,
+    percent: Option<i32>,
+    border: u8,
+    guard: u32,
+}
+
+impl Screen for RatingScreen {
     fn on_enter(&mut self, ctx: &mut UiContext) {
-        if self.recorded {
-            return;
-        }
-        self.recorded = true;
-        if let Some(g) = ctx.game.as_ref() {
-            ctx.audio.national_theme(g.human().civ, true);
-        }
-        if let Some(g) = ctx.game.as_ref() {
-            let me = g.human_slot;
-            let s = g.score(me);
-            let e = crate::save::FameEntry { leader: g.human().leader.clone(), civ_plural: g.civ_name(me).to_string(), score: s.total, percent: s.percent, year: g.year(), difficulty: g.setup.difficulty.as_u8(), title: g.human().title().trim().to_string(), population: g.total_population(me) };
-            ctx.hof.add(e);
-            ctx.hof.save(&ctx.save_dir);
-        }
+        ctx.audio.play(crate::audio::Sound::Win);
     }
     fn update(&mut self, _ctx: &mut UiContext) -> Transition {
-        self.dismiss.tick();
+        self.guard = self.guard.saturating_sub(1);
         Transition::None
     }
     fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
-        if !self.dismiss.closes(ev) {
-            Transition::None
-        } else if self.reveal.done() {
-            Transition::Pop(DialogResult::Done)
-        } else {
-            self.reveal.finish();
-            Transition::None
+        match ev {
+            Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } if self.guard == 0 => Transition::Pop(DialogResult::Done),
+            _ => Transition::None,
         }
     }
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
-        let pal = ctx.pic_pal("SLAM1");
-        let mut content = Surface::screen();
-        self.render(&mut content, ctx, &pal);
-        let old = ctx.palette;
-        self.reveal.draw(fb, &content, &old, &pal);
-    }
-    fn palette(&self, ctx: &UiContext) -> Palette {
-        ctx.pic_pal("SLAM1")
+        const FONT7: usize = 6;
+        fb.fill(15);
+        crate::ui::pedia_entry::draw_border(fb, ctx, self.border);
+        let sp = &ctx.pic("SP299").surf;
+        fb.blit_part(sp, Rect::new(200, 140, 40, 60), 10, 10, None);
+        fb.blit_part(sp, Rect::new(240, 140, 40, 60), 270, 10, None);
+        crate::ui::widgets::fill_texture(fb, ctx, Rect::new(80, 4, 160, 27));
+        crate::ui::widgets::bevel(fb, 80, 4, 159, 26, 11, 8);
+        let ruler = |i: usize| rules::RATINGS[19 - i];
+        let head = match self.percent {
+            Some(p) => ["Sire, your Civilization".to_string(), format!("Rating of {p}% exceeds even"), format!("{}!", ruler(self.level))],
+            None => ["Sire, your fame now".to_string(), "exceeds even that of".to_string(), format!("{}!", ruler(self.level))],
+        };
+        for (l, y) in head.iter().zip([6, 14, 22]) {
+            draw_text_centered(fb, &ctx.fonts, &TextStyle::new(FONT7, 15), 160, y, l);
+        }
+        for i in 0..=self.level {
+            let col = if i == self.level { 0 } else { 7 };
+            draw_text_centered(fb, &ctx.fonts, &TextStyle::new(FONT7, col), 160, 184 - 8 * i as i32, ruler(i));
+        }
+        fb.replace_colour(Rect::new(80, 183 - 8 * self.level as i32, 160, 8), 15, 14);
     }
     fn draws_parent(&self) -> bool {
         false
@@ -248,43 +294,18 @@ impl Screen for ScoreWall {
     }
 }
 
-impl ScoreWall {
-    /// The wall with the portrait, name plate and plaque text.
-    fn render(&self, fb: &mut Surface, ctx: &UiContext, pal: &Palette) {
-        let wall = ctx.pic("SLAM1");
-        fb.blit(&wall.surf, 0, 0);
-        // framed portrait (SLAM2 face strip, enlarged 2x) hanging on the wall
-        let faces = ctx.pic("SLAM2");
-        let face_pal = ctx.pic_pal("SLAM2");
-        let mut map = [0u8; 256];
-        for (i, m) in map.iter_mut().enumerate() {
-            *m = pal.nearest(face_pal.rgb(i as u8));
-        }
-        let r = face_rect(self.king);
-        let (fw, fh) = (r.w * 2, r.h * 2);
-        let (fx, fy) = ((320 - fw) / 2, 36);
-        let frame = Rect::new(fx - 4, fy - 4, fw + 8, fh + 8);
-        fb.fill_rect(frame, pal.nearest([130, 32, 20]));
-        fb.rect_outline(frame, pal.nearest([255, 219, 89]));
-        fb.rect_outline(frame.inset(1), pal.nearest([0, 0, 0]));
-        blit_scaled(fb, &faces.surf, r, fx, fy, 2, None, &map);
-        // name plate under the portrait
-        if let Some(g) = ctx.game.as_ref() {
-            let name = format!("{} of the {}", g.human().leader, g.civ_name(g.human_slot));
-            let w = text_width(&ctx.fonts, 0, &name) + 8;
-            let plate = Rect::new(160 - w / 2, fy + fh + 8, w, 11);
-            fb.fill_rect(plate, pal.nearest([255, 219, 89]));
-            fb.rect_outline(plate, pal.nearest([0, 0, 0]));
-            draw_text_centered(fb, &ctx.fonts, &TextStyle::new(0, pal.nearest([0, 0, 0])), 160, plate.y + 2, &name);
-        }
-        // plaque text
-        let ink = pal.nearest([0, 0, 0]);
-        let mut y = PLAQUE.y + 3;
-        for l in &self.lines {
-            for part in crate::gfx::text::wrap(&ctx.fonts, 0, PLAQUE.w - 12, l) {
-                draw_text(fb, &ctx.fonts, &TextStyle::new(0, ink), PLAQUE.x + 6, y, &part);
-                y += 8;
-            }
-        }
+/// The program ends (after the human's destruction: 0x258f -> main's exit 0x1c0d).
+struct Exit;
+
+impl Screen for Exit {
+    fn update(&mut self, _ctx: &mut UiContext) -> Transition {
+        Transition::Quit
+    }
+    fn handle(&mut self, _ev: &Event, _ctx: &mut UiContext) -> Transition {
+        Transition::Quit
+    }
+    fn draw(&mut self, _fb: &mut Surface, _ctx: &mut UiContext) {}
+    fn palette(&self, ctx: &UiContext) -> Palette {
+        ctx.game_palette()
     }
 }

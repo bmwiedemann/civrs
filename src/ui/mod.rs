@@ -17,6 +17,7 @@ pub mod halloffame;
 pub mod loadgame;
 pub mod intro_message;
 pub mod mapview;
+pub mod newspaper;
 pub mod palace;
 pub mod pedia_data;
 pub mod pedia_entry;

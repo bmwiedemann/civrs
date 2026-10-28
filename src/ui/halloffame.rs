@@ -3,41 +3,75 @@
 use crate::assets::Palette;
 use crate::gfx::Surface;
 use crate::platform::{Event, Key};
+use crate::save::FameEntry;
 use crate::ui::context::UiContext;
 use crate::gfx::text::{draw_text, draw_text_centered, text_width};
-use crate::gfx::TextStyle;
+use crate::gfx::{Rect, TextStyle};
 use crate::ui::reports::{commas, FONT};
 use crate::ui::screen::{DialogResult, Screen, Transition};
 
+/// The list from the title menu (`fame_show(-1)`).
 pub fn hall_of_fame() -> Box<dyn Screen> {
-    Box::new(HallOfFame { guard: 2 })
+    Box::new(HallOfFame { guard: 2, entry: None, highlight: None })
+}
+
+/// The end of a game (end_game_scores 0x2c64..0x2c7f): `fame_load`, `fame_insert` (o 0x2c88)
+/// of `entry` and `fame_save`. The new entry is shown highlighted with a "Clear" button; C
+/// empties the list (`fame_clear` o 0x2775) and enters the game again.
+pub fn hall_of_fame_with(entry: FameEntry) -> Box<dyn Screen> {
+    Box::new(HallOfFame { guard: 2, entry: Some(entry), highlight: None })
 }
 
 pub struct HallOfFame {
     guard: u32,
+    entry: Option<FameEntry>,
+    highlight: Option<usize>,
+}
+
+impl HallOfFame {
+    fn insert(&mut self, ctx: &mut UiContext) {
+        if let Some(e) = self.entry.clone() {
+            self.highlight = Some(ctx.hof.add(e));
+            ctx.hof.save(&ctx.save_dir);
+        }
+    }
 }
 
 impl Screen for HallOfFame {
+    fn on_enter(&mut self, ctx: &mut UiContext) {
+        if self.highlight.is_none() {
+            self.insert(ctx);
+        }
+    }
     fn update(&mut self, _ctx: &mut UiContext) -> Transition {
         self.guard = self.guard.saturating_sub(1);
         Transition::None
     }
-    fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
+    fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
         if self.guard > 0 {
             return Transition::None;
         }
         match ev {
+            // fame_show returns 1 for 'c' / 'C' after a game (o 0x2c25..)
+            Event::Key { down: true, key: Key::Char('c' | 'C'), .. } if self.highlight.is_some() => {
+                ctx.hof.entries.clear();
+                self.insert(ctx);
+                self.guard = 2;
+                Transition::None
+            }
             Event::Key { down: true, key, .. } if !matches!(key, Key::Unknown) => Transition::Pop(DialogResult::Done),
             Event::MouseButton { down: true, .. } => Transition::Pop(DialogResult::Done),
             _ => Transition::None,
         }
     }
-    /// `fame_show(-1)` (ovl 3 +0xd7): a colour-15 page, "CIVILIZATION" / "HALL OF FAME" centred
-    /// at y 16 and 24, a colour-14 rule (80, 32)..(240, 32), then five entries 26 px apart
+    /// `fame_show(highlight)` (ovl 3 +0xd7): a colour-15 page, "CIVILIZATION" / "HALL OF FAME"
+    /// centred at y 16 and 24, a colour-14 rule (80, 32)..(240, 32), then entries 26 px apart
     /// from y 40: "N. <leader>, <difficulty title> of the <civ> to <year> BC." at (8, y) in 0
     /// (cut after the civilization when it would pass x 320), "Population: N, Score: N
     /// (<level>)" at (20, y + 8) in 7 and "    --- CIVILIZATION RATING: N% ---" at (20, y + 16)
-    /// in 12; an empty slot is " ---" at (8, y).
+    /// in 12; an empty slot is " ---" at (8, y). The sixth record shows only when it is the
+    /// highlighted one, in the fifth one's place; the highlighted entry's colour 15 turns 14
+    /// over (4, y - 2, 296, 26), and "Clear" stands at (252, 189).
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
         fb.fill(15);
         let st = |c: u8| TextStyle::new(FONT, c);
@@ -46,7 +80,10 @@ impl Screen for HallOfFame {
         }
         fb.line(80, 32, 240, 32, 14);
         let mut y = 40;
-        for i in 0..5 {
+        for i in 0..6 {
+            if (i == 5 && self.highlight != Some(5)) || (i == 4 && self.highlight == Some(5)) {
+                continue;
+            }
             match ctx.hof.entries.get(i) {
                 Some(e) => {
                     let d = e.difficulty.min(4) as usize;
@@ -59,13 +96,19 @@ impl Screen for HallOfFame {
                     draw_text(fb, &ctx.fonts, &st(7), 20, y + 8, &format!("Population: {}, Score: {} ({level})", commas(e.population), e.score));
                     let rating = (d as i32 + 1) * e.score / 50;
                     draw_text(fb, &ctx.fonts, &st(12), 20, y + 16, &format!("    --- CIVILIZATION RATING: {rating}% ---"));
-                    y += 26;
+                    if self.highlight == Some(i) {
+                        fb.replace_colour(Rect::new(4, y - 2, 296, 26), 15, 14);
+                    }
                 }
                 None => {
                     draw_text(fb, &ctx.fonts, &st(0), 8, y, " ---");
-                    y += 26;
                 }
             }
+            y += 26;
+        }
+        if self.highlight.is_some() {
+            draw_text(fb, &ctx.fonts, &st(0), 252, 189, "Clear");
+            fb.rect_outline(Rect::new(236, 187, 60, 10), 11);
         }
     }
     /// From the title menu the screen keeps LOGO.PIC's palette (cream 15, brown 7, red 12).

@@ -320,6 +320,8 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&P
             "invaders" => civrs::ui::eventpics::invaders_screen(&ctx, ctx.game().cities_of(ctx.game().human_slot).first().copied(), vec!["Barbarians land".into(), "near Rome!".into()]),
             "endgame" => civrs::ui::endgame::end_screen(&ctx, match seed { 1 => civrs::game::EndReason::Destroyed, 2 => civrs::game::EndReason::Conquest, 3 => civrs::game::EndReason::Spaceship(1), _ => civrs::game::EndReason::Retired }),
             "arch" => civrs::ui::endgame::arch_screen(&ctx),
+            "newspaper" => civrs::ui::eventpics::over_map(civrs::ui::newspaper::newspaper(vec!["Scientists alarmed by".into(), "rising temperatures.".into(), "Global Warming feared!".into()], None)),
+            "rating" => civrs::ui::endgame::rating_screen(&ctx, 600),
             "powergraph" => Box::new(civrs::ui::replay::PowerGraph),
             // the conquest ending of the autoplayed game (CIVRS_FRAMES = ticks into it)
             // (the autoplayed human destroys no one: civs 2..4 are logged as destroyed by him)

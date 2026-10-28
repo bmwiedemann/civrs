@@ -1116,6 +1116,22 @@ mod calendar_tests {
         let ev = g.take_events();
         assert!(ev.contains(&GameEvent::GameEndedAgain(EndReason::Conquest)) && !asked(&ev));
     }
+
+    #[test]
+    fn the_end_year_ends_a_continued_game_again() {
+        let mut g = Game::new(GameSetup { seed: 9, ..Default::default() }, None);
+        g.end_game(EndReason::Spaceship(g.human_slot));
+        g.process_world();
+        g.take_events();
+        g.apply_decision(&Decision::KeepPlaying { reason: EndReason::Spaceship(g.human_slot) }, DecisionReply::Yes);
+        // 0x2b47 compares the year with 2100 - 20 * difficulty whatever ended before
+        let end = rules::DIFFICULTY[g.setup.difficulty as usize].end_year;
+        g.year = end - 1;
+        g.process_world();
+        let ev = g.take_events();
+        assert!(ev.contains(&GameEvent::GameEndedAgain(EndReason::TimeLimit)));
+        assert!(ev.iter().any(|e| matches!(e, GameEvent::NeedsDecision(Decision::KeepPlaying { .. }))));
+    }
 }
 
 #[cfg(test)]

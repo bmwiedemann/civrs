@@ -98,6 +98,8 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
     let me = g.human_slot;
     let msg = |lines: Vec<String>| -> Option<Box<dyn Screen>> { Some(Box::new(MessageBox::new(lines))) };
     let news = |lines: Vec<String>| -> Option<Box<dyn Screen>> { Some(eventpics::travelers_report(lines)) };
+    // overlay 21, named after `city` (None: the human's city, the -1 argument)
+    let paper = |lines: Vec<String>, city: Option<crate::game::CityId>| -> Option<Box<dyn Screen>> { Some(crate::ui::newspaper::newspaper(lines, city)) };
     let city_name = |id| g.city_opt(id).map(|c| c.name.clone()).unwrap_or_default();
     let civ = |s: u8| -> String {
         if s == 0 {
@@ -109,9 +111,9 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
     match ev {
         GameEvent::CityGrew(_) | GameEvent::CityShrank(_) | GameEvent::TurnStarted(_) | GameEvent::UnitVeteran(_) => None,
         GameEvent::Famine(c) if g.city_opt(*c).map(|c| c.owner == me).unwrap_or(false) => msg(vec![format!("Famine in {}!", city_name(*c)), "Population decreases.".into()]),
-        // CIV.EXE 0xd0a4..0xd0ff
-        GameEvent::FoodExhausted { name, owner, settlers_lost, .. } if *owner == me => {
-            msg(vec!["Food storage exhausted".into(), format!("in {name}!"), if *settlers_lost { "Settlers lost." } else { "Famine feared." }.into()])
+        // CIV.EXE 0xd0a4..0xd0ff, the newspaper of the city
+        GameEvent::FoodExhausted { city, name, owner, settlers_lost } if *owner == me => {
+            paper(vec!["Food storage exhausted".into(), format!("in {name}!"), if *settlers_lost { "Settlers lost." } else { "Famine feared." }.into()], Some(*city))
         }
         // CIV.EXE 0xd221..0xd258
         GameEvent::AqueductNeeded(c) if g.city_opt(*c).map(|c| c.owner == me).unwrap_or(false) => {
@@ -128,26 +130,37 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             // "CITY builds UNIT." only for Settlers, Diplomats and Caravans (CIV.EXE 0xe3dc)
             crate::game::Production::Unit(k) if *k == rules::unit_ids::SETTLERS || *k >= rules::unit_ids::DIPLOMAT => msg(vec![format!("{} builds {}.", city_name(*city), item.name())]),
             crate::game::Production::Unit(_) => None,
+            // the city view adds it, else the city's newspaper (CIV.EXE 0xe62f..0xe6e9)
             _ => match built_view_item(g, *city, *item) {
                 Some(view) => Some(crate::ui::city_view::built_view(ctx, *city, view)),
-                None => msg(vec![format!("{} builds", city_name(*city)), format!("{}.", item.name())]),
+                None => paper(vec![format!("{} builds", city_name(*city)), format!("{}.", item.name())], Some(*city)),
             },
         },
         GameEvent::ProductionBlocked { city, item } if g.city(*city).owner == me => {
             msg(vec![format!("{} cannot complete {}.", city_name(*city), item.name())])
         }
-        // the human's own wonder goes through the same completion as an improvement: the city
-        // view adds it (CIV.EXE 0xe676), or a plain note without animations
-        GameEvent::WonderBuilt { city, wonder, owner } if *owner == me => match built_view_item(g, *city, crate::game::Production::Wonder(*wonder)) {
-            Some(view) => Some(crate::ui::city_view::built_view(ctx, *city, view)),
-            None => msg(vec![format!("{} builds", city_name(*city)), format!("{}.", rules::WONDERS[*wonder as usize].name)]),
-        },
-        GameEvent::WonderBuilt { city, wonder, owner } => Some(crate::ui::wonderscreen::wonder_screen(ctx, *wonder, &city_name(*city), *owner)),
-        // "<adv> cancels\nthe effect of\n<wonder>." (CIV.EXE 0xc796, the human's wonders)
+        // a wonder goes through the same completion as an improvement (CIV.EXE 0xe5d6..0xe6e9):
+        // the human's is added by the city view, else (and every computer wonder) the
+        // newspaper of the city says "CITY builds\nWONDER."; the Manhattan Project's
+        // "Sensors report a\nNUCLEAR WEAPONS test\nnear CITY!" newspaper comes first (0xe52d)
+        GameEvent::WonderBuilt { city, wonder, owner } => {
+            let builds = match built_view_item(g, *city, crate::game::Production::Wonder(*wonder)).filter(|_| *owner == me) {
+                Some(view) => Some(crate::ui::city_view::built_view(ctx, *city, view)),
+                None => paper(vec![format!("{} builds", city_name(*city)), format!("{}.", rules::WONDERS[*wonder as usize].name)], Some(*city)),
+            };
+            if *wonder == rules::wonder_ids::MANHATTAN_PROJECT {
+                let test = paper(vec!["Sensors report a".into(), "NUCLEAR WEAPONS test".into(), format!("near {}!", city_name(*city))], None);
+                Some(Box::new(Sequence { first: test, then: builds }))
+            } else {
+                builds
+            }
+        }
+        // "<adv> cancels\nthe effect of\n<wonder>." (CIV.EXE 0xc796, the human's wonders, a
+        // newspaper)
         GameEvent::WonderObsolete { wonder, owner } if *owner == me => {
             let w = &rules::WONDERS[*wonder as usize];
             let adv = w.obsolete_by.map(|a| rules::ADVANCES[a as usize].name).unwrap_or("");
-            msg(vec![format!("{adv} cancels"), "the effect of".into(), format!("{}.", w.name)])
+            paper(vec![format!("{adv} cancels"), "the effect of".into(), format!("{}.", w.name)], None)
         }
         GameEvent::BarracksObsolete { slot, adv } if *slot == me => {
             msg(vec![format!("Development of {}", rules::ADVANCES[*adv as usize].name), "makes existing Barracks".into(), "obsolete.".into()])
@@ -156,6 +169,12 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
         GameEvent::DisorderOngoing { city, .. } if g.city(*city).owner == me => msg(eventpics::disorder_lines(ctx, *city)),
         GameEvent::DisorderEnded(c) if g.city(*c).owner == me => msg(vec![format!("Order restored in {}.", city_name(*c))]),
         GameEvent::Celebration(c) if g.city(*c).owner == me => Some(eventpics::celebration_screen(ctx, *c)),
+        // "'We love the TITLE'\ncelebration canceled\nin CITY." in the city's newspaper, not
+        // under Anarchy (CIV.EXE 0x12b23..0x12bbd)
+        GameEvent::CelebrationEnded(c) if g.city(*c).owner == me && g.human().govt != rules::Govt::Anarchy => paper(
+            vec![format!("'We love the {}'", g.human().title()), "celebration canceled".into(), format!("in {}.", city_name(*c))],
+            Some(*c),
+        ),
         GameEvent::AdvanceDiscovered { slot, adv } if *slot == me => with_pedia(Some(crate::ui::discovery::discovery_screen(ctx, *adv)), *adv),
         // the hut's own message (HutEntered) announces it and adds the Civilopedia page
         GameEvent::AdvanceAcquired { source, .. } if source == "hut" => None,
@@ -182,22 +201,26 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             with_pedia(msg(vec![format!("You acquire {}", rules::ADVANCES[*adv as usize].name), format!("({source})")]), *adv)
         }
         GameEvent::UnitLost { slot, kind, reason, .. } if *slot == me => msg(vec![format!("{} {}.", rules::UNITS[*kind as usize].name, reason)]),
-        GameEvent::CityCaptured { city, by, from, gold, adv } => {
-            if *by == me {
-                let mut l = vec![format!("{} captured!", city_name(*city)), format!("{} gold plundered.", gold)];
-                if let Some(a) = adv {
-                    l.push(format!("You acquire {}.", rules::ADVANCES[*a as usize].name));
-                }
-                match adv {
-                    Some(a) => with_pedia(msg(l), *a),
-                    None => msg(l),
-                }
-            } else if *from == me {
-                news(vec![format!("{} captured", city_name(*city)), format!("by the {}!", civ(*by))])
-            } else {
-                news(vec![format!("{} capture", civ(*by)), format!("{} city of {}!", g.player(*from).adjective(), city_name(*city))])
+        // capture_city (CIV.EXE 0x14014..0x14130): with the human on either side "PLURAL
+        // capture\nCITY. N gold\npieces plundered." in the city's newspaper (with animations
+        // the original shows it over the city view, overlay 19, not ported); a computer
+        // captor's theft follows as "PLURAL take\nADVANCE." (steal_advance 0x145a6). Between
+        // computer players only a human embassy with either side tells, as "Spies report:"
+        // at (100, 80) (0x1416d..0x1422a).
+        GameEvent::CityCaptured { city, by, from, gold, adv } if *by == me || *from == me => {
+            let news = paper(vec![format!("{} capture", g.player(*by).plural()), format!("{}. {} gold", city_name(*city), gold), "pieces plundered.".into()], Some(*city));
+            match adv {
+                Some(a) if *from == me => Some(Box::new(Sequence {
+                    first: news,
+                    then: Some(Box::new(MessageBox::new(vec![format!("{} take", g.player(*by).plural()), format!("{}.", rules::ADVANCES[*a as usize].name)]).with_pos(80, 32))),
+                })),
+                _ => news,
             }
         }
+        GameEvent::CityCaptured { city, by, from, .. } if g.player(me).has_embassy(*by) || g.player(me).has_embassy(*from) => Some(Box::new(
+            MessageBox::new(vec!["Spies report:".into(), format!("{} capture", g.player(*by).plural()), format!("the {} city", g.player(*from).adjective()), format!("of {}.", city_name(*city))])
+                .with_pos(100, 80),
+        )),
         GameEvent::CityRebels { city, from, to } if *from == me || *to == me || g.player(me).has_embassy(*from) || g.player(me).has_embassy(*to) => {
             let lines = if *to == 0 {
                 vec![format!("{} declare", g.player(*from).plural()), "independence in".into(), city_name(*city)]
@@ -209,8 +232,16 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
         GameEvent::CityDestroyed { name, by, from, .. } => {
             if *by == me {
                 msg(vec![format!("{name} destroyed!")])
+            } else if *from == me {
+                news(vec![format!("{name} destroyed"), format!("by the {}!", civ(*by))])
+            } else if g.player(me).has_embassy(*by) || g.player(me).has_embassy(*from) {
+                // between computer players: "Spies report:" for a human embassy with either
+                // side (CIV.EXE 0x1416d..0x1422a, ds:0x28a1)
+                Some(Box::new(
+                    MessageBox::new(vec!["Spies report:".into(), format!("{} destroy", g.player(*by).plural()), format!("the {} city", g.player(*from).adjective()), format!("of {name}.")]).with_pos(100, 80),
+                ))
             } else {
-                news(vec![format!("{name} destroyed"), format!("by the {}!", civ(*by)), if *from == me { String::new() } else { format!("({} city)", g.player(*from).adjective()) }])
+                None
             }
         }
         // KING.TXT *ESCHISM, shown to everyone (civil_war o 0x14dce: $US / $THEM the two
@@ -253,12 +284,12 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             let vx = crate::game::Map::wrap_x(at.0 - crate::ui::mapview::VIEW_W / 2);
             let vy = (at.1 - crate::ui::mapview::VIEW_H / 2).clamp(0, crate::rules::MAP_H as i32 - crate::ui::mapview::VIEW_H);
             let anim = eventpics::nuke_animation_at_tile(at.0, at.1, vx, vy);
-            let text = msg(vec!["Nuclear Catastrophe".into(), format!("in {}!", city_name(*city)), "Contamination feared!".into()]);
+            let text = paper(vec!["Nuclear Catastrophe".into(), format!("in {}!", city_name(*city)), "Contamination feared!".into()], Some(*city));
             Some(Box::new(Sequence { first: Some(anim), then: text }))
         }
-        // ds:0x3b6a and ds:0x1df8, shown by the newspaper (overlay 21) in CIV.EXE
-        GameEvent::GlobalWarming => msg(vec!["Global temperature".into(), "rises! Icecaps melt.".into(), "Severe Drought.".into()]),
-        GameEvent::GlobalWarmingFeared => msg(vec!["Scientists alarmed by".into(), "rising temperatures.".into(), "Global Warming feared!".into()]),
+        // ds:0x3b6a (o 0xa924) and ds:0x1df8 (0x3b2e), in the newspaper
+        GameEvent::GlobalWarming => paper(vec!["Global temperature".into(), "rises! Icecaps melt.".into(), "Severe Drought.".into()], None),
+        GameEvent::GlobalWarmingFeared => paper(vec!["Scientists alarmed by".into(), "rising temperatures.".into(), "Global Warming feared!".into()], None),
         // the owner reads it all, anyone else who sees the city only the first line (CIV.EXE
         // o 0x1bf3b)
         GameEvent::Disaster { city, kind } if g.city_opt(*city).is_some_and(|c| c.owner == me || g.visible_to(me, c.x, c.y)) => {
@@ -273,8 +304,11 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             msg(vec![format!("Residents of {}", city_name(*city)), format!("admire the prosperity of {}.", city_name(*admired))])
         }
         // "The <Plural> are\nrevolting! Citizens\ndemand new govt." (CIV.EXE 0x6f88, newspaper)
-        GameEvent::Revolution { slot } if *slot == me => msg(vec![format!("The {} are", g.player(*slot).plural()), "revolting! Citizens".into(), "demand new govt.".into()]),
-        GameEvent::GovernmentCollapsed { slot, city } if *slot == me => msg(vec!["Discontented citizens of".into(), format!("{} revolt:", city_name(*city)), "Government Collapses!".into()]),
+        GameEvent::Revolution { slot } if *slot == me => paper(vec![format!("The {} are", g.player(*slot).plural()), "revolting! Citizens".into(), "demand new govt.".into()], None),
+        // the city's newspaper (CIV.EXE 0x127d6..0x12810)
+        GameEvent::GovernmentCollapsed { slot, city } if *slot == me => {
+            paper(vec!["Discontented citizens of".into(), format!("{} revolt:", city_name(*city)), "Government Collapses!".into()], Some(*city))
+        }
         GameEvent::AnarchyEnded { slot } if *slot == me => None,
         GameEvent::GovernmentChanged { slot, govt } if *slot == me => Some(crate::ui::govtscreen::govt_screen(ctx, *govt)),
         GameEvent::UnitLimit(slot) if *slot == me => {
@@ -310,7 +344,8 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             let (first, then) = crate::ui::spaceship_ui::launch_screens(ctx, *s);
             Some(Box::new(Sequence { first: Some(first), then }))
         }
-        GameEvent::SpaceshipArrived(s) => news(vec![format!("The {} spaceship", civ(*s)), "reaches Alpha Centauri!".into()]),
+        // the arrival's newspaper follows its animation in the ending (`endgame`, 0x2b09)
+        GameEvent::SpaceshipArrived(_) => None,
         GameEvent::SpaceshipLost(s) if *s == me => msg(vec!["Your spaceship is lost!".into()]),
         // CIV.EXE o 0x1842b, for every part an AI civ adds
         GameEvent::SpaceshipPartBuilt(s) if *s != me => {
@@ -320,7 +355,7 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
         // "<Title> <Leader>\nplans retirement\nin 20 years." (CIV.EXE 0x2a28, overlay 21)
         GameEvent::RetirementWarning(s) if *s == me => {
             let p = g.player(*s);
-            news(vec![format!("{} {}", p.title(), p.leader), "plans retirement".into(), "in 20 years.".into()])
+            paper(vec![format!("{} {}", p.title(), p.leader), "plans retirement".into(), "in 20 years.".into()], None)
         }
         // CIV.EXE 0x14364
         GameEvent::SpaceshipCancelled { slot, launched } => {
