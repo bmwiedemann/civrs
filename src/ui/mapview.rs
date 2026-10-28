@@ -1526,7 +1526,8 @@ impl Screen for MapView {
                         self.queued.extend(notes);
                         self.show_events(ctx)
                     }
-                    Key::F(n) => Transition::Push(crate::ui::reports::advisor(ctx, *n)),
+                    // F1..F10 only (0x3b00..0x4400); Demographics and SpaceShips have no key
+                    Key::F(n) if (1..=10).contains(n) => Transition::Push(crate::ui::reports::advisor(ctx, *n)),
                     Key::Char('s') if mods.ctrl => {
                         let path = crate::save::slot_path(&ctx.save_dir, 0);
                         let r = crate::save::save_game(&path, ctx.game());
