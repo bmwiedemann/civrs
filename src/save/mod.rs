@@ -39,7 +39,10 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// 18: then by the replay log and power history (`Game::history`, a u32 LE byte count and its
 /// bincode) and the research catch-up bonus (`Game::catch_up`, i32 LE, set every 50 turns);
 /// older saves start with empty histories and compute the bonus for their turn.
-pub const VERSION: u16 = 18;
+/// 19: then by the number of city slots (u32 LE) and each slot's `City::known_size` byte (0 for
+/// an empty slot); older saves let the human know the size of every city whose square he has
+/// explored.
+pub const VERSION: u16 = 19;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -135,6 +138,8 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     data.extend_from_slice(&(history.len() as u32).to_le_bytes());
     data.extend_from_slice(&history);
     data.extend_from_slice(&g.catch_up.to_le_bytes());
+    data.extend_from_slice(&(g.cities.len() as u32).to_le_bytes());
+    data.extend(g.cities.iter().map(|c| c.as_ref().map(|c| c.known_size).unwrap_or(0)));
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -239,6 +244,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
         }
     }
     let mut catch_up = None;
+    let mut known_sizes: Option<Vec<u8>> = None;
     // version 14: the tribe names, after the counters
     if ver >= 14 {
         let mut at = counters + 112 * g.players.len();
@@ -281,6 +287,11 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
             g.history = rest.get(at + 4..at + 4 + n).and_then(|b| bincode::deserialize(b).ok()).unwrap_or_default();
             at += 4 + n;
             catch_up = rest.get(at..at + 4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+            at += 4;
+            if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 19) {
+                let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
+                known_sizes = rest.get(at + 4..at + 4 + n).map(|b| b.to_vec());
+            }
         }
     } else {
         for p in g.players.iter_mut() {
@@ -315,6 +326,24 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     match catch_up {
         Some(v) => g.catch_up = v,
         None => g.update_research_catch_up(),
+    }
+    let human = g.human_slot;
+    match known_sizes {
+        Some(b) => {
+            for (c, k) in g.cities.iter_mut().zip(b) {
+                if let Some(c) = c {
+                    c.known_size = k;
+                }
+            }
+        }
+        None => {
+            for i in 0..g.cities.len() {
+                let Some((x, y, size)) = g.cities[i].as_ref().map(|c| (c.x, c.y, c.size)) else { continue };
+                if g.explored(human, x, y) {
+                    g.cities[i].as_mut().unwrap().known_size = size;
+                }
+            }
+        }
     }
     Ok(g)
 }

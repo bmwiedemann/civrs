@@ -253,7 +253,7 @@ pub fn paint_score(fb: &mut Surface, ctx: &UiContext) {
 /// founded) is at column 40, and vertically centred on the rows of the human's units and cities
 /// (all rows once row 0 or 49 has been seen). Each square the human has seen is its 4x4
 /// terrain sprite from SP299 (160 + 4 * terrain, 111 or 115 by (x + y) & 1); a city the human
-/// knows fills its square in the owner's colour, a visible unit is a 3x3 dot in its owner's
+/// owns or has seen (+8 != 0) fills its square in the owner's colour, a visible unit is a 3x3 dot in its owner's
 /// colour with a black shadow.
 pub fn paint_world_map(fb: &mut Surface, ctx: &UiContext) {
     let g = ctx.game();
@@ -280,8 +280,11 @@ pub fn paint_world_map(fb: &mut Surface, ctx: &UiContext) {
             let (px, py) = (crate::game::Map::wrap_x(x + xoff) * 4, sy * 4);
             let t = g.map.tile(x, y).terrain as i32;
             fb.blit_part(sheet, Rect::new(160 + 4 * t, 111 + 4 * ((x + y) & 1), 4, 4), px, py, None);
-            if let Some(c) = g.city_at(x, y).map(|c| g.city(c)) {
-                fb.fill_rect(Rect::new(px, py, 4, 4), SLOT_COLOURS[(c.owner & 7) as usize].light);
+            if let Some(id) = g.city_at(x, y) {
+                // a foreign city the human has not seen shows nothing, not even units (o 0x10348)
+                if g.city_size_shown(id).is_some() {
+                    fb.fill_rect(Rect::new(px, py, 4, 4), SLOT_COLOURS[(g.city(id).owner & 7) as usize].light);
+                }
             } else if let Some(u) = g.units_at(x, y).first().map(|u| g.unit(*u)) {
                 if u.owner == me || u.seen_by & (1 << me) != 0 {
                     fb.fill_rect(Rect::new(px + 1, py + 1, 3, 3), 0);

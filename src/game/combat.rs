@@ -465,6 +465,7 @@ impl Game {
             cm.production = super::Production::Unit(unit_ids::MILITIA);
             cm.improvements &= kept;
         }
+        self.city_changed_hands(c, from, by);
         // units supported by the city are disbanded (Civ1), units of the loser inside are gone
         let homed: Vec<UnitId> = self.all_units().filter(|u| (u.home == Some(c) && u.owner == from) || ((u.x, u.y) == (city.x, city.y) && u.owner == from)).map(|u| u.id).collect();
         for h in homed {

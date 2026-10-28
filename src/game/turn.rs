@@ -1186,10 +1186,12 @@ impl Game {
         }
     }
 
-    /// "Makes all cities on the map visible": the owner of the Apollo Program sees every city
-    /// square (CIV.EXE o 0x1b828, as the cities are updated each turn).
+    /// "Makes all cities on the map visible", to the human only: the city squares are his once
+    /// he owns the Apollo Program (completion 0xea70, cities founded later o 0x1b828 in
+    /// `add_city`; at the start of each turn nothing new comes of it). A computer owner gets
+    /// nothing.
     pub fn apollo_reveal(&mut self, slot: Slot) {
-        if !self.owner_has_wonder(slot, won::APOLLO_PROGRAM) {
+        if slot != self.human_slot || !self.owner_has_wonder(slot, won::APOLLO_PROGRAM) {
             return;
         }
         let sites: Vec<(i32, i32)> = self.all_cities().map(|c| c.pos()).collect();
@@ -1205,6 +1207,13 @@ impl Game {
             won::APOLLO_PROGRAM => {
                 self.apollo_built = true;
                 self.apollo_reveal(owner);
+                // the human sees every foreign city as it is now (0xea70..0xeb12)
+                if owner == self.human_slot {
+                    let foreign: Vec<CityId> = self.all_cities().filter(|c| c.owner != owner).map(|c| c.id).collect();
+                    for c in foreign {
+                        self.note_city_size(c);
+                    }
+                }
             }
             won::DARWINS_VOYAGE => self.darwins_voyage(owner),
             _ => {}
@@ -1852,6 +1861,7 @@ impl Game {
             cm.caravan_shields = 0;
             cm.improvements &= kept;
         }
+        self.city_changed_hands(c, from, to);
         // steal_advance after the messages (0x14232), as for a city taken by force
         let adv = self.capture_steal(to, from);
         self.players[to as usize].stats.cities_captured += 1;

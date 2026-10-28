@@ -912,7 +912,8 @@ impl MapView {
     /// The sidebar minimap as `draw_map_view` (0x1a68e, o 0x1a826..0x1aa28) draws it: 80x50 of
     /// the minimap band, scrolled so that map column `vx - 32` is its left edge and row
     /// `vy - 19` its top (row 0 once the civ knows Navigation); explored water in colour 1,
-    /// land in 2 (`unit_look` 0x81b4), the cities the human has seen or owns as a dot in the
+    /// land in 2 (`unit_look` 0x81b4), the cities the human owns or has seen (+8 != 0, 0x1a97c,
+    /// explored or not) as a dot in the
     /// owner's light colour, then the 17x10 view outline in 15.
     fn draw_minimap(&self, fb: &mut Surface, ctx: &UiContext) {
         let g = ctx.game();
@@ -934,7 +935,7 @@ impl MapView {
         }
         for c in g.all_cities() {
             let my = c.y - my0;
-            if (0..50).contains(&my) && (c.owner == me || g.explored(me, c.x, c.y)) {
+            if (0..50).contains(&my) && g.city_size_shown(c.id).is_some() {
                 fb.put(Map::wrap_x(c.x - mx0), 8 + my, SLOT_COLOURS[(c.owner & 7) as usize].light);
             }
         }

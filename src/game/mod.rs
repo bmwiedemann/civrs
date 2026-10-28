@@ -809,6 +809,7 @@ impl Game {
             caravan_shields: 0,
             garrison: city::no_garrison(),
             garrison_out: false,
+            known_size: 0,
         };
         if first_city {
             c.add_improvement(rules::improvement_ids::PALACE);
@@ -836,6 +837,20 @@ impl Game {
         self.auto_assign(id);
         // a city sees only its 3x3 block (14_city_screen / 26_turn_12 captures)
         self.map.explore(owner, x, y, 1);
+        // the human knows a new foreign city at once when one of his cities is within two
+        // squares (o 0x1b734..0x1b783) or he has the Apollo Program, which also shows him its
+        // square (o 0x1b828); either way as size 1
+        let h = self.human_slot;
+        if owner != h {
+            let near = (-2..=2).any(|dy| (-2..=2).any(|dx| self.city_at(x + dx, y + dy).is_some_and(|c| self.city(c).owner == h)));
+            if near {
+                self.city_mut(id).known_size = 1;
+            }
+            if self.owner_has_wonder(h, rules::wonder_ids::APOLLO_PROGRAM) {
+                self.map.explore(h, x, y, 0);
+                self.city_mut(id).known_size = 1;
+            }
+        }
         // found_city o 0x1b4e4
         self.replay_city(replay::kind::CITY, owner, id);
         id

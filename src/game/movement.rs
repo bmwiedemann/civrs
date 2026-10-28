@@ -174,7 +174,14 @@ impl Game {
                     self.nuke(id, tx, ty);
                     MoveOutcome::Attacked { won: true, at: (tx, ty), defender: unit_ids::NUCLEAR }
                 } else {
-                    self.attack(id, tx, ty)
+                    let out = self.attack(id, tx, ty);
+                    // the human sees what is left of a city he attacked, won or lost (0x61f8)
+                    if slot == self.human_slot {
+                        if let Some(c) = self.city_at(tx, ty) {
+                            self.note_city_size(c);
+                        }
+                    }
+                    out
                 };
                 self.counting_losses = false;
                 return Ok(out);
@@ -404,7 +411,8 @@ impl Game {
     }
 
     /// The sightings of `unit_look` (CIV.EXE 0x8038) for unit `id` at its square:
-    /// - next to it (0x8255..0x8413): a foreign city sees a land unit; the first unit of a
+    /// - next to it (0x8255..0x8413): a foreign city sees a land unit, and the human's unit
+    ///   sees the city's size (0x82a9); the first unit of a
     ///   foreign stack sees it unless it stands in a city, and is seen by it unless that stack
     ///   is in a city (cities hide their units);
     /// - two squares away, for a unit that sees 5x5 (ships: ocean squares only, 0x878d): the
@@ -424,6 +432,7 @@ impl Game {
         let mut seen = 0u8;
         let mut marked: Vec<UnitId> = Vec::new();
         let mut woken: Vec<UnitId> = Vec::new();
+        let mut known: Vec<super::CityId> = Vec::new();
         for dy in -2..=2i32 {
             for dx in -2..=2i32 {
                 let (nx, ny) = (Map::wrap_x(u.x + dx), u.y + dy);
@@ -437,6 +446,10 @@ impl Game {
                         let o = self.city(c).owner;
                         if o != l && u.is_land() {
                             seen |= 1 << o;
+                        }
+                        // the human's unit sees the size of a foreign city next to it (0x82a9)
+                        if o != l && l == human {
+                            known.push(c);
                         }
                     }
                     if let Some(h) = head {
@@ -471,6 +484,9 @@ impl Game {
             }
         }
         self.unit_mut(id).seen_by |= seen;
+        for c in known {
+            self.note_city_size(c);
+        }
         for h in marked {
             self.unit_mut(h).seen_by |= 1 << l;
         }
@@ -964,5 +980,63 @@ mod zoc_tests {
         g.add_city(g.human_slot, "Rome".into(), 42, 25);
         assert_eq!(g.move_cost(&u, (42, 25), (41, 25)), 1);
         assert_eq!(g.move_cost(&u, (41, 25), (42, 25)), 1);
+    }
+
+    #[test]
+    fn the_human_sees_a_foreign_city_s_size_only_next_to_it() {
+        // city +8: 0 at founding (o 0x1b562); a unit of the human next to it sets it (0x82a9);
+        // a capture by the human resets it, a loss to a computer player sets it (0x14144)
+        let (mut g, id) = open_field();
+        let me = g.human_slot;
+        let other = if me == 2 { 3 } else { 2 };
+        let c = g.add_city(other, "Far".into(), 42, 25);
+        g.city_mut(c).size = 4;
+        assert_eq!(g.city_size_shown(c), None);
+        g.mark_sightings(id);
+        assert_eq!(g.city_size_shown(c), None, "two squares away");
+        assert_eq!(g.try_move(id, Dir8::E), Ok(MoveOutcome::Moved));
+        assert_eq!(g.city_size_shown(c), Some(4));
+        g.city_mut(c).size = 6;
+        assert_eq!(g.city_size_shown(c), Some(4), "what he saw last");
+        g.city_changed_hands(c, other, me);
+        g.city_mut(c).owner = me;
+        assert_eq!(g.city(c).known_size, 0);
+        assert_eq!(g.city_size_shown(c), Some(6));
+        g.city_mut(c).owner = other;
+        g.city_changed_hands(c, me, other);
+        assert_eq!(g.city_size_shown(c), Some(6));
+        // a foreign city founded within two squares of one of his is known at once (o 0x1b734)
+        let mine = g.add_city(me, "Home".into(), 36, 21);
+        let near = g.add_city(other, "Near".into(), 38, 22);
+        assert_eq!(g.city_size_shown(near), Some(1));
+        let _ = mine;
+    }
+
+    #[test]
+    fn a_ship_next_to_a_foreign_city_makes_no_city_goals_and_wakes_ships() {
+        use crate::game::goals::goal;
+        // 0x82c5: only a land unit gives the city's owner its goals; 0x92fe: a sentried ship
+        // next to the looker wakes, a land unit aboard does not
+        let (mut g, _) = open_field();
+        let me = g.human_slot;
+        let other = if me == 2 { 3 } else { 2 };
+        for x in 35..46 {
+            g.map.get_mut(x, 20).unwrap().terrain = Terrain::Ocean;
+        }
+        let c = g.add_city(other, "Port".into(), 40, 21);
+        let ship = g.add_unit(me, unit_ids::TRIREME, 41, 20);
+        g.reset_goals(other);
+        g.unit_look_goals(ship);
+        assert!(!g.ai_memory.goals[other as usize].iter().any(|q| q.kind == goal::ATTACK && (q.x as i32, q.y as i32) == g.city(c).pos()));
+        let sail = g.add_unit(other, unit_ids::TRIREME, 42, 20);
+        let rider = g.add_unit(other, unit_ids::MILITIA, 42, 20);
+        g.unit_mut(sail).order = crate::game::UnitOrder::Sentry;
+        g.unit_mut(rider).order = crate::game::UnitOrder::Sentry;
+        g.unit_look_goals(ship);
+        assert_eq!(g.unit(sail).order, crate::game::UnitOrder::None);
+        assert_eq!(g.unit(rider).order, crate::game::UnitOrder::Sentry);
+        let walker = g.add_unit(me, unit_ids::LEGION, 39, 22);
+        g.unit_look_goals(walker);
+        assert!(g.ai_memory.goals[other as usize].iter().any(|q| q.kind == goal::ATTACK && (q.x as i32, q.y as i32) == g.city(c).pos()));
     }
 }

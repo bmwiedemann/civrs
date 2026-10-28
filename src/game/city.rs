@@ -93,6 +93,12 @@ pub struct City {
     /// it again at the end of its turn or of the city screen (0x131d2). Saved with `garrison`.
     #[serde(skip)]
     pub garrison_out: bool,
+    /// CIV.EXE city record +8 (ds:0x70f4): the size the human last saw, 0 while he has not
+    /// seen the city. His map shows a foreign city only when it is not 0, and with this size
+    /// (0x1b2ad, 0x1b3a3; the minimap 0x1a97c, the World Map o 0x10348). See
+    /// [`Game::city_size_shown`]. Saved after the game body (save version 19).
+    #[serde(skip)]
+    pub known_size: u8,
 }
 
 /// A free garrison slot (CIV.EXE writes 0xff at city founding, o 0x1b5cd).
@@ -228,6 +234,36 @@ impl Game {
                     self.unstash_garrison(c);
                 }
             }
+        }
+    }
+
+    /// The size the human's map shows for city `c`: the size of his own city, the size he
+    /// last saw of a foreign one, nothing before he has seen it (CIV.EXE 0x1b2ad..0x1b3a3).
+    pub fn city_size_shown(&self, c: CityId) -> Option<u8> {
+        let city = self.city_opt(c)?;
+        if city.owner == self.human_slot {
+            Some(city.size)
+        } else {
+            (city.known_size != 0).then_some(city.known_size)
+        }
+    }
+
+    /// The human sees city `c` as it is now (`+8 = +7`, CIV.EXE 0x82a9, 0x6219, 0x96e1).
+    pub fn note_city_size(&mut self, c: CityId) {
+        if let Some(city) = self.cities.get_mut(c as usize).and_then(|c| c.as_mut()) {
+            city.known_size = city.size;
+        }
+    }
+
+    /// A city changes hands (capture_city 0x13d76, 0x14144): when the human takes it, he knows
+    /// it as his own (0); when he loses it, as it is now. Between computer players the old
+    /// knowledge stays.
+    pub fn city_changed_hands(&mut self, c: CityId, from: Slot, to: Slot) {
+        let h = self.human_slot;
+        if to == h {
+            self.city_mut(c).known_size = 0;
+        } else if from == h {
+            self.note_city_size(c);
         }
     }
 

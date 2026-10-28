@@ -221,8 +221,10 @@ pub fn draw_terrain(fb: &mut Surface, ctx: &UiContext, game: &Game, x: i32, y: i
 /// Draw a city on the map tile at pixel (px,py), as CIV.EXE 0x1b2be does: a white frame, the
 /// owner's dark frame along the top and right, the owner's light fill, the building texture
 /// (SP257 cell 12,7) in the dark shade, the size in black, a black outline when units are
-/// inside and the wall overlay (cell 13,7).
+/// inside and the wall overlay (cell 13,7). A foreign city appears only once the human has
+/// seen it, with the size he saw (0x1b2ad, 0x1b3a3).
 pub fn draw_city(fb: &mut Surface, ctx: &UiContext, game: &Game, city: crate::game::CityId, px: i32, py: i32) {
+    let Some(size) = game.city_size_shown(city) else { return };
     let c = game.city(city);
     let col = SLOT_COLOURS[(c.owner & 7) as usize];
     fb.rect_outline(Rect::new(px + 1, py + 1, 14, 14), 15);
@@ -238,8 +240,8 @@ pub fn draw_city(fb: &mut Surface, ctx: &UiContext, game: &Game, city: crate::ga
         blit_sprite(fb, &ctx.sp.surf, sp::citizen(4), px + 5, py + 2);
     } else {
         let st = crate::gfx::TextStyle::new(0, 0);
-        let x = px + if c.size < 10 { 6 } else { 3 };
-        crate::gfx::text::draw_text(fb, &ctx.fonts, &st, x, py + 5, &c.size.to_string());
+        let x = px + if size < 10 { 6 } else { 3 };
+        crate::gfx::text::draw_text(fb, &ctx.fonts, &st, x, py + 5, &size.to_string());
     }
     // a garrison stashed in the record counts as units inside (0x1b433 tests slot +0x1a)
     if !game.units_at(c.x, c.y).is_empty() || c.garrison[0] != crate::game::city::NO_GARRISON {
