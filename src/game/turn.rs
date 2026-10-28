@@ -1673,9 +1673,6 @@ impl Game {
     /// (never the last) and its Palace, Temple, Courthouse and Cathedral (`capture_losses`).
     pub fn transfer_city(&mut self, c: CityId, to: Slot) {
         let from = self.city(c).owner;
-        // "<Plural> rebel!\nCivil War in\n<city>.\n<Adjective> influence\nsuspected." (o 0x1e1d4,
-        // ds:0x533c), before capture_city's own message
-        self.push_event(GameEvent::CityRebels { city: c, from, to });
         let (gold, adv) = self.revolt_city(c, to);
         self.push_event(GameEvent::CityCaptured { city: c, by: to, from, gold, adv });
     }
@@ -1690,6 +1687,8 @@ impl Game {
             let city = self.city(c);
             (city.pos(), city.owner, city.size)
         };
+        // city_revolt's announcement (o 0x1e1d4), before capture_city's own message
+        self.push_event(GameEvent::CityRebels { city: c, from, to });
         // the leaders remember, as for a city taken by force (capture_city 0x13da6, 0x13e5c)
         if to == self.human_slot && from != 0 {
             self.player_mut(from).last_contact = -2;

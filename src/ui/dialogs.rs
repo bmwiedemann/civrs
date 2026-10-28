@@ -181,7 +181,11 @@ pub fn screen_for_event(ctx: &mut UiContext, ev: &GameEvent) -> Option<Box<dyn S
             }
         }
         GameEvent::CityRebels { city, from, to } if *from == me || *to == me || g.player(me).has_embassy(*from) || g.player(me).has_embassy(*to) => {
-            let lines = vec![format!("{} rebel!", g.player(*from).plural()), "Civil War in".into(), format!("{}.", city_name(*city)), format!("{} influence", g.player(*to).adjective()), "suspected.".into()];
+            let lines = if *to == 0 {
+                vec![format!("{} declare", g.player(*from).plural()), "independence in".into(), city_name(*city)]
+            } else {
+                vec![format!("{} rebel!", g.player(*from).plural()), "Civil War in".into(), format!("{}.", city_name(*city)), format!("{} influence", g.player(*to).adjective()), "suspected.".into()]
+            };
             Some(Box::new(MessageBox::new(lines).with_pos(100, 32)))
         }
         GameEvent::CityDestroyed { name, by, from, .. } => {

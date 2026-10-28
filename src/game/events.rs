@@ -220,8 +220,10 @@ pub enum GameEvent {
     /// human's newspaper): a Democracy's city stayed in disorder for a second turn.
     GovernmentCollapsed { slot: Slot, city: CityId },
     /// "<Plural> rebel!\nCivil War in\n<city>.\n<Adjective> influence\nsuspected." at
-    /// (100,32) (`city_revolt` CIV.EXE o 0x1e1d4): a Diplomat of `to` incited the city of
-    /// `from`; shown when the human is one of them or has an embassy with either.
+    /// (100,32), or "<Plural> declare\nindependence in\n<city>" when `to` is the barbarians
+    /// (`city_revolt` CIV.EXE o 0x1e1d4, ds:0x533c / 0x5322): the city of `from` was incited by
+    /// a Diplomat of `to` or defected to it; shown when the human is one of them or has an
+    /// embassy with either.
     CityRebels { city: CityId, from: Slot, to: Slot },
 }
 
