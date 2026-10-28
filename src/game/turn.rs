@@ -1128,7 +1128,8 @@ impl Game {
                 // the Settlers start anew on its square, homed by create_unit 0x8b51 like any new unit
                 // (0xdfa7..0xe04e)
                 // (0xdfe3 only lowers the size: the squares stay worked, and the city's trade
-                // totals with them, until the next worker assignment, see `process_city`)
+                // totals with them, until the next worker assignment, see `process_city` and
+                // the computer's re-choice below)
                 if k == unit_ids::SETTLERS && (self.city(c).size > 1 || self.cities_of(owner).len() > 1) {
                     self.city_mut(c).size -= 1;
                     if self.city(c).size == 0 {
@@ -1145,8 +1146,11 @@ impl Game {
                     self.city_attention = true;
                 }
                 // a computer city re-chooses after every unit (city_rechoose_production 0x18c4c,
-                // called at 0xe3b1)
+                // called at 0xe3b1); choose_production (0xa9fd) first runs the city routine in
+                // mode -1, whose worker assignment puts a city that shrank in order and whose
+                // totals the city's taxes then use
                 if !human {
+                    self.fix_workers(c);
                     let next = self.ai_rechoose(c);
                     self.city_mut(c).production = next;
                 }
