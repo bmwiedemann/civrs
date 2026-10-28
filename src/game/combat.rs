@@ -793,8 +793,17 @@ impl Game {
             self.remove_unit(id);
         }
         self.clear_census(slot);
-        let (adjective, civ) = (self.player(slot).adjective().to_string(), self.player(slot).civ);
-        self.push_event(GameEvent::CivDestroyed { slot, by, adjective, civ });
+        let adjective = self.player(slot).adjective().to_string();
+        // speakers 3 Defense Minister, 5 Foreign Minister, 2 Travelers (o5 0x5073..0x5095)
+        let human = self.human_slot;
+        let speaker = if by == human {
+            3
+        } else if self.player(human).has_embassy(slot) {
+            5
+        } else {
+            2
+        };
+        self.push_event(GameEvent::CivDestroyedReport { slot, by, adjective, speaker });
         self.replay_log(super::replay::kind::DESTROYED, &[slot, by]);
         if self.active_unit.map(|a| self.unit_opt(a).is_none()).unwrap_or(false) {
             self.active_unit = None;
@@ -947,6 +956,33 @@ mod tests {
         }
         g.check_destroyed(s);
         assert!(!g.player(s).alive);
+    }
+
+    #[test]
+    fn the_destruction_report_keeps_the_speaker_of_its_time() {
+        // o5 0x5073..0x5095: the embassy is read before civ_init clears the slot's diplomacy
+        let mut g = Game::new(GameSetup { seed: 3, ..Default::default() }, None);
+        g.turn = 10;
+        let h = g.human_slot;
+        let s = (1..8u8).find(|s| *s != h && g.player(*s).alive).unwrap();
+        let other = (1..8u8).find(|o| *o != h && *o != s).unwrap();
+        g.raise_flag(h, s, crate::game::diplomacy::flags::EMBASSY);
+        let speaker = |g: &mut Game| g.take_events().into_iter().find_map(|e| if let GameEvent::CivDestroyedReport { speaker, .. } = e { Some(speaker) } else { None });
+        g.take_events();
+        for id in g.units_of(s) {
+            g.remove_unit(id);
+        }
+        g.destroy_civ(s, other);
+        assert_eq!(speaker(&mut g), Some(5), "the Foreign Minister");
+        assert!(g.player(s).alive && !g.player(h).has_embassy(s), "the successor has no embassy");
+        for id in g.units_of(s) {
+            g.remove_unit(id);
+        }
+        g.destroy_civ(s, other);
+        assert_eq!(speaker(&mut g), Some(2), "the Travelers");
+        let t = (1..8u8).find(|o| *o != h && *o != s && g.player(*o).alive).unwrap();
+        g.destroy_civ(t, h);
+        assert_eq!(speaker(&mut g), Some(3), "the Defense Minister");
     }
 
     #[test]

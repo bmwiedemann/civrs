@@ -10,7 +10,7 @@ use crate::ui::context::UiContext;
 use crate::ui::eventpics;
 use crate::audio::{Sound, Tune};
 use crate::ui::screen::{DialogResult, Screen, Transition};
-use crate::ui::widgets::{MenuDialog, MessageBox, SPEAKER_DEFENSE, SPEAKER_DIPLOMATS, SPEAKER_FOREIGN, SPEAKER_TRAVELERS};
+use crate::ui::widgets::{MenuDialog, MessageBox, SPEAKER_DEFENSE, SPEAKER_DIPLOMATS, SPEAKER_DOMESTIC, SPEAKER_FOREIGN, SPEAKER_SCIENCE, SPEAKER_SPIES, SPEAKER_TRAVELERS};
 
 /// The tune CIV.EXE plays with an event's message, started as the message opens and faded
 /// (`PlayTune(1)`) as it closes. Only these call sites react to game events; everything else
@@ -172,6 +172,8 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
     let news = |lines: Vec<String>| -> Option<Box<dyn Screen>> { Some(eventpics::travelers_report(lines)) };
     // popup_menu(text, 100, 80) with a speaker (ds:0x2f9e)
     let speaker = |s: u8, lines: Vec<String>| -> Option<Box<dyn Screen>> { Some(Box::new(MenuDialog::new(lines, Vec::new()).with_pos(100, 80).with_speaker(s))) };
+    // the same at popup_menu(text, x, y)
+    let speaker_at = |s: u8, lines: Vec<String>, x: i32, y: i32| -> Option<Box<dyn Screen>> { Some(Box::new(MenuDialog::new(lines, Vec::new()).with_pos(x, y).with_speaker(s))) };
     // overlay 21, named after `city` (None: the human's city, the -1 argument)
     let paper = |lines: Vec<String>, city: Option<crate::game::CityId>| -> Option<Box<dyn Screen>> { Some(crate::ui::newspaper::newspaper(lines, city)) };
     let city_name = |id| g.city_opt(id).map(|c| c.name.clone()).unwrap_or_default();
@@ -189,20 +191,25 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
         GameEvent::FoodExhausted { city, name, owner, settlers_lost } if *owner == me => {
             paper(vec!["Food storage exhausted".into(), format!("in {name}!"), if *settlers_lost { "Settlers lost." } else { "Famine feared." }.into()], Some(*city))
         }
-        // CIV.EXE 0xd221..0xd258
+        // the Domestic Advisor at (100, 80) (CIV.EXE 0xd221..0xd258)
         GameEvent::AqueductNeeded(c) if g.city_opt(*c).map(|c| c.owner == me).unwrap_or(false) => {
-            msg(vec![format!("{} requires an AQUEDUCT", city_name(*c)), "for further growth.".into()])
+            speaker(SPEAKER_DOMESTIC, vec![format!("{} requires an AQUEDUCT", city_name(*c)), "for further growth.".into()])
         }
-        // "CITY can't support\nUNIT.\n Unit Disbanded." (CIV.EXE 0xfef3)
+        // "CITY can't support\nUNIT.\n Unit Disbanded." from the Defense Minister at (100, 80);
+        // the last line is an item (CIV.EXE 0xfef3..0xff5d)
         GameEvent::UnitDisbanded { unit_kind, city, reason } if reason == "shortage of shields" && g.city_opt(*city).map(|c| c.owner == me).unwrap_or(false) => {
-            msg(vec![format!("{} can't support", city_name(*city)), format!("{}.", rules::UNITS[*unit_kind as usize].name), " Unit Disbanded.".into()])
+            let lines = vec![format!("{} can't support", city_name(*city)), format!("{}.", rules::UNITS[*unit_kind as usize].name)];
+            Some(Box::new(MenuDialog::new(lines, vec![" Unit Disbanded.".into()]).with_pos(100, 80).with_speaker(SPEAKER_DEFENSE)))
         }
         GameEvent::UnitDisbanded { unit_kind, city, reason } if g.city_opt(*city).map(|c| c.owner == me).unwrap_or(false) => {
             msg(vec![format!("{} in {} disbanded", rules::UNITS[*unit_kind as usize].name, city_name(*city)), format!("({reason})")])
         }
         GameEvent::ItemBuilt { city, item } if g.city(*city).owner == me => match item {
-            // "CITY builds UNIT." only for Settlers, Diplomats and Caravans (CIV.EXE 0xe3dc)
-            crate::game::Production::Unit(k) if *k == rules::unit_ids::SETTLERS || *k >= rules::unit_ids::DIPLOMAT => msg(vec![format!("{} builds {}.", city_name(*city), item.name())]),
+            // "CITY builds UNIT." only for Settlers, Diplomats and Caravans, from the Defense
+            // Minister at (80, 80) (CIV.EXE 0xe3dc..0xe45e)
+            crate::game::Production::Unit(k) if *k == rules::unit_ids::SETTLERS || *k >= rules::unit_ids::DIPLOMAT => {
+                speaker_at(SPEAKER_DEFENSE, vec![format!("{} builds {}.", city_name(*city), item.name())], 80, 80)
+            }
             crate::game::Production::Unit(_) => None,
             // the city view adds it, else the city's newspaper (CIV.EXE 0xe62f..0xe6e9)
             _ => match built_view_item(g, *city, *item) {
@@ -247,13 +254,16 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
             let adv = w.obsolete_by.map(|a| rules::ADVANCES[a as usize].name).unwrap_or("");
             paper(vec![format!("{adv} cancels"), "the effect of".into(), format!("{}.", w.name)], None)
         }
+        // the Defense Minister at (80, 100) (CIV.EXE 0xc6ea..0xc732)
         GameEvent::BarracksObsolete { slot, adv } if *slot == me => {
-            msg(vec![format!("Development of {}", rules::ADVANCES[*adv as usize].name), "makes existing Barracks".into(), "obsolete.".into()])
+            speaker_at(SPEAKER_DEFENSE, vec![format!("Development of {}", rules::ADVANCES[*adv as usize].name), "makes existing Barracks".into(), "obsolete.".into()], 80, 100)
         }
         GameEvent::Disorder(c) if g.city(*c).owner == me => Some(eventpics::disorder_screen(ctx, *c)),
-        // the riot message without its animation, at (100, 80) (CIV.EXE 0x126a5..0x126b7)
-        GameEvent::DisorderOngoing { city, .. } if g.city(*city).owner == me => Some(Box::new(MessageBox::new(eventpics::disorder_lines(ctx, *city)).with_pos(100, 80))),
-        GameEvent::DisorderEnded(c) if g.city(*c).owner == me => msg(vec![format!("Order restored in {}.", city_name(*c))]),
+        // the riot message without its animation, from the Domestic Advisor at (100, 80)
+        // (CIV.EXE 0x126a5..0x126b7)
+        GameEvent::DisorderOngoing { city, .. } if g.city(*city).owner == me => speaker(SPEAKER_DOMESTIC, eventpics::disorder_lines(ctx, *city)),
+        // "Order restored\nin CITY." (CIV.EXE 0x12880..0x128bd)
+        GameEvent::DisorderEnded(c) if g.city(*c).owner == me => speaker(SPEAKER_DOMESTIC, vec!["Order restored".into(), format!("in {}.", city_name(*c))]),
         // not under Anarchy (CIV.EXE 0x129e4)
         GameEvent::Celebration(c) if g.city(*c).owner == me && g.human().govt != rules::Govt::Anarchy => Some(eventpics::celebration_screen(ctx, *c)),
         // "'We love the TITLE'\ncelebration canceled\nin CITY." in the city's newspaper, not
@@ -279,12 +289,13 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
         }
         // the hut's own message (HutEntered) announces it and adds the Civilopedia page
         GameEvent::AdvanceAcquired { source, .. } if source == "hut" => None,
-        // "<Plural> acquire\n<adv> from\nthe Great Library!" (CIV.EXE 0xc394..0xc42a)
+        // "<Plural> acquire\n<adv> from\nthe Great Library!" from the Science Advisor at
+        // (100, 80) (CIV.EXE 0xc394..0xc42a, 0xc4f0)
         GameEvent::AdvanceAcquired { slot, adv, source } if *slot == me && source == "Great Library" => {
-            with_pedia(msg(vec![format!("{} acquire", g.player(me).plural()), format!("{} from", rules::ADVANCES[*adv as usize].name), "the Great Library!".into()]), *adv)
+            with_pedia(speaker(SPEAKER_SCIENCE, vec![format!("{} acquire", g.player(me).plural()), format!("{} from", rules::ADVANCES[*adv as usize].name), "the Great Library!".into()]), *adv)
         }
-        // grant_advance 0xc394..0xc507 at (100,80): what the advance allows follows, one
-        // line each with a leading space (ds:0x2404, 0x2408)
+        // grant_advance 0xc394..0xc507 from the Spies at (100,80) (0xc4e8): what the advance
+        // allows follows, one line each with a leading space (ds:0x2404, 0x2408)
         GameEvent::ForeignAdvance { slot, adv, source } if *slot != me => {
             let name = rules::ADVANCES[*adv as usize].name;
             let mut l = match *source {
@@ -296,7 +307,7 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
             };
             l.extend(rules::IMPROVEMENTS.iter().take(24).filter(|i| i.prereq == Some(*adv)).map(|i| format!(" {}", i.name)));
             l.extend(rules::UNITS.iter().filter(|u| u.prereq == Some(*adv)).map(|u| format!(" {}", u.name)));
-            Some(Box::new(MessageBox::new(l).with_pos(100, 80)))
+            speaker(SPEAKER_SPIES, l)
         }
         GameEvent::AdvanceAcquired { slot, adv, source } if *slot == me => {
             with_pedia(msg(vec![format!("You acquire {}", rules::ADVANCES[*adv as usize].name), format!("({source})")]), *adv)
@@ -326,10 +337,11 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
                 _ => news,
             }
         }
-        GameEvent::CityCaptured { city, by, from, .. } if g.player(me).has_embassy(*by) || g.player(me).has_embassy(*from) => Some(Box::new(
-            MessageBox::new(vec!["Spies report:".into(), format!("{} capture", g.player(*by).plural()), format!("the {} city", g.player(*from).adjective()), format!("of {}.", city_name(*city))])
-                .with_pos(100, 80),
-        )),
+        // the Spies' box over its own "Spies report:" line (0x14190)
+        GameEvent::CityCaptured { city, by, from, .. } if g.player(me).has_embassy(*by) || g.player(me).has_embassy(*from) => speaker(
+            SPEAKER_SPIES,
+            vec!["Spies report:".into(), format!("{} capture", g.player(*by).plural()), format!("the {} city", g.player(*from).adjective()), format!("of {}.", city_name(*city))],
+        ),
         GameEvent::CityRebels { city, from, to } if *from == me || *to == me || g.player(me).has_embassy(*from) || g.player(me).has_embassy(*to) => {
             let lines = if *to == 0 {
                 vec![format!("{} declare", g.player(*from).plural()), "independence in".into(), city_name(*city)]
@@ -345,10 +357,8 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
                 news(vec![format!("{name} destroyed"), format!("by the {}!", civ(*by))])
             } else if g.player(me).has_embassy(*by) || g.player(me).has_embassy(*from) {
                 // between computer players: "Spies report:" for a human embassy with either
-                // side (CIV.EXE 0x1416d..0x1422a, ds:0x28a1)
-                Some(Box::new(
-                    MessageBox::new(vec!["Spies report:".into(), format!("{} destroy", g.player(*by).plural()), format!("the {} city", g.player(*from).adjective()), format!("of {name}.")]).with_pos(100, 80),
-                ))
+                // side, from the Spies (CIV.EXE 0x1416d..0x1422a, ds:0x28a1)
+                speaker(SPEAKER_SPIES, vec!["Spies report:".into(), format!("{} destroy", g.player(*by).plural()), format!("the {} city", g.player(*from).adjective()), format!("of {name}.")])
             } else {
                 None
             }
@@ -358,10 +368,33 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
         GameEvent::CivilWar { slot, new_slot } => {
             let v = Vars { us: g.player(*slot).adjective().to_string(), them: g.player(*new_slot).adjective().to_string(), ..Default::default() };
             let lines = ctx.texts.king.section("ESCHISM").map(|l| paragraphs(&substitute(l, &v))).unwrap_or_else(|| vec!["Civil war!".into()]);
-            msg(lines)
+            // the Foreign Minister at (80, 80) (o 0x14de7)
+            speaker_at(SPEAKER_FOREIGN, lines, 80, 80)
         }
-        // civ_destroyed (o5 0x4fe1): "<adjective> civilization / destroyed by <plural>!"
-        GameEvent::CivDestroyed { adjective, by, .. } => news(vec![format!("{adjective} civilization"), "destroyed".into(), format!("by {}!", civ(*by))]),
+        // civ_destroyed (o5 0x5029..0x50a7): "<Adjective>\ncivilization\ndestroyed\nby
+        // <Plural>!" at (100, 80) from the speaker of the event
+        GameEvent::CivDestroyedReport { adjective, by, speaker: s, .. } => {
+            speaker(*s, vec![adjective.clone(), "civilization".into(), "destroyed".into(), format!("by {}!", g.player(*by).plural())])
+        }
+        GameEvent::CivDestroyed { slot, adjective, by, .. } => {
+            let s = if *by == me {
+                SPEAKER_DEFENSE
+            } else if g.player(me).has_embassy(*slot) {
+                SPEAKER_FOREIGN
+            } else {
+                SPEAKER_TRAVELERS
+            };
+            speaker(s, vec![adjective.clone(), "civilization".into(), "destroyed".into(), format!("by {}!", g.player(*by).plural())])
+        }
+        // set_government (CIV.EXE 0x14f5e..0x15024), from the Diplomats at (80, 64)
+        GameEvent::ForeignGovernment { slot, govt } => {
+            let adj = g.player(*slot).adjective();
+            let lines = match govt {
+                Some(gv) => vec![format!("{adj} government"), format!("changed to {}!", rules::GOVERNMENTS[*gv as usize].adjective)],
+                None => vec![format!("The {adj} government"), "has been overthrown!".into()],
+            };
+            speaker_at(SPEAKER_DIPLOMATS, lines, 80, 64)
+        }
         // CIV.EXE 0x18fb1 (ds:0x2a70), the Defense Minister's box at (100, 32)
         GameEvent::BarbariansLanded { near_city, target, .. } if *target == me => Some(Box::new(
             MenuDialog::new(vec!["Barbarian raiding party".into(), format!("lands near {}!", near_city.map(city_name).unwrap_or_default()), "Citizens are alarmed.".into()], Vec::new())
@@ -379,15 +412,16 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
                 "Barbarian uprising"
             };
             let near = g.nearest_city_exe(at.0, at.1).0.map(city_name).unwrap_or_default();
-            // a plain box at (100, 32) whose first line is "Travellers report:" (0x3032)
-            Some(Box::new(MessageBox::new(vec![what.into(), format!("near {near}!")]).with_title("Travellers report:").with_pos(100, 32)))
+            // the Travelers' box at (100, 32) over its own "Travellers report:" line (0x302c)
+            speaker_at(SPEAKER_TRAVELERS, vec!["Travellers report:".into(), what.into(), format!("near {near}!")], 100, 32)
         }
         // KING.TXT *LEADER (combat 0x1a04c)
         GameEvent::BarbarianLeaderCaptured { slot, gold } if *slot == me => {
             let lines = ctx.texts.king.section("LEADER").map(paragraphs).unwrap_or_else(|| vec!["Barbarian leader captured!".into(), format!("{gold}$ ransom paid.")]);
             msg(lines)
         }
-        GameEvent::Pollution { city, .. } if g.city(*city).owner == me => msg(vec![format!("Pollution near {}!", city_name(*city))]),
+        // the Science Advisor at (80, 64) (CIV.EXE 0x12f01..0x12f3e)
+        GameEvent::Pollution { city, .. } if g.city(*city).owner == me => speaker_at(SPEAKER_SCIENCE, vec![format!("Pollution near {}.", city_name(*city))], 80, 64),
         // the explosion over the city, then "Nuclear Catastrophe\nin CITY!\nContamination
         // feared!" (CIV.EXE 0x12fab..0x1301f)
         GameEvent::Meltdown { city } if g.city(*city).owner == me => {
@@ -407,10 +441,12 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
         // o 0x1bf3b)
         GameEvent::Disaster { city, kind } if g.city_opt(*city).is_some_and(|c| c.owner == me || g.visible_to(me, c.x, c.y)) => {
             let lines = disaster_text(ctx, &city_name(*city), *kind);
+            // the owner's Domestic Advisor at (100, 80), else the Travelers at (100, 64)
+            // (o 0x1bf5c, 0x1bfd6)
             if g.city(*city).owner == me {
-                msg(lines)
+                speaker(SPEAKER_DOMESTIC, lines)
             } else {
-                msg(lines.into_iter().take(1).collect())
+                speaker_at(SPEAKER_TRAVELERS, lines.into_iter().take(1).collect(), 100, 64)
             }
         }
         GameEvent::CityDefected { city, admired, from } if *from == me || g.city_opt(*city).is_some_and(|c| g.visible_to(me, c.x, c.y)) => {
@@ -427,27 +463,34 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
         GameEvent::GovernmentChanged { slot, govt } if *slot == me => crate::ui::govtscreen::govt_screen(ctx, *govt),
         GameEvent::UnitLimit(slot) if *slot == me => {
             let lines = ctx.texts.king.section("UMAX").map(paragraphs).unwrap_or_else(|| vec!["Too many units.".into()]);
-            msg(lines)
+            // the Defense Minister at (80, 64) (CIV.EXE 0x8d33)
+            speaker_at(SPEAKER_DEFENSE, lines, 80, 64)
         }
         GameEvent::FutureTechnology { slot, n } if *slot == me => {
             let who = if g.player(*slot).knows(rules::advance_ids::INVENTION) { "scientists" } else { "wise men" };
-            msg(vec!["Which discovery should our".into(), format!("{who} be pursuing, sire?"), "Pick one...".into(), format!(" Future Technology {n}")])
+            // the Science Advisor at (100, 80), the last line an item (CIV.EXE 0xc218, 0xc290..0xc2de)
+            let head = vec!["Which discovery should our".into(), format!("{who} be pursuing, sire?"), "Pick one...".into()];
+            Some(Box::new(MenuDialog::new(head, vec![format!(" Future Technology {n}")]).with_pos(100, 80).with_speaker(SPEAKER_SCIENCE)))
         }
         GameEvent::LowFunds { slot } if *slot == me => {
             let lines = ctx.texts.king.section("TAXES").map(paragraphs).unwrap_or_else(|| vec!["Treasury is low!".into()]);
-            msg(lines)
+            // the Domestic Advisor at (80, 80) (CIV.EXE 0x26d7)
+            speaker_at(SPEAKER_DOMESTIC, lines, 80, 80)
         }
         // "CITY\ncan't maintain\nBUILDING." (CIV.EXE 0x13154)
         // "ADJ UNIT unit\nbribed by PLURAL!" (CIV.EXE o 0x1dd83)
+        // from the Spies at (80, 40) (o 0x1ddf3)
         GameEvent::UnitBribed { kind, from, by, .. } if *from == me => {
-            msg(vec![format!("{} {} unit", g.player(*from).adjective(), rules::UNITS[*kind as usize].name), format!("bribed by {}!", g.player(*by).plural())])
+            speaker_at(SPEAKER_SPIES, vec![format!("{} {} unit", g.player(*from).adjective(), rules::UNITS[*kind as usize].name), format!("bribed by {}!", g.player(*by).plural())], 80, 40)
         }
-        // CIV.EXE 0xd724..0xd761: "Population decrease\nin " + name + ".\n" in a box at (100, 80)
+        // CIV.EXE 0xd724..0xd761: "Population decrease\nin " + name + ".\n" from the Domestic
+        // Advisor at (100, 80)
         GameEvent::PopulationDecrease(city) if g.city_opt(*city).map(|c| c.owner == me).unwrap_or(false) => {
-            msg(vec!["Population decrease".into(), format!("in {}.", city_name(*city))])
+            speaker(SPEAKER_DOMESTIC, vec!["Population decrease".into(), format!("in {}.", city_name(*city))])
         }
+        // the Domestic Advisor at (100, 80) (CIV.EXE 0x13154..0x131ad)
         GameEvent::CantMaintain { city, improvement } if g.city(*city).owner == me => {
-            msg(vec![city_name(*city), "can't maintain".into(), format!("{}.", rules::IMPROVEMENTS[*improvement as usize].name)])
+            speaker(SPEAKER_DOMESTIC, vec![city_name(*city), "can't maintain".into(), format!("{}.", rules::IMPROVEMENTS[*improvement as usize].name)])
         }
         GameEvent::ImprovementSold { city, improvement, gold } if g.city(*city).owner == me => {
             msg(vec![format!("{} sold in {} for {} gold.", rules::IMPROVEMENTS[*improvement as usize].name, city_name(*city), gold)])
@@ -572,17 +615,15 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
         GameEvent::SdiProtects { city } => Some(Box::new(MessageBox::new(vec![format!("SDI protects {}.", city_name(*city))]).with_pos(80, 100))),
         GameEvent::GameEnded(reason) => Some(crate::ui::endgame::end_screen(ctx, *reason)),
         GameEvent::GameEndedAgain(reason) => Some(crate::ui::endgame::end_again_screen(ctx, *reason)),
-        // a computer Diplomat's deeds are announced to the human whoever was involved
-        // (CIV.EXE o 0x1d817 / 0x1d9a3, popups at (80,80))
-        GameEvent::DiplomatStole { by, adv, .. } => {
-            Some(Box::new(MessageBox::new(vec![format!("{} steal", g.player(*by).plural()), format!("{}.", rules::ADVANCES[*adv as usize].name)]).with_pos(80, 80)))
-        }
+        // a computer Diplomat's deeds are announced to the human whoever was involved, from
+        // the Spies (CIV.EXE o 0x1d811 / 0x1d99d, popups at (80,80))
+        GameEvent::DiplomatStole { by, adv, .. } => speaker_at(SPEAKER_SPIES, vec![format!("{} steal", g.player(*by).plural()), format!("{}.", rules::ADVANCES[*adv as usize].name)], 80, 80),
         GameEvent::CitySabotaged { city, improvement, production, .. } => {
             let first = match improvement {
                 Some(i) => format!("{} destroyed", rules::IMPROVEMENTS[*i as usize].name),
                 None => format!("{production} production sabotaged"),
             };
-            Some(Box::new(MessageBox::new(vec![first, format!("in {}.", city_name(*city))]).with_pos(80, 80)))
+            speaker_at(SPEAKER_SPIES, vec![first, format!("in {}.", city_name(*city))], 80, 80)
         }
         _ => None,
     }
@@ -631,7 +672,8 @@ impl Screen for Sequence {
 pub fn screen_for_decision(ctx: &mut UiContext, d: &Decision) -> Box<dyn Screen> {
     let g: &Game = ctx.game.as_ref().expect("game");
     match d {
-        // choose_research (CIV.EXE 0x0c103..0x0c23b, ds:0x236c..0x23d5) at (80,64)
+        // choose_research (CIV.EXE 0x0c103..0x0c23b, ds:0x236c..0x23d5) at (80,64), from the
+        // Science Advisor (0xc218)
         Decision::ChooseResearch { slot, options } => {
             let p = g.player(*slot);
             let items: Vec<String> = options
@@ -643,7 +685,7 @@ pub fn screen_for_decision(ctx: &mut UiContext, d: &Decision) -> Box<dyn Screen>
             // a right-button (or Alt-H) choice shows the advance's Civilopedia page and asks
             // again (0xc266)
             let pages = options.iter().map(|a| (*a != rules::advance_ids::FUTURE_TECH).then_some(crate::ui::pedia_data::Entry::Advance(*a))).collect();
-            Box::new(MenuDialog::new(head, items).with_pos(80, 64).with_help_entries(pages).no_cancel())
+            Box::new(MenuDialog::new(head, items).with_pos(80, 64).with_help_entries(pages).with_speaker(SPEAKER_SCIENCE).no_cancel())
         }
         Decision::ChooseGovernment { options, .. } => {
             let items: Vec<String> = options.iter().map(|gv| rules::GOVERNMENTS[*gv as usize].name.to_string()).collect();

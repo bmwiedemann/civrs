@@ -434,6 +434,12 @@ impl Game {
         }
         self.apollo_reveal(slot);
         self.anarchy_check(slot);
+        // a computer player's revolution flag puts its government in force again, which
+        // reports it to a human with an embassy (0x149de..0x14a01)
+        if !self.player(slot).human && self.player(slot).anarchy_turns != 0 {
+            let g = self.player(slot).govt;
+            self.choose_government(slot, g);
+        }
         // the peaceful turns ds:0xd808 (one count for the world): one more at the human's turn
         // from 1 AD on (0x259a); any fight between two civilizations resets them
         // (`Game::fight_diplomacy`)
@@ -1379,8 +1385,11 @@ impl Game {
 
     /// Install a government (ends anarchy).
     pub fn choose_government(&mut self, slot: Slot, g: Govt) {
-        if g != Govt::Anarchy && !self.governments_available(slot).contains(&g) {
+        if g != Govt::Anarchy && g != self.player(slot).govt && !self.governments_available(slot).contains(&g) {
             return;
+        }
+        if !self.player(slot).human {
+            self.foreign_government_report(slot, g);
         }
         if self.player(slot).govt != g {
             self.forget_vendettas(slot);
@@ -1389,7 +1398,9 @@ impl Game {
         {
             let p = self.player_mut(slot);
             p.govt = g;
-            p.anarchy_turns = 0;
+            if p.human {
+                p.anarchy_turns = 0;
+            }
         }
         // the human keeps its rates, above the new government's maximum too: set_government
         // stores them for the computer only (0x14f3c skips 0x15042); the maximum is a rule of
@@ -1398,6 +1409,23 @@ impl Game {
             self.ai_government_rates(slot);
         }
         self.push_event(GameEvent::GovernmentChanged { slot, govt: g });
+    }
+
+    /// `set_government` for a computer player (CIV.EXE 0x14f3f..0x15024), before `g` is
+    /// stored: when the government changes or the revolution flag ([civ][0] & 4, kept in
+    /// `anarchy_turns`) is set, a human with an embassy hears "changed to <govt>!" if the flag
+    /// was set, which clears it, else "has been overthrown!", which sets it. Without the
+    /// embassy the flag stays as it is.
+    pub fn foreign_government_report(&mut self, slot: Slot, g: Govt) {
+        let flag = self.player(slot).anarchy_turns != 0;
+        if self.player(slot).govt == g && !flag {
+            return;
+        }
+        if !self.player(self.human_slot).has_embassy(slot) {
+            return;
+        }
+        self.player_mut(slot).anarchy_turns = (!flag) as u8;
+        self.push_event(GameEvent::ForeignGovernment { slot, govt: flag.then_some(g) });
     }
 
     // ---- decisions --------------------------------------------------------------------------
@@ -2584,6 +2612,33 @@ mod tests {
         g.set_turn(20);
         g.anarchy_check(ai);
         assert_eq!(g.player(ai).govt, Govt::Despotism);
+    }
+
+    #[test]
+    fn a_computer_government_change_is_reported_in_two_steps() {
+        // set_government 0x14f3f..0x15024: overthrown (flag set), then at the next turn's
+        // start the flag puts the government in force again: changed to (flag cleared)
+        let (mut g, _) = fixture();
+        let me = g.human_slot;
+        let ai = g.alive_slots().into_iter().find(|s| *s != me).unwrap();
+        let reports = |g: &mut Game| g.take_events().into_iter().filter_map(|e| if let GameEvent::ForeignGovernment { slot, govt } = e { Some((slot, govt)) } else { None }).collect::<Vec<_>>();
+        g.player_mut(ai).learn(adv::MONARCHY);
+        g.take_events();
+        // no embassy: no word, no flag
+        g.choose_government(ai, Govt::Monarchy);
+        assert!(reports(&mut g).is_empty());
+        assert_eq!(g.player(ai).anarchy_turns, 0);
+        g.raise_flag(me, ai, crate::game::diplomacy::flags::EMBASSY);
+        g.choose_government(ai, Govt::Monarchy);
+        assert!(reports(&mut g).is_empty(), "the same government with the flag clear");
+        g.choose_government(ai, Govt::Despotism);
+        assert_eq!(reports(&mut g), vec![(ai, None)]);
+        assert_eq!(g.player(ai).anarchy_turns, 1);
+        g.process_player_turn_start(ai);
+        assert_eq!(reports(&mut g), vec![(ai, Some(Govt::Despotism))]);
+        assert_eq!(g.player(ai).anarchy_turns, 0);
+        g.process_player_turn_start(ai);
+        assert!(reports(&mut g).is_empty());
     }
 
     #[test]

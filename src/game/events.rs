@@ -107,6 +107,8 @@ pub enum GameEvent {
     CityDestroyed { name: String, at: (i32, i32), by: Slot, from: Slot },
     CivilWar { slot: Slot, new_slot: Slot },
     /// `adjective` and `civ` name the destroyed tribe: the slot may already hold its successor.
+    /// No longer raised (see `CivDestroyedReport`); kept so that older saves with one pending
+    /// still load.
     CivDestroyed { slot: Slot, by: Slot, adjective: String, civ: u8 },
     BarbariansLanded { at: (i32, i32), near_city: Option<CityId>, target: Slot },
     BarbarianUprising { at: (i32, i32), target: Slot },
@@ -249,6 +251,15 @@ pub enum GameEvent {
     /// Minister: `slot` completed a Palace in `city`, and is the human or has the human's
     /// embassy (CIV.EXE 0xe960..0xe9fe).
     CapitalMoved { slot: Slot, city: CityId },
+    /// `civ_destroyed` (o5 0x4fe1): the tribe `adjective` of `slot` was destroyed by `by`;
+    /// `speaker` (`ui::widgets::SPEAKERS`) as chosen then, before the slot can be handed to
+    /// its successor: the Defense Minister when `by` is the human, else the Foreign Minister
+    /// with the human's embassy, else the Travelers (o5 0x5073..0x5095).
+    CivDestroyedReport { slot: Slot, by: Slot, adjective: String, speaker: u8 },
+    /// `set_government`'s report on a computer player the human has an embassy with (CIV.EXE
+    /// 0x14f5e..0x15024): "<Adjective> government\nchanged to <govt>!" when its revolution
+    /// flag was set (`govt`), else "The <Adjective> government\nhas been overthrown!" (`None`).
+    ForeignGovernment { slot: Slot, govt: Option<Govt> },
 }
 
 /// A choice the engine needs from the human player before continuing.

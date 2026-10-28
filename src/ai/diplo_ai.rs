@@ -292,13 +292,13 @@ fn evaluate(g: &mut Game, ai: Slot, at: (i32, i32), mode: u8) -> Meeting {
 }
 
 /// CIV.EXE 0x14df7 `set_government(ai, 2)` for a computer player: no anarchy; the human with
-/// an embassy hears of it ("<Adj> government changed to Monarchy.").
+/// an embassy hears of it (`Game::foreign_government_report`).
 fn set_monarchy(g: &mut Game, ai: Slot) {
     if g.player(ai).govt == Govt::Monarchy {
         return;
     }
+    g.foreign_government_report(ai, Govt::Monarchy);
     g.player_mut(ai).govt = Govt::Monarchy;
-    g.player_mut(ai).anarchy_turns = 0;
     g.ai_government_rates(ai);
     g.forget_vendettas(ai);
     g.push_event(GameEvent::GovernmentChanged { slot: ai, govt: Govt::Monarchy });

@@ -433,6 +433,12 @@ impl MapView {
                 return Transition::None;
             }
         }
+        // *PMAX from the Domestic Advisor at (64, 80) (o 0x1b882)
+        if *e == crate::game::RuleError::Other("PMAX") {
+            let lines = ctx.texts.king.section("PMAX").map(crate::assets::text::paragraphs).unwrap_or_default();
+            self.pending = Pending::Error;
+            return Transition::Push(Box::new(crate::ui::widgets::MenuDialog::new(lines, Vec::new()).with_pos(64, 80).with_speaker(crate::ui::widgets::SPEAKER_DOMESTIC)));
+        }
         match dialogs::error_screen(ctx, e) {
             Some(s) => {
                 self.pending = Pending::Error;
@@ -1642,7 +1648,7 @@ impl Screen for MapView {
             Pending::PillageTreaty(id, _) => match result {
                 DialogResult::Choice(1) if ctx.game().senate_overrules(ctx.game().human_slot) => {
                     self.pending = Pending::Event;
-                    Transition::Push(Box::new(MessageBox::new(vec!["Overruled by".into(), "the Senate.".into(), "Action canceled.".into()]).with_pos(100, 80)))
+                    Transition::Push(crate::ui::unit_actions::senate_overrules_box())
                 }
                 DialogResult::Choice(1) if ctx.game().active_unit == Some(id) => self.unit_order(ctx, UnitOrder::Pillage),
                 _ => Transition::None,
@@ -1668,7 +1674,7 @@ impl Screen for MapView {
             Pending::AttackTreaty(id, d, o) => match result {
                 DialogResult::Choice(1) if ctx.game().senate_overrules(ctx.game().human_slot) => {
                     self.pending = Pending::Event;
-                    Transition::Push(Box::new(MessageBox::new(vec!["Overruled by".into(), "the Senate.".into(), "Action canceled.".into()]).with_pos(100, 80)))
+                    Transition::Push(crate::ui::unit_actions::senate_overrules_box())
                 }
                 DialogResult::Choice(1) => {
                     ctx.game_mut().treaty_break_ok = Some(o);
