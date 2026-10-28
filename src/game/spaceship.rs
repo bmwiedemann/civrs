@@ -554,6 +554,18 @@ impl Game {
         self.end_game(EndReason::Spaceship(slot));
     }
 
+    /// The "SpaceShip: (N[ possible])" line of `civ_score` (o 0x1c3cc..0x1c43f): once the
+    /// human's ship is launched, success % * colonists / 2, "possible" until it has landed.
+    /// CIV.EXE takes the success % ds:0x4cd4 of the last ship launched by any civ (0x18850)
+    /// with the human's colonists, so an AI launch shows a line for the human's unlaunched
+    /// ship; civrs uses the human's own ship only.
+    pub fn spaceship_score_line(&self) -> Option<(i32, bool)> {
+        let me = self.human_slot;
+        let s = self.player(me).spaceship;
+        let st = self.spaceship_stats(me);
+        (s.launched() && st.habitation() != 0 && st.success != 0).then(|| ((st.success * st.habitation() / 2).max(0), !s.landed))
+    }
+
     /// Spaceship score (o 0x1c3cc): success % * colonists / 2 (colonists = habitation modules)
     /// for the human's ship once it has landed. CIV.EXE adds the human's ship to every civ's
     /// score and tests "arrival year == current year"; civrs counts it for the human only.
@@ -705,6 +717,7 @@ mod tests {
         // 1770 AD: two years a turn until a ship is in flight, then one
         g.set_turn(360);
         assert_eq!((g.year(), g.next_year()), (1770, 1772));
+        assert_eq!(g.spaceship_score_line(), None, "no line before the launch");
         g.launch_spaceship(slot).unwrap();
         let s = g.player(slot).spaceship;
         assert_eq!((s.launch_year, s.launched_turn), (Some(1770), Some(360)));
@@ -712,6 +725,9 @@ mod tests {
         assert!(arrival > 1771);
         assert_eq!(s.arrival_year, Some(arrival));
         assert_eq!(g.spaceship_score(slot), 0);
+        // F9 shows the points as "possible" while the ship is in flight (o 0x1c3fb)
+        let points = st.success * st.habitation() / 2;
+        assert_eq!(g.spaceship_score_line(), (st.success != 0).then_some((points, true)));
         // the year the turn loop compares is the coming one (0x2a13 after 0x26ed)
         while g.next_year() < arrival {
             g.spaceship_arrivals();
@@ -723,6 +739,7 @@ mod tests {
         g.spaceship_arrivals();
         assert_eq!(g.ended, Some(EndReason::Spaceship(slot)));
         assert_eq!(g.spaceship_score(slot), st.success * st.habitation() / 2);
+        assert_eq!(g.spaceship_score_line(), (st.success != 0).then_some((points, false)));
     }
 
     #[test]

@@ -140,10 +140,16 @@ pub fn paint_top_five(fb: &mut Surface, ctx: &UiContext) {
 /// the last row with the civ's wonders (pictogram and name in 11, columns 152 px apart), then,
 /// 10 px apart from 10 px lower: "SpaceShip: (N[ possible])", one line of "Pollution: (-N)",
 /// "Peace: (+N)" and "Future Tech: (+N)", and "Total Score: N" (or "Bonus Score"); a bar
-/// (35, 192) 250x7 in 8 filled in 11 for score / 4.
+/// (35, 192) 250x7 in 8 filled in 11 for score / 4. The citizens are those `civ_score` counts,
+/// at 40% luxuries (o 0x1c0e0). Once the game has ended and goes on (ds:0x4cd8 bit 0x100),
+/// only "SCORING COMPLETED" centred at (160, 100) in 15 (o 0x1c05a).
 pub fn paint_score(fb: &mut Surface, ctx: &UiContext) {
     title_block(fb, ctx, "CIVILIZATION SCORE");
     let g = ctx.game();
+    if g.scoring_over {
+        text_c(fb, ctx, 160, 100, "SCORING COMPLETED", WHITE);
+        return;
+    }
     let me = g.human_slot;
     let s = g.score(me);
     let adj = g.human().adjective();
@@ -161,7 +167,7 @@ pub fn paint_score(fb: &mut Surface, ctx: &UiContext) {
     };
     let mut citizens = 0;
     for c in g.cities_of(me) {
-        let h = g.city_happiness(c);
+        let h = g.city_happiness_lux(c, Some(40));
         let city = g.city(c);
         for i in 0..h.happy {
             head(fb, (i & 1) as u8);
@@ -198,8 +204,10 @@ pub fn paint_score(fb: &mut Surface, ctx: &UiContext) {
     }
     text_sh(fb, ctx, 16, ay, &format!("{adj} Achievements ({})", 20 * s.wonders), WHITE, BLACK);
     let mut y = y + 10;
-    if s.spaceship > 0 {
-        text_sh(fb, ctx, 16, y, &format!("SpaceShip: ({})", s.spaceship), WHITE, BLACK);
+    if let Some((points, possible)) = g.spaceship_score_line() {
+        if y < 184 {
+            text_sh(fb, ctx, 16, y, &format!("SpaceShip: ({points}{})", if possible { " possible" } else { "" }), WHITE, BLACK);
+        }
         y += 10;
     }
     let mut line = String::new();
