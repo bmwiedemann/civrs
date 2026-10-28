@@ -652,15 +652,10 @@ impl Game {
     }
 
     /// A city emptied by famine or by its last citizen leaving as Settlers goes as CIV.EXE's
-    /// destroy_city (0xa76a) takes it: the units it supports are disbanded, so are the
-    /// non-land units in its square (0x7e6:0x1447 with 0x7e6:0x163f), and its owner may be
-    /// out of the game (0xd159, 0xe041).
+    /// destroy_city (0xa76a) takes it (`remove_city` disbands the units it supports and the
+    /// non-land units in its square), and its owner may be out of the game (0xd159, 0xe041).
     fn city_wiped_out(&mut self, c: CityId) {
-        let (owner, pos) = (self.city(c).owner, self.city(c).pos());
-        let doomed: Vec<UnitId> = self.all_units().filter(|u| u.home == Some(c) || (u.pos() == pos && !u.is_land())).map(|u| u.id).collect();
-        for id in doomed {
-            self.remove_unit(id);
-        }
+        let owner = self.city(c).owner;
         self.remove_city(c);
         self.city_lost_check(owner, 0);
     }
@@ -926,7 +921,8 @@ impl Game {
                 self.city_mut(c).shields = if human { 0 } else { self.city(c).shields - cost };
                 // Settlers take a citizen, unless it is the last one of the civilization's only
                 // city; the last citizen of a city leaves it empty: the city is destroyed and
-                // the Settlers start anew on its square, without a home (0xdfa7..0xe04e)
+                // the Settlers start anew on its square, homed by create_unit 0x8b51 like any new unit
+                // (0xdfa7..0xe04e)
                 if k == unit_ids::SETTLERS && (self.city(c).size > 1 || self.cities_of(owner).len() > 1) {
                     self.city_mut(c).size -= 1;
                     if self.city(c).size == 0 {
@@ -1739,8 +1735,9 @@ mod tests {
         g.complete_production(c, Production::Unit(unit_ids::SETTLERS));
         assert!(g.city_opt(c).is_none());
         assert!(g.city_opt(other).is_some());
+        // create_unit 0x8b51 homes them to the nearest city, the civ's other one
         let new = g.units_at(x, y).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
-        assert_eq!(g.unit(new).home, None);
+        assert_eq!(g.unit(new).home, Some(other));
     }
 
     #[test]
