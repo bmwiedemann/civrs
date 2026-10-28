@@ -584,7 +584,7 @@ impl Game {
     /// 350 - 50 * difficulty. It gets a new start square (random squares (8 + random(64),
     /// 8 + random(34)) until the k-th is land, has a site value of at least 12 - k/32, lies
     /// 10 - k/64 from the nearest city, on a continent with at least 32 - turn/16 - k/64 site
-    /// squares and, after 1 AD, no city, and has no hut; 2000 tries), one Settlers there, each
+    /// squares and, after 1 AD, no city, and has no hut; 1999 tries), one Settlers there, each
     /// advance the human knows and a computer civilization found with probability 1/2
     /// (first discoverer, which may be the slot's destroyed civilization), Despotism,
     /// no gold, science (civilized trait + 3) tenths, tax the rest but one tenth, and clean
@@ -626,15 +626,17 @@ impl Game {
         for id in barbarians {
             self.remove_unit(id);
         }
-        // civ_init ends by zeroing the unit counters (o5 0x4fc2)
+        // the research count starts at 1 again whatever was granted (o5 0x4fa4), and civ_init
+        // ends by zeroing the unit counters (o5 0x4fc2)
+        self.players[slot as usize].research_count = 1;
         self.players[slot as usize].unit_counter = [0; 28];
         self.players[slot as usize].units_lost_by_type = [0; 28];
         self.refresh_vision(slot);
         true
     }
 
-    /// The start-square search of `civ_init` after turn 0 (o5 0x4bd3..0x4d8b); `None` after
-    /// 2000 tries.
+    /// The start-square search of `civ_init` after turn 0 (o5 0x4bd3..0x4d8b); `None` when the
+    /// 2000th try is reached, even if that square would do (o5 0x4e41).
     fn respawn_square(&mut self) -> Option<(i32, i32)> {
         use crate::rules::Terrain;
         let mut sites = [0i32; 16];
@@ -659,7 +661,9 @@ impl Game {
             let near = if near.0.is_none() { 30 } else { near.1 };
             let site = self.map.site_at(x, y) as i32;
             k += 1;
-            if k > 2000 {
+            // the 2001st try ends the search, and a square found on the 2000th is dropped
+            // too (count >= 2000, o5 0x4e41)
+            if k >= 2000 {
                 return None;
             }
             let t = self.map.tile(x, y);
@@ -713,6 +717,26 @@ mod tests {
         }
         g.check_destroyed(s);
         assert!(!g.player(s).alive);
+    }
+
+    #[test]
+    fn a_new_civ_starts_with_research_count_one() {
+        let mut g = Game::new(GameSetup { seed: 3, ..Default::default() }, None);
+        g.turn = 10;
+        let h = g.human_slot;
+        let s = (1..8u8).find(|s| *s != h && g.player(*s).alive).unwrap();
+        let finder = (1..8u8).find(|o| *o != h && *o != s).unwrap();
+        for a in 0..20u8 {
+            g.players[h as usize].learn(a);
+            g.first_discoverer[a as usize] = finder;
+        }
+        for id in g.units_of(s) {
+            g.remove_unit(id);
+        }
+        g.check_destroyed(s);
+        assert!(g.player(s).alive);
+        assert!((0..20u8).any(|a| g.player(s).knows(a)), "half of the human's advances come along");
+        assert_eq!(g.player(s).research_count, 1);
     }
 
     #[test]
