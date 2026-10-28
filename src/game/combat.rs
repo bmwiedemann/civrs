@@ -146,7 +146,7 @@ impl Game {
             }
         }
         // one roll each, the defence first; a tie goes to the defender, and a barbarian at a
-        // city must win a second roll (0x19a2f..0x19a6e)
+        // city must win a second roll (0x19a2d..0x19a6e)
         let (a, d) = (a.max(0) as u32, d.max(0) as u32);
         let rd = self.rng.below(d);
         let mut won = rd < self.rng.below(a);
@@ -779,7 +779,7 @@ mod tests {
         assert_eq!(g.defense_strength(g.unit(d), Some(g.unit(a))), 16);
         g.remove_unit(a);
         g.remove_unit(d);
-        // one roll each, ties to the defender (CIV.EXE 0x19a2f): 24 vs 16 wins 64.6%
+        // one roll each, ties to the defender (CIV.EXE 0x19a2d): 24 vs 16 wins 64.6%
         let pct = win_share(&mut g, unit_ids::LEGION, unit_ids::PHALANX, 10_000);
         assert!((60..=69).contains(&pct), "attacker won {pct}%");
     }
@@ -787,7 +787,7 @@ mod tests {
     #[test]
     fn difficulty_and_partial_moves_weigh_on_the_attack() {
         // CIV.EXE 0x199c2..: below Prince the computer's attack on the human is halved, at
-        // Chieftain the human's attack doubled; 0x199a6: x moves / 3 below a full move
+        // Chieftain the human's attack doubled; 0x1999a: x moves / 3 below a full move
         let mut g = flat_game();
         let h = g.human_slot;
         assert!(h == 1 || h == 2, "the tests fight between slots 1 and 2");
