@@ -577,26 +577,24 @@ impl Game {
     // ---- contact ----------------------------------------------------------------------------
 
     /// The contact part of `unit_look` (CIV.EXE 0x8038, 0x8413..0x8491) for the unit `id`: a
-    /// land unit on land meets the civilization of every unit (not an aircraft) on a land
-    /// square next to it (`civs_meet`).
+    /// land unit on land meets, square by square in the order of the neighbour table
+    /// (ds:0x1882), the civilization of the first unit (0x1a68:0x145e) on each land square
+    /// next to it unless that unit is an aircraft (`civs_meet(civ, other, x, y)` with the
+    /// looker's square). Two squares of the same civ are two meetings.
     pub fn look_for_contacts(&mut self, id: super::UnitId) {
         let Some(u) = self.unit_opt(id).cloned() else { return };
-        if u.owner == 0 || !u.is_land() || u.carried_by.is_some() || self.map.is_ocean(u.x, u.y) {
+        if u.owner == 0 || !u.is_land() || self.map.is_ocean(u.x, u.y) {
             return;
         }
-        let mut met: Vec<(Slot, (i32, i32))> = Vec::new();
         for (nx, ny) in Map::neighbours8(u.x, u.y) {
             if self.map.is_ocean(nx, ny) {
                 continue;
             }
-            for o in self.all_units().filter(|o| o.pos() == (nx, ny) && o.owner != u.owner && !o.is_air()) {
-                if !met.iter().any(|(s, _)| *s == o.owner) {
-                    met.push((o.owner, (nx, ny)));
-                }
+            let Some(f) = self.units_at(nx, ny).first().copied() else { continue };
+            let (other, air) = (self.unit(f).owner, self.unit(f).is_air());
+            if other != u.owner && !air {
+                self.civs_meet(u.owner, other, u.x, u.y);
             }
-        }
-        for (other, at) in met {
-            self.civs_meet(u.owner, other, at.0, at.1);
         }
     }
 
@@ -939,6 +937,45 @@ mod tests {
         g.turn = 7; // (2 + 3 + turn) & 3 == 0: they look at each other again
         g.civs_meet(2, 3, 21, 10);
         assert_eq!(g.relation(2, 3), Relation::War);
+    }
+
+    #[test]
+    fn contact_goes_by_the_first_unit_of_each_square() {
+        // 0x8413..0x8491: an aircraft heading its stack makes no contact; each square with a
+        // foreign land unit is a meeting of its own, here two exchanges of advances
+        let mut g = game();
+        g.add_city(2, "A".into(), 10, 10);
+        g.add_city(3, "B".into(), 30, 10);
+        let a = g.add_unit(2, unit_ids::MILITIA, 20, 10);
+        g.add_unit(3, unit_ids::FIGHTER, 21, 10);
+        g.add_unit(3, unit_ids::MILITIA, 21, 10);
+        g.look_for_contacts(a);
+        assert_eq!(g.diplo(2, 3) & CONTACT, 0);
+        g.set_relation(2, 3, Relation::Peace);
+        g.raise_flag(2, 3, MET);
+        g.raise_flag(3, 2, MET);
+        let ids: Vec<_> = g.units_at(21, 10);
+        for id in ids {
+            g.remove_unit(id);
+        }
+        g.add_unit(3, unit_ids::MILITIA, 21, 10);
+        g.add_unit(3, unit_ids::MILITIA, 21, 11);
+        for s in [2u8, 3] {
+            g.player_mut(s).advances = 0;
+        }
+        for x in [1u8, 2] {
+            g.player_mut(2).learn(x);
+        }
+        for x in [4u8, 5] {
+            g.player_mut(3).learn(x);
+        }
+        g.turn = 7; // (2 + 3 + turn) & 3 == 0
+        // Senates keep the peace whatever the leaders want
+        g.player_mut(2).govt = crate::rules::Govt::Republic;
+        g.player_mut(3).govt = crate::rules::Govt::Republic;
+        g.look_for_contacts(a);
+        assert!(g.player(2).knows(4) && g.player(2).knows(5));
+        assert!(g.player(3).knows(1) && g.player(3).knows(2));
     }
 
     #[test]

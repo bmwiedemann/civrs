@@ -251,9 +251,10 @@ impl Game {
     /// (after every move and at the start of its civilization's turn, with `look_for_contacts`).
     ///
     /// For each of the 8 neighbours n:
-    /// - a city of another civ o that the looking civ has no treaty with gets o's attack (1,
-    ///   priority 4) and defend (2, priority 2) goals on itself (0x8124 path at 0x82ea);
-    /// - units of another civ o2 there: their sentried units on land wake, the first one's goto
+    /// - a city of another civ o next to a land unit (0x82c5) whose civ has no treaty with o
+    ///   gets o's attack (1, priority 4) and defend (2, priority 2) goals on itself (0x82ea);
+    /// - units of another civ o2 there: their sentried units wake but for land units at sea
+    ///   (wake_if_not_at_sea 0x92fe, so ships wake too), the first one's goto
     ///   is dropped unless it is at sea and the looker on land; the looker's goto is dropped
     ///   unless it stands on land beside a ship (aircraft always). Between land units on land
     ///   without a treaty the looker's civ gets an attack goal on n (priority 3, or 1 against
@@ -284,7 +285,7 @@ impl Game {
             if k <= 8 {
                 if let Some(c) = self.city_at(nx, ny) {
                     let o = self.city(c).owner;
-                    if o != civ && !peace(self, civ, o) {
+                    if o != civ && land && !peace(self, civ, o) {
                         self.add_goal(o, nx, ny, goal::ATTACK, 4);
                         self.add_goal(o, nx, ny, goal::DEFEND, 2);
                     }
@@ -294,7 +295,7 @@ impl Game {
                 let o2 = fu.owner;
                 for w in self.units_at(nx, ny) {
                     let wu = self.unit_mut(w);
-                    if wu.order == super::UnitOrder::Sentry && !n_ocean {
+                    if wu.order == super::UnitOrder::Sentry && !(n_ocean && wu.is_land()) {
                         wu.order = super::UnitOrder::None;
                     }
                 }
