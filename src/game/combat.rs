@@ -571,6 +571,11 @@ impl Game {
             self.end_game(EndReason::Destroyed);
             return;
         }
+        // the slot forgets the map: its bit in the seen plane (+0x740) goes from every square,
+        // so a new civilization knows only its start (o5 0x5104..0x514a)
+        for t in self.map.tiles.iter_mut() {
+            t.explored &= !(1u8 << slot);
+        }
         if self.respawn_civ(slot) {
             return;
         }
@@ -737,6 +742,10 @@ mod tests {
         assert!(g.player(s).alive);
         assert!((0..20u8).any(|a| g.player(s).knows(a)), "half of the human's advances come along");
         assert_eq!(g.player(s).research_count, 1);
+        // the new civilization knows only the squares around its Settlers
+        let u = g.unit(g.units_of(s)[0]).clone();
+        let known: Vec<(i32, i32)> = (0..rules::MAP_H as i32).flat_map(|y| (0..rules::MAP_W as i32).map(move |x| (x, y))).filter(|&(x, y)| g.map.tile(x, y).explored_by(s)).collect();
+        assert!(!known.is_empty() && known.iter().all(|&(x, y)| (x - u.x).abs() <= 1 && (y - u.y).abs() <= 1));
     }
 
     #[test]
