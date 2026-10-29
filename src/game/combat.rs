@@ -175,7 +175,10 @@ impl Game {
             }
             let t = self.map.tile(x, y);
             let stack_safe = t.city.is_some() || t.has(tile_flags::FORTRESS);
-            let victims: Vec<UnitId> = if stack_safe { vec![def_id] } else { self.units_at(x, y) };
+            // the stack goes in the order of its ring from the defender (for_each_in_stack
+            // 0x1a0d0). Not copied: that walk stops after ten units, so the rest of a bigger
+            // stack would survive
+            let victims: Vec<UnitId> = if stack_safe { vec![def_id] } else { self.stack_ring(def_id, 128) };
             let mut losers: Vec<Slot> = Vec::new();
             for v in victims {
                 // a ship's cargo goes down with it (`remove_unit`)
