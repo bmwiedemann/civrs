@@ -239,6 +239,19 @@ mod tests {
 
     /// Long soak with statistics: `cargo test --lib ai::tests::long_soak -- --ignored --nocapture`.
     #[test]
+    fn the_stack_rings_hold_every_square_s_units_through_a_game() {
+        let (mut bad, mut stacked) = (None, 0);
+        soak_setup(GameSetup { seed: 42, num_civs: 7, ..Default::default() }, 120, &mut |g| {
+            if bad.is_none() && !g.stacks_consistent() {
+                bad = Some(g.turn);
+            }
+            stacked += g.all_units().filter(|u| u.next.is_some()).count();
+        });
+        assert_eq!(bad, None, "a unit outside its square's ring");
+        assert!(stacked > 500, "{stacked} units in stacks");
+    }
+
+    #[test]
     #[ignore]
     fn long_soak() {
         let g = soak(1234, 300);

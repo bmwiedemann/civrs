@@ -65,7 +65,10 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// saves show the improvements as they are.
 /// 27: then by the number of city slots (u32 LE) and each slot's `City::trade` (i16 LE, 0 for an
 /// empty slot); older saves take the trade each city has now (`Game::visible_trade`).
-pub const VERSION: u16 = 27;
+/// 28: then by the number of unit slots (u32 LE) and each slot's `Unit::next` (u16 LE unit id,
+/// 0xffff for none or an empty slot); older saves link each square's units up in record order
+/// (`Game::rebuild_stacks`).
+pub const VERSION: u16 = 28;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -184,6 +187,10 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
         let t = c.as_ref().map_or(0, |c| c.trade.clamp(i16::MIN as i32, i16::MAX as i32) as i16);
         data.extend_from_slice(&t.to_le_bytes());
     }
+    data.extend_from_slice(&(g.units.len() as u32).to_le_bytes());
+    for u in &g.units {
+        data.extend_from_slice(&u.as_ref().and_then(|u| u.next).unwrap_or(0xffff).to_le_bytes());
+    }
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -297,6 +304,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     let mut milestone: Option<u16> = None;
     let mut seen_layer: Option<Vec<u16>> = None;
     let mut stored_trade: Option<Vec<i16>> = None;
+    let mut links: Option<Vec<u16>> = None;
     // version 14: the tribe names, after the counters
     if ver >= 14 {
         let mut at = counters + 112 * g.players.len();
@@ -371,6 +379,11 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
                                     if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 27) {
                                         let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
                                         stored_trade = rest.get(at + 4..at + 4 + 2 * n).map(|b| b.chunks(2).map(|w| i16::from_le_bytes([w[0], w[1]])).collect());
+                                        at += 4 + 2 * n;
+                                        if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 28) {
+                                            let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
+                                            links = rest.get(at + 4..at + 4 + 2 * n).map(|b| b.chunks(2).map(|w| u16::from_le_bytes([w[0], w[1]])).collect());
+                                        }
                                     }
                                 }
                             }
@@ -411,6 +424,16 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
             }
         }
         None => g.number_unit_records(),
+    }
+    match links {
+        Some(b) => {
+            for (u, n) in g.units.iter_mut().zip(b) {
+                if let Some(u) = u {
+                    u.next = (n != 0xffff).then_some(n);
+                }
+            }
+        }
+        None => g.rebuild_stacks(),
     }
     // older saves keep a ship's cargo aboard in port; there it belongs to the city's stack
     let ports: Vec<bool> = g.units.iter().map(|u| u.as_ref().is_some_and(|u| u.carried_by.is_some() && g.map.is_land(u.x, u.y))).collect();
@@ -1011,6 +1034,31 @@ mod tests {
         let old = super::load_game(&path).unwrap();
         let _ = std::fs::remove_dir_all(dir);
         assert_eq!(old.city(c).trade, live);
+    }
+
+    #[test]
+    fn the_stack_rings_survive_a_save_and_old_saves_link_in_record_order() {
+        let mut g = Game::new(GameSetup { seed: 6, ..Default::default() }, None);
+        let h = g.human_slot;
+        let a = g.add_unit(h, crate::rules::unit_ids::MILITIA, 30, 30);
+        let b = g.add_unit(h, crate::rules::unit_ids::MILITIA, 30, 30);
+        let c = g.add_unit(h, crate::rules::unit_ids::MILITIA, 30, 30);
+        // a -> c -> b; b steps off and back: a -> b -> c
+        g.relocate_unit(b, 31, 30);
+        g.relocate_unit(b, 30, 30);
+        assert_eq!(g.stack_ring(a, 10), vec![a, b, c]);
+        let dir = std::env::temp_dir().join(format!("civrs-rings-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        assert_eq!(super::load_game(&path).unwrap().stack_ring(a, 10), vec![a, b, c]);
+        let mut data = std::fs::read(&path).unwrap();
+        data[4..6].copy_from_slice(&27u16.to_le_bytes());
+        std::fs::write(&path, &data).unwrap();
+        let old = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        // as if created in record order: a, then b after a, then c after a
+        assert_eq!(old.stack_ring(a, 10), vec![a, c, b]);
+        assert!(old.stacks_consistent());
     }
 
     #[test]

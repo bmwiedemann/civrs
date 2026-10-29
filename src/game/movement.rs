@@ -275,6 +275,9 @@ impl Game {
             return Ok(MoveOutcome::Blocked);
         }
         let had_hut = target.has(tile_flags::HUT);
+        // the units the step takes along go in the order of the square's stack ring from the
+        // unit's successor (0x6799 keeps its +0xa, 0x6a15 follows the links)
+        let ring: Vec<UnitId> = self.stack_ring(id, 128).into_iter().skip(1).collect();
         // a ship leaving a city takes along the sentried units of its kind there, land units
         // onto transports and aircraft onto a Carrier, up to its capacity (CIV.EXE 0x6932); a
         // computer's ship takes every unit that is not fortified or fortifying (0x693f), and
@@ -286,9 +289,10 @@ impl Game {
             }
             let air = u.kind == unit_ids::CARRIER;
             let computer = !self.is_human(slot);
-            let waiting: Vec<UnitId> = self
-                .all_units()
-                .filter(|o| o.owner == slot && o.id != id && (o.x, o.y) == (u.x, u.y) && o.carried_by.is_none())
+            let waiting: Vec<UnitId> = ring
+                .iter()
+                .map(|o| self.unit(*o))
+                .filter(|o| o.carried_by.is_none())
                 .filter(|o| o.order == UnitOrder::Sentry || (computer && !matches!(o.order, UnitOrder::Fortify | UnitOrder::Fortified) && o.order_turns == 0))
                 .filter(|o| if air { o.is_air() } else { o.is_land() })
                 .map(|o| o.id)
@@ -328,14 +332,14 @@ impl Game {
         // (+8, 0x69b9), is sentried aboard a transport but not a Carrier (0x69d6..0x69e5) and,
         // with a range, gets a full tank (+5 = range - 1, 0x6a02: civrs's 0 turns flown)
         if u.is_sea() {
-            let cargo: Vec<UnitId> = self.all_units().filter(|c| c.carried_by == Some(id)).map(|c| c.id).collect();
+            let cargo: Vec<UnitId> = ring.iter().copied().filter(|c| self.unit(*c).carried_by == Some(id)).collect();
             let port = target.is_land();
             let transport = u.carries_land_units();
             for c in cargo {
                 self.set_heading(c, 0xff);
+                // each one out of the old square's ring and into the new one's (0x697a/0x698e)
+                self.relocate_unit(c, tx, ty);
                 let cu = self.unit_mut(c);
-                cu.x = tx;
-                cu.y = ty;
                 cu.seen_by = 0;
                 if transport {
                     cu.order = UnitOrder::Sentry;
@@ -405,9 +409,9 @@ impl Game {
 
     /// Move a unit to a tile and deduct movement cost (thirds).
     pub fn place_unit(&mut self, id: UnitId, x: i32, y: i32, cost: u8) {
+        // out of the old square's stack ring, into the new one's (0x67ae/0x67ce)
+        self.relocate_unit(id, x, y);
         let u = self.unit_mut(id);
-        u.x = x;
-        u.y = y;
         u.moves_left = u.moves_left.saturating_sub(cost);
         if u.order == UnitOrder::Fortified || u.order == UnitOrder::Fortify || u.order.is_work() {
             u.order = UnitOrder::None;
@@ -554,20 +558,6 @@ impl Game {
 
     pub fn cargo_of(&self, ship: UnitId) -> Vec<UnitId> {
         self.all_units().filter(|u| u.carried_by == Some(ship)).map(|u| u.id).collect()
-    }
-
-    /// The stack of `first`'s square as CIV.EXE's stack walk (`for_each_in_stack` 0x92a7)
-    /// visits it from `first`: the owner's units there, at most ten, round from `first`.
-    pub fn stack_from(&self, first: UnitId) -> Vec<UnitId> {
-        self.stack_ring(first, 10)
-    }
-
-    /// The first `n` units of `first`'s stack ring, `first` included.
-    pub fn stack_ring(&self, first: UnitId, n: usize) -> Vec<UnitId> {
-        let u = self.unit(first);
-        let here: Vec<UnitId> = self.units_at(u.x, u.y).into_iter().filter(|o| self.unit(*o).owner == u.owner).collect();
-        let i = here.iter().position(|o| *o == first).unwrap_or(0);
-        here.iter().cycle().skip(i).take(here.len().min(n)).copied().collect()
     }
 
     /// Can the unit (by rules of terrain only) enter the tile? Used by pathfinding.

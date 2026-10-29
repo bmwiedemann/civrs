@@ -191,11 +191,13 @@ impl Game {
     }
 
     /// Unit types of the owner's units in the city square that impose martial law: every unit
-    /// with an attack strength, ships and aircraft included, in stack order (CIV.EXE 0xf818
-    /// walks at most 32 units of the stack). These are the units the happiness row shows.
+    /// with an attack strength, ships and aircraft included, in the order of the square's
+    /// stack ring from its first unit (CIV.EXE 0xf818 walks at most 31 units of it). These
+    /// are the units the happiness row shows.
     pub fn martial_law_kinds(&self, c: CityId) -> Vec<u8> {
         let city = self.city(c);
-        self.all_units().filter(|u| (u.x, u.y) == (city.x, city.y) && u.owner == city.owner).take(32).filter(|u| u.info().att > 0).map(|u| u.kind).collect()
+        let Some(first) = self.unit_at(city.x, city.y).filter(|u| self.unit(*u).owner == city.owner) else { return Vec::new() };
+        self.stack_ring(first, 31).into_iter().map(|u| self.unit(u)).filter(|u| u.info().att > 0).map(|u| u.kind).collect()
     }
 
     /// Military units of the owner inside the city that impose martial law (capped at 3 by

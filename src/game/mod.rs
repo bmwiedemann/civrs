@@ -27,6 +27,7 @@ pub mod rng;
 pub mod science;
 pub mod score;
 pub mod spaceship;
+pub mod stack;
 pub mod turn;
 pub mod unit;
 pub mod wonders;
@@ -707,9 +708,13 @@ impl Game {
         self.all_cities().filter(|c| c.owner == slot).map(|c| c.id).collect()
     }
 
+    /// The units on (x, y) in the order of their records, so that the first is the square's
+    /// first unit (`unit_at` 0x1bade) when one civ holds it.
     pub fn units_at(&self, x: i32, y: i32) -> Vec<UnitId> {
         let x = Map::wrap_x(x);
-        self.all_units().filter(|u| u.x == x && u.y == y).map(|u| u.id).collect()
+        let mut v: Vec<(u8, UnitId)> = self.all_units().filter(|u| u.x == x && u.y == y).map(|u| (u.record, u.id)).collect();
+        v.sort_unstable();
+        v.into_iter().map(|(_, id)| id).collect()
     }
 
     pub fn city_at(&self, x: i32, y: i32) -> Option<CityId> {
@@ -727,20 +732,28 @@ impl Game {
 
     /// The defender of a tile.
     pub fn best_defender(&self, x: i32, y: i32, attacker: Option<&Unit>) -> Option<UnitId> {
-        // move_units picks it with best_defender_stack (CIV.EXE 0x111e): the highest
-        // `defence_value`, the first of equals, else the square's first unit; the attacker,
+        // move_units picks it with best_defender_stack (CIV.EXE 0x5a91, 0x605c, 0x111e): from
+        // the square's first unit (unit_at 0x1bade) the highest `defence_value` of the first
+        // ten of its stack ring, the first of equals, else that first unit; the attacker,
         // walls and fortresses play no part
         let _ = attacker;
-        let here = self.units_at(x, y);
-        let mut best: Option<(UnitId, i32)> = None;
-        for &id in &here {
+        let first = self.unit_at(x, y)?;
+        Some(self.best_defender_stack(first))
+    }
+
+    /// `best_defender_stack(civ, unit)` (CIV.EXE 0x8f7e): the unit of highest
+    /// `defence_value` among the ten units of `first`'s stack ring the walk (0x92a7) visits,
+    /// the first of equals; `first` when none counts.
+    pub fn best_defender_stack(&self, first: UnitId) -> UnitId {
+        let mut best = (first, -1);
+        for id in self.stack_from(first) {
             if let Some(d) = self.defence_value(id) {
-                if best.map(|(_, bd)| d > bd).unwrap_or(true) {
-                    best = Some((id, d));
+                if d > best.1 {
+                    best = (id, d);
                 }
             }
         }
-        best.map(|(id, _)| id).or(here.first().copied())
+        best.0
     }
 
     /// Units or a city at (x, y) whose owner `slot` may fight (`Game::may_fight`).
@@ -835,6 +848,8 @@ impl Game {
         } else {
             self.units[id as usize] = Some(u);
         }
+        // into the square's stack ring after its first unit (create_unit 0x8ba9)
+        self.stack_link(id, x, y);
         self.players[owner as usize].stats.units_built += 1;
         self.players[owner as usize].unit_counter[kind as usize % 28] += 1;
         self.note_occupant(owner, x, y);
@@ -865,6 +880,10 @@ impl Game {
             }
         }
         for c in lost.into_iter().chain([id]) {
+            // out of the square's stack ring (delete_unit 0x8e83)
+            if self.unit_opt(c).is_some() {
+                self.stack_unlink(c);
+            }
             if let Some(u) = self.units[c as usize].take() {
                 let p = &mut self.players[u.owner as usize];
                 p.unit_counter[u.kind as usize % 28] -= 1;

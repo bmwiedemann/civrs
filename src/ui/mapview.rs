@@ -1018,9 +1018,11 @@ impl MapView {
         }
         // 0x4ac5: one of our units there opens the stack box (0x9dc5), even
         // for a lone unit; elsewhere the view centres on the square
-        let own: Vec<UnitId> = g.units_at(tx, ty).into_iter().filter(|u| g.unit(*u).owner == me).collect();
-        if !own.is_empty() {
-            let default = g.best_defender(tx, ty, None).filter(|id| own.contains(id)).unwrap_or(own[0]);
+        // for the square's first unit (unit_at 0x4acb): its stack ring, its best defender
+        // by best_defender_at (0x9ddd)
+        if let Some(first) = g.unit_at(tx, ty).filter(|u| g.unit(*u).owner == me) {
+            let own = g.stack_ring(first, 12);
+            let default = g.best_defender_at(first);
             self.pending = Pending::StackPick;
             return Transition::Push(Box::new(StackPicker::new(own, default)));
         }
@@ -1334,9 +1336,8 @@ impl MapView {
                                 x += 16;
                             }
                         }
-                        let stack = g.units_at(u.x, u.y);
-                        let at = stack.iter().position(|o| *o == id).unwrap_or(0);
-                        for o in stack.iter().cycle().skip(at + 1).take(stack.len().saturating_sub(1)) {
+                        // (the ring links +0xa from the unit's successor round to it, 0x7cb9)
+                        for o in g.stack_ring(id, 128).iter().skip(1) {
                             if y >= 184 {
                                 draw_text(fb, &ctx.fonts, &st, 74, 192, "+");
                                 break;

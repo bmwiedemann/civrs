@@ -495,6 +495,8 @@ fn import_slot(data: &[u8], map_pic: &[u8], moves_back: bool) -> Result<Game, Sa
 
     // units, civ by civ in record order
     let mut units: Vec<Option<Unit>> = Vec::new();
+    // each unit's +0xa, the record of the next unit in its square's stack ring
+    let mut links: Vec<(u8, u8)> = Vec::new();
     for c in 0..8usize {
         for i in 0..128usize {
             let r = &data[off::UNITS + 0x600 * c + 12 * i..off::UNITS + 0x600 * c + 12 * (i + 1)];
@@ -525,6 +527,14 @@ fn import_slot(data: &[u8], map_pic: &[u8], moves_back: bool) -> Result<Game, Sa
                 heading.insert(id, r[8]);
             }
             units.push(Some(u));
+            links.push((c as u8, r[0xa]));
+        }
+    }
+    let by_record = |c: u8, rec: u8| units.iter().flatten().find(|u| u.owner == c && u.record == rec).map(|u| u.id);
+    let nexts: Vec<Option<u16>> = links.iter().map(|&(c, rec)| if rec == 0xff { None } else { by_record(c, rec) }).collect();
+    for (u, n) in units.iter_mut().zip(nexts) {
+        if let Some(u) = u {
+            u.next = n;
         }
     }
     // cargo: land units at sea on a ship, aircraft at sea on a Carrier, in record order
@@ -543,6 +553,11 @@ fn import_slot(data: &[u8], map_pic: &[u8], moves_back: bool) -> Result<Game, Sa
         }
     }
     g.units = units;
+    // a ring that does not hold all of a civ's units on its square (none in the sample
+    // saves) is linked up again from the records
+    if !g.stacks_consistent() {
+        g.rebuild_stacks();
+    }
 
     // AI goals ds:0xd76e.. and continent policies ds:0xe698
     for c in 0..8usize {
@@ -950,6 +965,23 @@ mod tests {
         let dir = crate::assets::AssetDir::locate(None).ok()?;
         let path = slot_file(dir.root(), n)?;
         Some((std::fs::read(&path).ok()?, std::fs::read(map_file(&path)).ok()?))
+    }
+
+    #[test]
+    fn imports_the_stack_rings() {
+        // unit +0xa: the record of the next unit in the square's ring, 0xff alone
+        let mut stacked = 0;
+        for n in [0, 1, 3, 4] {
+            let Some((sve, _)) = sample_bytes(n) else { return };
+            let g = sample(n).unwrap();
+            assert!(g.stacks_consistent(), "CIVIL{n}");
+            for u in g.all_units() {
+                let at = off::UNITS + 0x600 * u.owner as usize + 12 * u.record as usize + 0xa;
+                assert_eq!(u.next.map_or(0xff, |o| g.unit(o).record), sve[at], "CIVIL{n} civ {} record {}", u.owner, u.record);
+                stacked += u.next.is_some() as usize;
+            }
+        }
+        assert!(stacked > 0);
     }
 
     #[test]

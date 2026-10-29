@@ -266,7 +266,8 @@ impl Game {
     /// For each of the 8 neighbours n:
     /// - a city of another civ o next to a land unit (0x82c5) whose civ has no treaty with o
     ///   gets o's attack (1, priority 4) and defend (2, priority 2) goals on itself (0x82ea);
-    /// - units of another civ o2 there: their sentried units wake but for land units at sea
+    /// - units of another civ o2 there: their sentried units (ten of the ring from the first)
+    ///   wake but for land units at sea
     ///   (wake_if_not_at_sea 0x92fe, so ships wake too), the first one's goto
     ///   is dropped unless it is at sea and the looker on land; the looker's goto is dropped
     ///   unless it stands on land beside a ship (aircraft always). Between land units on land
@@ -306,7 +307,8 @@ impl Game {
                 let Some(f) = first else { continue };
                 let fu = self.unit(f).clone();
                 let o2 = fu.owner;
-                for w in self.units_at(nx, ny) {
+                // the first ten of its stack ring (for_each_in_stack, 0x836f)
+                for w in self.stack_from(f) {
                     let wu = self.unit_mut(w);
                     if wu.order == super::UnitOrder::Sentry && !(n_ocean && wu.is_land()) {
                         wu.order = super::UnitOrder::None;

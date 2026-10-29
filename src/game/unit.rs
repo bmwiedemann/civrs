@@ -85,6 +85,11 @@ pub struct Unit {
     /// Saved in the version-23 trailer.
     #[serde(skip)]
     pub record: u8,
+    /// The next unit of the owner's on the square in the stack ring (CIV.EXE unit +0xa),
+    /// `None` for a unit alone there (0xff); see `game::stack`. Saved in the version-28
+    /// trailer.
+    #[serde(skip)]
+    pub next: Option<UnitId>,
 }
 
 impl Unit {
@@ -108,6 +113,7 @@ impl Unit {
             created_turn: turn,
             seen_by: 1 << owner,
             record: 0,
+            next: None,
         }
     }
 

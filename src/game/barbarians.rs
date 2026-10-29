@@ -433,10 +433,7 @@ impl Game {
 
     /// The other unit after `id` in its square's stack (unit byte +0xa), if any.
     fn stack_next(&self, id: UnitId) -> Option<UnitId> {
-        let u = self.unit(id);
-        let here = self.units_at(u.x, u.y);
-        let i = here.iter().position(|o| *o == id)?;
-        (here.len() > 1).then(|| here[(i + 1) % here.len()])
+        self.stack_ring(id, 2).get(1).copied()
     }
 
     /// `zoc_blocked` (0x09581) for the barbarians: a unit of a civilisation on a neighbouring

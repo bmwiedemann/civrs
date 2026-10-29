@@ -399,19 +399,18 @@ pub fn draw_tile_units(fb: &mut Surface, ctx: &UiContext, game: &Game, slot: Slo
 
 /// The unit that shows on top of the stack at (x, y), as draw_tile_with_units (0x1b85a) and
 /// draw_top_unit (0x1b8e1) pick it: from the square's first unit by record (unit_at 0x1bade),
-/// on Ocean a land or air unit gives way to the first ship of the stack after it; otherwise a
-/// stack shows its best defender (best_defender_stack 0x111e), a ship's cargo included.
+/// on Ocean a land or air unit gives way to the first ship of its stack ring after it;
+/// otherwise a stack shows its best defender (best_defender_stack 0x111e), a ship's cargo
+/// included.
 pub fn top_unit(game: &Game, x: i32, y: i32) -> Option<crate::game::UnitId> {
-    let mut units = game.units_at(x, y);
-    units.sort_by_key(|u| game.unit(*u).record);
-    let first = *units.first()?;
-    if units.len() == 1 {
+    let first = game.unit_at(x, y)?;
+    if game.unit(first).next.is_none() {
         return Some(first);
     }
     if game.map.get(x, y).is_some_and(|t| t.terrain == Terrain::Ocean) && !game.unit(first).is_sea() {
-        return Some(units.iter().copied().find(|u| game.unit(*u).is_sea()).unwrap_or(first));
+        return Some(game.stack_ring(first, 128).into_iter().find(|u| game.unit(*u).is_sea()).unwrap_or(first));
     }
-    game.best_defender(x, y, None).or(Some(first))
+    Some(game.best_defender_stack(first))
 }
 
 /// The square without its units (`draw_tile` 0x1aa40; the map's 't' view draws only this,

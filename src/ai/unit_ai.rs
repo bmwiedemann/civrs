@@ -116,7 +116,7 @@ fn flush_events(g: &mut Game, sink: &mut dyn FnMut(TurnStep)) {
 // ---- stacks -----------------------------------------------------------------------------
 
 /// The stack of `first`'s square as CIV.EXE's stack walk (0x92a7) visits it from `first`: the
-/// owner's units there, at most ten, in unit order round from `first`.
+/// first ten units of its stack ring.
 fn stack(g: &Game, first: UnitId) -> Vec<UnitId> {
     g.stack_from(first)
 }
@@ -130,9 +130,11 @@ fn stack_sum(g: &Game, first: UnitId, f: impl Fn(&rules::UnitType) -> u8) -> i32
     stack(g, first).iter().map(|o| f(g.unit(*o).info()) as i32).sum()
 }
 
-/// `stack_sum` what 4: Defend-role units of the stack with a lower index than `first`.
+/// `stack_sum` what 4: Defend-role units of the stack with a lower record than `first`
+/// (0x90dc compares the record indices).
 fn defenders_before(g: &Game, first: UnitId) -> i32 {
-    stack(g, first).iter().filter(|o| **o < first && g.unit(**o).info().role == AiRole::Defend).count() as i32
+    let rec = g.unit(first).record;
+    stack(g, first).iter().filter(|o| g.unit(**o).record < rec && g.unit(**o).info().role == AiRole::Defend).count() as i32
 }
 
 /// `defence_value_cb` 0x8fc5: land units defence x (3 fortified, else 2) x terrain << 3, others
@@ -659,9 +661,11 @@ fn in_city(g: &mut Game, c: &Ctx) -> Option<Command> {
     if others.is_empty() {
         return Some(Command::Fortify);
     }
-    // the best other defender, this unit counting as a Diplomat (defence 0, 0x16c99)
+    // the best other defender, this unit counting as a Diplomat (defence 0, 0x16c99), among
+    // the first ten of the ring from the square's first unit (best_defender_at 0x8ee5)
+    let head = g.unit_at(c.x, c.y).unwrap_or(c.id);
     let mut best: Option<(UnitId, i32)> = None;
-    for o in &others {
+    for o in stack(g, head).iter().filter(|o| **o != c.id) {
         let fortified = g.unit(*o).order == UnitOrder::Fortified;
         if let Some(v) = defence_value(g, *o, fortified) {
             if v > best.map(|b| b.1).unwrap_or(0) {
@@ -757,7 +761,8 @@ fn transport(g: &mut Game, c: &Ctx) -> Option<Command> {
     let mut roles = 0u32;
     let mut released = 0;
     let size = g.city_at(c.x, c.y).map(|ct| g.city(ct).size as i32).unwrap_or(0);
-    for o in stack(g, c.id).into_iter().filter(|o| *o != c.id) {
+    // the whole ring from the ship's successor (0x16ed8 follows the links without a count)
+    for o in g.stack_ring(c.id, 128).into_iter().skip(1) {
         let ou = g.unit(o).clone();
         if ou.order != UnitOrder::Fortified {
             roles |= 1 << (ou.info().role as u8);
@@ -1867,7 +1872,7 @@ mod tests {
         let c = g.add_unit(s, unit_ids::CAVALRY, 10, 10);
         assert!(do_step(&mut g, c, Dir8::E, &mut |_| {}));
         assert_eq!((g.unit(c).pos(), g.unit(c).moves_left), ((11, 10), 3));
-        g.unit_mut(c).x = 10;
+        g.relocate_unit(c, 10, 10);
         g.unit_mut(c).moves_left = 3;
         assert!(!do_step(&mut g, c, Dir8::E, &mut |_| {}), "2 + 1, no moves after the step");
         assert_eq!((g.unit(c).pos(), g.unit(c).moves_left), ((10, 10), 0));
