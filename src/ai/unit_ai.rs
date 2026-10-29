@@ -1877,6 +1877,22 @@ mod tests {
         g
     }
 
+    /// `stack_sum` what 4 counts the Defend-role units of lower record (0x90dc), not of an
+    /// older civrs id: a unit in a freed lower record comes before.
+    #[test]
+    fn defenders_before_go_by_record() {
+        let mut g = arena();
+        let a = g.add_unit(2, unit_ids::MILITIA, 10, 10);
+        let b = g.add_unit(2, unit_ids::MILITIA, 10, 10);
+        g.remove_unit(a);
+        // another civ's unit takes the freed id, not the record
+        g.add_unit(3, unit_ids::MILITIA, 30, 20);
+        let c = g.add_unit(2, unit_ids::MILITIA, 10, 10);
+        assert!(c > b && g.unit(c).record < g.unit(b).record);
+        assert_eq!(defenders_before(&g, b), 1);
+        assert_eq!(defenders_before(&g, c), 0);
+    }
+
     fn ai(g: &Game) -> Slot {
         (2..5).find(|s| *s != g.human_slot).unwrap()
     }
