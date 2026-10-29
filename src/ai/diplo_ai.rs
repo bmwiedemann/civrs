@@ -68,7 +68,8 @@ enum Open {
 
 /// CIV.EXE o 0x7a42 `diplomacy_open`: the first call of an audience asks "An emissary from the
 /// <civ> wishes to speak with you. Will you receive him?" when the audience is the computer's
-/// (ds:0x3934 == 0), with "Check Intelligence" when the human has an embassy; then the leader
+/// (ds:0x3934 == 0) over the map drawn around the meeting square, with "Check Intelligence"
+/// when the human has an embassy; then the leader
 /// greets the human. Later calls only repeat the answer. Received goes on with `then`,
 /// refused with `refused` (ds:0x3934 = -1 for the rest of the audience).
 fn open(g: &mut Game, m: &mut Meeting, then: Step, refused: Step) -> Open {
@@ -77,7 +78,15 @@ fn open(g: &mut Game, m: &mut Meeting, then: Step, refused: Step) -> Open {
     }
     m.asked = true;
     match g.diplo_latch {
-        0 => Open::Show(Await::Emissary { then, refused }, emissary(g, m)),
+        0 => {
+            // the map is drawn with the meeting square at column 8, row 2 before the question
+            // (o 0x7a63..0x7a7a: draw_map_view(human, x - 8, y - 2)), which moves the human's
+            // view and so the next unit his loop takes
+            if m.at.0 != -1 {
+                g.view = Some((crate::game::Map::wrap_x(m.at.0 - 8), (m.at.1 - 2).clamp(0, crate::rules::MAP_H as i32 - 12)));
+            }
+            Open::Show(Await::Emissary { then, refused }, emissary(g, m))
+        }
         -1 => Open::Refused,
         _ => Open::Show(Await::Ack(then), greeting(g, m)),
     }
@@ -933,6 +942,18 @@ mod tests {
             }
         }
         panic!("the audience does not end: {seen:?}");
+    }
+
+    #[test]
+    fn the_emissary_question_draws_the_map_around_the_meeting() {
+        // o 0x7a63..0x7a7a: draw_map_view(human, x - 8, y - 2) before the question, so the
+        // human's loop then prefers the units around there
+        let (mut g, human, _) = meeting_game();
+        g.view = Some((0, 0));
+        let id = g.units_of(human)[0];
+        g.look_for_contacts(id);
+        assert_eq!(decisions(&mut g).len(), 1);
+        assert_eq!(g.view, Some((7, 13)), "the looker at (15, 15) is at column 8, row 2");
     }
 
     #[test]
