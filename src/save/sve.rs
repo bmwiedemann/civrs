@@ -401,6 +401,7 @@ fn import_slot_with(data: &[u8], map_pic: &[u8], moves_back: bool, resume: bool)
 
     // cities: the record index is the city id
     let mut cities: Vec<Option<City>> = Vec::with_capacity(128);
+    g.exe_city_owner = (0..128usize).map(|i| data[off::CITIES + 0x1c * i + 0xb]).collect();
     for i in 0..128usize {
         let r = &data[off::CITIES + 0x1c * i..off::CITIES + 0x1c * (i + 1)];
         if r[6] == 0xff {

@@ -330,6 +330,11 @@ pub struct Game {
     /// the last square of the radius out of the site/owner layer (0x13fff).
     #[serde(skip)]
     pub exe_quirks: bool,
+    /// The owner byte (+0xb) CIV.EXE's free city records keep: destroy_city frees a record by
+    /// its +6 byte alone (0xa7cc). With `exe_quirks` founding reads it (o 0x1b5df). Imported
+    /// from a save, set when a city goes; not saved.
+    #[serde(skip)]
+    pub exe_city_owner: Vec<u8>,
 }
 
 /// `wonders_built` entry of a wonder whose city was destroyed: built, owned by no one, listed
@@ -560,6 +565,7 @@ impl Game {
             riot_shown: false,
             leader_traits: rules::initial_traits(),
             exe_quirks: false,
+            exe_city_owner: Vec::new(),
         };
         game.place_starting_units(&slots, &world, &mut wr);
         // the game's draws go on in CIV.EXE's one stream
@@ -945,8 +951,14 @@ impl Game {
     /// foreign units next to it dropped). Only a garrison let out of a city does not look
     /// (city_unstash_garrison sets ds:0x20f4, 0x7e80); loading a game and the tests place
     /// units with `add_unit`.
+    ///
+    /// It never writes the moves byte (+4), and a free record has none (delete_unit 0x8e6c
+    /// clears it), so the unit waits for its owner's next move loop to get its moves (0x40a4):
+    /// a unit made in the middle of a turn (a respawned tribe's Settlers, a bribed or
+    /// re-created unit) has no moves till then.
     pub fn create_unit(&mut self, owner: Slot, kind: UnitTypeId, x: i32, y: i32) -> Option<UnitId> {
         let id = self.try_add_unit(owner, kind, x, y)?;
+        self.unit_mut(id).moves_left = 0;
         self.unit_look(id);
         Some(id)
     }
@@ -996,7 +1008,11 @@ impl Game {
 
     pub fn add_city(&mut self, owner: Slot, name: String, x: i32, y: i32) -> CityId {
         let id = self.cities.iter().position(|c| c.is_none()).unwrap_or(self.cities.len()) as CityId;
-        let first_city = self.cities_of(owner).is_empty();
+        // found_city's first-city test (o 0x1b5df..0x1b616) goes over all 128 records by their
+        // owner byte, free ones too: with `exe_quirks` a city the civilization's slot lost
+        // before (the tribe destroyed and back as its other tribe) means no Palace
+        let first_city = self.cities_of(owner).is_empty()
+            && !(self.exe_quirks && self.exe_city_owner.iter().enumerate().any(|(i, o)| i as CityId != id && *o == owner && self.city_opt(i as CityId).is_none()));
         let production = self.first_production(owner);
         let mut c = City {
             id,
@@ -1186,6 +1202,10 @@ impl Game {
             self.players[owner as usize].capital = None;
         }
         self.cities[id as usize] = None;
+        if self.exe_city_owner.len() <= id as usize {
+            self.exe_city_owner.resize(id as usize + 1, 0);
+        }
+        self.exe_city_owner[id as usize] = owner;
         // the site/owner layer gets the generator's values back (0xa8f3..0xa968): on the city
         // radius, and on the 24 squares beyond where no other city is within 3 (nearest
         // city 0x1d43:0xf8)
@@ -1557,6 +1577,41 @@ mod calendar_tests {
 #[cfg(test)]
 mod new_game_tests {
     use super::*;
+
+    #[test]
+    fn a_unit_made_in_play_waits_for_its_owners_move_loop() {
+        // create_unit 0x8b51 never writes the moves byte, which delete_unit clears (0x8e6c)
+        let mut g = Game::new(GameSetup { seed: 7, ..Default::default() }, None);
+        let s = (1..8).find(|s| *s != g.human_slot && g.player(*s).alive).unwrap();
+        let (x, y) = g.units_of(s).first().map(|u| g.unit(*u).pos()).unwrap();
+        let id = g.create_unit(s, rules::unit_ids::LEGION, x, y).unwrap();
+        assert_eq!(g.unit(id).moves_left, 0);
+        g.reset_moves(s);
+        assert_eq!(g.unit(id).moves_left, 3);
+    }
+
+    #[test]
+    fn exe_quirks_give_no_palace_to_a_slot_that_lost_a_city_before() {
+        // found_city's first-city test (o 0x1b5df) reads the owner byte of the free records
+        let mut g = Game::new(GameSetup { seed: 7, ..Default::default() }, None);
+        let s = (1..8).find(|s| *s != g.human_slot && g.player(*s).alive).unwrap();
+        for (x, y) in [(20, 20), (24, 20), (28, 20)] {
+            let t = g.map.get_mut(x, y).unwrap();
+            t.terrain = rules::Terrain::Plains;
+        }
+        // two cities gone: the new one takes the first free record, the other still says `s`
+        let a = g.add_city(s, "Old".into(), 20, 20);
+        let b = g.add_city(s, "Older".into(), 28, 20);
+        g.destroy_city(a, 0);
+        g.destroy_city(b, 0);
+        g.exe_quirks = true;
+        let n = g.add_city(s, "New".into(), 24, 20);
+        assert!(!g.city(n).has_improvement(rules::improvement_ids::PALACE));
+        g.remove_city(n);
+        g.exe_quirks = false;
+        let n = g.add_city(s, "Sane".into(), 24, 20);
+        assert!(g.city(n).has_improvement(rules::improvement_ids::PALACE));
+    }
 
     #[test]
     fn city_names_are_given_once_in_table_order() {
