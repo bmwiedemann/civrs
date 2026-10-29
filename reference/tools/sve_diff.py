@@ -302,6 +302,10 @@ def play(game, slot, turns, out, script=None, seed=None):
             dosciv.shot(os.path.join(out, 'stuck%02d.png' % i))
         t = turn_of(save) if os.path.exists(save) else last
         print('step', i, 'turn', t, flush=True)
+        if os.environ.get('CIVKEEP') and os.path.exists(save):
+            # every save of the run, also the later ones of a turn: s<STEP>_t<TURN>.SVE
+            shutil.copy(save, os.path.join(out, 's%03d_t%d.SVE' % (i, t)))
+            shutil.copy(save[:-3] + 'MAP', os.path.join(out, 's%03d_t%d.MAP' % (i, t)))
         if t != last:
             last = t
             shutil.copy(save, os.path.join(out, 't%d.SVE' % t))

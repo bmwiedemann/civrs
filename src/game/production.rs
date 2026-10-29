@@ -257,8 +257,12 @@ impl Game {
 
     /// ds:0x6ed4 (0x15ca1): the civ is at war with someone. CIV.EXE keeps one word for all
     /// civilizations, so the advisor (0xb7c7) reads the war of whichever civ's AI turn ran last
-    /// (the civ before for cities processed at the start of a turn); civrs asks the city's own.
+    /// (the civ before for cities processed at the start of a turn); civrs asks the city's own,
+    /// but for `exe_quirks` (`AiMemory::war_word`).
     fn exe_at_war(&self, slot: Slot) -> bool {
+        if self.exe_quirks {
+            return self.ai_memory.war_word;
+        }
         (1..8).any(|o| o != slot && self.exe_war(slot, o))
     }
 

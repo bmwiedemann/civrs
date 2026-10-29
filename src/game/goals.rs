@@ -87,6 +87,9 @@ pub struct AiMemory {
     /// Unit flag 0x10 of the census: next to a foreign unit or a land unit at sea (skipped
     /// by the unit tasking).
     pub busy: HashSet<UnitId>,
+    /// ds:0x6ed4 as the last ai_civ_turn set it (0x15ca1): that civ is at war (contact
+    /// without peace) with someone (`Game::exe_quirks` only; not saved, 0 after a load).
+    pub war_word: bool,
     /// Unit byte +8, the direction of the unit's last step (1..8; absent = 0xff), read by
     /// the goto and the AI move scoring. Barbarians keep theirs in `BarbarianMemory`.
     pub heading: HashMap<UnitId, u8>,
@@ -112,6 +115,7 @@ impl Default for AiMemory {
             policies: [None; 8],
             coarse: [[0; 13]; 20],
             busy: HashSet::new(),
+            war_word: false,
             heading: HashMap::new(),
             moving: None,
             goto_cache: GotoCache::default(),

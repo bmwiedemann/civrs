@@ -205,6 +205,8 @@ pub fn civ_turn(g: &mut Game, slot: Slot) {
     census_units(g, slot);
     let reserve = (g.units_of(slot).iter().filter(|id| g.unit(**id).kind != unit_ids::NUCLEAR && g.unit(**id).kind != unit_ids::SETTLERS).count() as i32 / 8).clamp(3, 99);
     city_goals(g, slot);
+    // ds:0x6ed4 (0x15ca1..0x15ccf): one word for all civilizations
+    g.ai_memory.war_word = (1..8).any(|j| g.diplo(slot, j) & 3 == crate::game::diplomacy::flags::CONTACT);
     update_policies(g, &census, slot);
     if slot == 0 || g.is_human(slot) {
         return;
