@@ -228,6 +228,11 @@ pub struct Game {
     /// until it is over. Not saved.
     #[serde(skip)]
     pub audience_pending: u8,
+    /// A computer's unit whose step opened an audience with the human and also entered a
+    /// hut: the move routine holds the audience in unit_look (0x6ae2) before hut_outcome
+    /// (0x6b05), so the hut waits for the answer (`unit_ai::resume_units`). Not saved.
+    #[serde(skip)]
+    pub deferred_hut: Option<UnitId>,
     /// ds:0x3934 between audiences: -1 (none, the initial value), else 0 after a
     /// `diplomacy_close` outside an audience (see `diplo_ai::open`). Not saved.
     #[serde(skip, default = "no_audience")]
@@ -514,6 +519,7 @@ impl Game {
             barbarian_memory: Default::default(),
             ai_memory: Default::default(),
             audience_pending: 0,
+            deferred_hut: None,
             diplo_latch: -1,
             treaty_break_ok: None,
             weak_attack_ok: false,

@@ -1132,4 +1132,32 @@ mod tests {
         assert_eq!(g.unit(later).moves_left, 0, "the later unit has had its turn");
         let _ = human;
     }
+
+    #[test]
+    fn a_hut_on_the_step_that_opens_an_audience_waits_for_the_answer() {
+        use crate::game::{tile_flags, Dir8};
+        let (mut g, _human, ai) = meeting_game();
+        let u = g.units_of(ai)[0];
+        g.unit_mut(u).x = 17;
+        g.map.get_mut(16, 15).unwrap().set(tile_flags::HUT, true);
+        // in the computer's unit loop: the look opens the audience (0x6ae2) and the hut
+        // (0x6b05) comes after the answer
+        g.ai_memory.moving = Some(ai);
+        assert_eq!(g.try_move(u, Dir8::W).unwrap(), crate::game::MoveOutcome::EnteredHut);
+        assert_eq!(decisions(&mut g).len(), 1);
+        assert_eq!(g.deferred_hut, Some(u));
+        assert!(!g.map.tile(16, 15).has(tile_flags::HUT));
+        // without an audience the hut is opened at once
+        let (mut g, _human, ai) = meeting_game();
+        let u = g.units_of(ai)[0];
+        g.unit_mut(u).x = 17;
+        g.raise_flag(ai, 1, crate::game::diplomacy::flags::CONTACT | crate::game::diplomacy::flags::MET);
+        g.raise_flag(1, ai, crate::game::diplomacy::flags::CONTACT | crate::game::diplomacy::flags::MET);
+        g.players[ai as usize].last_contact = g.turn as i32;
+        g.map.get_mut(16, 15).unwrap().set(tile_flags::HUT, true);
+        g.ai_memory.moving = Some(ai);
+        assert_eq!(g.try_move(u, Dir8::W).unwrap(), crate::game::MoveOutcome::EnteredHut);
+        assert!(decisions(&mut g).is_empty());
+        assert_eq!(g.deferred_hut, None);
+    }
 }

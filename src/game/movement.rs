@@ -387,12 +387,19 @@ impl Game {
         self.reveal_garrisons_near(slot, tx, ty);
         self.refresh_vision(slot);
         // unit_look: who sees whom, and the civilizations whose units are next to it meet (0x8491)
+        let audiences = self.audience_pending;
         self.mark_sightings(id);
         self.look_for_contacts(id);
         self.unit_look_goals(id);
         if had_hut {
             self.map.get_mut(tx, ty).unwrap().set(tile_flags::HUT, false);
-            self.enter_hut(id);
+            // an audience the look opened in a computer's unit loop comes first (unit_look
+            // 0x6ae2, then hut_outcome 0x6b05): the hut waits for the human's answer
+            if self.ai_memory.moving == Some(slot) && self.audience_pending & !audiences != 0 {
+                self.deferred_hut = Some(id);
+            } else {
+                self.enter_hut(id);
+            }
             return Ok(MoveOutcome::EnteredHut);
         }
         Ok(boarded.map_or(MoveOutcome::Moved, MoveOutcome::Boarded))

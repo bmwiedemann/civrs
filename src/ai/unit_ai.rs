@@ -1640,6 +1640,8 @@ pub fn resume_units(g: &mut Game, mut s: UnitLoop, sink: &mut dyn FnMut(TurnStep
     let stops = s.stops;
     let stop = |g: &Game| stops && asked.take().iter().any(|d| g.is_human(crate::game::turn::decision_slot(g, d)));
     g.ai_memory.moving = Some(s.slot);
+    // the rest of the step the loop stopped in, after the human's answer
+    deferred_hut(g, &mut watch);
     while s.pass < 3 {
         if unit_pass(g, &mut s, &mut watch, &stop) {
             g.ai_memory.moving = None;
@@ -1805,8 +1807,20 @@ fn run_unit(g: &mut Game, slot: Slot, id: UnitId, first: u8, sink: &mut dyn FnMu
         if stop(g) {
             return Visit::Stopped(call + 1);
         }
+        deferred_hut(g, sink);
     }
     Visit::Done
+}
+
+/// The hut of a step whose look opened an audience (`Game::deferred_hut`), once the audience
+/// is over or, where nobody answers in the loop, at once.
+fn deferred_hut(g: &mut Game, sink: &mut dyn FnMut(TurnStep)) {
+    if let Some(id) = g.deferred_hut.take() {
+        if g.unit_opt(id).is_some() {
+            g.enter_hut(id);
+        }
+        flush_events(g, sink);
+    }
 }
 
 /// Give one computer unit its turn (tests and tools): `run_unit` with the civilization as
@@ -1815,6 +1829,7 @@ pub fn act(g: &mut Game, id: UnitId, sink: &mut dyn FnMut(TurnStep)) {
     let Some(slot) = g.unit_opt(id).map(|u| u.owner) else { return };
     g.ai_memory.moving = Some(slot);
     run_unit(g, slot, id, 1, sink, &|_| false);
+    deferred_hut(g, sink);
     g.ai_memory.moving = None;
 }
 
