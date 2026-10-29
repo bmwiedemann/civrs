@@ -684,7 +684,25 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   address.
 - `Game::exe_quirks` (set by the state dump only, like `use_exe_land_links`) plays CIV.EXE
   mistakes that civrs otherwise leaves out where they decide what is drawn: the Chieftain
-  wonder purchase tests the prerequisite of the improvement with the wonder's number (0x3c4a).
+  wonder purchase tests the prerequisite of the improvement with the wonder's number (0x3c4a);
+  the goto's local search picks a step by the neighbours' grid costs alone (0x1eae2), so a
+  road beside a city does not count; the production advisor's war test reads ds:0x6ed4, set by
+  whichever civilization's ai_civ_turn ran last (0x15ca1, 0xb7c7). A new game's dump also
+  takes CIV.EXE's land links from its first save (`--exe-links`, see above).
+- Results (2026-10-29, seed 4763, after the fixes in this round): CIVIL4 30 turns, CIVIL0 30,
+  CIVIL1 30, CIVIL3 30, GROWTH 30, RAPTURE 30, MONARCHY 30, REPUBLIC 30, DEMOCRACY 30,
+  WONDERS 30, POLLUTION 24 (6 saves missing), and a new game 40 turns: every draw of the two
+  streams agrees, and the fields with them but for one-turn effects: the diff method's
+  (DEMOCRACY t52, POLLUTION t53 above), a computer Settlers' heading byte after its first
+  step of a new game (t1), a human's Sail with no moves in one save (WONDERS t61), and the
+  contact between the human and a computer lapsing one politics pass earlier in CIV.EXE on
+  a turn & 15 == 0 (MONARCHY, REPUBLIC, DEMOCRACY t64, CIVIL3 t80; cause not found). The
+  seeded runs found and fixed: the move roll for any land move off a road with other than
+  one move left (0x634a), the veteran rolls drawn for veterans, the respawn's draw order, the
+  AI's square value for non-attackers, the extra defender's lower-record count (0x90dc), the
+  losses counted only in the human's fights (0x6075), an attack keeping the attacker's
+  heading, computer moves and fights scrolling the human's view, the barbarians' start
+  rates, the new game's opening before the human's first move, and the quirks above.
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
