@@ -546,7 +546,8 @@ impl Game {
     /// heading are forgotten. Returns the unit the order loop goes on with
     /// (`next_unit_in_stack` 0x7d8f): of the stack's units but ships, the first after the
     /// ship in record order (round the table), else the ship itself; `None` when the key does
-    /// nothing.
+    /// nothing. Not copied: CIV.EXE then runs the end-of-unit fuel and Trireme code on the
+    /// record before that unit, which may be any unit (0x4e71 -> 0x6dad -> 0x750f).
     pub fn unload(&mut self, id: UnitId) -> Option<UnitId> {
         if self.unit(id).info().capacity == 0 {
             return None;

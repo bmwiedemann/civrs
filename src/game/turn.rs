@@ -1361,18 +1361,18 @@ impl Game {
         self.refresh_vision(slot);
     }
 
-    /// The fuel of an aircraft at the end of its turn (CIV.EXE 0x752e..0x75c7): in a city or
-    /// on a carrier it fills up, else one turn of it goes; with none left the unit crashes
-    /// (*FUEL). Nothing for other units.
+    /// The fuel of an aircraft at the end of its turn (CIV.EXE 0x752e..0x75c7): in a city (the
+    /// square's city bit 0x01, any owner's, 0x7561) or on a carrier it fills up, else one turn
+    /// of it goes; with none left the unit crashes (*FUEL). Nothing for other units.
     pub fn air_fuel_turn(&mut self, id: UnitId) {
         let Some(u) = self.unit_opt(id).cloned() else { return };
         if !u.is_air() {
             return;
         }
         let slot = u.owner;
-        let in_own_city = self.city_at(u.x, u.y).map(|c| self.city(c).owner == slot).unwrap_or(false);
+        let in_city = self.city_at(u.x, u.y).is_some();
         let on_carrier = u.carried_by.map(|cr| self.unit_opt(cr).is_some()).unwrap_or(false);
-        if in_own_city || on_carrier {
+        if in_city || on_carrier {
             self.unit_mut(id).fuel = 0;
             return;
         }
@@ -2071,6 +2071,21 @@ mod tests {
         let settler = g.units_of(slot).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
         let c = g.found_city(settler).unwrap();
         (g, c)
+    }
+
+    #[test]
+    fn an_aircraft_fills_up_in_any_city() {
+        // 0x7559: the square's city bit (0x1a68:0x158b & 1), whoever owns the city
+        let (mut g, c) = fixture();
+        let (x, y) = g.city(c).pos();
+        let other = g.civ_slots().into_iter().find(|s| *s != g.human_slot && *s != 0).unwrap();
+        let f = g.add_unit(other, unit_ids::BOMBER, x, y);
+        g.unit_mut(f).fuel = 1;
+        g.air_fuel_turn(f);
+        assert_eq!(g.unit(f).fuel, 0);
+        g.unit_mut(f).x = x + 3;
+        g.air_fuel_turn(f);
+        assert_eq!(g.unit(f).fuel, 1);
     }
 
     #[test]
