@@ -938,6 +938,17 @@ impl Game {
         Some(self.add_unit(owner, kind, x, y))
     }
 
+    /// `create_unit` (CIV.EXE 0x8b51) in play: `try_add_unit`, and the new unit looks around at
+    /// once (`unit_look` 0x8038 from 0x8cd3: sightings, contacts, goals, and the gotos of the
+    /// foreign units next to it dropped). Only a garrison let out of a city does not look
+    /// (city_unstash_garrison sets ds:0x20f4, 0x7e80); loading a game and the tests place
+    /// units with `add_unit`.
+    pub fn create_unit(&mut self, owner: Slot, kind: UnitTypeId, x: i32, y: i32) -> Option<UnitId> {
+        let id = self.try_add_unit(owner, kind, x, y)?;
+        self.unit_look(id);
+        Some(id)
+    }
+
     pub fn push_event(&mut self, e: GameEvent) {
         let (before, after) = self.hints_for_event(&e);
         self.events.extend(before);

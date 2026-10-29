@@ -1617,6 +1617,20 @@ mod zoc_tests {
     }
 
     #[test]
+    fn a_created_unit_looks_and_drops_the_goto_of_a_foreign_unit_beside_it() {
+        // create_unit 0x8b51 -> unit_look 0x8038 (0x8cd3): a barbarian appearing next to a
+        // unit on land drops that unit's goto (0x839f), as the hut's barbarians do
+        let (mut g, _) = open_field();
+        let other = (1..8).find(|s| *s != g.human_slot).unwrap();
+        let a = g.add_unit(other, unit_ids::LEGION, 36, 22);
+        g.unit_mut(a).goto = Some((44, 28));
+        g.add_unit(0, unit_ids::CAVALRY, 37, 22);
+        assert_eq!(g.unit(a).goto, Some((44, 28)), "a unit placed by add_unit does not look");
+        g.create_unit(0, unit_ids::CAVALRY, 37, 23).unwrap();
+        assert_eq!(g.unit(a).goto, None);
+    }
+
+    #[test]
     fn a_trireme_is_checked_as_the_loop_leaves_it() {
         // 0x6dad -> 0x750f -> 0x75da: the human's Trireme without moves rolls random(2) when
         // the loop goes on from it; a sentried one, which the loop never takes, does not

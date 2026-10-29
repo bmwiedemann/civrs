@@ -730,7 +730,7 @@ impl Game {
     /// does not check and writes to slot -1, o 0x15088).
     fn recreate_unit(&mut self, u: &Unit, owner: Slot) -> Option<UnitId> {
         self.remove_unit(u.id);
-        let n = self.try_add_unit(owner, u.kind, u.x, u.y)?;
+        let n = self.create_unit(owner, u.kind, u.x, u.y)?;
         self.players[owner as usize].stats.units_built -= 1;
         Some(n)
     }
@@ -894,7 +894,7 @@ impl Game {
             self.grant_advance(slot, a, super::science::AdvanceSource::Discovered);
         }
         self.map.explore(slot, x, y, 1);
-        self.add_unit(slot, unit_ids::SETTLERS, x, y);
+        self.create_unit(slot, unit_ids::SETTLERS, x, y);
         let barbarians: Vec<UnitId> = self.all_units().filter(|u| u.owner == 0 && Map::civ_distance((u.x, u.y), (x, y)) <= 8).map(|u| u.id).collect();
         for id in barbarians {
             self.remove_unit(id);

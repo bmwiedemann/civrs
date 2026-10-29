@@ -412,7 +412,7 @@ impl Game {
         let cost = self.bribe_cost(target);
         let t = self.unit(target).clone();
         self.remove_unit(target);
-        let new = self.try_add_unit(by, t.kind, t.x, t.y);
+        let new = self.create_unit(by, t.kind, t.x, t.y);
         // the new unit is also seen by the unit's former owner (o 0x1de89)
         if let Some(n) = new {
             self.unit_mut(n).seen_by |= 1 << t.owner;
@@ -1197,7 +1197,7 @@ impl Game {
                 // nothing; civrs does what the code meant.)
                 if k == unit_ids::DIPLOMAT && !human {
                     // without a free unit slot nothing is built and nothing is paid (0xe30b)
-                    if let Some((target, id)) = self.ai_diplomat_site(owner).and_then(|(at, t)| self.try_add_unit(owner, k, at.0, at.1).map(|id| (t, id))) {
+                    if let Some((target, id)) = self.ai_diplomat_site(owner).and_then(|(at, t)| self.create_unit(owner, k, at.0, at.1).map(|id| (t, id))) {
                         self.unit_mut(id).home = Some(c);
                         let (tx, ty) = self.city(target).pos();
                         self.set_goto(id, tx, ty);
@@ -1212,7 +1212,7 @@ impl Game {
                 // with every unit slot in use the shields are spent on nothing and the store
                 // is emptied (create_unit 0x8b62 returns -1; 0xdeb8, 0xdf9d -> 0xe3bc), and the
                 // human hears *UMAX once a turn
-                let Some(id) = self.try_add_unit(owner, k, x, y) else {
+                let Some(id) = self.create_unit(owner, k, x, y) else {
                     self.city_mut(c).shields = 0;
                     return;
                 };
@@ -1235,7 +1235,7 @@ impl Game {
                     self.city_mut(c).size -= 1;
                     if self.city(c).size == 0 {
                         self.city_wiped_out(c);
-                        self.add_unit(owner, k, x, y);
+                        self.create_unit(owner, k, x, y);
                         self.refresh_vision(owner);
                         return;
                     }

@@ -226,7 +226,7 @@ impl Game {
             HutOutcome::Mercenaries(k) => {
                 // create_unit (0x8b51) does not set the moves byte; none are given here. With
                 // every unit slot in use there are none (CIV.EXE then writes to slot -1, 0x9aa5)
-                if let Some(m) = self.try_add_unit(slot, *k, u.x, u.y) {
+                if let Some(m) = self.create_unit(slot, *k, u.x, u.y) {
                     self.unit_mut(m).moves_left = 0;
                 }
             }
@@ -301,12 +301,12 @@ impl Game {
         Some(c)
     }
 
-    /// A barbarian unit as `create_unit` (0x8b51) makes it: no veteran flag, no heading; none
+    /// A barbarian unit as `create_unit` (0x8b51) makes it: no veteran flag, no heading, and it
+    /// looks around at once (0x8cd3); none
     /// when the barbarians' 127 unit slots are in use (0x8b62). CIV.EXE's callers do not check
     /// and write to slot -1 (0x2dfb, 0x30b2, 0x9aa5); civrs skips the unit.
     fn add_barbarian(&mut self, kind: UnitTypeId, x: i32, y: i32) -> Option<UnitId> {
-        let id = self.try_add_unit(0, kind, x, y)?;
-        self.barbarian_memory.heading.remove(&id);
+        let id = self.create_unit(0, kind, x, y)?;
         self.players[0].alive = true;
         self.players[0].in_game = true;
         Some(id)
