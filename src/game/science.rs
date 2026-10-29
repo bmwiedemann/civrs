@@ -211,10 +211,15 @@ impl Game {
             return true;
         }
         self.player_mut(slot).research_count += 1;
-        // told to the human with an embassy there (0xc37f)
+        // told to the human with an embassy there (0xc37f); without one, a computer that is the
+        // first to learn an advance the human lacks, knowing Navigation, invites him one time
+        // in three to "gape with awe" at it (random(3) == 0, 0xc54f: an audience, KING.TXT
+        // *GAPE, that changes nothing; civrs draws the roll but holds no audience)
         let human = self.human_slot;
         if slot != human && self.player(human).has_embassy(slot) {
             self.push_event(GameEvent::ForeignAdvance { slot, adv: a, source: source.code() });
+        } else if slot != human && new_to_world && self.player(slot).knows(rules::advance_ids::NAVIGATION) && !self.player(human).knows(a) {
+            self.rng.random(0xc54f, 3);
         }
         // wonders made obsolete by the first civilisation to learn this advance (CIV.EXE 0xc774)
         for w in 1..rules::WONDERS.len() as u8 {

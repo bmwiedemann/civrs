@@ -954,6 +954,24 @@ mod tests {
     use crate::game::{tile_flags, GameSetup, Relation};
     use crate::rules::{improvement_ids as imp, unit_ids, Terrain};
 
+    /// civ_init searches the start square before it looks at the turn limit (o 0x4bd7 before
+    /// o 0x4e5f): a civilization destroyed too late to come back still draws the search.
+    #[test]
+    fn a_respawn_too_late_still_searches_its_square() {
+        let mut g = Game::new(GameSetup { seed: 3, ..Default::default() }, None);
+        g.turn = 400;
+        let s = (1..8u8).find(|s| *s != g.human_slot && g.player(*s).alive).unwrap();
+        for id in g.units_of(s) {
+            g.remove_unit(id);
+        }
+        crate::game::rng::trace_start();
+        g.check_destroyed(s);
+        assert!(!g.player(s).alive);
+        let draws = crate::game::rng::trace_take();
+        assert!(draws.iter().any(|d| d.at == crate::game::rng::ovl(0x4bd7)));
+        assert!(draws.iter().any(|d| d.at == crate::game::rng::ovl(0x4be9)));
+    }
+
     #[test]
     fn a_destroyed_computer_civ_returns_once_as_its_other_tribe() {
         let mut g = Game::new(GameSetup { seed: 3, ..Default::default() }, None);
@@ -1083,6 +1101,25 @@ mod tests {
             g.events.clear();
         }
         wins * 100 / trials
+    }
+
+    /// The winner's veteran roll is drawn even for a veteran (0x1a20a / 0x1a253), right after
+    /// the two combat rolls.
+    #[test]
+    fn a_veteran_winner_still_draws_its_veteran_roll() {
+        for seed in 0..12 {
+            let mut g = flat_game();
+            g.rng = crate::game::Rng::new(seed);
+            let a = g.add_unit(1, unit_ids::LEGION, 10, 10);
+            g.unit_mut(a).veteran = true;
+            let d = g.add_unit(2, unit_ids::PHALANX, 11, 10);
+            g.unit_mut(d).veteran = true;
+            crate::game::rng::trace_start();
+            let won = matches!(g.attack(a, 11, 10), MoveOutcome::Attacked { won: true, .. });
+            let sites: Vec<u32> = crate::game::rng::trace_take().iter().map(|d| d.at).collect();
+            let vet = if won { 0x1a20a } else { 0x1a253 };
+            assert_eq!(sites[..3], [0x19a2d, 0x19a3a, vet], "seed {seed}");
+        }
     }
 
     #[test]

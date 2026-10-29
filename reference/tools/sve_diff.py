@@ -3,7 +3,9 @@
 
     python3 -I sve_diff.py play GAME_DIR SLOT TURNS OUT_DIR [--actions SCRIPT] [--seed N]
         Start CIV.EXE in dosbox (dosciv.py) on GAME_DIR (a private writable copy of the game),
-        load CIVIL<SLOT>.SVE, turn Instant Advice and AutoSave off and End of Turn on, then
+        load CIVIL<SLOT>.SVE (SLOT `new`: start a new game, Chieftain, 7 civilizations, the
+        Romans, and keep its first save as OUT_DIR/t0.SVE), turn Instant Advice and AutoSave
+        off and End of Turn on, then
         TURNS times:
         perform the script's actions of the turn (src/save/actions.rs; examples in
         actions/), skip the active unit (Space) until the turn ends, save to slot 2
@@ -13,7 +15,8 @@
         The palace screen gets its first section and style, the copy-protection quiz
         (every 50th turn in BC) its right answer (quiz.py).
     python3 -I sve_diff.py diff CIVRS START.SVE RESULT.SVE [RESULT.SVE ...] [--actions SCRIPT] [--seed N]
-        For each CIV.EXE result: civrs imports START.SVE, plays (result turn - start turn)
+        For each CIV.EXE result: civrs imports START.SVE (`new`: starts the new game of the
+        seed with the same setup, `civrs --dump state:N:SEED`), plays (result turn - start turn)
         turns with the human doing only the script's actions (--dump state:N) and is diffed
         against civrs's import of the result (--dump state:0). Prints `field: CIV.EXE | civrs`
         per differing line.
@@ -158,9 +161,25 @@ def play(game, slot, turns, out, script=None, seed=None):
     dosciv.start(game)
     k = dosciv.keys
     time.sleep(6)
-    # graphics VGA, no sound, mouse and keyboard; the title menu's "Load a Saved Game"; drive C:
-    k(['1', 'sleep2', '1', 'sleep8', '1', 'sleep10', 'Return', 'sleep5', 'Down', 'Return', 'sleep3', 'Return', 'sleep2'])
-    k(['Down'] * int(slot) + ['Return', 'sleep6'])
+    save = os.path.join(game, 'CIVIL2.SVE')
+    if slot == 'new':
+        # graphics VGA, no sound, mouse and keyboard; "Start a New Game", Chieftain, 7
+        # civilizations, the Romans, "Caesar", the leader's introduction and the story; the
+        # first turn's help overlay and note (Instant Advice is on at Chieftain); then a save
+        # to slot 2 for the options
+        k(['1', 'sleep2', '1', 'sleep8', '1', 'sleep10', 'Return', 'sleep5'])
+        k(['Return', 'sleep3', 'Return', 'sleep3', 'Return', 'sleep3', 'Return', 'sleep3', 'Return', 'sleep6', 'Return', 'sleep4', 'space', 'sleep12'])
+        for _ in range(3):
+            k(['Return', 'sleep3'])
+            dosciv.shot(os.path.join(out, 'start%d.png' % _))
+        if os.path.exists(save):
+            os.remove(save)
+        k(['alt+g', 'sleep1', 'Down', 'Down', 'Down', 'Down', 'Return', 'sleep2', 'Return', 'sleep2', 'Down', 'Down', 'Return', 'sleep3', 'Return', 'sleep2'])
+        slot = '2'
+    else:
+        # graphics VGA, no sound, mouse and keyboard; the title menu's "Load a Saved Game"; drive C:
+        k(['1', 'sleep2', '1', 'sleep8', '1', 'sleep10', 'Return', 'sleep5', 'Down', 'Return', 'sleep3', 'Return', 'sleep2'])
+        k(['Down'] * int(slot) + ['Return', 'sleep6'])
     # Options (SVE 0x8aa4): Instant Advice off (its notes would take keys) and End of Turn on
     # (else the turn ends by itself after the last unit's move, before the script is done)
     with open(os.path.join(game, 'CIVIL%s.SVE' % slot), 'rb') as f:
@@ -170,8 +189,10 @@ def play(game, slot, turns, out, script=None, seed=None):
     # the harness's Return for its drive prompt and overwrite a slot of GAME_DIR)
     toggle = (['Return'] if opts & 1 else []) + ['Down'] + (['Return'] if opts & 2 else []) + ['Down'] + (['Return'] if not opts & 4 else [])
     k(['alt+g', 'sleep1', 'Down', 'Down', 'Down', 'Return', 'sleep1'] + toggle + ['Escape', 'sleep1'])
-    save = os.path.join(game, 'CIVIL2.SVE')
     last = turn_of(os.path.join(game, 'CIVIL%s.SVE' % slot))
+    if slot == '2':
+        shutil.copy(save, os.path.join(out, 't%d.SVE' % last))
+        shutil.copy(save[:-3] + 'MAP', os.path.join(out, 't%d.MAP' % last))
     end = last + int(turns)
     shot = os.path.join(out, 'now.png')
     cyan = bytes([12, 227, 235])
@@ -305,7 +326,8 @@ def state(civrs, sve, turns, script=None, seed=None):
         path = f.name
     spec = 'state:%d' % turns + (':%d' % int(seed) if seed is not None else '')
     extra = ['--rng-log', path + '.rng'] if seed is not None else []
-    subprocess.run([civrs, '--load-sve', sve, '--dump', spec, '--out', path] + (['--actions', script] if script else []) + extra, check=True)
+    load = [] if sve == 'new' else ['--load-sve', sve]
+    subprocess.run([civrs] + load + ['--dump', spec, '--out', path] + (['--actions', script] if script else []) + extra, check=True)
     with open(path) as f:
         lines = f.read().splitlines()
     os.remove(path)
@@ -364,7 +386,7 @@ def first_split(exe, rs):
 
 
 def diff(civrs, start, results, script=None, seed=None):
-    t0 = turn_of(start)
+    t0 = 0 if start == 'new' else turn_of(start)
     exe_log = None
     if seed is not None:
         exe_log = exe_draws(os.path.join(os.path.dirname(os.path.abspath(results[0])), 'random.log'))

@@ -29,7 +29,16 @@ thread_local! {
     static TRACE: RefCell<Option<Vec<Draw>>> = const { RefCell::new(None) };
 }
 
-/// Record every draw of this thread's generators from now on.
+fn trace(at: u32, n: i32, r: i32) {
+    TRACE.with(|t| {
+        if let Some(v) = t.borrow_mut().as_mut() {
+            v.push(Draw { at, n, r });
+        }
+    });
+}
+
+/// Record every draw of this thread's generators from now on (the world generator's
+/// `MsRand` ones with address 0).
 pub fn trace_start() {
     TRACE.with(|t| *t.borrow_mut() = Some(Vec::new()));
 }
@@ -58,13 +67,9 @@ impl Rng {
     /// for n > 0 (0 for n == 0, which still draws, as CIV.EXE does).
     pub fn random(&mut self, at: u32, n: i32) -> i32 {
         let mut m = MsRand::new(self.0 as u32);
-        let r = m.random(n);
+        let r = (m.rand() * n) >> 15;
         self.0 = m.state as u64;
-        TRACE.with(|t| {
-            if let Some(v) = t.borrow_mut().as_mut() {
-                v.push(Draw { at, n, r });
-            }
-        });
+        trace(at, n, r);
         r
     }
 
@@ -99,6 +104,8 @@ impl MsRand {
 
     /// `random(n)` (0x1d43:0x53): 0..n for n > 0.
     pub fn random(&mut self, n: i32) -> i32 {
-        (self.rand() * n) >> 15
+        let r = (self.rand() * n) >> 15;
+        trace(0, n, r);
+        r
     }
 }

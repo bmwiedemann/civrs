@@ -318,6 +318,11 @@ pub struct Game {
     /// game takes the shipped traits (CIV.EXE keeps a re-draw until it exits).
     #[serde(skip, default = "rules::initial_traits")]
     pub leader_traits: [rules::Traits; 16],
+    /// Play CIV.EXE's mistakes that civrs otherwise leaves out where they decide what is
+    /// drawn from the random stream (for the differential test's state dump only, as
+    /// `use_exe_land_links`): the Chieftain wonder purchase's prerequisite (0x3c4a).
+    #[serde(skip)]
+    pub exe_quirks: bool,
 }
 
 /// `wonders_built` entry of a wonder whose city was destroyed: built, owned by no one, listed
@@ -539,6 +544,7 @@ impl Game {
             unit_limit_shown: false,
             riot_shown: false,
             leader_traits: rules::initial_traits(),
+            exe_quirks: false,
         };
         game.place_starting_units(&slots, &world, &mut wr);
         // the game's draws go on in CIV.EXE's one stream

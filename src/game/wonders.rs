@@ -28,7 +28,9 @@ impl Game {
         let rocketry = |g: &Game, s| g.player(s).knows(adv::ROCKETRY);
         for attempt in 0..=difficulty {
             let mut w = self.rng.random(0x3c2f, 21) as u8 + 1;
-            if difficulty == 0 && !rules::WONDERS[w as usize].prereq.is_none_or(|a| self.player(human).knows(a)) {
+            // (with `exe_quirks` the improvement of the same number's prerequisite, as 0x3c4a reads)
+            let prereq = if self.exe_quirks { rules::IMPROVEMENTS[w as usize].prereq } else { rules::WONDERS[w as usize].prereq };
+            if difficulty == 0 && !prereq.is_none_or(|a| self.player(human).knows(a)) {
                 continue;
             }
             if difficulty < 2 && self.all_cities().any(|c| c.owner == human && c.production == Production::Wonder(w)) {

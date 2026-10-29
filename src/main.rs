@@ -10,8 +10,8 @@ fn usage() -> ! {
                 civrs --dump TARGET --out FILE.ppm [--assets DIR] [--zoom N] [--load-sve CIVILn.SVE]\n\
          dump targets: pic:NAME | sheet:NAME | fonts | pal:NAME | all-pics:DIR\n\
                        sound:ID[:LEVEL[:SECONDS]] (WAV) | sound-regs:ID[:LEVEL[:TICKS]] (OPL2 register log)\n\
-                       state:TURNS[:SEED] (text, with --load-sve [--actions SCRIPT] [--rng-log FILE];\n\
-                       reference/tools/sve_diff.py)\n\
+                       state:TURNS[:SEED] (text, with --load-sve or a new game from SEED; [--actions SCRIPT]\n\
+                       [--rng-log FILE]; reference/tools/sve_diff.py)\n\
          --load-sve: start from (or, with screen:NAME, render) an original CIVILn.SVE + .MAP"
     );
     std::process::exit(2);
@@ -78,19 +78,34 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&P
         let mut it = turns.split(':');
         let turns: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
         let seed: Option<u64> = it.next().and_then(|s| s.parse().ok());
-        let sve = sve.ok_or("state: needs --load-sve")?;
-        let mut game = civrs::save::sve::import(sve)?;
-        game.use_exe_land_links(&civrs::save::sve::exe_land_links(sve)?);
-        if let Some(s) = seed {
-            game.rng.srand((s & 0x7fff) as u16);
-        }
-        if rng_log.is_some() {
-            civrs::game::rng::trace_start();
-        }
+        // without --load-sve: a new game from SEED with the default setup (Chieftain, seven
+        // civilizations, the Romans, a normal random world), whose draws go on from the world
+        // generator's as CIV.EXE's do
+        let mut game = match sve {
+            Some(sve) => {
+                let mut game = civrs::save::sve::import(sve)?;
+                game.use_exe_land_links(&civrs::save::sve::exe_land_links(sve)?);
+                if let Some(s) = seed {
+                    game.rng.srand((s & 0x7fff) as u16);
+                }
+                if rng_log.is_some() {
+                    civrs::game::rng::trace_start();
+                }
+                game
+            }
+            None => {
+                let seed = seed.ok_or("state: needs --load-sve or a SEED")?;
+                if rng_log.is_some() {
+                    civrs::game::rng::trace_start();
+                }
+                civrs::game::Game::new(civrs::game::GameSetup { seed, ..Default::default() }, None)
+            }
+        };
         let script = match actions {
             Some(p) => civrs::save::actions::parse(&std::fs::read_to_string(p)?)?,
             None => Vec::new(),
         };
+        game.exe_quirks = true;
         let mut ai = civrs::ai::Ai::new(seed.unwrap_or(1));
         let played = civrs::save::actions::play(&mut game, &mut ai, &script, turns);
         if let Some(p) = rng_log {
