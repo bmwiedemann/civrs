@@ -864,6 +864,12 @@ impl Game {
             return false;
         }
         let human = self.human_slot;
+        // the diplomacy words go both ways before anything is looked at (o5 0x4a81..0x4aa8),
+        // so they are clean also when the tribe does not come back
+        for s in 0..8usize {
+            self.players[s].diplo[slot as usize] = 0;
+            self.players[slot as usize].diplo[s] = 0;
+        }
         let mut granted = Vec::new();
         for a in 0..rules::advances::REAL_ADVANCE_COUNT as u8 {
             // the first discoverer may be this slot's destroyed civilization (o5 0x4af1)
@@ -886,9 +892,6 @@ impl Game {
         let sci = (self.leader_traits[civ as usize & 15].civilized as i32 + 3).clamp(0, 9);
         p.tax = (10 * (9 - sci)) as u8;
         p.lux = 10;
-        for s in 0..8usize {
-            self.players[s].diplo[slot as usize] = 0;
-        }
         self.players[slot as usize] = p;
         self.score_acc[slot as usize] = 0;
         // ai_clear_persistent_goals (0x189b9) and the continent strategy table (o5 0x49bb)
@@ -998,12 +1001,17 @@ mod tests {
         assert_eq!(g.player(s).civ, first ^ 8);
         assert_eq!(g.units_of(s).len(), 1);
         assert_eq!(g.unit(g.units_of(s)[0]).kind, unit_ids::SETTLERS);
-        // the second time the slot is gone for good
+        // the second time the slot is gone for good, its diplomacy cleared both ways all the
+        // same (o5 0x4a81, before the once-per-slot test)
+        let h = g.human_slot;
+        g.raise_flag(h, s, crate::game::diplomacy::flags::CONTACT);
+        g.raise_flag(s, h, crate::game::diplomacy::flags::CONTACT);
         for id in g.units_of(s) {
             g.remove_unit(id);
         }
         g.check_destroyed(s);
         assert!(!g.player(s).alive);
+        assert_eq!((g.diplo(h, s), g.diplo(s, h)), (0, 0));
     }
 
     #[test]
