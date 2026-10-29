@@ -724,6 +724,38 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   city keeping its worked squares, computer moves and fights scrolling the human's view, the
   barbarians' start
   rates, the new game's opening before the human's first move, and the quirks above.
+- Long seeded runs (2026-10-29, later): the new game to t100 with the human founding Rome
+  and fortifying every unit it builds (so a turn needs one Space): 100 turns, every draw
+  and every field but t1's heading byte. WARX: CIVIL5 with Map Making for the Romans
+  (`sve_edit.py adv:1:7`), WAR.txt, then a Legion and a bought Trireme, the Trireme fetching
+  the veteran Legion from Berlin to Rome ('u' wakes it), a march on Paris, contact with the
+  French (their emissary), a revolution (Monarchy to Despotism), a tax change and attacks
+  that destroy Paris (its size falls with each defender lost): t51..t85 match (35 turns);
+  then from CIV.EXE's own t86 save t87..t101 (15) and from its t101 save t102..t135 (34),
+  each stretch draw for draw and field for field. Both breaks were the script: a move that
+  makes contact must be the turn's last action, the audience takes the keys after it; and
+  the emissary question moves the human's view (below), so the next unit his loop takes
+  is another. The runs found and fixed: a look gives the neighbour's civ a defend goal on
+  the looker's square at peace too (0x84ff; only the attack goal waits on the treaty);
+  CHANGE values the production menu for the human too, advisors shown or not (0x117e4..
+  0x117ef: the Diplomat line's random(5), the city routine in mode -1); a computer's land
+  unit walks into an empty city of a computer treaty partner and takes it, the treaty
+  standing (0x6523 guards the human's land only; 0x6a65), and the old owner sees the
+  conqueror (0x6a83); the emissary question draws the map with the meeting square at
+  column 8, row 2 (o 0x7a63), which is the human's view afterwards; a computer city goes
+  on alert only when its defender loses (a beaten attacker leaves at 0x60cd); civ_init
+  clears the slot's diplomacy both ways before it looks whether the tribe comes back (o5
+  0x4a81); every re-choice runs the worker assignment of the mode -1 city routine first
+  (0xaa1b: a city that lost population to an attack and re-chooses at 0x625e); create_unit
+  never writes the moves byte (delete_unit clears it, 0x8e6c), so a unit made in the middle
+  of a turn (a respawned tribe's Settlers) has no moves till its owner's move loop. New
+  `exe_quirks`: destroy_city's sweep of its square takes the conqueror's unit by the map
+  mark and walks the old owner's record of that number (0xa8bc..0xa8eb; an empty record
+  counts as type -1, which is the Caravan counter of the civilization before: WAR's and
+  WARX's -1 Caravans), the local search's cached grid is indexed without bounds, so a probe
+  beyond the window keeps the last grid of the same waypoint (0x1e765: a one-move unit's
+  prices then send a Legion through a swamp), and the first-city test reads the owner byte
+  of free city records (o 0x1b5df): a slot that lost more than one city gets no Palace.
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
