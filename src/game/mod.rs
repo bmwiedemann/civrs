@@ -337,9 +337,9 @@ impl Game {
     /// expansion and civilized traits as random(3) - 1, in that order.
     pub fn randomize_leaders(&mut self) {
         for c in 0..16 {
-            let aggressive = self.rng.below(3) as i8 - 1;
-            let expansionist = self.rng.below(3) as i8 - 1;
-            let civilized = self.rng.below(3) as i8 - 1;
+            let aggressive = self.rng.random(0x71ea, 3) as i8 - 1;
+            let expansionist = self.rng.random(0x71fb, 3) as i8 - 1;
+            let civilized = self.rng.random(0x720c, 3) as i8 - 1;
             self.leader_traits[c] = rules::Traits { aggressive, expansionist, civilized };
         }
     }
@@ -541,6 +541,8 @@ impl Game {
             leader_traits: rules::initial_traits(),
         };
         game.place_starting_units(&slots, &world, &mut wr);
+        // the game's draws go on in CIV.EXE's one stream
+        game.rng = Rng::from_ms(wr);
         game.refresh_all_vision();
         game.active_unit = game.next_active_unit();
         game

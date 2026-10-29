@@ -27,14 +27,14 @@ impl Game {
         let difficulty = self.setup.difficulty as i32;
         let rocketry = |g: &Game, s| g.player(s).knows(adv::ROCKETRY);
         for attempt in 0..=difficulty {
-            let mut w = self.rng.below(21) as u8 + 1;
+            let mut w = self.rng.random(0x3c2f, 21) as u8 + 1;
             if difficulty == 0 && !rules::WONDERS[w as usize].prereq.is_none_or(|a| self.player(human).knows(a)) {
                 continue;
             }
             if difficulty < 2 && self.all_cities().any(|c| c.owner == human && c.production == Production::Wonder(w)) {
                 w = won::MANHATTAN_PROJECT;
             }
-            let slot = self.rng.below(128) as usize;
+            let slot = self.rng.random(0x3ca8, 128) as usize;
             let Some(c) = self.cities.get(slot).and_then(|c| c.as_ref()).map(|c| c.id) else { continue };
             let civ = self.city(c).owner;
             if w == won::MANHATTAN_PROJECT && !rocketry(self, civ) {

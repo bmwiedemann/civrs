@@ -202,7 +202,7 @@ impl Game {
         // (ds:0x70d4/5); taken as far away here (unverified)
         let (_, d) = self.nearest_city_exe(u.x, u.y);
         let cities = self.cities_of(slot).len();
-        let roll = self.rng.below(4);
+        let roll = self.rng.random(0x9814, 4);
         let outcome = match roll {
             0 if d < 4 => self.hut_mercenaries(),
             0 if self.hut_site_value(u.x, u.y) & 7 > 4 => HutOutcome::AdvancedTribe(None),
@@ -264,14 +264,14 @@ impl Game {
 
     /// "A friendly tribe of skilled mercenaries": Legion or Cavalry (random(2), 0x9a46).
     fn hut_mercenaries(&mut self) -> HutOutcome {
-        HutOutcome::Mercenaries(if self.rng.below(2) != 0 { unit_ids::LEGION } else { unit_ids::CAVALRY })
+        HutOutcome::Mercenaries(if self.rng.random(0x9a46, 2) != 0 { unit_ids::LEGION } else { unit_ids::CAVALRY })
     }
 
     /// The advance in the scrolls (0x994f..0x99e1): from random(72) upwards, wrapping, the
     /// first one the civ lacks with both prerequisites known, within 999 tries. The four unused
     /// slots and Future Tech have the prerequisite 0x7f, which nobody knows.
     fn hut_scroll(&mut self, slot: Slot) -> Option<u8> {
-        let mut a = self.rng.below(72) as usize;
+        let mut a = self.rng.random(0x9958, 72) as usize;
         let p = self.player(slot);
         for _ in 0..999 {
             let info = &rules::ADVANCES[a];
@@ -346,8 +346,8 @@ impl Game {
         // CIV.EXE loops until it finds a square; bounded here
         let mut at = None;
         for _ in 0..100_000 {
-            let x = self.rng.below(80) as i32;
-            let y = self.rng.below(44) as i32 + 3;
+            let x = self.rng.random(0x2d3c, 80);
+            let y = self.rng.random(0x2d4b, 44) + 3;
             if self.map.is_ocean(x, y) && self.units_at(x, y).is_empty() && self.ocean_size(x, y) >= 16 {
                 at = Some((x, y));
                 break;
@@ -370,21 +370,21 @@ impl Game {
     }
 
     fn barbarian_uprising(&mut self) {
-        let slot = self.rng.below(128) as usize;
+        let slot = self.rng.random(0x2e2a, 128) as usize;
         let Some(c) = self.cities.get(slot).and_then(|c| c.as_ref()).map(|c| c.id) else { return };
         if self.city(c).owner != self.human_slot {
             return;
         }
         let chance = self.plunder_value(c);
-        if self.rng.below(100) as i32 >= chance {
+        if self.rng.random(0x2e67, 100) >= chance {
             return;
         }
         let mut around = c;
         let mut tries = 0;
         let found = loop {
             let (cx, cy) = self.city(around).pos();
-            let x = Map::wrap_x(cx + self.rng.below(13) as i32 - 6);
-            let y = cy + self.rng.below(13) as i32 - 6;
+            let x = Map::wrap_x(cx + self.rng.random(0x2e88, 13) - 6);
+            let y = cy + self.rng.random(0x2ea2, 13) - 6;
             let (near, d) = self.nearest_city_exe(x, y);
             if let Some(n) = near {
                 around = n;
@@ -417,7 +417,7 @@ impl Game {
         if near.owner == self.human_slot && self.map.tile(x, y).explored_by(self.human_slot) {
             self.push_event(GameEvent::BarbarianUprising { at: (x, y), target: self.human_slot });
         }
-        let count = (self.rng.below((near.size / 2) as u32) as i32).clamp(2, 99);
+        let count = self.rng.random(0x3060, near.size as i32 / 2).clamp(2, 99);
         let modern = self.discovered_by_anyone(adv::INDUSTRIALIZATION);
         for i in 0..=count {
             let kind = match (i == count, modern, i & 4 != 0) {
@@ -552,7 +552,7 @@ impl Game {
                     None => 0,
                 };
                 let (_, cd) = self.nearest_city_exe(nx, ny);
-                s += self.map.terrain(nx, ny).info().move_cost as i32 + self.rng.below(4) as i32 + 4 * cd;
+                s += self.map.terrain(nx, ny).info().move_cost as i32 + self.rng.random(0x19434, 4) + 4 * cd;
                 s
             } else {
                 if let Some(c) = self.city_at(nx, ny) {
@@ -564,7 +564,7 @@ impl Game {
                     }
                 }
                 let t = self.map.tile(nx, ny);
-                let mut s = self.rng.below(6) as i32;
+                let mut s = self.rng.random(0x1949f, 6);
                 if t.has(tile_flags::IRRIGATION) || t.has(tile_flags::MINE) {
                     s += 6;
                 }

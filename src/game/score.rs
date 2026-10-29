@@ -229,9 +229,9 @@ impl Game {
         if self.turn < self.historian_timer {
             return;
         }
-        self.historian_timer = self.turn + 20 + self.rng.below(40);
-        let category = self.rng.below(5) as u8;
-        let historian = self.rng.below(4) as u8;
+        self.historian_timer = self.turn + 20 + self.rng.random(0x28eb, 40) as u32;
+        let category = self.rng.random(crate::game::rng::ovl(0x10b6d), 5) as u8;
+        let historian = self.rng.random(crate::game::rng::ovl(0x10b98), 4) as u8;
         let alive = self.alive_slots();
         let mut values = [0i32; 8];
         // every city goes through the city routine, whatever the category (o 0x10c63)

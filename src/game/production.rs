@@ -560,7 +560,7 @@ impl Game {
                 if self.exe_peace(slot, human) || in_production[unit_ids::DIPLOMAT as usize] > 0 {
                     return (99, false);
                 }
-                let r = self.rng.below(5);
+                let r = self.rng.random(0xb3e0, 5);
                 if !self.faces_human(census, slot) {
                     return (99, false);
                 }

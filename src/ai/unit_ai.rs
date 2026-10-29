@@ -944,7 +944,7 @@ fn transport(g: &mut Game, c: &Ctx) -> Option<Command> {
     }
     if g.unit(c.id).goto.is_none() {
         for r in 2..24 {
-            let d = g.rng.below(9) as usize;
+            let d = g.rng.random(0x1763f, 9) as usize;
             let (tx, ty) = (Map::wrap_x(c.x + DX[d] * r), c.y + DY[d] * r);
             if ty <= 2 || ty >= 47 || g.map.is_ocean(tx, ty) {
                 continue;
@@ -1137,7 +1137,7 @@ fn explore(g: &mut Game, c: &Ctx) -> Option<Command> {
     if g.unit(c.id).goto.is_some() {
         return Some(Command::Goto);
     }
-    let r = g.rng.below(20) as usize + 1;
+    let r = g.rng.random(0x17bd2, 20) as usize + 1;
     let (bx, by) = (c.x / 4 + DX[r], c.y / 4 + DY[r]);
     let occupied = !(0..20).contains(&bx) || !(0..13).contains(&by) || g.ai_memory.coarse[bx as usize][by as usize] & 3 != 0;
     if !occupied {
@@ -1235,7 +1235,7 @@ fn military(g: &mut Game, c: &mut Ctx) -> Command {
 /// more.
 ///
 /// Base: Settlers 0 (and no square next to an enemy from a ship); a unit nobody else can see,
-/// on land: random(3) - 2 x the terrain's move cost (attackers) or defence (others); else
+/// on land: random(3) - 2 x the terrain's move cost (attackers) or - its defence (others); else
 /// random(5) plus, onto an own stack, 4 x its defence / (units + 1) (attackers) or 2 x its
 /// attack / (defence + 1) (defenders), elsewhere 4 x the terrain defence; aircraft random(3).
 /// Then: -2 x the turn from the heading squared; an empty enemy city 999 (empty square: a hut
@@ -1295,11 +1295,15 @@ fn score_direction(g: &mut Game, c: &Ctx, k: usize, peaceful: bool) -> Option<(i
         // nobody has seen the unit since its last step (unit +9 == 0, 0x1802c)
         let seen = u.seen_by != 0;
         if !seen && !here_ocean {
-            let r = g.rng.below(3) as i32;
-            let f = if c.role == AiRole::Attack { t.info().move_cost } else { t.info().defense } as i32;
-            v = r - 2 * f;
+            // an attacker: random(3) - 2 x the move cost; any other unit random(3) - the
+            // defence (0x18068 jumps past the doubling at 0x1805a)
+            v = if c.role == AiRole::Attack {
+                g.rng.random(0x18043, 3) - 2 * t.info().move_cost as i32
+            } else {
+                g.rng.random(0x18068, 3) - t.info().defense as i32
+            };
         } else {
-            v = g.rng.below(5) as i32;
+            v = g.rng.random(0x18085, 5);
             match s {
                 Some(first) if owner == slot => match c.role {
                     AiRole::Attack => v += 4 * stack_sum(g, first, |t| t.def) / (stack_count(g, first) + 1),
@@ -1310,7 +1314,7 @@ fn score_direction(g: &mut Game, c: &Ctx, k: usize, peaceful: bool) -> Option<(i
             }
         }
         if u.is_air() {
-            v = g.rng.below(3) as i32;
+            v = g.rng.random(0x18178, 3);
         }
     }
     let heading = g.heading(c.id);
@@ -1342,7 +1346,7 @@ fn score_direction(g: &mut Game, c: &Ctx, k: usize, peaceful: bool) -> Option<(i
                 let their_war_h = g.diplo(owner, h) & 3 == 1;
                 if c.role == AiRole::Attack && c.policy == POLICY_HOSTILE && land_unit && fortified && war_h && !their_war_h {
                     let census = &g.ai_memory.census;
-                    if census.cities[h as usize][continent_index(c.cont)] != 0 && stack_count(g, first) < 2 && (g.rng.below(8) == 0 || c.city_owner(g) == Some(h)) && !city_there {
+                    if census.cities[h as usize][continent_index(c.cont)] != 0 && stack_count(g, first) < 2 && (g.rng.random(0x184af, 8) == 0 || c.city_owner(g) == Some(h)) && !city_there {
                         try_bribe(g, slot, first);
                     }
                 }
@@ -1369,7 +1373,7 @@ fn score_direction(g: &mut Game, c: &Ctx, k: usize, peaceful: bool) -> Option<(i
                 v -= 999;
                 let du = g.unit(def).clone();
                 let tough = du.order == UnitOrder::Fortified || du.veteran;
-                if c.role == AiRole::Attack && c.policy == POLICY_HOSTILE && land_unit && tough && t.info().defense >= 4 && stack_count(g, def) < 2 && g.rng.below(4) == 0 && !city_there {
+                if c.role == AiRole::Attack && c.policy == POLICY_HOSTILE && land_unit && tough && t.info().defense >= 4 && stack_count(g, def) < 2 && g.rng.random(0x183c8, 4) == 0 && !city_there {
                     try_bribe(g, slot, def);
                 }
             }

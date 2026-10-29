@@ -271,7 +271,7 @@ impl Game {
         // with any other amount short of the cost the move fails (and ends the unit's turn)
         // when random(cost) exceeds the points left
         let moves = self.unit(id).moves_left;
-        if cost > moves && u.is_land() && moves != 3 && self.rng.below(cost as u32) > moves as u32 {
+        if cost > moves && u.is_land() && moves != 3 && self.rng.random(0x635e, cost as i32) > moves as i32 {
             self.unit_mut(id).moves_left = 0;
             return Ok(MoveOutcome::Blocked);
         }

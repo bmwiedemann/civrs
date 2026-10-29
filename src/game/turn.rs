@@ -990,7 +990,7 @@ impl Game {
         }
         let mut i = 0u32;
         while i < 2 {
-            i = self.rng.below(128);
+            i = self.rng.random(0x2653, 128) as u32;
             let Some(city) = self.city_opt(i as CityId) else {
                 i += 1;
                 continue;
@@ -1023,8 +1023,8 @@ impl Game {
             let loss = g.city(c).size / div;
             g.shrink_city(c, loss as i32);
         };
-        let kind = match self.rng.below(10) {
-            0 if hills && has_low_improvement => Disaster::Earthquake(self.random_improvement_lost(c)),
+        let kind = match self.rng.random(super::rng::ovl(0x1b92e), 10) {
+            0 if hills && has_low_improvement => Disaster::Earthquake(self.random_improvement_lost(c, super::rng::ovl(0x1b966))),
             1 if !medicine && no_aqueduct => {
                 lose_citizens(self, 4);
                 Disaster::Plague
@@ -1046,7 +1046,7 @@ impl Game {
                 lose_citizens(self, 3);
                 Disaster::Famine
             }
-            5 if has_low_improvement && no_aqueduct => Disaster::Fire(self.random_improvement_lost(c)),
+            5 if has_low_improvement && no_aqueduct => Disaster::Fire(self.random_improvement_lost(c, super::rng::ovl(0x1bbae))),
             6 if ocean && !city.has_improvement(imp::BARRACKS) => {
                 let cm = self.city_mut(c);
                 cm.food = 0;
@@ -1061,9 +1061,9 @@ impl Game {
 
     /// Remove a random improvement (draws of `random(24)` until one the city has, never the
     /// Palace) and return it.
-    fn random_improvement_lost(&mut self, c: CityId) -> ImprovementId {
+    fn random_improvement_lost(&mut self, c: CityId, at: u32) -> ImprovementId {
         loop {
-            let bit = self.rng.below(24);
+            let bit = self.rng.random(at, 24);
             let i = bit as ImprovementId + 1;
             if bit != 0 && self.city(c).has_improvement(i) {
                 self.city_mut(c).remove_improvement(i);
@@ -1087,7 +1087,7 @@ impl Game {
             return;
         }
         let city = self.city(c).clone();
-        let wording = self.rng.below(3) as u8;
+        let wording = self.rng.random(super::rng::ovl(0x1bc81), 3) as u8;
         let demand = [imp::TEMPLE, imp::COURTHOUSE, imp::MARKETPLACE]
             .into_iter()
             .find(|i| !city.has_improvement(*i))
@@ -1137,14 +1137,6 @@ impl Game {
             self.fix_workers(c);
         }
         self.push_event(GameEvent::CityShrank(c));
-    }
-
-    /// Destroy a random improvement (never the Palace); returns the id destroyed.
-    pub fn destroy_random_improvement(&mut self, c: CityId) -> Option<ImprovementId> {
-        let cands = self.sellable_improvements(c);
-        let id = *self.rng.pick(&cands)?;
-        self.city_mut(c).remove_improvement(id);
-        Some(id)
     }
 
     /// Production after an improvement or wonder is finished: a human's city stays on it, so
@@ -1384,9 +1376,10 @@ impl Game {
         let ids = self.units_of(slot);
         for id in ids {
             let Some(u) = self.unit_opt(id).cloned() else { continue };
-            let in_own_city = self.city_at(u.x, u.y).map(|c| self.city(c).owner == slot).unwrap_or(false);
-            // only the human's Triremes are lost at sea (CIV.EXE 0x75da)
-            if u.kind == unit_ids::TRIREME && self.player(slot).human && !in_own_city && self.map.land_mask8(u.x, u.y) == 0 && self.rng.chance(50) {
+            // only the human's Triremes are lost at sea (CIV.EXE 0x75da): random(2) != 0 is
+            // drawn first, then the eight squares around must all be ocean (the unit's own
+            // square, a city's too, is not looked at)
+            if u.kind == unit_ids::TRIREME && self.player(slot).human && self.rng.random(0x75f3, 2) != 0 && self.map.land_mask8(u.x, u.y) == 0 {
                 self.remove_unit(id);
                 self.push_event(GameEvent::UnitLost { slot, kind: u.kind, at: (u.x, u.y), reason: "lost at sea".into() });
                 continue;
@@ -1883,7 +1876,7 @@ impl Game {
     fn steal_advance(&mut self, id: UnitId, city: CityId) -> Option<AdvanceId> {
         let us = self.unit(id).owner;
         let them = self.city(city).owner;
-        let start = self.rng.below(rules::advances::ADVANCE_COUNT as u32) as usize;
+        let start = self.rng.random(super::rng::ovl(0x1d760), rules::advances::ADVANCE_COUNT as i32) as usize;
         let a = (0..rules::advances::ADVANCE_COUNT)
             .map(|i| ((start + i) % rules::advances::ADVANCE_COUNT) as AdvanceId)
             .find(|a| us != 0 && self.player(them).knows(*a) && !self.player(us).knows(*a))?;
@@ -1900,9 +1893,9 @@ impl Game {
     fn sabotage_city(&mut self, city: CityId) -> Option<ImprovementId> {
         let target = self.city(city).clone();
         let mut destroyed = None;
-        if self.rng.below(2) != 0 || target.shields == 0 {
+        if self.rng.random(super::rng::ovl(0x1d853), 2) != 0 || target.shields == 0 {
             for n in 1..=99 {
-                let i = self.rng.below(24) as ImprovementId + 1;
+                let i = self.rng.random(super::rng::ovl(0x1d875), 24) as ImprovementId + 1;
                 if n == 99 {
                     break;
                 }
@@ -1964,7 +1957,7 @@ impl Game {
     /// with the human. Returns the unit's square and the target city.
     pub fn ai_diplomat_site(&mut self, slot: Slot) -> Option<((i32, i32), CityId)> {
         let mut rng = self.rng.clone();
-        let r = self.diplomat_site_with(slot, &mut |n| rng.below(n as u32) as i32);
+        let r = self.diplomat_site_with(slot, &mut |n| rng.random(0xe1f4, n));
         self.rng = rng;
         r
     }

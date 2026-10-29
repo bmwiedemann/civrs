@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Differential test of civrs against CIV.EXE from the same original saved game.
 
-    python3 -I sve_diff.py play GAME_DIR SLOT TURNS OUT_DIR [--actions SCRIPT]
+    python3 -I sve_diff.py play GAME_DIR SLOT TURNS OUT_DIR [--actions SCRIPT] [--seed N]
         Start CIV.EXE in dosbox (dosciv.py) on GAME_DIR (a private writable copy of the game),
         load CIVIL<SLOT>.SVE, turn Instant Advice and AutoSave off and End of Turn on, then
         TURNS times:
@@ -12,7 +12,7 @@
         act*.png for dialogs the Space/Return keys answered (production menus, advances).
         The palace screen gets its first section and style, the copy-protection quiz
         (every 50th turn in BC) its right answer (quiz.py).
-    python3 -I sve_diff.py diff CIVRS START.SVE RESULT.SVE [RESULT.SVE ...] [--actions SCRIPT]
+    python3 -I sve_diff.py diff CIVRS START.SVE RESULT.SVE [RESULT.SVE ...] [--actions SCRIPT] [--seed N]
         For each CIV.EXE result: civrs imports START.SVE, plays (result turn - start turn)
         turns with the human doing only the script's actions (--dump state:N) and is diffed
         against civrs's import of the result (--dump state:0). Prints `field: CIV.EXE | civrs`
@@ -21,6 +21,14 @@
 The SVE keeps no RNG state (CIV.EXE seeds rand() from the clock at program start), so AI moves,
 huts and anything else behind random() diverge; the human's cities, units, gold and research
 and the turn/year should agree exactly.
+
+--seed N: GAME_DIR's CIV.EXE is built by civ_seed_patch.py with --trace --quiet-ui. play sets
+CIVSEED=N (rand() seeded with N & 0x7fff) and keeps CIV.EXE's draws (GAME_DIR/RANDOM.LOG, emptied at
+the start) in OUT_DIR/random.log; diff runs civrs with the same seed (--dump state:N:SEED
+--rng-log) and reports, besides the fields, the first draw where the two streams part (the
+draw's index, CIV.EXE's call address and civrs's, n and the result), with the draws around it.
+Both draw nothing for pictures (--quiet-ui), so a loaded game's first draw is its first game
+draw.
 """
 import os
 import shutil
@@ -138,11 +146,15 @@ def act(w, k, click, shot):
         raise ValueError('unknown action %s' % w)
 
 
-def play(game, slot, turns, out, script=None):
+def play(game, slot, turns, out, script=None, seed=None):
     import dosciv
     import quiz
     os.makedirs(out, exist_ok=True)
     actions = parse_actions(script) if script else {}
+    log = os.path.join(game, 'RANDOM.LOG')
+    if seed is not None:
+        os.environ['CIVSEED'] = str(int(seed))
+        open(log, 'wb').close()
     dosciv.start(game)
     k = dosciv.keys
     time.sleep(6)
@@ -283,40 +295,115 @@ def play(game, slot, turns, out, script=None):
                 break
             run_actions(t)
     dosciv.stop()
+    if seed is not None:
+        shutil.copy(log, os.path.join(out, 'random.log'))
 
 
-def state(civrs, sve, turns, script=None):
+def state(civrs, sve, turns, script=None, seed=None):
+    """civrs's state text after `turns` turns, and with a seed its draws [(at, n, r)]."""
     with tempfile.NamedTemporaryFile(suffix='.txt', delete=False) as f:
         path = f.name
-    subprocess.run([civrs, '--load-sve', sve, '--dump', 'state:%d' % turns, '--out', path] + (['--actions', script] if script else []), check=True)
+    spec = 'state:%d' % turns + (':%d' % int(seed) if seed is not None else '')
+    extra = ['--rng-log', path + '.rng'] if seed is not None else []
+    subprocess.run([civrs, '--load-sve', sve, '--dump', spec, '--out', path] + (['--actions', script] if script else []) + extra, check=True)
     with open(path) as f:
         lines = f.read().splitlines()
     os.remove(path)
-    return dict(l.split(' ', 1) if ' ' in l else (l, '') for l in lines)
+    draws = []
+    if seed is not None:
+        with open(path + '.rng') as f:
+            draws = [(int(a, 16), int(n), int(r)) for a, n, r in (l.split() for l in f if l.strip())]
+        os.remove(path + '.rng')
+    return dict(l.split(' ', 1) if ' ' in l else (l, '') for l in lines), draws
 
 
-def diff(civrs, start, results, script=None):
+# overlay number, code start and end in civ.overlay.bin (the catalogue's flat addresses)
+OVL = [(1, 0x00375, 0x0076f), (2, 0x00b75, 0x02531), (3, 0x02775, 0x033ed), (4, 0x03775, 0x03bef),
+       (5, 0x04175, 0x05ee3), (6, 0x06375, 0x0891f), (7, 0x08d75, 0x0aa93), (8, 0x0af75, 0x0c76b),
+       (9, 0x0cb75, 0x0e0d1), (10, 0x0e375, 0x0ea1b), (11, 0x0ed75, 0x0fd0f), (12, 0x10175, 0x11ccd),
+       (13, 0x11f75, 0x1291d), (14, 0x12d75, 0x148e7), (15, 0x14b75, 0x154ef), (16, 0x15775, 0x15cd1),
+       (17, 0x15f75, 0x1700b), (18, 0x17575, 0x18c47), (19, 0x19175, 0x1ae19), (20, 0x1b375, 0x1c7b9),
+       (21, 0x1cb75, 0x1cf9f), (22, 0x1d575, 0x1e6c7), (23, 0x1e975, 0x1f0fb)]
+OVL_AREA = 0x22f30   # the overlays' load area: a call at offset k of an overlay's code logs 0x22f30 + k
+
+
+def exe_draws(path):
+    """CIV.EXE's draws from its RANDOM.LOG (civ_seed_patch.py --trace): [(call address, n,
+    result, caller's return address)], the overlays' calls as 'oNN+off' strings."""
+    d = open(path, 'rb').read()
+    out = []
+    for i in range(len(d) // 12):
+        ip, cs, n, r, ip2, cs2 = struct.unpack_from('<6H', d, 12 * i)
+        at = ((cs * 16 + ip) & 0xfffff) - 5
+        out.append((at, n - 0x10000 if n >= 0x8000 else n, r - 0x10000 if r >= 0x8000 else r, (cs2 * 16 + ip2) & 0xfffff))
+    return out
+
+
+def same_site(exe_at, rs_at):
+    if rs_at == 0:
+        return True
+    if rs_at & 0x100000:
+        flat = rs_at & 0xfffff
+        return any(s <= flat < e and exe_at == OVL_AREA + flat - s for _, s, e in OVL)
+    return exe_at == rs_at
+
+
+def name(exe_at):
+    if exe_at >= OVL_AREA:
+        k = exe_at - OVL_AREA
+        return '/'.join('o%#x' % (s + k) for _, s, e in OVL if s + k < e) + ' (overlay +%#x)' % k
+    return '%#x' % exe_at
+
+
+def first_split(exe, rs):
+    """The index of the first draw where the streams differ (n, result or call site)."""
+    for i, (a, b) in enumerate(zip(exe, rs)):
+        if a[1:3] != b[1:3] or not same_site(a[0], b[0]):
+            return i
+    return None if len(rs) <= len(exe) else len(exe)
+
+
+def diff(civrs, start, results, script=None, seed=None):
     t0 = turn_of(start)
+    exe_log = None
+    if seed is not None:
+        exe_log = exe_draws(os.path.join(os.path.dirname(os.path.abspath(results[0])), 'random.log'))
     for r in results:
         n = turn_of(r) - t0
-        exe, rs = state(civrs, r, 0), state(civrs, start, n, script)
+        (exe, _), (rs, draws) = state(civrs, r, 0), state(civrs, start, n, script, seed)
         keys = sorted(set(exe) | set(rs), key=lambda k: (k.split('.')[0].rstrip('0123456789,'), k))
         bad = [k for k in keys if exe.get(k) != rs.get(k)]
         print('== %s: %d turn(s), %d of %d fields differ' % (os.path.basename(r), n, len(bad), len(keys)))
         for k in bad:
             print('%s: %s | %s' % (k, exe.get(k, '-'), rs.get(k, '-')))
+        if exe_log is not None:
+            i = first_split(exe_log, draws)
+            if i is None:
+                print('random: the %d draws agree' % len(draws))
+                continue
+            print('random: draw %d of %d differs (CIV.EXE: address n result [from] | civrs: address n result)' % (i, len(draws)))
+            for j in range(max(0, i - 4), min(max(len(draws), len(exe_log)), i + 5)):
+                e = exe_log[j] if j < len(exe_log) else None
+                c = draws[j] if j < len(draws) else None
+                es = '%s %d %d [%#x]' % (name(e[0]), e[1], e[2], e[3]) if e else '-'
+                cs = '%#x %d %d' % c if c else '-'
+                print('%s %4d  %s | %s' % ('>' if j == i else ' ', j, es, cs))
 
 
 if __name__ == '__main__':
     args = sys.argv[1:]
-    script = None
+    script = seed = None
     if '--actions' in args:
         i = args.index('--actions')
         script = args[i + 1]
         del args[i:i + 2]
+    if '--seed' in args:
+        i = args.index('--seed')
+        seed = int(args[i + 1])
+        del args[i:i + 2]
     if len(args) >= 5 and args[0] == 'play':
-        play(*args[1:5], script=script)
+        play(*args[1:5], script=script, seed=seed)
     elif len(args) >= 4 and args[0] == 'diff':
-        diff(args[1], args[2], args[3:], script)
+        diff(args[1], args[2], args[3:], script, seed)
     else:
         print(__doc__)

@@ -719,7 +719,7 @@ impl Game {
         }
         let h = self.human_slot;
         for j in 1..8u8 {
-            if self.diplo(civ, j) & BREAK != 0 && self.rng.below(3) == 0 {
+            if self.diplo(civ, j) & BREAK != 0 && self.rng.random(0x14a28, 3) == 0 {
                 self.drop_flag(civ, j, BREAK | PEACE);
                 self.raise_flag(civ, j, SNEAK);
             }

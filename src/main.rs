@@ -10,7 +10,8 @@ fn usage() -> ! {
                 civrs --dump TARGET --out FILE.ppm [--assets DIR] [--zoom N] [--load-sve CIVILn.SVE]\n\
          dump targets: pic:NAME | sheet:NAME | fonts | pal:NAME | all-pics:DIR\n\
                        sound:ID[:LEVEL[:SECONDS]] (WAV) | sound-regs:ID[:LEVEL[:TICKS]] (OPL2 register log)\n\
-                       state:TURNS[:SEED] (text, with --load-sve [--actions SCRIPT]; reference/tools/sve_diff.py)\n\
+                       state:TURNS[:SEED] (text, with --load-sve [--actions SCRIPT] [--rng-log FILE];\n\
+                       reference/tools/sve_diff.py)\n\
          --load-sve: start from (or, with screen:NAME, render) an original CIVILn.SVE + .MAP"
     );
     std::process::exit(2);
@@ -31,10 +32,12 @@ struct Cli {
     load_sve: Option<PathBuf>,
     /// Scripted human actions for `--dump state:N` (`save::actions`).
     actions: Option<PathBuf>,
+    /// Where `--dump state:N` writes its random draws (`rng::trace_start`).
+    rng_log: Option<PathBuf>,
 }
 
 fn parse_cli() -> Cli {
-    let mut cli = Cli { assets: None, scale: None, fullscreen: false, dump: None, out: None, zoom: 1, skip_intro: false, keyboard_only: false, seed: None, load_sve: None, actions: None };
+    let mut cli = Cli { assets: None, scale: None, fullscreen: false, dump: None, out: None, zoom: 1, skip_intro: false, keyboard_only: false, seed: None, load_sve: None, actions: None, rng_log: None };
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -48,6 +51,7 @@ fn parse_cli() -> Cli {
             "--seed" => cli.seed = args.next().and_then(|s| s.parse().ok()),
             "--load-sve" => cli.load_sve = args.next().map(PathBuf::from),
             "--actions" => cli.actions = args.next().map(PathBuf::from),
+            "--rng-log" => cli.rng_log = args.next().map(PathBuf::from),
             "--zoom" => cli.zoom = args.next().and_then(|s| s.parse().ok()).unwrap_or(1),
             "-h" | "--help" => usage(),
             _ => {
@@ -59,7 +63,7 @@ fn parse_cli() -> Cli {
     cli
 }
 
-fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&Path>, actions: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
+fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&Path>, actions: Option<&Path>, rng_log: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(spec) = target.strip_prefix("sound:") {
         return dump_sound(assets, spec, out, false);
     }
@@ -67,19 +71,33 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&P
         // state:TURNS[:SEED]: the stored state of the --load-sve game after TURNS turns in
         // which the human does nothing but the actions of the --actions script
         // (save::sve::state_text, save::actions, reference/tools/sve_diff.py); the goto uses
-        // CIV.EXE's own land links of the save
+        // CIV.EXE's own land links of the save. With SEED the game draws from rand() seeded
+        // as the patched CIV.EXE seeds it from CIVSEED (seed_random 0x1d43:0x38: srand(SEED &
+        // 0x7fff)); the loaded game draws nothing before its first turn but for pictures,
+        // which civ_seed_patch.py --quiet-ui takes out of CIV.EXE's stream as civrs does.
         let mut it = turns.split(':');
         let turns: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-        let seed: u64 = it.next().and_then(|s| s.parse().ok()).unwrap_or(1);
+        let seed: Option<u64> = it.next().and_then(|s| s.parse().ok());
         let sve = sve.ok_or("state: needs --load-sve")?;
         let mut game = civrs::save::sve::import(sve)?;
         game.use_exe_land_links(&civrs::save::sve::exe_land_links(sve)?);
+        if let Some(s) = seed {
+            game.rng.srand((s & 0x7fff) as u16);
+        }
+        if rng_log.is_some() {
+            civrs::game::rng::trace_start();
+        }
         let script = match actions {
             Some(p) => civrs::save::actions::parse(&std::fs::read_to_string(p)?)?,
             None => Vec::new(),
         };
-        let mut ai = civrs::ai::Ai::new(seed);
-        civrs::save::actions::play(&mut game, &mut ai, &script, turns)?;
+        let mut ai = civrs::ai::Ai::new(seed.unwrap_or(1));
+        let played = civrs::save::actions::play(&mut game, &mut ai, &script, turns);
+        if let Some(p) = rng_log {
+            let log: String = civrs::game::rng::trace_take().iter().map(|d| format!("{:x} {} {}\n", d.at, d.n, d.r)).collect();
+            std::fs::write(p, log)?;
+        }
+        played?;
         std::fs::write(out, civrs::save::sve::state_text(&game))?;
         return Ok(());
     }
@@ -630,7 +648,7 @@ fn main() {
     };
     if let Some(target) = &cli.dump {
         let out = cli.out.clone().unwrap_or_else(|| PathBuf::from("dump.ppm"));
-        if let Err(e) = dump(&assets, target, &out, cli.zoom, cli.load_sve.as_deref(), cli.actions.as_deref()) {
+        if let Err(e) = dump(&assets, target, &out, cli.zoom, cli.load_sve.as_deref(), cli.actions.as_deref(), cli.rng_log.as_deref()) {
             eprintln!("dump failed: {e}");
             std::process::exit(1);
         }

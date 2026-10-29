@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build a runnable CIV.EXE whose random seed can be set from the DOS environment.
 
-    python3 -I civ_seed_patch.py ../../../civ/CIV.EXE OUT/CIV.EXE
+    python3 -I civ_seed_patch.py ../../../civ/CIV.EXE OUT/CIV.EXE [--trace] [--quiet-ui]
 
 In DOSBox, `SET CIVSEED=4763` before `civ` makes the game seed rand() (and the map seed
 ds:0x6e80) with 4763 & 0x7fff instead of time(0) & 0x7fff. That is the same value a clock seed
@@ -22,6 +22,12 @@ Patch:
       ax &= 0x7fff; ds:0x6e80 = ax; srand(ax)
   and returns to seed_random's caller. (The C getenv found nothing when called with the name
   on the stack.) The two far calls into the C runtime segment 0x1fc3 get new relocations.
+- With --trace, random(n) (0x1d43:0x53) jumps from its last shift (0x1d499) to 0:0x8d9, which
+  does the shift and appends a record to C:\\RANDOM.LOG for every draw: the caller's return ip,
+  its code segment minus the load segment (0x1d43-style for the main image; overlays share
+  their load area at 0x22f3), n, the result, and the return ip and segment of the caller's
+  caller (six words). The file must exist (the harness creates
+  it empty); each record opens, appends and closes it, so the log survives a killed dosbox.
 """
 import struct, sys
 
@@ -30,6 +36,22 @@ RT_SEG = 0x1fc3
 SEED_RANDOM = 0x1d468          # 0x1d43:0x38
 CAVE = 0x940                   # 0:0x940
 CAVE_END = 0x9e3               # first used stub after the free entries (90 = 0x76d + 7*90)
+RANDOM_TAIL = 0x1d499          # random(n) 0x1d43:0x53 from `mov cl,15` on (shift, pop bp, retf)
+LSHR = 0x32c6                  # long shift right in segment 0x1fc3
+TRACE = 0x8d9                  # 0:0x8d9, the free stub entries 52..
+TRACE_DATA = 0x9c8             # its record and file name, after the seed routine
+QUIET = 0x9ac                  # 0:0x9ac, the presentation draws' own generator (--quiet-ui)
+OVL_BIN = 0x175                # civ.overlay.bin (flat overlay addresses) starts 0x175 before e_cp * 512
+# random(n) calls that only make pictures: the map view's drawing order (draw_map_view
+# 0x1a68e), the page border (0xa46a), the leader's animation (o 0x7ea8), the quiz's question
+# (o 0x157a1), the spaceship screen's stars (o 0x17575, o 0x181be), the city view's layout
+# (o 0x19175, which also re-seeds rand() with the city name, o 0x1920f) and the newspaper
+# (o 0x1cb75)
+QUIET_MAIN = [0x1a6e8, 0xa476]
+QUIET_OVL = [0x7fe4, 0x804b, 0x157b2, 0x1760e, 0x17621, 0x181ec, 0x19281, 0x1933b, 0x1938f,
+             0x193d7, 0x19427, 0x1946c, 0x19506, 0x19517, 0x19791, 0x197a2, 0x1ccca, 0x1cd1d,
+             0x1cdf1, 0x1cf1a]
+CITY_VIEW_SRAND = 0x1920f
 
 
 def unpack(d):
@@ -142,7 +164,49 @@ def cave_code(relocs):
     ], CAVE, relocs)
 
 
-def main(src_path, out_path):
+def trace_code(relocs):
+    """random(n)'s tail: the shift of rand() * n, then a record appended to C:\\RANDOM.LOG
+    (which must exist): the caller's ip and cs, n, the result, and the ip and cs its caller
+    returns to (through the caller's saved bp), six little-endian words, the code segments
+    relative to the load segment."""
+    JB = 0x72
+    buf = lambda off: struct.pack('<H', TRACE_DATA + off)
+    return assemble([
+        b'\xb1\x0f', ('far', LSHR),     # mov cl,15; call far lshr (dx:ax >>= 15)
+        b'\x50\x56\x57\x06\x1e',         # push ax si di es ds
+        b'\x16\x1f\x0e\x07',             # ds = ss (DGROUP), es = cs
+        b'\x8d\x76\x02\xbf', buf(0),     # lea si,[bp+2]; mov di,buf
+        b'\xfc\xa5\xa5\xa5\xab',         # cld; movsw x3 (ip, cs, n); stosw (the result)
+        b'\x8b\x76\x00\x8d\x74\x02\xa5\xa5',  # si = [bp] + 2: the caller's return ip, cs
+        b'\x8c\xcb\x26\x29\x1e', buf(2), # mov bx,cs; sub es:[buf+2],bx
+        b'\x26\x29\x1e', buf(10),        # sub es:[buf+10],bx
+        b'\x0e\x1f',                     # push cs; pop ds
+        b'\xba', buf(12), b'\xb8\x01\x3d\xcd\x21',   # open(name, write)
+        ('jcc', JB, 'done'),
+        b'\x8b\xd8\x31\xc9\x31\xd2\xb8\x02\x42\xcd\x21',  # bx = handle; seek to the end
+        b'\xba', buf(0), b'\xb9\x0c\x00\xb4\x40\xcd\x21',  # write 12 bytes
+        b'\xb4\x3e\xcd\x21',             # close
+        ('label', 'done'),
+        b'\x1f\x07\x5f\x5e\x58\x5d\xcb', # pop ds es di si ax bp; retf
+    ], TRACE, relocs)
+
+
+TRACE_RECORD = bytes(12) + b'C:\\RANDOM.LOG\0'   # the record; the log's name
+
+
+def quiet_code():
+    """random(n) for pictures from a 16-bit Weyl sequence of its own: (s += 0x4e6d) / 2 * n
+    >> 15, so they draw nothing from rand()."""
+    st = struct.pack('<H', QUIET + 26)
+    return (b'\x55\x8b\xec'                        # push bp; mov bp,sp
+            + b'\x2e\x81\x06' + st + b'\x6d\x4e'      # add cs:[s],0x4e6d
+            + b'\x2e\xa1' + st                       # mov ax,cs:[s]
+            + b'\xd1\xe8\xf7\x66\x06'                # shr ax,1; mul word [bp+6]
+            + b'\xd1\xe0\xd1\xd2\x92'                # shl ax,1; rcl dx,1; xchg ax,dx
+            + b'\x5d\xcb' + b'\0\0')                  # pop bp; retf; s
+
+
+def main(src_path, out_path, trace=False, quiet=False):
     d = open(src_path, 'rb').read()
     h, img, relocs = unpack(d)
     # the code being replaced, so a different CIV.EXE version is refused
@@ -152,11 +216,20 @@ def main(src_path, out_path):
     for r in (SEED_RANDOM + 6, SEED_RANDOM + 21):
         relocs.remove(r)
     code = cave_code(relocs)
-    assert CAVE + len(code) <= CAVE_END
+    assert CAVE + len(code) <= (TRACE_DATA if trace else CAVE_END)
     img[CAVE:CAVE + len(code)] = code
     jmp = b'\xea' + struct.pack('<HH', CAVE, 0)       # jmp far 0:CAVE (segment relocated)
     img[SEED_RANDOM:SEED_RANDOM + 27] = jmp + b'\x90' * (27 - len(jmp))
     relocs.append(SEED_RANDOM + 3)
+    if trace:
+        assert img[RANDOM_TAIL:RANDOM_TAIL + 9] == bytes.fromhex('b10f9ac632c31f5dcb'), 'unexpected random'
+        relocs.remove(RANDOM_TAIL + 5)
+        tcode = trace_code(relocs)
+        assert TRACE + len(tcode) <= CAVE and TRACE_DATA + len(TRACE_RECORD) <= CAVE_END
+        img[TRACE:TRACE + len(tcode)] = tcode
+        img[TRACE_DATA:TRACE_DATA + len(TRACE_RECORD)] = TRACE_RECORD
+        img[RANDOM_TAIL:RANDOM_TAIL + 9] = b'\xea' + struct.pack('<HH', TRACE, 0) + b'\x90' * 4
+        relocs.append(RANDOM_TAIL + 3)
 
     # image padded to whole pages so the overlays start at e_cp * 512
     img += bytes(-len(img) % 512)
@@ -170,12 +243,29 @@ def main(src_path, out_path):
                      minalloc, h['maxalloc'], h['ss'], h['sp'], 0, h['ip'], h['cs'], 0x1c, 0)
     for i, r in enumerate(relocs):
         struct.pack_into('<2H', hd, 0x1c + 4 * i, r & 0xffff, (r >> 16) * 0x1000)
-    overlays = d[h['cp'] * 512:]
+    overlays = bytearray(d[h['cp'] * 512:])
     assert overlays[:2] == b'MZ', 'no overlay at the page after the packed image'
-    open(out_path, 'wb').write(bytes(hd) + bytes(img) + overlays)
+    if quiet:
+        q = quiet_code()
+        assert QUIET + len(q) <= TRACE_DATA and not any(img[QUIET:QUIET + len(q)])
+        img[QUIET:QUIET + len(q)] = q
+        call = b'\x9a' + struct.pack('<HH', 0x53, 0x1d43)
+        far = b'\x9a' + struct.pack('<HH', QUIET, 0)   # the segment word keeps its relocation
+        for a in QUIET_MAIN:
+            assert img[a:a + 5] == call, hex(a)
+            img[a:a + 5] = far
+        for a in QUIET_OVL:
+            o = a - OVL_BIN
+            assert overlays[o:o + 5] == call, hex(a)
+            overlays[o:o + 5] = far
+        # the city view's srand(name): jump over the call (its relocated segment word stays)
+        o = CITY_VIEW_SRAND - OVL_BIN
+        assert overlays[o:o + 5] == b'\x9a' + struct.pack('<HH', SRAND, RT_SEG)
+        overlays[o:o + 2] = b'\xeb\x03'
+    open(out_path, 'wb').write(bytes(hd) + bytes(img) + bytes(overlays))
     print(f'{out_path}: image {len(img):#x} bytes, {len(relocs)} relocations, '
           f'seed routine {len(code)} bytes at 0:{CAVE:#x}')
 
 
 if __name__ == '__main__':
-    main(*sys.argv[1:3])
+    main(sys.argv[1], sys.argv[2], '--trace' in sys.argv[3:], '--quiet-ui' in sys.argv[3:])

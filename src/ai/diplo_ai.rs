@@ -105,7 +105,7 @@ fn greeting(g: &mut Game, m: &Meeting) -> DiplomacyState {
     let p = g.player(m.ai);
     let (title, leader, plural) = (p.title(), p.leader.clone(), p.plural().to_string());
     let mut s = String::from(if g.diplo(m.ai, h) & VENDETTA != 0 { "O most untrustworthy leader of the\ninfidels, hear now " } else { "Greetings from " });
-    match g.rng.below(4) {
+    match g.rng.random(crate::game::rng::ovl(0x7c1d), 4) {
         0 => s += &format!("the most exalted\n{title}: {leader} "),
         1 => s += &format!("{leader}, ruler\nand {title} "),
         2 => s += &format!("our most wise\n{title}: {leader} "),
@@ -261,7 +261,7 @@ fn evaluate(g: &mut Game, ai: Slot, at: (i32, i32), mode: u8) -> Meeting {
     let no_treaty = if g.treaty(ai, h) { 0 } else { 1 };
     if busy > no_treaty && !human_leads {
         want = false;
-        if g.rng.below(2) != 0 {
+        if g.rng.random(crate::game::rng::ovl(0x6917), 2) != 0 {
             tribute = 0;
         }
     }
@@ -646,7 +646,7 @@ pub fn respond(g: &mut Game, st: &DiplomacyState, choice: usize) -> Option<Diplo
         Await::Cancel => {
             if yes {
                 m.want = false;
-                if g.rng.below(2) != 0 {
+                if g.rng.random(crate::game::rng::ovl(0x6c91), 2) != 0 {
                     m.tribute = 0;
                 }
                 if let Some(j) = m.crusade {

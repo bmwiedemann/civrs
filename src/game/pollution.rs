@@ -55,10 +55,10 @@ impl Game {
         let points = self.pollution_points(c);
         let owner = self.city(c).owner;
         let range = 256 - self.player(owner).research_count as i32 * self.setup.difficulty as i32 / 2;
-        if 2 * points <= self.rng.below(range.max(1) as u32) as i32 {
+        if 2 * points <= self.rng.random(0x12e36, range) {
             return;
         }
-        let (dx, dy) = POLLUTION_SQUARES[self.rng.below(20) as usize];
+        let (dx, dy) = POLLUTION_SQUARES[self.rng.random(0x12e4f, 20) as usize];
         let (cx, cy) = self.city(c).pos();
         let (x, y) = (super::Map::wrap_x(cx + dx as i32), cy + dy as i32);
         let Some(t) = self.map.get(x, y) else { return };
@@ -80,7 +80,7 @@ impl Game {
         if !self.player(city.owner).human || !city.disorder || !city.has_improvement(imp::NUCLEAR_PLANT) {
             return;
         }
-        if self.rng.below(3) == 0 && !self.player(self.city(c).owner).knows(adv::FUSION_POWER) {
+        if self.rng.random(0x12f6f, 3) == 0 && !self.player(self.city(c).owner).knows(adv::FUSION_POWER) {
             self.meltdown(c);
         }
     }
@@ -106,7 +106,7 @@ impl Game {
                     self.shrink_city(hit, loss);
                 }
                 hit_cities.push(hit);
-            } else if self.rng.below(3) != 0 && t.is_land() && !t.has(tile_flags::POLLUTION) {
+            } else if self.rng.random(0x1a5eb, 3) != 0 && t.is_land() && !t.has(tile_flags::POLLUTION) {
                 self.map.get_mut(x, y).unwrap().set(tile_flags::POLLUTION, true);
                 // add_pollution (0x13639) shows it on the map at once
                 self.map.update_seen(x, y);

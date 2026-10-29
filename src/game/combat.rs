@@ -1,7 +1,7 @@
 //! Combat, nuclear attacks, city capture, civil war and civilisation destruction.
 //!
 //! Strengths are expressed x8 so that the integer modifiers (x1.5, x2, x3, terrain halves)
-//! stay exact. Resolution rolls `rng.below(D)` then `rng.below(A)` once; the attacker wins
+//! stay exact. Resolution rolls `random(D)` then `random(A)` once; the attacker wins
 //! only when its roll is higher (CIV.EXE 0x19724).
 
 use super::map::{tile_flags, CityId, Map, Slot, UnitId};
@@ -147,12 +147,12 @@ impl Game {
         }
         // one roll each, the defence first; a tie goes to the defender, and a barbarian at a
         // city must win a second roll (0x19a2d..0x19a6e)
-        let (a, d) = (a.max(0) as u32, d.max(0) as u32);
-        let rd = self.rng.below(d);
-        let mut won = rd < self.rng.below(a);
+        let (a, d) = (a.max(0), d.max(0));
+        let rd = self.rng.random(0x19a2d, d);
+        let mut won = rd < self.rng.random(0x19a3a, a);
         if won && second_roll {
-            let rd = self.rng.below(d);
-            won = self.rng.below(a) >= rd;
+            let rd = self.rng.random(0x19a5a, d);
+            won = self.rng.random(0x19a67, a) >= rd;
         }
         self.last_combat = Some(((attacker.x, attacker.y), (x, y), won));
         self.fight_diplomacy(attacker.owner, defender.owner);
@@ -194,6 +194,12 @@ impl Game {
             if let Some(c) = t.city.filter(|_| self.units_at(x, y).is_empty()) {
                 self.city_emptied(c);
             }
+            // the winner becomes a veteran on random(2) != 0, rolled for a veteran too
+            // (0x1a20a), before the move code shrinks or takes the city
+            if self.rng.random(0x1a20a, 2) != 0 && !attacker.veteran {
+                self.unit_mut(id).veteran = true;
+                self.push_event(GameEvent::UnitVeteran(id));
+            }
             // a city without walls shrinks when its defender loses, unless the attack came from
             // the sea, or at Chieftain from anyone against the human (CIV.EXE 0x615d..0x618a);
             // only the size drops: the extra worker goes at the city's next turn, the human's
@@ -219,10 +225,6 @@ impl Game {
                     }
                 }
             }
-            if !attacker.veteran && self.rng.chance(50) {
-                self.unit_mut(id).veteran = true;
-                self.push_event(GameEvent::UnitVeteran(id));
-            }
             // a computer's city square left without a unit: that civilization's cities on the
             // continent re-choose their production at once (0x622b..0x625e -> 0x18bef)
             if t.city.is_some() && defender.owner != self.human_slot && self.units_at(x, y).is_empty() {
@@ -240,7 +242,7 @@ impl Game {
             self.players[defender.owner as usize].stats.units_killed += 1;
             self.push_event(GameEvent::UnitLost { slot: attacker.owner, kind: attacker.kind, at: (attacker.x, attacker.y), reason: "lost in combat".into() });
             self.remove_unit(id);
-            if !defender.veteran && self.rng.chance(50) {
+            if self.rng.random(0x1a253, 2) != 0 && !defender.veteran {
                 self.unit_mut(def_id).veteran = true;
                 self.push_event(GameEvent::UnitVeteran(def_id));
             }
@@ -365,7 +367,7 @@ impl Game {
         let mut word0: u32 = 0xfbb6;
         let mut rest: u32 = !0 << 17;
         if !by_diplomat {
-            word0 &= 0xaaaa >> self.rng.below(2);
+            word0 &= 0xaaaa >> self.rng.random(0x13f05, 2);
             rest = 0;
         }
         // CIV.EXE bit k is improvement k + 1, civrs bit k + 1
@@ -573,7 +575,7 @@ impl Game {
         let mut start_civ = old.start_civ;
         let civ = if first_civs && (new_slot == 7 || old.civ & 1 == 0) && old.civ <= 15 {
             old.civ ^ 8
-        } else if self.rng.below(2) != 0 {
+        } else if self.rng.random(super::rng::ovl(0x14ce8), 2) != 0 {
             new_slot
         } else {
             start_civ = new_slot + 8;
@@ -840,13 +842,29 @@ impl Game {
     /// diplomacy both ways. Barbarian units within 8 squares are deleted. (civ_init leaves the
     /// slot's ship grid and ds:0x4cd8 launch bits alone, so CIV.EXE hands a destroyed civ's
     /// spaceship to the new tribe; civrs starts it without one.)
+    /// CIV.EXE rolls the advances (o5 0x4ad0) and searches the square before it looks at the
+    /// turn limit and the once-per-slot bit (o5 0x4e5f), so a civilization that does not come
+    /// back still draws them.
     pub fn respawn_civ(&mut self, slot: Slot) -> bool {
         let old = self.player(slot).clone();
         let civ = old.civ ^ 8;
-        if civ == old.start_civ || old.human || self.turn as i32 > 350 - 50 * self.setup.difficulty as i32 {
+        if old.human {
             return false;
         }
-        let Some((x, y)) = self.respawn_square() else { return false };
+        let human = self.human_slot;
+        let mut granted = Vec::new();
+        for a in 0..rules::advances::REAL_ADVANCE_COUNT as u8 {
+            // the first discoverer may be this slot's destroyed civilization (o5 0x4af1)
+            let found_by_ai = ![0, human].contains(&self.first_discoverer(a));
+            if self.player(human).knows(a) && found_by_ai && self.rng.random(super::rng::ovl(0x4b12), 2) == 0 {
+                granted.push(a);
+            }
+        }
+        let square = self.respawn_square();
+        if civ == old.start_civ || self.turn as i32 > 350 - 50 * self.setup.difficulty as i32 {
+            return false;
+        }
+        let Some((x, y)) = square else { return false };
         let mut p = Player::new(slot, civ, false);
         p.in_game = true;
         p.alive = true;
@@ -864,13 +882,8 @@ impl Game {
         // ai_clear_persistent_goals (0x189b9) and the continent strategy table (o5 0x49bb)
         self.ai_memory.persistent[slot as usize] = [super::goals::Goal::FREE; super::goals::PERSISTENT_GOALS];
         self.ai_memory.policies[slot as usize] = None;
-        let human = self.human_slot;
-        for a in 0..rules::advances::REAL_ADVANCE_COUNT as u8 {
-            // the first discoverer may be this slot's destroyed civilization (o5 0x4af1)
-            let found_by_ai = ![0, human].contains(&self.first_discoverer(a));
-            if self.player(human).knows(a) && found_by_ai && self.rng.below(2) == 0 {
-                self.grant_advance(slot, a, super::science::AdvanceSource::Discovered);
-            }
+        for a in granted {
+            self.grant_advance(slot, a, super::science::AdvanceSource::Discovered);
         }
         self.map.explore(slot, x, y, 1);
         self.add_unit(slot, unit_ids::SETTLERS, x, y);
@@ -907,8 +920,8 @@ impl Game {
         let turn = self.turn as i32;
         let mut k = 0;
         loop {
-            let x = 8 + self.rng.below(64) as i32;
-            let y = 8 + self.rng.below(34) as i32;
+            let x = 8 + self.rng.random(super::rng::ovl(0x4bd7), 64);
+            let y = 8 + self.rng.random(super::rng::ovl(0x4be9), 34);
             let near = self.nearest_city_exe(x, y);
             let near = if near.0.is_none() { 30 } else { near.1 };
             // the site/owner layer as it is now (o5 0x4c99)
@@ -1786,9 +1799,9 @@ mod tests {
         let (mut g, c, d) = diplomat_game();
         g.city_mut(c).shields = 0;
         let mut rng = g.rng.clone();
-        rng.below(2);
+        rng.random(0, 2);
         for _ in 0..99 {
-            rng.below(24);
+            rng.random(0, 24);
         }
         assert_eq!(g.diplomat_action(d, DiplomatAction::Sabotage, c).unwrap(), DiplomatResult::Sabotaged(None));
         assert_eq!(g.rng, rng);

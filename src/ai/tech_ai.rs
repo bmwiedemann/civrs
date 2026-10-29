@@ -27,7 +27,7 @@ fn candidates(g: &Game, slot: Slot) -> Vec<AdvanceId> {
 /// (the human's own current goal, ds:0x19be).
 pub fn draw(g: &mut Game, slot: Slot, skip: Option<AdvanceId>) -> Option<AdvanceId> {
     let mut rng = g.rng.clone();
-    let a = draw_by(g, slot, skip, |n| rng.below(n.max(0) as u32) as i32);
+    let a = draw_by(g, slot, skip, |n| rng.random(0xbbc3, n));
     g.rng = rng;
     a
 }
@@ -54,7 +54,7 @@ pub fn choose(g: &mut Game, slot: Slot) -> Option<AdvanceId> {
     }
     let a = draw(g, slot, None);
     let human = g.human_slot;
-    if g.turn != 0 && g.setup.difficulty == Difficulty::Chieftain && !a.map(|a| g.player(human).knows(a)).unwrap_or(true) && g.rng.below(2) != 0 {
+    if g.turn != 0 && g.setup.difficulty == Difficulty::Chieftain && !a.map(|a| g.player(human).knows(a)).unwrap_or(true) && g.rng.random(0xbc31, 2) != 0 {
         return None;
     }
     a
