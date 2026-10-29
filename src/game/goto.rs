@@ -367,9 +367,23 @@ impl Game {
             }
         };
         let mut found = 0;
-        let reuse = self.ai_memory.goto_cache.waypoint == Some(w)
-            && self.ai_memory.goto_cache.grid.len() == 256
-            && cell(near(p.x), p.y).map(|i| self.ai_memory.goto_cache.grid[i] != 0).unwrap_or(false);
+        // the grid is kept for the same waypoint when the probe's square in it is set (0x1e765);
+        // CIV.EXE indexes it (x - wx + 8) * 16 + (y - wy + 8) with the raw x and no bounds, so
+        // with `exe_quirks` a square beyond it reads past the grid (ds:0xb880.., the terrain
+        // sprite handles, taken as set) and one before it (the score words) as clear
+        let cached = |g: &Game| -> bool {
+            let grid = &g.ai_memory.goto_cache.grid;
+            if !g.exe_quirks {
+                return cell(near(p.x), p.y).map(|i| grid[i] != 0).unwrap_or(false);
+            }
+            let idx = (p.x - ox) * 16 + (p.y - oy);
+            match idx {
+                0..=255 => grid[idx as usize] != 0,
+                256.. => true,
+                _ => false,
+            }
+        };
+        let reuse = self.ai_memory.goto_cache.waypoint == Some(w) && self.ai_memory.goto_cache.grid.len() == 256 && cached(self);
         if !reuse {
             let mut grid = vec![0u8; 256];
             let mut qx = [0i32; 256];
@@ -722,6 +736,24 @@ mod tests {
         g.barbarian_memory = Default::default();
         g.ai_memory = Default::default();
         g
+    }
+
+    #[test]
+    fn exe_quirks_keep_the_grid_for_a_probe_beyond_it() {
+        // 0x1e765 indexes the cached grid without bounds: a unit far outside the window of
+        // the same waypoint reads past it (taken as set) and keeps the grid of the last near
+        // search, a one-move unit's here; civrs floods again for its own probe
+        let run = |quirks: bool| -> Vec<u8> {
+            let mut g = flat();
+            g.exe_quirks = quirks;
+            g.local_search(Probe { x: 12, y: 12, sea: false, one_move: true }, (10, 12), 999);
+            let (d, _) = g.local_search(Probe { x: 30, y: 12, sea: false, one_move: false }, (10, 12), 999);
+            assert_eq!(d, -1);
+            g.ai_memory.goto_cache.grid.clone()
+        };
+        let (kept, fresh) = (run(true), run(false));
+        // the near search stopped at its probe; the far one, flooding again, fills the window
+        assert!(kept.iter().filter(|v| **v != 0).count() < fresh.iter().filter(|v| **v != 0).count());
     }
 
     #[test]
