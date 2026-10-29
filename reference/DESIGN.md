@@ -662,3 +662,21 @@ the goto before "We have signed a peace treaty" (0x656d) and asks; "Cancel actio
 unit with its moves waiting for orders (0x58c1 -> 0x6d7f -> 0x442c), "Break treaty." makes the
 step and the unit waits for orders after it. Scripts answer that question with `menu ROW`
 (src/save/actions.rs; the harness's `act` needs `menu` as rows + Return).
+
+### City screen pixel comparison (mapshot.py with clicks)
+- `mapshot.py GAME_DIR SLOT OUT N @X,Y ...`: an `@X,Y` key token clicks the 320x200 screen. A
+  click on a map square away from the active unit centres the map there; one on an own city
+  opens its city screen. civrs side: `CIVRS_CITY=NAME CIVRS_MOUSE=X,Y civrs --dump
+  screen:city[:0:0:happy|map] --load-sve F --out F.ppm` (the torch where the click left it).
+  CIVIL0/1/3/4 (Rome, Caesarea) and staged busy cities (`sve_edit.py` `build:`, `unit:`,
+  `city:..:route=C`, `work:`) match pixel for pixel, INFO, HAPPY and MAP tabs, up to the water
+  cycles, which go on behind the city screen (compare against several `CIVRS_FRAMES`).
+- Load staged saves from a slot below 4: from slot 4 on the load gives the human's units their
+  moves and the unit loop completes fortifications before the screen opens (0x40c0).
+- Layout facts: the small icons are draw_icon's 7x7 cuts (SP257 (129 + 8 (i & 3), 33 + 2 (i & 4))),
+  the units the 15x15 map icons in load_sprite_sheets' civ colours; the city size and the unit
+  letters on the city map and in the INFO box are in the screen's current font, the small one;
+  `work_tile` (0x13233) redraws each worked square and packs its icons 8/5/3 px apart, rows 8
+  px down (a third row runs into the square below, which a later square may cover again).
+- Not matched: the martial law units of the HAPPY tab follow CIV.EXE's stack ring (unit +0xa,
+  walked from 0x1a68:0x145e), which civrs does not keep.

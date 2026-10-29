@@ -10,7 +10,8 @@ The .MAP next to IN.SVE is copied next to OUT.SVE. Edits (offsets as src/save/sv
                                production byte: unit type, -improvement, -24-wonder), worked
                                (CIV.EXE radius bit mask, bit 20 the centre), codes (the 2-bit
                                specialist codes +0x14: 1 taxman, 2 scientist, 3 entertainer),
-                               status; a size change also changes the owner's citizens (0x708)
+                               status, trade (the stored trade +0xa), route (a trade route to
+                               that city in the first free slot +0x17..0x19); a size change also changes the owner's citizens (0x708)
     unit:CIV:TYPE:X,Y[:HOME[:FLAGS[:SEEN]]]   a new unit in the civ's lowest free record, with no
                                goto, full moves (thirds) and the stack ring of its square; the
                                civ's unit counters (0x158, and 0x6d8 for non-Settlers) go up;
@@ -89,6 +90,12 @@ def edit(d, e, page):
                 struct.pack_into('<H', d, r + 0x14, v)
             elif k == 'status':
                 d[r + 6] = v
+            elif k == 'trade':
+                d[r + 0xa] = v
+            elif k == 'route':
+                # route=C adds a trade route to city C in the first free slot +0x17..0x19
+                s = next(s for s in range(0x17, 0x1a) if d[r + s] == 0xff)
+                d[r + s] = v
             else:
                 raise ValueError(k)
     elif kind == 'unit':

@@ -256,7 +256,9 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&P
         // the city screen needs a city: found one with the human's first settler
         let mut city = None;
         if sve.is_some() {
-            city = game.cities_of(game.human_slot).first().copied();
+            // CIVRS_CITY=NAME picks another of the human's cities
+            let name = std::env::var("CIVRS_CITY").ok();
+            city = game.cities_of(game.human_slot).into_iter().find(|c| name.as_ref().is_none_or(|n| game.city(*c).name.eq_ignore_ascii_case(n)));
         } else if matches!(parts.first(), Some(&"city" | &"founded" | &"built" | &"diplomat")) {
             let slot = game.human_slot;
             let id = game.units_of(slot).into_iter().find(|id| game.unit(*id).kind == civrs::rules::unit_ids::SETTLERS).ok_or("no settler")?;
@@ -500,6 +502,10 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&P
         let mut app = civrs::app::App::new(ctx, screen);
         if let Some(d) = dialog {
             app.screens.push(d, &mut app.ctx);
+        }
+        // CIVRS_MOUSE=X,Y puts the pointer where a capture of the original has it
+        if let Some((x, y)) = std::env::var("CIVRS_MOUSE").ok().and_then(|v| v.split_once(',').and_then(|(x, y)| Some((x.parse().ok()?, y.parse().ok()?)))) {
+            app.ctx.mouse = (x, y);
         }
         let mut backend = civrs::platform::headless::HeadlessBackend::new();
         let frames: u32 = std::env::var("CIVRS_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
