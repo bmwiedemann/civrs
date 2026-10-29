@@ -267,11 +267,12 @@ impl Game {
         }
 
         let cost = self.move_cost(&u, (u.x, u.y), (tx, ty));
-        // CIV.EXE 0x634a: a land unit with exactly one full move point always gets through;
-        // with any other amount short of the cost the move fails (and ends the unit's turn)
-        // when random(cost) exceeds the points left
+        // CIV.EXE 0x634a: a land unit off a road (not road to road) with exactly one full
+        // move point always gets through; with any other amount it rolls random(3 x the
+        // terrain's cost), even when it has the points (a Chariot onto grassland), and the move
+        // fails (and ends the unit's turn) when the roll exceeds the points left
         let moves = self.unit(id).moves_left;
-        if cost > moves && u.is_land() && moves != 3 && self.rng.random(0x635e, cost as i32) > moves as i32 {
+        if u.is_land() && cost >= 3 && moves != 3 && self.rng.random(0x635e, cost as i32) > moves as i32 {
             self.unit_mut(id).moves_left = 0;
             return Ok(MoveOutcome::Blocked);
         }
@@ -723,6 +724,24 @@ mod tests {
         t.flags = 0;
         g.unit_mut(id).moves_left = moves;
         (g, id)
+    }
+
+    /// 0x634a rolls random(3 x the terrain cost) for any land move off a road but with exactly
+    /// one full move left, also when the unit has the points: 6 thirds onto grassland draw
+    /// (and always pass), 3 thirds do not.
+    #[test]
+    fn a_land_move_rolls_unless_exactly_one_move_is_left() {
+        for (moves, draws) in [(6u8, 1usize), (3, 0)] {
+            let (mut g, id) = militia_before_mountains(3, moves);
+            g.unit_mut(id).moves_left = moves;
+            let (x, y) = g.unit(id).pos();
+            let t = g.map.get_mut(x + 1, y).unwrap();
+            t.terrain = Terrain::Grassland;
+            crate::game::rng::trace_start();
+            assert!(matches!(g.try_move(id, Dir8::E), Ok(MoveOutcome::Moved)));
+            let n = crate::game::rng::trace_take().iter().filter(|d| d.at == 0x635e).count();
+            assert_eq!(n, draws, "moves {moves}");
+        }
     }
 
     #[test]

@@ -623,7 +623,8 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   the top-left corner, where the driver clamps it, and then moves it by (2x + 1, 2y + 1).
 - A land unit short of the move cost rolls random(cost) (0x634a), except with exactly 3 points
   left, which always get through; scripts avoid the roll.
-- No RNG state is saved: CIV.EXE seeds rand() from the clock when it starts. Divergences behind
+- No RNG state is saved: CIV.EXE seeds rand() from the clock when it starts (but see the seeded
+  runs below). Unseeded, divergences behind
   random() are expected: hut outcomes (0x978d random(4)), the Chieftain computer's skipped advance
   (0xbb4a), and the computer Settlers' goals. After such a divergence, its effects follow on, for
   example the human's Chieftain research bonus when another civ found the goal first (0x12c93). Two
@@ -652,6 +653,37 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   reaches the unit (0x50db), after the save if an earlier unit waits, civrs at the turn start.
   Edited saves keep the cities' saved trade (+0xa) of the original until their next turn, which
   the caravans and routes read, so the scripts set up routes from the second turn on.
+- Seeded runs (`--seed N` for `play` and `diff`): GAME_DIR's CIV.EXE is built with
+  `python3 -I reference/tools/civ_seed_patch.py civ/CIV.EXE GAME_DIR/CIV.EXE --trace
+  --quiet-ui` (the file must be named CIV.EXE). `play` sets CIVSEED=N, so seed_random
+  (0x1d43:0x38) seeds rand() with N & 0x7fff, and keeps CIV.EXE's draws in OUT_DIR/random.log;
+  `diff` runs `civrs --dump state:N:SEED --rng-log F` and prints, besides the fields, the first
+  draw where the two streams part (index, CIV.EXE's call address and the address its caller
+  returns to, civrs's address, n, result) with the draws around it. `play GAME_DIR new ...` and
+  `diff CIVRS new ...` start a new game instead (Chieftain, 7 civilizations, the Romans,
+  "Caesar"; civrs `--dump state:N:SEED` without `--load-sve`), the world generator's draws
+  compared too.
+- civrs draws all its game randomness from CIV.EXE's one stream (`Game::rng`: the MS C rand()
+  state, random(n) = rand() * n >> 15), each call named by the CIV.EXE address it stands for
+  (`Rng::random(at, n)`, overlay addresses marked by `rng::ovl`), and draws nothing for
+  pictures. CIV.EXE also draws for pictures: the map view's tile order (random(256) per
+  draw_map_view 0x1a68e: every redraw, scroll and centring), the page border (0xa46a, every
+  save screen), the leader's animation (o 0x7ea8, every tick of an audience), the city view's
+  layout (o 0x19175, which first re-seeds rand() with the sum of the city name's characters,
+  o 0x1920f, on every view: a built improvement with Animations on, a capture), the
+  newspaper, the spaceship's stars and the quiz's question. Those depend on the screen and on
+  time, so `--quiet-ui` sends them to a 16-bit generator of their own (0:0x9ac) and skips the
+  city view's srand. With that a loaded game draws nothing before its first game draw, so
+  civrs needs only srand(N) after the import; a new game's stream goes on from the world
+  generator into civ_init and start_report and then the turns.
+- `--trace` makes random(n) append (caller ip, caller cs - load segment, n, result, the
+  caller's return ip and cs) to C:\RANDOM.LOG (opened, appended and closed per draw, so the
+  log survives the harness killing dosbox). Overlay calls log the overlay load area 0x22f30 +
+  the offset in the overlay's code, which sve_diff.py matches against the overlay's flat
+  address.
+- `Game::exe_quirks` (set by the state dump only, like `use_exe_land_links`) plays CIV.EXE
+  mistakes that civrs otherwise leaves out where they decide what is drawn: the Chieftain
+  wonder purchase tests the prerequisite of the improvement with the wonder's number (0x3c4a).
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in

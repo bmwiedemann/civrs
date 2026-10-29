@@ -23,10 +23,10 @@ Patch:
   and returns to seed_random's caller. (The C getenv found nothing when called with the name
   on the stack.) The two far calls into the C runtime segment 0x1fc3 get new relocations.
 - With --trace, random(n) (0x1d43:0x53) jumps from its last shift (0x1d499) to 0:0x8d9, which
-  does the shift and appends a record to C:\\RANDOM.LOG for every draw: the caller's return ip,
-  its code segment minus the load segment (0x1d43-style for the main image; overlays share
-  their load area at 0x22f3), n, the result, and the return ip and segment of the caller's
-  caller (six words). The file must exist (the harness creates
+  does the shift and appends a record to RANDOM.LOG (in the current directory, C:\\) for every
+  draw: the caller's return ip, its code segment minus the load segment (0x1d43-style for the
+  main image; overlays share their load area at 0x22f3), n, the result, and the return ip and
+  segment of the caller's caller and the caller's first two arguments (eight words). The file must exist (the harness creates
   it empty); each record opens, appends and closes it, so the log survives a killed dosbox.
 """
 import struct, sys
@@ -165,9 +165,10 @@ def cave_code(relocs):
 
 
 def trace_code(relocs):
-    """random(n)'s tail: the shift of rand() * n, then a record appended to C:\\RANDOM.LOG
-    (which must exist): the caller's ip and cs, n, the result, and the ip and cs its caller
-    returns to (through the caller's saved bp), six little-endian words, the code segments
+    """random(n)'s tail: the shift of rand() * n, then a record appended to RANDOM.LOG in the
+    current directory (which must exist): the caller's ip and cs, n, the result, and through
+    the caller's saved bp the ip and cs it returns to and its first two arguments (for
+    ai_unit_command the civ and the unit), eight little-endian words, the code segments
     relative to the load segment."""
     JB = 0x72
     buf = lambda off: struct.pack('<H', TRACE_DATA + off)
@@ -177,21 +178,21 @@ def trace_code(relocs):
         b'\x16\x1f\x0e\x07',             # ds = ss (DGROUP), es = cs
         b'\x8d\x76\x02\xbf', buf(0),     # lea si,[bp+2]; mov di,buf
         b'\xfc\xa5\xa5\xa5\xab',         # cld; movsw x3 (ip, cs, n); stosw (the result)
-        b'\x8b\x76\x00\x8d\x74\x02\xa5\xa5',  # si = [bp] + 2: the caller's return ip, cs
+        b'\x8b\x76\x00\x8d\x74\x02\xa5\xa5\xa5\xa5',  # si = [bp] + 2: the caller's return, 2 args
         b'\x8c\xcb\x26\x29\x1e', buf(2), # mov bx,cs; sub es:[buf+2],bx
         b'\x26\x29\x1e', buf(10),        # sub es:[buf+10],bx
         b'\x0e\x1f',                     # push cs; pop ds
-        b'\xba', buf(12), b'\xb8\x01\x3d\xcd\x21',   # open(name, write)
+        b'\xba', buf(16), b'\xb8\x01\x3d\xcd\x21',   # open(name, write)
         ('jcc', JB, 'done'),
         b'\x8b\xd8\x31\xc9\x31\xd2\xb8\x02\x42\xcd\x21',  # bx = handle; seek to the end
-        b'\xba', buf(0), b'\xb9\x0c\x00\xb4\x40\xcd\x21',  # write 12 bytes
+        b'\xba', buf(0), b'\xb9\x10\x00\xb4\x40\xcd\x21',  # write 16 bytes
         b'\xb4\x3e\xcd\x21',             # close
         ('label', 'done'),
         b'\x1f\x07\x5f\x5e\x58\x5d\xcb', # pop ds es di si ax bp; retf
     ], TRACE, relocs)
 
 
-TRACE_RECORD = bytes(12) + b'C:\\RANDOM.LOG\0'   # the record; the log's name
+TRACE_RECORD = bytes(16) + b'RANDOM.LOG\0'   # the record; the log's name
 
 
 def quiet_code():

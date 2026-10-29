@@ -4,8 +4,7 @@
     python3 -I sve_diff.py play GAME_DIR SLOT TURNS OUT_DIR [--actions SCRIPT] [--seed N]
         Start CIV.EXE in dosbox (dosciv.py) on GAME_DIR (a private writable copy of the game),
         load CIVIL<SLOT>.SVE (SLOT `new`: start a new game, Chieftain, 7 civilizations, the
-        Romans, and keep its first save as OUT_DIR/t0.SVE), turn Instant Advice and AutoSave
-        off and End of Turn on, then
+        Romans), turn Instant Advice and AutoSave off and End of Turn on, then
         TURNS times:
         perform the script's actions of the turn (src/save/actions.rs; examples in
         actions/), skip the active unit (Space) until the turn ends, save to slot 2
@@ -162,37 +161,32 @@ def play(game, slot, turns, out, script=None, seed=None):
     k = dosciv.keys
     time.sleep(6)
     save = os.path.join(game, 'CIVIL2.SVE')
+    if os.path.exists(save):
+        os.remove(save)
     if slot == 'new':
-        # graphics VGA, no sound, mouse and keyboard; "Start a New Game", Chieftain, 7
-        # civilizations, the Romans, "Caesar", the leader's introduction and the story; the
-        # first turn's help overlay and note (Instant Advice is on at Chieftain); then a save
-        # to slot 2 for the options
+        # graphics VGA, no sound, mouse and keyboard; "Start a New Game", the story,
+        # Chieftain, 7 civilizations, the Romans, "Caesar", the leader's introduction, the
+        # first turn's help overlay and its note (Instant Advice is on at Chieftain)
         k(['1', 'sleep2', '1', 'sleep8', '1', 'sleep10', 'Return', 'sleep5'])
         k(['Return', 'sleep3', 'Return', 'sleep3', 'Return', 'sleep3', 'Return', 'sleep3', 'Return', 'sleep6', 'Return', 'sleep4', 'space', 'sleep12'])
-        for _ in range(3):
-            k(['Return', 'sleep3'])
-            dosciv.shot(os.path.join(out, 'start%d.png' % _))
-        if os.path.exists(save):
-            os.remove(save)
-        k(['alt+g', 'sleep1', 'Down', 'Down', 'Down', 'Down', 'Return', 'sleep2', 'Return', 'sleep2', 'Down', 'Down', 'Return', 'sleep3', 'Return', 'sleep2'])
-        slot = '2'
+        k(['Return', 'sleep3', 'Return', 'sleep3'])
+        # a new game's options: Instant Advice and AutoSave on, End of Turn off
+        opts, last = 3, 0
     else:
         # graphics VGA, no sound, mouse and keyboard; the title menu's "Load a Saved Game"; drive C:
         k(['1', 'sleep2', '1', 'sleep8', '1', 'sleep10', 'Return', 'sleep5', 'Down', 'Return', 'sleep3', 'Return', 'sleep2'])
         k(['Down'] * int(slot) + ['Return', 'sleep6'])
-    # Options (SVE 0x8aa4): Instant Advice off (its notes would take keys) and End of Turn on
-    # (else the turn ends by itself after the last unit's move, before the script is done)
-    with open(os.path.join(game, 'CIVIL%s.SVE' % slot), 'rb') as f:
-        f.seek(0x8aa4)
-        opts = f.read(1)[0]
+        # Options (SVE 0x8aa4): Instant Advice off (its notes would take keys) and End of
+        # Turn on (else the turn ends by itself after the last unit's move, before the
+        # script is done)
+        with open(os.path.join(game, 'CIVIL%s.SVE' % slot), 'rb') as f:
+            f.seek(0x8aa4)
+            opts = f.read(1)[0]
+        last = turn_of(os.path.join(game, 'CIVIL%s.SVE' % slot))
     # and AutoSave off (its save every 50th turn to CIVIL4..9, game_turn 0x2796, would take
     # the harness's Return for its drive prompt and overwrite a slot of GAME_DIR)
     toggle = (['Return'] if opts & 1 else []) + ['Down'] + (['Return'] if opts & 2 else []) + ['Down'] + (['Return'] if not opts & 4 else [])
     k(['alt+g', 'sleep1', 'Down', 'Down', 'Down', 'Return', 'sleep1'] + toggle + ['Escape', 'sleep1'])
-    last = turn_of(os.path.join(game, 'CIVIL%s.SVE' % slot))
-    if slot == '2':
-        shutil.copy(save, os.path.join(out, 't%d.SVE' % last))
-        shutil.copy(save[:-3] + 'MAP', os.path.join(out, 't%d.MAP' % last))
     end = last + int(turns)
     shot = os.path.join(out, 'now.png')
     cyan = bytes([12, 227, 235])
@@ -351,11 +345,12 @@ OVL_AREA = 0x22f30   # the overlays' load area: a call at offset k of an overlay
 
 def exe_draws(path):
     """CIV.EXE's draws from its RANDOM.LOG (civ_seed_patch.py --trace): [(call address, n,
-    result, caller's return address)], the overlays' calls as 'oNN+off' strings."""
+    result, the caller's return address)]."""
     d = open(path, 'rb').read()
     out = []
-    for i in range(len(d) // 12):
-        ip, cs, n, r, ip2, cs2 = struct.unpack_from('<6H', d, 12 * i)
+    size = 16
+    for i in range(len(d) // size):
+        ip, cs, n, r, ip2, cs2 = struct.unpack_from('<6H', d, size * i)
         at = ((cs * 16 + ip) & 0xfffff) - 5
         out.append((at, n - 0x10000 if n >= 0x8000 else n, r - 0x10000 if r >= 0x8000 else r, (cs2 * 16 + ip2) & 0xfffff))
     return out
