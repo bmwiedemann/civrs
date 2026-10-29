@@ -493,8 +493,9 @@ impl Game {
         self.radius_tile(c, idx).map(|(x, y)| self.tile_yield(slot, x, y, Some(c))).unwrap_or((0, 0, 0))
     }
 
-    /// Re-place all citizens from scratch (a new, joined or captured city; CIV.EXE reaches the
-    /// same state through a cleared worked-square mask, found_city o 0x1b375).
+    /// Re-place all citizens from scratch (a new or joined city; CIV.EXE reaches the same state
+    /// through a cleared worked-square mask, found_city o 0x1b375; a captured city keeps its
+    /// mask instead).
     pub fn auto_assign(&mut self, c: CityId) {
         for idx in 1..21u8 {
             if self.city(c).works(idx) {

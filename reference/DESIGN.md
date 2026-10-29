@@ -691,8 +691,11 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   takes CIV.EXE's land links from its first save (`--exe-links`, see above).
 - Results (2026-10-29, seed 4763, after the fixes in this round): CIVIL4 30 turns, CIVIL0 30,
   CIVIL1 30, CIVIL3 30, GROWTH 30, RAPTURE 30, MONARCHY 30, REPUBLIC 30, DEMOCRACY 30,
-  WONDERS 30, POLLUTION 24 (6 saves missing), and a new game 40 turns: every draw of the two
-  streams agrees, and the fields with them but for one-turn effects: the diff method's
+  WONDERS 30, POLLUTION 24 (6 saves missing), WAR 30 (Monarchy at war, walls, veterans,
+  barbarians, Berlin captured, Leipzig destroyed and the Germans back as another tribe, the
+  Aztecs and Babylon at war) and a new game 40 turns: every draw of the two streams agrees,
+  and the fields with them but for one-turn effects (and in WAR a Caravan counter that
+  CIV.EXE's trading-at-once leaves at -1): the diff method's
   (DEMOCRACY t52, POLLUTION t53 above), a computer Settlers' heading byte after its first
   step of a new game (t1), a human's Sail with no moves in one save (WONDERS t61), and the
   contact between the human and a computer lapsing one politics pass earlier in CIV.EXE on
@@ -700,8 +703,10 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   seeded runs found and fixed: the move roll for any land move off a road with other than
   one move left (0x634a), the veteran rolls drawn for veterans, the respawn's draw order, the
   AI's square value for non-attackers, the extra defender's lower-record count (0x90dc), the
-  losses counted only in the human's fights (0x6075), an attack keeping the attacker's
-  heading, computer moves and fights scrolling the human's view, the barbarians' start
+  losses counted only in the human's fights (0x6075), an attack, a failed move roll or the
+  zone of control keeping the computer unit's heading (0x6433 comes after them), a captured
+  city keeping its worked squares, computer moves and fights scrolling the human's view, the
+  barbarians' start
   rates, the new game's opening before the human's first move, and the quirks above.
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
