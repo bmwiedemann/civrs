@@ -130,6 +130,10 @@ def act(w, k, click, shot):
             k(['p', 'sleep1'] + steps_to(dx, dy) + ['Return', 'sleep2', 'Escape', 'sleep1'])
         shot()
         k(['Escape', 'sleep2'])
+    elif w[0] == 'menu':
+        # the treaty question a goto step opened (0x656d -> 0x1a3b4): row 0 cancels, 1 breaks
+        # the treaty; a Senate overrule after that needs one more Return
+        k(rows(w[1]) + ['Return', 'sleep2'])
     else:
         raise ValueError('unknown action %s' % w)
 
