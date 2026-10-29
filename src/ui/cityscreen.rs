@@ -1019,8 +1019,8 @@ impl CityScreen {
             let u = g.unit(id);
             dot(fb, u.x, u.y, GREY);
         }
-        for r in &c.trade_routes {
-            if let Some(other) = g.city_opt(*r) {
+        for r in c.routes() {
+            if let Some(other) = g.city_opt(r) {
                 dot(fb, other.x, other.y, 10);
             }
         }
@@ -1104,10 +1104,9 @@ fn work_tile_icons((f, s, t): (i32, i32, i32)) -> Vec<((i32, i32), i32, i32)> {
 /// The trade route lines of the INFO tab (CIV.EXE 0x10f05): "<city>:+<n>} ".
 fn c_routes(g: &crate::game::Game, city: CityId) -> Vec<String> {
     let c = g.city(city);
-    c.trade_routes
-        .iter()
+    c.routes()
         .filter_map(|r| {
-            let other = g.city_opt(*r)?;
+            let other = g.city_opt(r)?;
             let sum = other.trade + c.trade + 4;
             let n = if other.owner == c.owner { sum / 16 } else { sum / 8 };
             Some(format!("{}:+{}}} ", other.name.to_ascii_uppercase(), n))

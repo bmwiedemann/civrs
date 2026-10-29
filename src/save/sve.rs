@@ -430,7 +430,14 @@ fn import_slot(data: &[u8], map_pic: &[u8], moves_back: bool) -> Result<Game, Sa
             wonders: 0,
             worked,
             specialists,
-            trade_routes: r[0x17..0x1a].iter().filter(|c| **c < 128).map(|c| *c as u16).collect(),
+            // the slots where they are, a free one between used ones too
+            trade_routes: {
+                let mut v: Vec<u16> = r[0x17..0x1a].iter().map(|c| if *c < 128 { *c as u16 } else { crate::game::city::NO_ROUTE }).collect();
+                while v.last() == Some(&crate::game::city::NO_ROUTE) {
+                    v.pop();
+                }
+                v
+            },
             disorder: st & 0x01 != 0,
             disorder_turns: 0,
             celebrating: st & 0x40 != 0,

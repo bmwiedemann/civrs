@@ -1736,23 +1736,29 @@ impl Game {
         v
     }
 
-    /// Record a route of city `c` (CIV.EXE 0x148a7): up to three; when full, the new route
-    /// replaces the weakest one if it is stronger (by the partner's stored trade, doubled
-    /// abroad, 0x148af).
+    /// Record a route of city `c` (CIV.EXE 0x148a7..0x14950): nothing when a slot holds it
+    /// already; else, going over the three slots, the one of least weight below the new
+    /// route's takes it (the first of equals): a free slot weighs -1, a partner its stored
+    /// trade, doubled abroad (0x148af). So the first free slot, holes included, else the
+    /// weakest route if the new one is stronger.
     fn add_trade_route(&mut self, c: CityId, other: CityId) {
-        if self.city(c).trade_routes.contains(&other) {
-            return;
-        }
-        if self.city(c).trade_routes.len() < 3 {
-            self.city_mut(c).trade_routes.push(other);
-            return;
-        }
         let owner = self.city(c).owner;
         let weight = |r: CityId| self.city_opt(r).map(|rc| rc.trade * if rc.owner != owner { 2 } else { 1 }).unwrap_or(-1);
-        let routes = self.city(c).trade_routes.clone();
-        let (i, w) = routes.iter().enumerate().map(|(i, r)| (i, weight(*r))).min_by_key(|(_, w)| *w).unwrap();
-        if w < weight(other) {
-            self.city_mut(c).trade_routes[i] = other;
+        let mut least = weight(other);
+        let mut slot = None;
+        for i in 0..3 {
+            let r = self.city(c).route_slot(i);
+            if r == Some(other) {
+                return;
+            }
+            let w = r.map_or(-1, weight);
+            if w < least {
+                least = w;
+                slot = Some(i);
+            }
+        }
+        if let Some(i) = slot {
+            self.city_mut(c).set_route_slot(i, Some(other));
         }
     }
 
@@ -3192,6 +3198,19 @@ mod tests {
         g.city_mut(n).trade = 4;
         g.add_trade_route(c, n);
         assert_eq!(g.city(c).trade_routes, vec![far, n, b]);
+        // a destroyed partner leaves its slot free between the others (0xa83a); the next
+        // route takes that slot (0x148af), and the routes add up in slot order (0xf141)
+        g.destroy_city(n, slot);
+        assert_eq!(g.city(c).trade_routes, vec![far, crate::game::city::NO_ROUTE, b]);
+        assert_eq!(g.city(c).routes().collect::<Vec<_>>(), vec![far, b]);
+        let t = g.raw_trade(c);
+        let t1 = t + (11 + t + 4) / 16;
+        assert_eq!(g.city_yield(c).trade, t1 + (5 + t1 + 4) / 16);
+        g.add_trade_route(c, a);
+        assert_eq!(g.city(c).trade_routes, vec![far, a, b]);
+        // the trailing slot frees without a hole
+        g.destroy_city(b, slot);
+        assert_eq!(g.city(c).trade_routes, vec![far, a]);
     }
 
     #[test]

@@ -542,10 +542,12 @@ impl Game {
         let disorder = city.disorder;
         let i = match item {
             Production::Unit(unit_ids::CARAVAN) => {
-                // a free trade route slot: the less trade, the better; 3 at best
+                // the third trade route slot free (0xb33e): the less trade, the better, +2 for
+                // each of the first two in use; 3 at best
                 let mut v = 99;
-                if city.trade_routes.len() < 3 {
-                    v = (10 - trade / 2 + 2 * city.trade_routes.len() as i32).max(3);
+                if city.route_slot(2).is_none() {
+                    let used = (0..2).filter(|i| city.route_slot(*i).is_some()).count() as i32;
+                    v = (10 - trade / 2 + 2 * used).max(3);
                 }
                 if slot == human && city.auto_build {
                     v = 99;

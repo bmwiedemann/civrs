@@ -308,8 +308,8 @@ impl Game {
         // trade routes (CIV.EXE 0xf141): each adds (partner's stored trade, `City::trade`
         // (0xf195) + this city's trade so far + 4) / 8, or / 16 between cities of one
         // civilization
-        for r in &city.trade_routes {
-            if let Some(other) = self.city_opt(*r) {
+        for r in city.routes() {
+            if let Some(other) = self.city_opt(r) {
                 let div = if other.owner == slot { 16 } else { 8 };
                 y.trade += (other.trade + y.trade + 4) / div;
             }

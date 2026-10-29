@@ -64,6 +64,9 @@ pub struct City {
     /// Bit per CITY_RADIUS index (1..=20) of worked tiles (index 0, the centre, is implicit).
     pub worked: u32,
     pub specialists: Vec<Specialist>,
+    /// The three route slots of the record (+0x17..+0x19), in slot order; `NO_ROUTE` marks a
+    /// free slot between used ones (a destroyed partner, destroy_city 0xa83a), trailing free
+    /// slots are left out. Read them with [`City::routes`].
     pub trade_routes: Vec<CityId>,
     pub disorder: bool,
     pub disorder_turns: u8,
@@ -132,6 +135,8 @@ pub struct City {
 
 /// `City::name_index` of a city whose name is not in the name table.
 pub const NO_NAME_INDEX: u8 = 0xff;
+/// A free trade route slot (0xff in the record).
+pub const NO_ROUTE: CityId = 0xff;
 
 /// The name-table entry of `name` (the first one that has it), or `NO_NAME_INDEX`.
 pub fn name_table_index(name: &str) -> u8 {
@@ -150,6 +155,29 @@ pub fn no_garrison() -> [u8; 2] {
 impl City {
     pub fn pos(&self) -> (i32, i32) {
         (self.x, self.y)
+    }
+
+    /// The trade partners in slot order, free slots skipped (as 0xf141 and 0x10f28 go over
+    /// them).
+    pub fn routes(&self) -> impl Iterator<Item = CityId> + '_ {
+        self.trade_routes.iter().copied().filter(|r| *r != NO_ROUTE)
+    }
+
+    /// Route slot `i` (0..3), `None` when free.
+    pub fn route_slot(&self, i: usize) -> Option<CityId> {
+        self.trade_routes.get(i).copied().filter(|r| *r != NO_ROUTE)
+    }
+
+    /// Store `r` (or free the slot with `None`) in route slot `i`, keeping the trailing free
+    /// slots out of the list.
+    pub fn set_route_slot(&mut self, i: usize, r: Option<CityId>) {
+        while self.trade_routes.len() <= i {
+            self.trade_routes.push(NO_ROUTE);
+        }
+        self.trade_routes[i] = r.unwrap_or(NO_ROUTE);
+        while self.trade_routes.last() == Some(&NO_ROUTE) {
+            self.trade_routes.pop();
+        }
     }
     pub fn has_improvement(&self, id: ImprovementId) -> bool {
         self.improvements & (1u32 << id) != 0
