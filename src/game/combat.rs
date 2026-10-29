@@ -494,7 +494,9 @@ impl Game {
         }
         self.place_unit(id, city.x, city.y, 3);
         self.unit_mut(id).order = UnitOrder::None;
-        self.auto_assign(c);
+        // the worked squares stay (capture_city 0x13d76 leaves city +0x10 alone); the city
+        // routine that follows (0x1430d) fits them to the smaller size
+        self.fix_workers(c);
         // a human captor sees the city's screen (capture_city 0x1430d, city routine mode 1)
         if self.player(by).human {
             self.note_trade(c);

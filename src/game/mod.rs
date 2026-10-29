@@ -322,7 +322,8 @@ pub struct Game {
     /// drawn from the random stream (for the differential test's state dump only, as
     /// `use_exe_land_links`): the Chieftain wonder purchase's prerequisite (0x3c4a), the goto's
     /// local search choosing a step by the neighbours' costs alone (0x1eae2), the advisor's war
-    /// test reading the one word ds:0x6ed4 of the last ai_civ_turn (0xb7c7).
+    /// test reading the one word ds:0x6ed4 of the last ai_civ_turn (0xb7c7), a capture leaving
+    /// the last square of the radius out of the site/owner layer (0x13fff).
     #[serde(skip)]
     pub exe_quirks: bool,
 }

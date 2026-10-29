@@ -343,9 +343,10 @@ impl Game {
         }
         // the new owner's number goes on the city radius of the site/owner layer (0x13fbc).
         // CIV.EXE stops at index 19 (`< 0x14`, 0x13fff) and leaves (-1, -2) out, unlike
-        // destroy_city's `<= 0x14` (0xa929); civrs takes all 21 squares.
+        // destroy_city's `<= 0x14` (0xa929); civrs takes all 21 squares (but for `exe_quirks`).
         let (x, y) = self.city(c).pos();
-        for (dx, dy) in &super::barbarians::CLAIM[..21] {
+        let n = if self.exe_quirks { 20 } else { 21 };
+        for (dx, dy) in &super::barbarians::CLAIM[..n] {
             self.map.set_claim(Map::wrap_x(x + dx), y + dy, to);
         }
     }
