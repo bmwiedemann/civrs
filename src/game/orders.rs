@@ -629,14 +629,16 @@ impl Game {
     }
 
     /// Clear a unit's orders, as a click on it in the city screen does (CIV.EXE 0x122d3):
-    /// a sentried or fortified unit also gets its full moves back.
+    /// a sentried or fortified unit also gets its full moves back (flags & 9, 0x122ea), then
+    /// every order but the veteran bits is cleared (flags &= 0x30, 0x12335, a job kept under
+    /// the sentry bit too) and so is the goto. The work counter (+5) stays.
     pub fn wake_unit(&mut self, id: UnitId) {
         let u = self.unit_mut(id);
         if matches!(u.order, UnitOrder::Sentry | UnitOrder::Fortified) {
             u.moves_left = u.full_moves();
         }
         u.order = UnitOrder::None;
-        u.order_turns = 0;
+        u.sentry_job = None;
         u.goto = None;
     }
 
@@ -979,5 +981,12 @@ mod tests {
             assert_eq!(g.unit(u).order, UnitOrder::None);
             assert_eq!(g.unit(u).moves_left, moves);
         }
+        // a Settlers sentried with its job kept loses the job but keeps its work counter
+        let u = g.add_unit(slot, unit_ids::SETTLERS, x, y);
+        g.unit_mut(u).order = UnitOrder::Sentry;
+        g.unit_mut(u).sentry_job = Some(UnitOrder::Road);
+        g.unit_mut(u).order_turns = 2;
+        g.wake_unit(u);
+        assert_eq!((g.unit(u).order, g.unit(u).sentry_job, g.unit(u).order_turns), (UnitOrder::None, None, 2));
     }
 }
