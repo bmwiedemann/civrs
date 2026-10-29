@@ -405,12 +405,13 @@ impl Game {
         }
     }
 
-    /// `note_trade` for every city of `slot`, or of everyone with `None`, in record order (the
-    /// reports and `civ_score`, which run the city routine for each such city).
+    /// `city_routine_quiet` for every city of `slot`, or of everyone with `None`, in record
+    /// order (the reports and `civ_score`, which run the city routine in mode -1 for each such
+    /// city).
     pub fn note_trade_of(&mut self, slot: Option<Slot>) {
         for c in 0..self.cities.len() as CityId {
             if self.city_opt(c).is_some_and(|city| slot.is_none_or(|s| city.owner == s)) {
-                self.note_trade(c);
+                self.city_routine_quiet(c);
             }
         }
     }
@@ -690,15 +691,31 @@ impl Game {
         while cm.specialists.len() < n {
             cm.specialists.push(Specialist::Entertainer);
         }
-        // work_tile (0x132c1..0x132e3) writes the owner on the site/owner layer for the city
-        // square and each square it works, outside the city screen's drawing pass (mode 1).
-        // civrs writes in the city's turn only; CIV.EXE's other quiet runs of the city
-        // routine (reports, score) write the same squares unless they were changed since.
+        // the city's turn (mode 0) marks its squares; the other quiet runs do it in
+        // `city_routine_quiet`
         if turn {
-            let squares: Vec<(i32, i32)> = (0..21u8).filter(|i| *i == 0 || self.city(c).works(*i)).filter_map(|i| self.radius_tile(c, i)).collect();
-            for (x, y) in squares {
-                self.map.set_claim(x, y, slot);
-            }
+            self.claim_worked_squares(c);
+        }
+    }
+
+    /// work_tile (CIV.EXE 0x132c1..0x132e3) writes the city's owner on the site/owner layer
+    /// for the city square and each square it works, in every run of the city routine but
+    /// the city screen's drawing pass (mode 1).
+    fn claim_worked_squares(&mut self, c: CityId) {
+        let slot = self.city(c).owner;
+        let squares: Vec<(i32, i32)> = (0..21u8).filter(|i| *i == 0 || self.city(c).works(*i)).filter_map(|i| self.radius_tile(c, i)).collect();
+        for (x, y) in squares {
+            self.map.set_claim(x, y, slot);
+        }
+    }
+
+    /// A run of the city routine in mode -1 (`process_city(city, -1)`: the production advisor
+    /// 0xaa1b, the reports, civ_score, unrest): it stores the city's trade (`note_trade`)
+    /// and, not drawing, marks its worked squares with the owner (work_tile 0x132e3).
+    pub fn city_routine_quiet(&mut self, c: CityId) {
+        if self.city_opt(c).is_some() {
+            self.note_trade(c);
+            self.claim_worked_squares(c);
         }
     }
 
@@ -1637,5 +1654,29 @@ mod tests {
         // a capture keeps the bit
         g.city_mut(theirs).owner = human;
         assert!(!g.can_build_unit(theirs, unit_ids::TRIREME));
+    }
+
+    /// work_tile (0x132e3) marks the owner on the city square and its worked squares in
+    /// every run of the city routine but the drawing one: the reports' mode -1 too.
+    #[test]
+    fn quiet_city_runs_mark_the_worked_squares() {
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        let human = g.human_slot;
+        let settler = g.units_of(human).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        let idx = (1..21u8).find(|i| g.city(c).works(*i)).unwrap();
+        let (x, y) = g.radius_tile(c, idx).unwrap();
+        let (cx, cy) = g.city(c).pos();
+        g.map.set_claim(x, y, 0);
+        g.map.set_claim(cx, cy, 0);
+        // the city screen's drawing pass stores the trade only
+        g.note_trade(c);
+        assert_eq!((g.map.claim_at(x, y), g.map.claim_at(cx, cy)), (0, 0));
+        // a report runs the routine in mode -1
+        g.note_trade_of(Some(human));
+        assert_eq!((g.map.claim_at(x, y), g.map.claim_at(cx, cy)), (human, human));
+        g.map.set_claim(x, y, 0);
+        g.build_advice(c).unwrap();
+        assert_eq!(g.map.claim_at(x, y), human, "the production advisor's mode -1");
     }
 }

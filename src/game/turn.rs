@@ -1081,7 +1081,7 @@ impl Game {
     /// above 4 among the city slots before it.
     pub(crate) fn city_unrest(&mut self, c: CityId) {
         // city_process(city, -1) (o 0x1bc64), and again for each city compared (o 0x1be0f)
-        self.note_trade(c);
+        self.city_routine_quiet(c);
         let h = self.city_happiness(c);
         if h.happy >= h.unhappy {
             return;
@@ -1106,7 +1106,7 @@ impl Game {
             }
             let Some(other) = self.city_opt(i) else { break };
             let d = Map::civ_distance(other.pos(), city.pos()).max(1);
-            self.note_trade(i);
+            self.city_routine_quiet(i);
             let oh = self.city_happiness(i);
             let score = 32 * (oh.happy - oh.unhappy) / d;
             if score > best.0 {
