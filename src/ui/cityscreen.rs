@@ -11,7 +11,7 @@ use crate::ui::city_draw::*;
 use crate::ui::context::UiContext;
 use crate::ui::pedia_data::Entry;
 use crate::ui::screen::{DialogResult, Screen, Transition};
-use crate::ui::tilerender::{draw_city, draw_fog_edges, draw_terrain};
+use crate::ui::tilerender::{draw_fog_edges, draw_terrain};
 use crate::ui::widgets::{CityNamePrompt, MenuDialog, MessageBox, YesNo};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -86,11 +86,6 @@ const P_RES: Rect = Rect::new(2, 23, 123, 43);
 const P_SUPPORT: Rect = Rect::new(2, 67, 123, 38);
 const P_MAP: Rect = Rect::new(127, 23, 82, 82);
 const P_IMP: Rect = Rect::new(211, 1, 107, 97);
-const P_FOOD: Rect = Rect::new(2, 106, 91, 92);
-/// Dark interior of the FOOD STORAGE panel; the stippled storage box sits at its left edge,
-/// (size+1) icons wide and ten rows high (a size-1 city: (3,115)-(19,196)).
-const FOOD_AREA: Rect = Rect::new(3, 114, 90, 84);
-const FOOD_ROWS: i32 = 10;
 const P_TABS: Rect = Rect::new(95, 106, 133, 92);
 /// Buttons as draw_button's inclusive (x1, y1)..(x2, y2) (CIV.EXE 0x10737 ff.).
 const TAB_RECTS: [Rect; 4] = [Rect::new(95, 106, 34, 9), Rect::new(129, 106, 32, 9), Rect::new(161, 106, 33, 9), Rect::new(194, 106, 33, 9)];
@@ -105,8 +100,12 @@ const MAP_ORIGIN: (i32, i32) = (128, 24);
 const CITIZEN_X: i32 = 8;
 const CITIZEN_W: i32 = 192;
 const CITIZEN_Y: i32 = 8;
-const MINIMAP: Rect = Rect::new(101, 116, 120, 76);
 const B_MORE: Rect = Rect::new(287, 88, 29, 9);
+/// The city radius in CIV.EXE's order (ds:0x2498 / ds:0x24c2), the centre last.
+const EXE_RADIUS: [(i32, i32); 21] = [
+    (0, -1), (1, 0), (0, 1), (-1, 0), (1, -1), (1, 1), (-1, 1), (-1, -1), (0, -2), (2, 0), (0, 2),
+    (-2, 0), (-1, -2), (1, -2), (2, -1), (2, 1), (1, 2), (-1, 2), (-2, 1), (-2, -1), (0, 0),
+];
 /// Rows of the improvement list (from y 2, 6 px apart; CIV.EXE 0x103ad).
 const IMP_ROWS: usize = 14;
 
@@ -303,7 +302,8 @@ impl CityScreen {
     fn info_units(&self, ctx: &UiContext) -> Vec<crate::game::UnitId> {
         let g = ctx.game();
         let c = g.city(self.city);
-        g.units_at(c.x, c.y).into_iter().filter(|id| g.unit(*id).owner == c.owner).take(18).collect()
+        // the owner's units on the city square in the order of their records (0x101da)
+        g.units_of(c.owner).into_iter().filter(|id| g.unit(*id).pos() == c.pos()).take(18).collect()
     }
 
     /// Improvements then wonders of the city, as listed in the improvements panel.
@@ -645,22 +645,59 @@ impl CityScreen {
         header(fb, ctx, Rect::new(P_RES.x, P_RES.y, P_RES.w, 9), "CITY RESOURCES");
         let g = ctx.game();
         let y = g.city_yield(self.city);
-        let w = P_RES.w - 4;
-        icon_row(fb, ctx, ICON_FOOD, 2, 32, y.food, y.food_upkeep, w);
-        icon_row(fb, ctx, ICON_SHIELD, 2, 40, y.shields, y.shield_upkeep, w);
-        icon_row(fb, ctx, ICON_TRADE, 2, 47, y.trade, y.corruption, w);
-        // luxuries, taxes and science, each group separated by a small gap
-        let mut x = 2;
-        for (n, src) in [(y.lux, ICON_LUX), (y.tax, ICON_TAX), (y.sci, ICON_SCI)] {
-            if n <= 0 {
-                continue;
-            }
-            let total = y.lux.max(0) + y.tax.max(0) + y.sci.max(0);
-            let pitch = if total * 8 + 8 <= w { 8 } else { ((w - 8) / total.max(1)).max(1) };
+        // CIV.EXE 0x10a1b..0x10b80: food, shields and trade in rows 8 px apart from (4, 33),
+        // 116 / (n + 1) px apart (at most 8), a 4 px gap after the food the citizens eat and
+        // after the shields that go to units, 2 px between the trade kept and the corruption
+        let support = y.shield_upkeep;
+        let rows = [(ICON_FOOD, y.food, y.food.max(y.food_upkeep).min(999)), (ICON_SHIELD, y.shields, y.shields), (ICON_TRADE, y.trade, y.trade)];
+        for (r, (src, n, spread)) in rows.into_iter().enumerate() {
+            let pitch = (116 / (spread + 1)).clamp(1, 8);
+            let ry = 33 + 8 * r as i32;
+            let mut x = 4;
             for i in 0..n {
-                icon(fb, ctx, src, x + i * pitch, 55, None);
+                x += match r {
+                    0 if i == y.food_upkeep => 4,
+                    1 if support != 0 && i == support => 4,
+                    2 if i == y.trade - y.corruption => 2,
+                    _ => 0,
+                };
+                icon(fb, ctx, src, x, ry);
+                x += pitch;
             }
-            x += n * pitch + 4;
+        }
+        // luxuries, taxes and science at y 57 (0x10b83..0x10ca4), on a half-pixel grid of
+        // 224 / (lux + tax + sci + corruption + 2) (at most 16) from 8, 8 more after a group
+        let pitch = (224 / (y.lux + y.tax + y.sci + y.corruption + 2)).clamp(1, 16);
+        let mut x2 = 8;
+        for (n, src) in [(y.lux, ICON_LUX), (y.tax, ICON_TAX), (y.sci, ICON_SCI)] {
+            for _ in 0..n {
+                icon(fb, ctx, src, x2 / 2, 57);
+                x2 += pitch;
+            }
+            if n != 0 {
+                x2 += 8;
+            }
+        }
+        // shortages (0x10ca4..0x10ea6): the food and shields missing, drawn where a surplus
+        // would be and turned black (white 15 -> 0), and the corruption blackened
+        if y.food_upkeep > y.food {
+            let pitch = (116 / (y.food_upkeep + 1)).clamp(1, 8);
+            for i in y.food..y.food_upkeep {
+                icon(fb, ctx, ICON_FOOD, i * pitch + 8, 33);
+            }
+            recolour(fb, Rect::new(pitch * y.food + 8, 33, (y.food_upkeep - y.food) * pitch + 4, 8), WHITE, BLACK);
+        }
+        if y.shields < support {
+            // the pitch of the shields produced, not of the support (0x10db7)
+            let pitch = (116 / (y.shields + 1)).clamp(1, 8);
+            for i in y.shields..support {
+                icon(fb, ctx, ICON_SHIELD, i * pitch + 8, 41);
+            }
+            recolour(fb, Rect::new(pitch * y.shields + 8, 41, (support - y.shields) * pitch, 8), WHITE, BLACK);
+        }
+        if y.corruption != 0 {
+            let pitch = (116 / (y.trade + 1)).clamp(1, 8);
+            recolour(fb, Rect::new((y.trade - y.corruption) * pitch + 6, 49, pitch * y.corruption + 2, 8), WHITE, BLACK);
         }
     }
 
@@ -676,7 +713,7 @@ impl CityScreen {
         for (id, costs) in g.shield_costs(self.city) {
             let u = g.unit(id);
             if costs {
-                icon(fb, ctx, ICON_SHIELD, x + 8, y + 12, None);
+                icon(fb, ctx, ICON_SHIELD, x + 8, y + 12);
             }
             let (src, n) = if u.kind == rules::unit_ids::SETTLERS {
                 (ICON_FOOD, govt.settler_food as i32)
@@ -684,7 +721,7 @@ impl CityScreen {
                 (ICON_UNHAPPY, g.unit_unhappiness(self.city, u))
             };
             for k in 0..n.min(2) {
-                icon(fb, ctx, src, x + 2 * k, y + 12, None);
+                icon(fb, ctx, src, x + 2 * k, y + 12);
             }
             let kind = if u.leader { rules::unit_ids::DIPLOMAT } else { u.kind };
             unit_box(fb, ctx, kind, u.owner, x, y);
@@ -699,62 +736,85 @@ impl CityScreen {
         }
     }
 
-    fn draw_tile_icons(&self, fb: &mut Surface, ctx: &UiContext, px: i32, py: i32, yields: (i32, i32, i32), outline: Option<u8>) {
-        let (f, s, t) = yields;
-        let mut list = Vec::new();
-        list.extend(std::iter::repeat(ICON_FOOD).take(f.max(0) as usize));
-        list.extend(std::iter::repeat(ICON_SHIELD).take(s.max(0) as usize));
-        list.extend(std::iter::repeat(ICON_TRADE).take(t.max(0) as usize));
-        let n = list.len() as i32;
-        if n == 0 {
-            return;
-        }
-        let per_row = if n <= 4 { 2 } else if n <= 6 { 3 } else { 4 };
-        let rows = (n + per_row - 1) / per_row;
-        let px_pitch = 16 / per_row;
-        let py_pitch = (16 / rows).min(8);
-        for (i, src) in list.iter().enumerate() {
-            let i = i as i32;
-            icon(fb, ctx, *src, px + (i % per_row) * px_pitch, py + (i / per_row) * py_pitch, outline);
+    /// `draw_tile` (0x1aa40) of a city map square: terrain, the fringe towards squares the
+    /// human has not seen and a city.
+    fn draw_square(&self, fb: &mut Surface, ctx: &UiContext, tx: i32, ty: i32, px: i32, py: i32) {
+        let g = ctx.game();
+        draw_terrain(fb, ctx, g, tx, ty, px, py);
+        draw_fog_edges(fb, ctx, g, g.human_slot, tx, ty, px, py);
+        if let Some(city) = g.city_at(tx, ty) {
+            crate::ui::tilerender::draw_city_in_font(fb, ctx, g, city, px, py, SMALL);
         }
     }
 
-    fn draw_map(&self, fb: &mut Surface, ctx: &UiContext) {
-        panel(fb, ctx, P_MAP);
+    /// The squares of the 5x5 city map that other cities work (CIV.EXE 0xca55..0xcbf7): those
+    /// of every city at most 5 away, its centre included, indexed [dx + 2][dy + 2]. (The
+    /// original compares the x coordinates without wrapping them; civrs wraps.)
+    fn taken_squares(&self, ctx: &UiContext) -> [[bool; 5]; 5] {
         let g = ctx.game();
         let c = g.city(self.city);
-        let slot = c.owner;
-        for dy in -2..=2 {
-            for dx in -2..=2 {
-                // the corners are outside the city radius: the panel shows through
-                if dx * dx == 4 && dy * dy == 4 {
+        let mut taken = [[false; 5]; 5];
+        for other in g.all_cities() {
+            if other.pos() == c.pos() || crate::game::Map::civ_distance(c.pos(), other.pos()) > 5 {
+                continue;
+            }
+            for (idx, &(rx, ry)) in rules::CITY_RADIUS.iter().enumerate() {
+                if !other.works(idx as u8) {
                     continue;
                 }
-                let (tx, ty) = (crate::game::Map::wrap_x(c.x + dx), c.y + dy);
-                let px = MAP_ORIGIN.0 + (dx + 2) * 16;
-                let py = MAP_ORIGIN.1 + (dy + 2) * 16;
-                // unexplored (and off-map) squares leave the panel background, as in the original
-                if !crate::game::Map::in_bounds(tx, ty) || !g.explored(slot, tx, ty) {
-                    continue;
-                }
-                draw_terrain(fb, ctx, g, tx, ty, px, py);
-                draw_fog_edges(fb, ctx, g, slot, tx, ty, px, py);
-                if let Some(city) = g.city_at(tx, ty) {
-                    draw_city(fb, ctx, g, city, px, py);
+                let dx = crate::game::Map::delta_x(c.x, other.x + rx as i32);
+                let dy = other.y + ry as i32 - c.y;
+                if dx.abs() <= 2 && dy.abs() <= 2 {
+                    taken[(dx + 2) as usize][(dy + 2) as usize] = true;
                 }
             }
         }
-        // worked tiles show their yields
-        for idx in 0..21u8 {
+        taken
+    }
+
+    fn draw_map(&self, fb: &mut Surface, ctx: &UiContext) {
+        use crate::game::Map;
+        panel(fb, ctx, P_MAP);
+        let g = ctx.game();
+        let c = g.city(self.city);
+        let owner = c.owner;
+        let at = |dx: i32, dy: i32| (Map::wrap_x(c.x + dx), c.y + dy, MAP_ORIGIN.0 + (dx + 2) * 16, MAP_ORIGIN.1 + (dy + 2) * 16);
+        // CIV.EXE 0xcebd..0xd004: the centre, then the 21 squares in the original's radius
+        // order; a human city leaves the squares its owner has not seen to the panel
+        // background (a foreign one shows them all); a square with units of another civ
+        // shows them as the map does; squares other cities work get a colour 12 outline
+        let (tx, ty, px, py) = at(0, 0);
+        self.draw_square(fb, ctx, tx, ty, px, py);
+        let taken = self.taken_squares(ctx);
+        for (dx, dy) in EXE_RADIUS {
+            let (tx, ty, px, py) = at(dx, dy);
+            if !Map::in_bounds(tx, ty) || (owner == g.human_slot && !g.explored(owner, tx, ty)) {
+                continue;
+            }
+            self.draw_square(fb, ctx, tx, ty, px, py);
+            if g.unit_owner_at(tx, ty).is_some_and(|o| o != owner) {
+                crate::ui::tilerender::draw_tile_units(fb, ctx, g, g.human_slot, tx, ty, px, py, None, SMALL);
+                continue;
+            }
+            if taken[(dx + 2) as usize][(dy + 2) as usize] {
+                fb.rect_outline(Rect::new(px, py, 16, 16), RED);
+            }
+        }
+        // the worked squares, in the same order (0xd684 -> work_tile 0x13233): the square is
+        // drawn again, then its food, shields and trade from (+1, +1), 8, 5 or 3 px apart
+        // for up to 4, 6 or more items and 8 px between rows, which may run into the square
+        // below; an empty square shows icon 13 at (+5, +5)
+        for (dx, dy) in EXE_RADIUS {
+            let idx = rules::CITY_RADIUS.iter().position(|&r| r == (dx as i8, dy as i8)).unwrap() as u8;
             if !c.works(idx) {
                 continue;
             }
-            let (rx, ry) = rules::CITY_RADIUS[idx as usize];
             let Some((tx, ty)) = g.radius_tile(self.city, idx) else { continue };
-            let px = MAP_ORIGIN.0 + (rx as i32 + 2) * 16;
-            let py = MAP_ORIGIN.1 + (ry as i32 + 2) * 16;
-            let yields = g.tile_yield(slot, tx, ty, Some(self.city));
-            self.draw_tile_icons(fb, ctx, px, py, yields, None);
+            let (_, _, px, py) = at(dx, dy);
+            self.draw_square(fb, ctx, tx, ty, px, py);
+            for (src, ox, oy) in work_tile_icons(g.tile_yield(owner, tx, ty, Some(self.city))) {
+                icon(fb, ctx, src, px + ox, py + oy);
+            }
         }
     }
 
@@ -799,28 +859,25 @@ impl CityScreen {
     }
 
     fn draw_food(&self, fb: &mut Surface, ctx: &UiContext) {
-        panel(fb, ctx, P_FOOD);
-        header(fb, ctx, Rect::new(P_FOOD.x, P_FOOD.y, P_FOOD.w, 8), "FOOD STORAGE");
-        fb.fill_rect(FOOD_AREA, BORDER);
-        let c = ctx.game().city(self.city);
-        let cols = c.size as i32 + 1;
-        // 8 px per icon column, squeezed once the box would leave the panel
-        let max_w = FOOD_AREA.w - 1;
-        let pitch_x = 8.min((max_w - 9) / (cols - 1).max(1)).max(1);
-        let w = if cols > 1 { (cols - 1) * pitch_x + 9 } else { 9 };
-        let store = Rect::new(FOOD_AREA.x, FOOD_AREA.y + 1, w.min(max_w), FOOD_AREA.h - 2);
-        fill_stipple(fb, ctx, store);
+        // CIV.EXE 0x10866..0x109c0: a colour 1 box (2, 106, 91, 80 / f * f + 12) for the food
+        // factor f (10 for the human), "FOOD STORAGE" at (8, 108), the stippled store (3, 115,
+        // size * dx + 9, 80 / f * f + 2) with dx = clamp(80 / size, 1, 8), and the food in rows
+        // of size + 1 from (4, 116), 80 / f px apart
+        let g = ctx.game();
+        let c = g.city(self.city);
+        let size = (c.size as i32).max(1);
+        let factor = g.cost_factor(c.owner).max(1);
+        let dx = (80 / size).clamp(1, 8);
+        let dy = 80 / factor;
+        fb.fill_rect(Rect::new(2, 106, 91, factor * dy + 12), BORDER);
+        small_text(fb, ctx, 8, 108, WHITE, "FOOD STORAGE");
+        fill_stipple(fb, ctx, Rect::new(3, 115, size * dx + 9, factor * dy + 2));
         // a granary marks the food kept after growth with a line across the middle (0x1090a)
         if c.has_improvement(improvement_ids::GRANARY) {
-            fb.hline(5, (cols - 1) * pitch_x + 9, 155, 1);
+            fb.hline(5, size * dx + 9, 155, BORDER);
         }
-        let n = c.food.clamp(0, ctx.game().food_box(self.city));
-        for k in 0..n {
-            let (col, row) = (k % cols, k / cols);
-            if row >= FOOD_ROWS {
-                break;
-            }
-            icon(fb, ctx, ICON_FOOD, store.x + 1 + col * pitch_x, store.y + 1 + row * 8, None);
+        for i in 0..c.food.clamp(0, (size + 1) * factor) {
+            icon(fb, ctx, ICON_FOOD, (i % (size + 1)) * dx + 4, (i / (size + 1)) * dy + 116);
         }
     }
 
@@ -832,10 +889,11 @@ impl CityScreen {
             Tab::Map => 2,
         };
         for (i, r) in TAB_RECTS.iter().enumerate() {
-            let style = if i == sel { ButtonStyle::Selected } else { ButtonStyle::Plain };
-            button(fb, ctx, *r, TAB_LABELS[i], style);
+            button(fb, ctx, *r, TAB_LABELS[i], ButtonStyle::Plain);
         }
-        fb.hline(P_TABS.x + 1, P_TABS.right() - 2, 114, BORDER);
+        // the current tab's face turns white: recolour 9 -> 15 at (0x60 + 0x21 tab, 107), 32x7
+        // (CIV.EXE 0xf03d)
+        recolour(fb, Rect::new(96 + 33 * sel, 107, 32, 7), LIGHT, WHITE);
         match self.tab {
             Tab::Info => self.draw_info(fb, ctx),
             Tab::Happy => self.draw_happy(fb, ctx),
@@ -855,20 +913,16 @@ impl CityScreen {
             // and the order letters show as on the map
             // the 'a' selection blinks: background, 10 ticks, the unit, 10 ticks (0x1197e)
             if self.unit_cursor != Some(i) || (ctx.frame / 16) % 2 == 0 {
-                crate::ui::tilerender::draw_unit(fb, ctx, g, *id, x, y, false);
+                crate::ui::tilerender::draw_unit_in_font(fb, ctx, g, *id, x, y, false, SMALL);
             }
             let home = u.home.and_then(|h| g.city_opt(h)).map(|c| c.name.to_ascii_uppercase()).unwrap_or_else(|| "NONE".into());
             let abbrev: String = home.chars().take(3).chain(std::iter::once('.')).collect();
             small_text(fb, ctx, x, y + 15, BLACK, &abbrev);
         }
-        // the trade routes, 6 px apart from (98, 179) in colour 10: "<partner>:+N}" with N =
-        // (both cities' stored trade + 4) / 8, / 16 at home (CIV.EXE 0x10f05..0x11073)
-        let c = g.city(self.city);
-        for (i, r) in c.trade_routes.iter().enumerate().take(3) {
-            let Some(other) = g.city_opt(*r) else { continue };
-            let div = if other.owner == c.owner { 16 } else { 8 };
-            let n = (c.trade + other.trade + 4) / div;
-            small_text(fb, ctx, 98, 179 + 6 * i as i32, crate::ui::theme::LIGHT_GREEN, &format!("{}:+{n}}} ", other.name));
+        // the trade routes (0x10f05..0x11073): "<city>:+<n>} " at (98, 179 + 6 slot) in colour
+        // 10, n = (both cities' stored trade + 4) / 8, or / 16 between cities of one civilization
+        for (i, r) in c_routes(g, self.city).into_iter().enumerate() {
+            small_text(fb, ctx, 98, 179 + 6 * i as i32, 10, &r);
         }
         // the pollution risk: one smokestack (the map's pollution sprite) per pollution point,
         // from x 98 at y 161/162 alternately, at most 8 px apart (CIV.EXE 0x110ad)
@@ -887,71 +941,90 @@ impl CityScreen {
     /// pictograms right of the citizens.
     fn draw_happy(&self, fb: &mut Surface, ctx: &UiContext) {
         use crate::game::happiness::HappyRow;
-        use crate::ui::tilerender::{blit_sprite_remap, civ_remap, sp};
         let g = ctx.game();
         let c = g.city(self.city);
         let h = g.city_happiness(self.city);
-        // draw_citizens(city, 100, y, specialists, 92) (0xf51b)
+        // draw_citizens(city, 100, y, specialists, 92) (0xf51b); the pictograms of the
+        // buildings (0xf5d4), the martial law units (0xf8c3) and the unhappy faces of units
+        // abroad (0xfa1d) go first, 16, 2 and 2 px apart leftwards from x 208, and the
+        // citizens over them; the luxury icon (0xf5ac) and WONDERS (0xfbab) come after
         for (r, step) in h.steps.iter().enumerate().take(5) {
             let y = 116 + 16 * r as i32;
-            let row = CitizenRow { size: c.size as i32, happy: step.happy, content: step.content, unhappy: step.unhappy, extra: step.extra, specialists: &c.specialists };
-            row.draw(fb, ctx, 100, y, 92);
             match &step.row {
-                HappyRow::Base => {}
-                HappyRow::Luxuries => icon(fb, ctx, ICON_LUX, 208, y + 4, None),
                 HappyRow::Buildings(ids) => {
                     for (i, id) in ids.iter().enumerate() {
                         if let Some(cell) = improvement_cell(*id) {
-                            imp_icon(fb, ctx, cell, 208 + 16 * i as i32, y);
+                            imp_icon(fb, ctx, cell, 208 - 16 * i as i32, y);
                         }
                     }
                 }
                 HappyRow::MartialLaw(kinds) => {
-                    let map = civ_remap(c.owner);
                     for (i, k) in kinds.iter().enumerate() {
-                        blit_sprite_remap(fb, &ctx.sp.surf, sp::unit(*k), 208 - 2 * i as i32, y - 1, &map);
+                        unit_box(fb, ctx, *k, c.owner, 208 - 2 * i as i32, y - 1);
                     }
                 }
                 HappyRow::Military(faces) => {
                     for i in 0..*faces {
-                        icon(fb, ctx, ICON_UNHAPPY, 208 - 2 * i, y + 4, None);
+                        icon(fb, ctx, ICON_UNHAPPY, 208 - 2 * i, y + 4);
                     }
                 }
+                _ => {}
+            }
+            let row = CitizenRow { size: c.size as i32, happy: step.happy, content: step.content, unhappy: step.unhappy, extra: step.extra, specialists: &c.specialists };
+            row.draw(fb, ctx, 100, y, 92);
+            match &step.row {
+                HappyRow::Luxuries => icon(fb, ctx, ICON_LUX, 208, y + 4),
                 HappyRow::Wonders => {
                     small_text(fb, ctx, 190, y + 5, WHITE, "WONDERS");
                 }
+                _ => {}
             }
             fb.hline(100, 222, y + 14, BORDER);
         }
     }
 
+    /// The MAP tab, `draw_city_minimap` (0x13bbd): a black box (101, 117, 120, 75), each
+    /// square the human has seen as a 2x2 block, columns from the human's capital x - 40,
+    /// at 3/2 scale with the offsets ds:0x280c / ds:0x2810 by the parity of column and row,
+    /// colour 1 for Ocean and 2 for land, and a colour 9 outline (100, 117)-(221, 192); then
+    /// the dots of `minimap_dot` (0x13cf0): the supported units in colour 7 (0x101a9), the
+    /// cities at the ends of the trade routes in 10 (0x11042) and the city itself in 15
+    /// (0x1109b).
     fn draw_minimap(&self, fb: &mut Surface, ctx: &UiContext) {
-        fb.fill_rect(MINIMAP, BLACK);
+        const DX: [i32; 4] = [0, 2, 0, 1];
+        const DY: [i32; 4] = [-1, 0, 1, 2];
         let g = ctx.game();
         let c = g.city(self.city);
-        let slot = c.owner;
-        let (w, h) = (rules::MAP_W as i32, rules::MAP_H as i32);
-        for ty in 0..h {
-            for tx in 0..w {
-                if !g.explored(slot, tx, ty) {
+        let human = g.human_slot;
+        // ds:0xdcec[civ], the capital's x (no capital: 0)
+        let cap = g.player(human).capital.and_then(|id| g.city_opt(id)).map_or(0, |k| k.x);
+        fb.fill_rect(Rect::new(101, 117, 120, 75), BLACK);
+        for y in 0..rules::MAP_H as i32 {
+            for col in 0..rules::MAP_W as i32 {
+                let x = crate::game::Map::wrap_x(cap + col - 40);
+                if !g.explored(human, x, y) {
                     continue;
                 }
-                let x0 = MINIMAP.x + tx * MINIMAP.w / w;
-                let x1 = MINIMAP.x + (tx + 1) * MINIMAP.w / w;
-                let y0 = MINIMAP.y + ty * MINIMAP.h / h;
-                let y1 = MINIMAP.y + (ty + 1) * MINIMAP.h / h;
-                let colour = if g.map.is_land(tx, ty) { 2 } else { BORDER };
-                fb.fill_rect(Rect::new(x0, y0, (x1 - x0).max(1), (y1 - y0).max(1)), colour);
+                let d = ((y & 1) * 2 + (col & 1)) as usize;
+                let colour = if g.map.tile(x, y).terrain == rules::Terrain::Ocean { BORDER } else { 2 };
+                fb.fill_rect(Rect::new(col / 2 * 3 + DX[d] + 101, y / 2 * 3 + DY[d] + 118, 2, 2), colour);
             }
         }
-        for other in g.all_cities() {
-            if g.explored(slot, other.x, other.y) {
-                let x = MINIMAP.x + other.x * MINIMAP.w / w;
-                let y = MINIMAP.y + other.y * MINIMAP.h / h;
-                let col = rules::SLOT_COLOURS[(other.owner & 7) as usize].light;
-                fb.fill_rect(Rect::new(x, y, 2, 2), col);
+        fb.rect_outline(Rect::new(100, 117, 122, 76), LIGHT);
+        let dot = |fb: &mut Surface, x: i32, y: i32, colour: u8| {
+            let col = crate::game::Map::wrap_x(x - cap + 40);
+            fb.fill_rect(Rect::new(3 * col / 2 + 101, 3 * y / 2 + 118, 2, 2), colour);
+        };
+        for (id, _) in g.shield_costs(self.city) {
+            let u = g.unit(id);
+            dot(fb, u.x, u.y, GREY);
+        }
+        for r in &c.trade_routes {
+            if let Some(other) = g.city_opt(*r) {
+                dot(fb, other.x, other.y, 10);
             }
         }
+        dot(fb, c.x, c.y, WHITE);
     }
 
     fn draw_production(&self, fb: &mut Surface, ctx: &UiContext) {
@@ -961,19 +1034,22 @@ impl CityScreen {
         let (k, step, r) = stock_layout(c.production.cost() / 10, c.shields, factor);
         fb.fill_rect(r, BORDER);
         fill_stipple(fb, ctx, Rect::new(231, 116, r.w - 2, r.h - 18));
-        button(fb, ctx, B_CHANGE, if c.auto_build { "AUTO." } else { "CHANGE" }, ButtonStyle::Plain);
-        // production that cannot be completed: the button face flashes yellow, colours 9 and
-        // 14 swapping every 10 ticks (CIV.EXE 0x112e1)
-        if g.production_invalid(self.city) && (ctx.frame / 10) % 2 == 0 {
-            for y in B_CHANGE.y..B_CHANGE.bottom() {
-                for x in B_CHANGE.x..B_CHANGE.right() {
-                    if fb.get(x, y) == LIGHT {
-                        fb.put(x, y, crate::ui::theme::YELLOW);
+        // CHANGE (or AUTO.) and BUY on the human's cities only (0x106fb)
+        if c.owner == g.human_slot {
+            button(fb, ctx, B_CHANGE, if c.auto_build { "AUTO." } else { "CHANGE" }, ButtonStyle::Plain);
+            // production that cannot be completed: the button face flashes yellow, colours 9
+            // and 14 swapping every 10 ticks (CIV.EXE 0x112e1)
+            if g.production_invalid(self.city) && (ctx.frame / 10) % 2 == 0 {
+                for y in B_CHANGE.y..B_CHANGE.bottom() {
+                    for x in B_CHANGE.x..B_CHANGE.right() {
+                        if fb.get(x, y) == LIGHT {
+                            fb.put(x, y, crate::ui::theme::YELLOW);
+                        }
                     }
                 }
             }
+            button(fb, ctx, B_BUY, "BUY", ButtonStyle::Plain);
         }
-        button(fb, ctx, B_BUY, "BUY", ButtonStyle::Plain);
         match c.production {
             Production::Unit(u) => unit_box(fb, ctx, u, c.owner, ITEM_FRAME.0, ITEM_FRAME.1),
             // improvements and wonders by name, centred over the buttons (0x1079f)
@@ -983,7 +1059,7 @@ impl CityScreen {
         }
         let per_row = factor * k;
         for i in 0..c.shields.max(0) {
-            icon(fb, ctx, ICON_SHIELD, 232 + (i % per_row) * step / k, 117 + (i / per_row) * 8, None);
+            icon(fb, ctx, ICON_SHIELD, 232 + (i % per_row) * step / k, 117 + (i / per_row) * 8);
         }
     }
 
@@ -997,6 +1073,47 @@ impl CityScreen {
             }
         }
     }
+}
+
+/// The icons `work_tile` (0x13233, mode 1) puts on a worked square of the city map, with
+/// their offsets from the square's corner: the food, shields and trade from (1, 1), 8, 5 or
+/// 3 px apart for up to 4, 6 or more items, a new row 8 px down once a row's x has passed 8
+/// px; an empty square gets icon 13 at (5, 5).
+fn work_tile_icons((f, s, t): (i32, i32, i32)) -> Vec<((i32, i32), i32, i32)> {
+    let total = f.max(0) + s.max(0) + t.max(0);
+    if total == 0 {
+        return vec![(ICON_UNHAPPY, 5, 5)];
+    }
+    let step = if total <= 4 { 8 } else if total <= 6 { 5 } else { 3 };
+    let (mut ox, mut oy) = (0, 0);
+    let mut v = Vec::new();
+    for (src, n) in [(ICON_FOOD, f), (ICON_SHIELD, s), (ICON_TRADE, t)] {
+        for _ in 0..n {
+            v.push((src, 1 + ox, 1 + oy));
+            if ox < 8 {
+                ox += step;
+            } else {
+                ox = 0;
+                oy += 8;
+            }
+        }
+    }
+    v
+}
+
+/// The trade route lines of the INFO tab (CIV.EXE 0x10f05): "<city>:+<n>} ".
+fn c_routes(g: &crate::game::Game, city: CityId) -> Vec<String> {
+    let c = g.city(city);
+    c.trade_routes
+        .iter()
+        .filter_map(|r| {
+            let other = g.city_opt(*r)?;
+            let sum = other.trade + c.trade + 4;
+            let n = if other.owner == c.owner { sum / 16 } else { sum / 8 };
+            Some(format!("{}:+{}}} ", other.name.to_ascii_uppercase(), n))
+        })
+        .take(3)
+        .collect()
 }
 
 /// The step of `draw_citizens` (0xc91:0x6eca, 0x137ef): 7 px, or width / size when seven
@@ -1161,13 +1278,18 @@ impl Screen for CityScreen {
         self.draw_food(fb, ctx);
         self.draw_tabs(fb, ctx);
         self.draw_production(fb, ctx);
-        button(fb, ctx, B_RENAME, "RENAME", ButtonStyle::Plain);
-        button(fb, ctx, B_EXIT, "EXIT", ButtonStyle::Exit);
+        // EXIT and RENAME on the human's cities only (0x11158)
+        if ctx.game().city(self.city).owner == ctx.game().human_slot {
+            button(fb, ctx, B_RENAME, "RENAME", ButtonStyle::Plain);
+            button(fb, ctx, B_EXIT, "EXIT", ButtonStyle::Exit);
+        }
         self.draw_advisors(fb, ctx);
     }
 
+    /// The map's water cycles go on behind the city screen: the timer ISR turns them until
+    /// something stops them (0x1d43:0x655), and process_city does not.
     fn palette(&self, ctx: &UiContext) -> crate::assets::Palette {
-        ctx.game_palette()
+        crate::ui::mapview::water_cycles(ctx.game_palette(), ctx.frame)
     }
 
     fn draws_parent(&self) -> bool {
@@ -1194,6 +1316,75 @@ mod tests {
         assert_eq!(citizen_xs(8, 7, 2, 2, 1, 1), vec![8, 15, 24, 31, 40, 51]);
         // no content: no second gap
         assert_eq!(citizen_xs(100, 7, 1, 0, 1, 0), vec![100, 109]);
+    }
+
+    #[test]
+    fn worked_squares_pack_their_icons_as_work_tile() {
+        let at = |v: Vec<((i32, i32), i32, i32)>| v.into_iter().map(|(_, x, y)| (x, y)).collect::<Vec<_>>();
+        // up to 4: two to a row, 8 px apart
+        assert_eq!(at(work_tile_icons((2, 1, 1))), vec![(1, 1), (9, 1), (1, 9), (9, 9)]);
+        // 5 or 6: three to a row, 5 px apart
+        assert_eq!(at(work_tile_icons((3, 1, 1))), vec![(1, 1), (6, 1), (11, 1), (1, 9), (6, 9)]);
+        // more: four to a row, 3 px apart, the third row running into the square below
+        assert_eq!(at(work_tile_icons((4, 1, 4))).last(), Some(&(1, 17)));
+        assert_eq!(work_tile_icons((2, 0, 1))[2].0, ICON_TRADE);
+        // nothing: the "0" icon in the middle
+        assert_eq!(work_tile_icons((0, 0, 0)), vec![(ICON_UNHAPPY, 5, 5)]);
+    }
+
+    #[test]
+    fn city_screen_units_are_the_map_icons() {
+        let Some((mut ctx, cs)) = screen() else { return };
+        let (c, slot) = (cs.city, ctx.game().human_slot);
+        let (x, y) = ctx.game().city(c).pos();
+        let g = ctx.game_mut();
+        for kind in [rules::unit_ids::MILITIA, rules::unit_ids::CHARIOT] {
+            let id = g.add_unit(slot, kind, x, y);
+            g.unit_mut(id).home = Some(c);
+        }
+        g.city_mut(c).production = Production::Unit(rules::unit_ids::CATAPULT);
+        let mut fb = Surface::screen();
+        let mut cs = cs;
+        cs.draw(&mut fb, &mut ctx);
+        // the supported units at (8, 69) and (24, 69) and the production at (264, 100) are
+        // draw_icon's map icons (0x1017d, 0x10794): drawing them again changes nothing
+        let mut again = fb.clone();
+        let g = ctx.game();
+        let kinds: Vec<u8> = g.shield_costs(c).iter().map(|(id, _)| g.unit(*id).kind).collect();
+        for (i, k) in kinds.iter().enumerate() {
+            crate::ui::tilerender::draw_unit_kind(&mut again, &ctx, *k, slot, 8 + 16 * i as i32, 69);
+        }
+        crate::ui::tilerender::draw_unit_kind(&mut again, &ctx, rules::unit_ids::CATAPULT, slot, 264, 100);
+        assert_eq!(again.px, fb.px);
+        // and not the old 16x16 cells one pixel up and left
+        let mut cell = fb.clone();
+        crate::ui::tilerender::draw_unit_kind(&mut cell, &ctx, rules::unit_ids::CATAPULT, slot, 263, 99);
+        assert_ne!(cell.px, fb.px);
+    }
+
+    #[test]
+    fn squares_other_cities_work_are_marked() {
+        let Some((mut ctx, cs)) = screen() else { return };
+        let g = ctx.game_mut();
+        let (x, y) = g.city(cs.city).pos();
+        // a second city 4 east working the square 2 west of it (2 east of ours)
+        let land = (3..=5).find(|dx| g.map.is_land(x + dx, y) && g.city_at(x + dx, y).is_none());
+        let dx = land.expect("land east of the city");
+        let s = g.add_unit(g.human_slot, rules::unit_ids::SETTLERS, x + dx, y);
+        let other = g.found_city(s).expect("a second city");
+        let idx = rules::CITY_RADIUS.iter().position(|&r| r == ((2 - dx) as i8, 0)).unwrap() as u8;
+        g.city_mut(other).worked = 0;
+        g.city_mut(other).set_worked(idx, true);
+        let taken = cs.taken_squares(&ctx);
+        assert!(taken[4][2], "the square 2 east is worked by the other city");
+        assert!(!taken[0][2]);
+    }
+
+    #[test]
+    fn names_are_fitted_on_their_full_advances() {
+        let Some((ctx, _)) = screen() else { return };
+        assert_eq!(fit_small_text(&ctx, "MASS TRANSIT", 56), "MASS TRANS.");
+        assert_eq!(fit_small_text(&ctx, "GRANARY", 56), "GRANARY");
     }
 
     fn key(k: Key) -> Event {

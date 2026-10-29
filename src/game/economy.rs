@@ -227,7 +227,12 @@ impl Game {
 
     /// Units drawing shield upkeep from the city (every unit homed there, Settlers included).
     pub fn supported_units(&self, c: CityId) -> Vec<super::UnitId> {
-        self.all_units().filter(|u| u.home == Some(c)).map(|u| u.id).collect()
+        // in the order of the owner's unit records, as CIV.EXE's loops over the civ's units
+        // count (0xd26b) and draw (0xfc6e) them
+        let owner = self.city(c).owner;
+        let mut v: Vec<(bool, u8, super::UnitId)> = self.all_units().filter(|u| u.home == Some(c)).map(|u| (u.owner != owner, u.record, u.id)).collect();
+        v.sort_unstable();
+        v.into_iter().map(|(_, _, id)| id).collect()
     }
 
     /// The city gets power from its own plant or a Hoover Dam on its continent.
@@ -1056,6 +1061,23 @@ mod tests {
         g.player_mut(slot).gold = 0;
         g.player_mut(slot).advances = 0;
         (g, c)
+    }
+
+    #[test]
+    fn supported_units_follow_the_unit_records() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        let (x, y) = g.city(c).pos();
+        let ids: Vec<UnitId> = (0..3).map(|_| g.add_unit(slot, unit_ids::MILITIA, x, y)).collect();
+        for id in &ids {
+            g.unit_mut(*id).home = Some(c);
+        }
+        // the first unit by id holds the highest record: it is listed last (0xfc6e)
+        g.unit_mut(ids[0]).record = 120;
+        let sup = g.supported_units(c);
+        let recs: Vec<u8> = sup.iter().map(|id| g.unit(*id).record).collect();
+        assert!(recs.windows(2).all(|w| w[0] < w[1]), "{recs:?}");
+        assert_eq!(sup.last(), Some(&ids[0]));
     }
 
     #[test]

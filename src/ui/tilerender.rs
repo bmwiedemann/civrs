@@ -241,6 +241,12 @@ pub fn draw_terrain(fb: &mut Surface, ctx: &UiContext, game: &Game, x: i32, y: i
 /// inside and the wall overlay (cell 13,7). A foreign city appears only once the human has
 /// seen it, with the size he saw (0x1b2ad, 0x1b3a3).
 pub fn draw_city(fb: &mut Surface, ctx: &UiContext, game: &Game, city: crate::game::CityId, px: i32, py: i32) {
+    draw_city_in_font(fb, ctx, game, city, px, py, 0);
+}
+
+/// `draw_city` with the size in font `font`: 0x1b413 writes it in the screen's current font,
+/// the small font (1) on the city screen.
+pub fn draw_city_in_font(fb: &mut Surface, ctx: &UiContext, game: &Game, city: crate::game::CityId, px: i32, py: i32, font: usize) {
     let Some(size) = game.city_size_shown(city) else { return };
     let c = game.city(city);
     let col = SLOT_COLOURS[(c.owner & 7) as usize];
@@ -256,7 +262,7 @@ pub fn draw_city(fb: &mut Surface, ctx: &UiContext, game: &Game, city: crate::ga
     if c.disorder {
         blit_sprite(fb, &ctx.sp.surf, sp::citizen(4), px + 5, py + 2);
     } else {
-        let st = crate::gfx::TextStyle::new(0, 0);
+        let st = crate::gfx::TextStyle::new(font, 0);
         let x = px + if size < 10 { 6 } else { 3 };
         crate::gfx::text::draw_text(fb, &ctx.fonts, &st, x, py + 5, &size.to_string());
     }
@@ -312,6 +318,12 @@ pub fn draw_unit_kind(fb: &mut Surface, ctx: &UiContext, kind: u8, owner: u8, px
 
 /// Draw a unit sprite (with civ colours) at pixel (px,py).
 pub fn draw_unit(fb: &mut Surface, ctx: &UiContext, game: &Game, id: crate::game::UnitId, px: i32, py: i32, stacked: bool) {
+    draw_unit_in_font(fb, ctx, game, id, px, py, stacked, 0);
+}
+
+/// `draw_unit` with the status letters in font `font`: 0x1b6c3 writes them in the screen's
+/// current font, the small font (1) on the city screen.
+pub fn draw_unit_in_font(fb: &mut Surface, ctx: &UiContext, game: &Game, id: crate::game::UnitId, px: i32, py: i32, stacked: bool, font: usize) {
     let u = game.unit(id);
     let kind = if u.leader { rules::unit_ids::DIPLOMAT } else { u.kind };
     if stacked {
@@ -325,8 +337,8 @@ pub fn draw_unit(fb: &mut Surface, ctx: &UiContext, game: &Game, id: crate::game
     // white units, white otherwise
     let letter_colour = if u.owner == 1 { 9 } else { 15 };
     let letter = |fb: &mut Surface, s: &str| {
-        crate::gfx::text::draw_text(fb, &ctx.fonts, &crate::gfx::TextStyle::new(0, 0), px + 4, py + 8, s);
-        crate::gfx::text::draw_text(fb, &ctx.fonts, &crate::gfx::TextStyle::new(0, letter_colour), px + 4, py + 7, s);
+        crate::gfx::text::draw_text(fb, &ctx.fonts, &crate::gfx::TextStyle::new(font, 0), px + 4, py + 8, s);
+        crate::gfx::text::draw_text(fb, &ctx.fonts, &crate::gfx::TextStyle::new(font, letter_colour), px + 4, py + 7, s);
     };
     match u.order {
         UnitOrder::Fortified => fb.blit_part(&ctx.sp.surf, sp::icon7(sp::FORTIFIED.0), px, py, Some(0)),
@@ -365,6 +377,12 @@ pub fn draw_tile(fb: &mut Surface, ctx: &UiContext, game: &Game, slot: Slot, x: 
     if !draw_tile_without_units(fb, ctx, game, slot, x, y, px, py) {
         return;
     }
+    draw_tile_units(fb, ctx, game, slot, x, y, px, py, hide_unit, 0);
+}
+
+/// The unit part of `draw_tile_with_units` (0x1b85a): the top unit of the stack on (x, y),
+/// when `slot` may see it, its letters in font `font`.
+pub fn draw_tile_units(fb: &mut Surface, ctx: &UiContext, game: &Game, slot: Slot, x: i32, y: i32, px: i32, py: i32, hide_unit: Option<crate::game::UnitId>, font: usize) {
     // the active unit's off phase shows the bare square, not the next unit of its stack
     let blinking = hide_unit.is_some_and(|h| game.unit_opt(h).is_some_and(|u| u.pos() == (x, y)));
     // foreign units only when the viewer has seen them since their last step (unit +9,
@@ -373,7 +391,7 @@ pub fn draw_tile(fb: &mut Surface, ctx: &UiContext, game: &Game, slot: Slot, x: 
         if let Some(top) = top_unit(game, x, y) {
             // In a city only show units when there are no city sprites? Civ1 shows the city only.
             if game.city_at(x, y).is_none() || game.city(game.city_at(x, y).unwrap()).owner != game.unit(top).owner {
-                draw_unit(fb, ctx, game, top, px, py, game.units_at(x, y).len() > 1);
+                draw_unit_in_font(fb, ctx, game, top, px, py, game.units_at(x, y).len() > 1, font);
             }
         }
     }

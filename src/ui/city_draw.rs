@@ -6,9 +6,8 @@ use crate::game::{Slot, Specialist};
 use crate::assets::fonts::GLYPH_SPACING;
 use crate::gfx::text::{draw_text, ink_width};
 use crate::gfx::{Rect, Surface, TextStyle};
-use crate::rules::SLOT_COLOURS;
 use crate::ui::context::UiContext;
-use crate::ui::tilerender::{blit_sprite_remap, civ_remap, sp};
+use crate::ui::tilerender::sp;
 
 /// Light stipple colour (121,142,255).
 pub const LIGHT: u8 = 9;
@@ -64,20 +63,11 @@ pub enum ButtonStyle {
     /// Colour 9: light face, grey top/left and dark right/bottom edges (CHANGE, BUY, RENAME,
     /// unselected tabs).
     Plain,
-    /// White face (the selected tab).
-    Selected,
     /// Red face with dark red edges (EXIT).
     Exit,
 }
 
 pub fn button(fb: &mut Surface, ctx: &UiContext, r: Rect, label: &str, style: ButtonStyle) {
-    if style == ButtonStyle::Selected {
-        fb.fill_rect(r, WHITE);
-        fb.hline(r.x, r.right() - 1, r.y, GREY);
-        fb.vline(r.x, r.y, r.bottom() - 1, GREY);
-        small_text_centered(fb, ctx, (2 * r.x + r.w - 1) / 2 + 1, r.y + 2, BORDER, label);
-        return;
-    }
     // draw_button(x1, y1, x2, y2, col) (0x13ac5), r covering x1..=x2, y1..=y2: fill up to
     // x2-1/y2-1, top and left lines in col+8 (7 from col 8 up), bottom and right in 8
     // (col-8), the label in col^8 centred on (x1 + x2) / 2 + 1
@@ -92,41 +82,28 @@ pub fn button(fb: &mut Surface, ctx: &UiContext, r: Rect, label: &str, style: Bu
     small_text_centered(fb, ctx, (r.x + x2) / 2 + 1, (r.y + y2) / 2 - 2, col ^ 8, label);
 }
 
-/// 8x8 resource icons in SP257 (top-left of the cell; colours 0 and 3 are transparent).
+/// The small icons of the city screen, `draw_icon` (0x1d43:0x90) indices 8..15, cut by
+/// load_sprite_sheets (o 0x5a11) as 7x7 from SP257 (129 + 8 (i & 3), 33 + 2 (i & 4)); each
+/// constant is the corner of the icon's 8x8 cell, the icon starts one pixel inside it.
 pub const ICON_FOOD: (i32, i32) = (128, 32);
 pub const ICON_SHIELD: (i32, i32) = (136, 32);
 pub const ICON_TRADE: (i32, i32) = (144, 32);
-pub const ICON_LUX: (i32, i32) = (144, 40);
 pub const ICON_TAX: (i32, i32) = (152, 32);
 pub const ICON_SCI: (i32, i32) = (128, 40);
 pub const ICON_UNHAPPY: (i32, i32) = (136, 40);
+pub const ICON_LUX: (i32, i32) = (144, 40);
 
-/// Blit an 8x8 icon. The black outline (colour 5) can be recoloured for dark backgrounds.
-pub fn icon(fb: &mut Surface, ctx: &UiContext, src: (i32, i32), x: i32, y: i32, outline: Option<u8>) {
+/// `draw_icon(idx, x, y)` (0x1d43:0x90) of a small icon: its 7x7 picture at (x, y), colour 0
+/// transparent.
+pub fn icon(fb: &mut Surface, ctx: &UiContext, src: (i32, i32), x: i32, y: i32) {
     let sheet = &ctx.sp.surf;
-    for yy in 0..8 {
-        for xx in 0..8 {
-            let v = sheet.get(src.0 + xx, src.1 + yy);
-            if v == 0 || v == 3 {
-                continue;
+    for yy in 0..7 {
+        for xx in 0..7 {
+            let v = sheet.get(src.0 + 1 + xx, src.1 + 1 + yy);
+            if v != 0 {
+                fb.put(x + xx, y + yy, v);
             }
-            let v = if v == 5 { outline.unwrap_or(5) } else { v };
-            fb.put(x + xx, y + yy, v);
         }
-    }
-}
-
-/// A row of `n` icons at 8 px pitch, with a 4 px gap after the first `split` icons.
-/// The pitch shrinks when the row would not fit in `max_w` pixels.
-pub fn icon_row(fb: &mut Surface, ctx: &UiContext, src: (i32, i32), x: i32, y: i32, n: i32, split: i32, max_w: i32) {
-    if n <= 0 {
-        return;
-    }
-    let gap = if split > 0 && split < n { 4 } else { 0 };
-    let pitch = if n * 8 + gap <= max_w { 8 } else { ((max_w - gap) / n).max(1) };
-    for i in 0..n {
-        let g = if i >= split { gap } else { 0 };
-        icon(fb, ctx, src, x + i * pitch + g, y, None);
     }
 }
 
@@ -168,31 +145,11 @@ pub fn recolour(fb: &mut Surface, r: Rect, from: u8, to: u8) {
     }
 }
 
-/// Colour map used for unit sprites on the city screen: civ colours for the box, the white
-/// frame line of the cell turns cyan (as in the original), the guide colour takes the dark shade.
-pub fn unit_remap(slot: Slot) -> [u8; 256] {
-    let mut m = civ_remap(slot);
-    let c = SLOT_COLOURS[(slot & 7) as usize];
-    m[15] = CYAN;
-    m[3] = c.dark;
-    m
-}
-
-/// The 15x15 unit box (cyan left/bottom, dark top/right, civ-coloured face) with the unit
-/// sprite, as drawn in the INFO view and the production frame. `(x,y)` is the box corner.
+/// A unit type's map icon (0x40 + 0x20 civ + kind, `draw_icon` 0x1d43:0x90) at (x, y), as
+/// the supported units (0x1017d), the martial law row (0xf8c3) and the production box (0x10794)
+/// draw it.
 pub fn unit_box(fb: &mut Surface, ctx: &UiContext, kind: u8, owner: Slot, x: i32, y: i32) {
-    let map = unit_remap(owner);
-    blit_sprite_remap(fb, &ctx.sp.surf, sp::unit(kind), x - 1, y - 1, &map);
-}
-
-/// Empty 15x15 frame in the unit-box style (for improvement icons in the production frame).
-pub fn item_frame(fb: &mut Surface, x: i32, y: i32, owner: Slot) {
-    let c = SLOT_COLOURS[(owner & 7) as usize];
-    fb.fill_rect(Rect::new(x, y, 15, 15), c.light);
-    fb.hline(x + 1, x + 14, y, c.dark);
-    fb.vline(x + 14, y + 1, y + 13, c.dark);
-    fb.vline(x, y, y + 14, CYAN);
-    fb.hline(x, x + 14, y + 14, CYAN);
+    crate::ui::tilerender::draw_unit_kind(fb, ctx, kind, owner, x, y);
 }
 
 /// SP299 holds the improvement / wonder pictograms, 18x10 cells 19 px apart, five to a column
@@ -215,10 +172,11 @@ pub fn wonder_cell(id: u8) -> usize {
 }
 
 /// Cut `s` down to `max` pixels of small text the way CIV.EXE 0x1f1ad does: drop the last
-/// character and end the rest with a '.' unless that would follow a space.
+/// character and end the rest with a '.' unless that would follow a space. The width is
+/// `text_width` (0x182:0xef), the glyphs' full advances.
 pub fn fit_small_text(ctx: &UiContext, s: &str, max: i32) -> String {
     let mut b: Vec<u8> = s.bytes().collect();
-    while b.len() > 1 && small_text_width(ctx, std::str::from_utf8(&b).unwrap_or("")) > max {
+    while b.len() > 1 && crate::gfx::text::text_width(&ctx.fonts, SMALL, std::str::from_utf8(&b).unwrap_or("")) > max {
         let n = b.len();
         if n >= 3 && b[n - 3] != b' ' {
             b[n - 2] = b'.';
