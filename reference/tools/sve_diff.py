@@ -233,7 +233,7 @@ def play(game, slot, turns, out, script=None, seed=None):
     def save_game():
         # the GAME menu opens with Tax Rate highlighted (cyan at (100, 32)); anything else is
         # a dialog (city view, production or research menu), answered with Return, or the
-        # palace screen
+        # palace screen. 'saved', 'dialog' (one answered: try again) or 'failed'
         k(['alt+g', 'sleep1'])
         px = screen()
         if px(100, 32) != cyan:
@@ -272,7 +272,7 @@ def play(game, slot, turns, out, script=None, seed=None):
                     k(['sleep2'])
             else:
                 k(['Return', 'sleep2'])
-            return False
+            return 'dialog'
         k(['Down', 'Down', 'Down', 'Down', 'Return', 'sleep2'])
         # the slot list: slot n is the band from y = 90 + 16 n; walk the cursor to slot 2.
         # The drive prompt comes first, but not after the palace screen (its require_disk):
@@ -286,9 +286,9 @@ def play(game, slot, turns, out, script=None, seed=None):
             rows_ = slots()
         if not rows_:
             k(['Escape', 'sleep1'])
-            return False
+            return 'failed'
         k((['Up'] * (rows_[0] - 2) if rows_[0] > 2 else ['Down'] * (2 - rows_[0])) + ['Return', 'sleep3', 'Return', 'sleep2'])
-        return True
+        return 'saved'
 
     run_actions(last)
     for i in range(6 * int(turns) + 8):
@@ -296,10 +296,21 @@ def play(game, slot, turns, out, script=None, seed=None):
         k(['space', 'sleep3'])
         dosciv.shot(os.path.join(out, 'shot%02d.png' % i))
         stamp = os.path.getmtime(save) if os.path.exists(save) else 0
-        for _ in range(6):
-            if save_game() and os.path.exists(save) and os.path.getmtime(save) != stamp:
+        # the turn's first save must come before any key reaches a unit: a turn can start
+        # with a run of messages (a famine in the newspaper, the advisor's population note,
+        # an advance and the research menu, ...), and the alt+g and Return of one attempt
+        # answer at most two of them. So answered dialogs do not count against the six
+        # failed attempts (a Space here would skip the turn's first unit unsaved)
+        failed = 0
+        for j in range(40):
+            r = save_game()
+            if r == 'saved' and os.path.exists(save) and os.path.getmtime(save) != stamp:
                 break
-            dosciv.shot(os.path.join(out, 'stuck%02d.png' % i))
+            dosciv.shot(os.path.join(out, 'stuck%02d_%d.png' % (i, j)))
+            if r != 'dialog':
+                failed += 1
+                if failed == 6:
+                    break
         t = turn_of(save) if os.path.exists(save) else last
         print('step', i, 'turn', t, flush=True)
         if os.environ.get('CIVKEEP') and os.path.exists(save):

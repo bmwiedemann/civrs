@@ -653,9 +653,12 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   Anarchy a second time (DEMOCRACY's t52) and one of a turn with turn & 15 == 0 let the
   contacts kept by the human's politics lapse at the replay, which found their MET bit
   cleared (MONARCHY, REPUBLIC, DEMOCRACY t64, CIVIL3 t80; a probe in the politics loop showed
-  CIV.EXE's memory with the contact kept). A message waiting for a key at the human's turn
-  start (WONDERS t61: Rome's famine in the newspaper) can take the harness's save attempts,
-  so the turn's first save is made after a Space has skipped a unit. CIV.EXE advances a Settlers' work when its loop
+  CIV.EXE's memory with the contact kept). A run of messages waiting for keys at the human's turn
+  start (WONDERS t61: Rome's famine in the newspaper, the Domestic Advisor's population note,
+  an advance, the research menu) is answered by the save step itself: each answered dialog
+  is a try that does not count against the six failed ones, so the turn's first save still
+  comes before a Space reaches a unit (it once took all six attempts, and the save came
+  after a Space had skipped the Sail). CIV.EXE advances a Settlers' work when its loop
   reaches the unit (0x50db), after the save if an earlier unit waits, civrs at the turn start.
   Edited saves keep the cities' saved trade (+0xa) of the original until their next turn, which
   the caravans and routes read, so the scripts set up routes from the second turn on.
@@ -702,8 +705,8 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   Aztecs and Babylon at war) and a new game 40 turns: every draw of the two streams agrees,
   and the fields with them but for one-turn effects (and in WAR a Caravan counter that
   CIV.EXE's trading-at-once leaves at -1). Since the result saves are read as written
-  (above) and the dump lists a square's units by record, the only others left are a human's
-  Sail skipped before the first save of WONDERS t61 (the harness, above) and a computer
+  (above) and the dump lists a square's units by record, the only one left (WONDERS t61's skipped Sail was the harness,
+  above; 13 turns of WONDERS now match) is a computer
   Settlers' heading byte in a new game's t1: the harness saves through the GAME menu, and a
   menu choice while the human has no active unit runs the unit code for record 0x80
   (0x73cc -> 0x4bbe), whose heading reset (0x4bf8) lands on the next civilization's first
