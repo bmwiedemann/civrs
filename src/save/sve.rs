@@ -240,6 +240,22 @@ pub fn import_bytes(data: &[u8], map_pic: &[u8]) -> Result<Game, SaveError> {
 /// full moves before the loop takes the first of them (0x40c0 runs for each unit as the loop
 /// starts, so a unit saved without moves can be the first).
 fn import_slot(data: &[u8], map_pic: &[u8], moves_back: bool) -> Result<Game, SaveError> {
+    import_slot_with(data, map_pic, moves_back, true)
+}
+
+/// Import `CIVILn.SVE` as it was written, without what a load then does for the human (his
+/// politics, ai_civ_turn, goals, moves and the loop's first unit, `import`): CIV.EXE's state
+/// at the moment it saved, mid-way through the human's turn, for comparing it with civrs's
+/// own state at that point (`--dump state:0`, reference/tools/sve_diff.py). A load replays
+/// the human's politics, whose turn-numbered checks (the revolution every 4th turn, the
+/// lapsing contacts every 16th) would act a second time on that turn.
+pub fn import_as_saved(sve: &Path) -> Result<Game, SaveError> {
+    let data = std::fs::read(sve)?;
+    let map = std::fs::read(map_file(sve))?;
+    import_slot_with(&data, &map, false, false)
+}
+
+fn import_slot_with(data: &[u8], map_pic: &[u8], moves_back: bool, resume: bool) -> Result<Game, SaveError> {
     if data.len() < SVE_LEN {
         return Err(SaveError::Format(format!("a CIVILn.SVE has {SVE_LEN} bytes, this one {}", data.len())));
     }
@@ -670,6 +686,11 @@ fn import_slot(data: &[u8], map_pic: &[u8], moves_back: bool) -> Result<Game, Sa
 
     g.refresh_all_vision();
     g.update_research_catch_up();
+    if !resume {
+        g.derive_pop_milestone();
+        g.active_unit = None;
+        return Ok(g);
+    }
     // a loaded game resumes game_turn at the human's civ (ds:0xdf60 != 0 skips the civs
     // before him and his cities, 0x2614, 0x2503): his politics (0x252b), ai_civ_turn with his
     // census and policies (0x2536), ai_reset_goals (0x2541), the peaceful turns (0x259a),
@@ -932,6 +953,28 @@ mod tests {
         let Some(g0) = sample(0) else { return };
         let s = g0.all_units().find(|u| u.owner == g0.human_slot && u.kind == rules::unit_ids::SETTLERS).unwrap();
         assert_eq!(s.moves_left, 0, "slots 0..3 keep the saved moves");
+    }
+
+    #[test]
+    fn a_save_as_written_keeps_what_the_load_replays() {
+        // a save made on turn 64 (turn & 15 == 0) in the human's turn, after his politics
+        // kept a contact that had met and cleared its MET bit (0x14a5c..0x14b53): a load
+        // replays his politics (0x252b), which finds no MET bit and drops the contact; the
+        // save as written still has it
+        let Ok(dir) = crate::assets::AssetDir::locate(None) else { return };
+        let Some(path) = slot_file(dir.root(), 0) else { return };
+        let (mut data, map) = (std::fs::read(&path).unwrap(), std::fs::read(map_file(&path)).unwrap());
+        let h = Sve(&data).w(off::HUMAN) as usize & 7;
+        let o = (1..8).find(|o| *o != h).unwrap();
+        data[off::TURN..off::TURN + 2].copy_from_slice(&64i16.to_le_bytes());
+        for (a, b) in [(h, o), (o, h)] {
+            data[off::DIPLOMACY + 16 * a + 2 * b..][..2].copy_from_slice(&0x03u16.to_le_bytes());
+        }
+        let loaded = import_slot_with(&data, &map, false, true).unwrap();
+        let saved = import_slot_with(&data, &map, false, false).unwrap();
+        assert_eq!(loaded.diplo(h as u8, o as u8), 0x02);
+        assert_eq!(saved.diplo(h as u8, o as u8), 0x03);
+        assert_eq!(saved.active_unit, None);
     }
 
     #[test]

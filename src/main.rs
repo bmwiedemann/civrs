@@ -86,7 +86,9 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&P
         // generator's as CIV.EXE's do
         let mut game = match sve {
             Some(sve) => {
-                let mut game = civrs::save::sve::import(sve)?;
+                // state:0 shows the save as written (CIV.EXE's state when it saved), later
+                // turns go on from it as a load does
+                let mut game = if turns == 0 { civrs::save::sve::import_as_saved(sve)? } else { civrs::save::sve::import(sve)? };
                 game.use_exe_land_links(&civrs::save::sve::exe_land_links(sve)?);
                 if let Some(s) = seed {
                     game.rng.srand((s & 0x7fff) as u16);
