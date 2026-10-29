@@ -1116,7 +1116,7 @@ mod tests {
         let owner = g.unit(id).owner;
         let other = if owner == 2 { 3 } else { 2 };
         g.unit_mut(id).seen_by = 1 << owner | 1 << other;
-        let dir = std::env::temp_dir().join(format!("civrs-seen-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("civrs-sightings-{}", std::process::id()));
         let path = dir.join("s.sav");
         super::save_game(&path, &g).unwrap();
         assert_eq!(super::load_game(&path).unwrap().unit(id).seen_by, 1 << owner | 1 << other);

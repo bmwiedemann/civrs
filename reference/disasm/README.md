@@ -28,3 +28,7 @@ Known driver entries / call sites (see DESIGN.md "Graphics driver"):
 - entry 20 (stub 0:0x7fb): copy rect `(src page, x, y, w, h, dst page, x, y)`; entry 32 (stub 0:0x84d): draw picture.
 - game helpers in segment 0: 0xbfa fill rect on a page, 0x4aa fade palette `(ticks, pal)`, 0x382/0x3fa/0x42b palette cycling.
 - discovery screen: main image 0xbcc0..0xbf6b (no dissolve: picture copied, icon palette faded with 0:0x4aa over 30 ticks).
+
+Full function catalogue (every main-image and overlay function, named and described):
+`../CIV-EXE-FUNCTIONS.md`. Function-aligned re-disassembly and a per-function index can be
+generated with `../tools/resync_disasm.py` and `../tools/index_functions.py` (see that file).
