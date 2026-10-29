@@ -1776,7 +1776,10 @@ mod tests {
     }
 
     #[test]
-    fn a_city_losing_a_defender_shrinks_but_keeps_its_workers_until_its_turn() {
+    fn a_city_left_empty_by_an_attack_shrinks_and_puts_its_workers_in_order() {
+        // the population loss (0x618a) leaves the layout, but the city now empty re-chooses
+        // (0x625e -> 0x18bef), and choose_production's run of the city routine in mode -1
+        // assigns the workers anew (WARXC t117: Babylon down to size 1 works one square)
         let (mut g, c, d) = diplomat_game();
         g.remove_unit(d);
         let workers = g.city(c).workers();
@@ -1789,7 +1792,8 @@ mod tests {
             }
         }
         assert_eq!(g.city(c).size, 3);
-        assert_eq!(g.city(c).workers(), workers);
+        assert_eq!(g.city(c).workers() + g.city(c).specialists.len() as u32, 3);
+        assert!(g.city(c).workers() < workers);
         assert!(g.city(c).auto_build, "on alert");
     }
 

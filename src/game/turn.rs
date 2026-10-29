@@ -1252,9 +1252,8 @@ impl Game {
                 // a computer city re-chooses after every unit (city_rechoose_production 0x18c4c,
                 // called at 0xe3b1); choose_production (0xa9fd) first runs the city routine in
                 // mode -1, whose worker assignment puts a city that shrank in order and whose
-                // totals the city's taxes then use
+                // totals the city's taxes then use (`build_advice`)
                 if !human {
-                    self.fix_workers(c);
                     let next = self.ai_rechoose(c);
                     self.city_mut(c).production = next;
                 }

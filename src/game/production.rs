@@ -348,7 +348,10 @@ impl Game {
 
     /// `build_advice`; with `rechoose` the city's own unit does not count as in production.
     fn build_advice_with(&mut self, c: CityId, rechoose: bool) -> Result<BuildAdvice, Production> {
-        // choose_production starts with the city routine in mode -1 (0xaa1b)
+        // choose_production starts with the city routine in mode -1 (0xaa1b), whose worker
+        // assignment puts a city that shrank in order (an attack's population loss, 0x618a,
+        // before the re-choice of 0x625e) and whose totals the valuation reads
+        self.fix_workers(c);
         self.city_routine_quiet(c);
         let city = self.city(c).clone();
         let slot = city.owner;
