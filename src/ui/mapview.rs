@@ -724,7 +724,8 @@ impl MapView {
                     if in_city {
                         add(&mut items, "Home City \u{8f}h", key('h'), false);
                     }
-                    if (kind.role == rules::AiRole::Transport || u.kind == rules::unit_ids::CARRIER) && u.seen_by != 0xff {
+                    // a transport or Carrier with a stack successor (+0xa, 0x1c5bb)
+                    if (kind.role == rules::AiRole::Transport || u.kind == rules::unit_ids::CARRIER) && u.next.is_some() {
                         add(&mut items, "Unload \u{8f}u", key('u'), false);
                     }
                     add(&mut items, " ", BarAction::Nothing, false);
