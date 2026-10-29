@@ -189,13 +189,19 @@ impl Game {
     }
 
     /// A goto given by the AI (unit bytes +6/+7, flag 0x10 set and the low order bits
-    /// 0x0f — sentry, fortifying, fortified — cleared, 0x16416 / 0x188fc).
+    /// 0x0f — sentry, road 0x02, fortifying, fortified — cleared, 0x1641b / 0x18901). The
+    /// Settlers job bits 0xc0 and the work counter (+5) stay: irrigation, mine and fortress go
+    /// on as orders beside the goto, pollution (0x82) becomes mine (0x80).
     pub fn ai_set_goto(&mut self, id: UnitId, to: (i32, i32)) {
+        use super::UnitOrder as O;
         self.ai_memory.busy.insert(id);
         let u = self.unit_mut(id);
         u.goto = Some(to);
-        u.order = super::UnitOrder::Goto;
-        u.order_turns = 0;
+        u.order = match u.order {
+            O::Irrigate | O::Mine | O::Fortress => u.order,
+            O::CleanPollution => O::Mine,
+            _ => O::Goto,
+        };
     }
 
     /// CIV.EXE 0x189b9 `ai_clear_persistent_goals(civ)` (a new game, overlay 5 0x4a74).

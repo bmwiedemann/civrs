@@ -288,9 +288,9 @@ fn task_units(g: &mut Game, slot: Slot, reserve: i32) {
     let turn = g.turn as i32;
     for id in g.units_of(slot) {
         let Some(u) = g.unit_opt(id).cloned() else { continue };
-        // civrs: units at work are left at it. CIV.EXE clears their order bits but keeps the
-        // work counter (+5), and the unit routine gives the same work key again on the square.
-        if g.ai_memory.busy.contains(&id) || u.kind == unit_ids::NUCLEAR || u.order_turns > 0 {
+        // units at work are tasked too (0x161af tests only flag 0x10 and the Nuclear type);
+        // `ai_set_goto` keeps their job bits 0xc0 and counter
+        if g.ai_memory.busy.contains(&id) || u.kind == unit_ids::NUCLEAR {
             continue;
         }
         let cont = g.continent_exe(u.x, u.y);
@@ -2125,6 +2125,24 @@ mod tests {
         g.turn = 16 - (record & 15);
         task_units(&mut g, s, 3);
         assert!(g.unit_opt(m).is_none());
+    }
+
+    #[test]
+    fn working_units_are_tasked_and_keep_their_job_bits_and_counter() {
+        // 0x161af skips only flag 0x10 and Nuclear; 0x1641b `and 0xf0`: pollution 0x82 -> mine 0x80
+        let mut g = arena();
+        let s = ai(&g);
+        let id = g.add_unit(s, unit_ids::SETTLERS, 20, 20);
+        g.unit_mut(id).order = UnitOrder::CleanPollution;
+        g.unit_mut(id).order_turns = 2;
+        g.add_goal(s, 25, 20, goal::SETTLE, 4);
+        task_units(&mut g, s, 3);
+        let u = g.unit(id);
+        assert_eq!((u.goto, u.order, u.order_turns), (Some((25, 20)), UnitOrder::Mine, 2));
+        let r = g.add_unit(s, unit_ids::SETTLERS, 10, 20);
+        g.unit_mut(r).order = UnitOrder::Road;
+        g.ai_set_goto(r, (12, 20));
+        assert_eq!(g.unit(r).order, UnitOrder::Goto);
     }
 
     #[test]
