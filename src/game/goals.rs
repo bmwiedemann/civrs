@@ -274,7 +274,7 @@ impl Game {
     /// - units of another civ o2 there: their sentried units (ten of the ring from the first)
     ///   wake but for land units at sea
     ///   (wake_if_not_at_sea 0x92fe, so ships wake too), the first one's goto
-    ///   is dropped unless it is at sea and the looker on land; the looker's goto is dropped
+    ///   is dropped unless it is on land and the looker at sea; the looker's goto is dropped
     ///   unless it stands on land beside a ship (aircraft always). Between land units on land
     ///   without a treaty the looker's civ gets an attack goal on n (priority 3, or 1 against
     ///   barbarians, a Diplomat or a fortified defender) and, unless the looker is a Diplomat,
@@ -319,7 +319,8 @@ impl Game {
                         wu.wake_sentry();
                     }
                 }
-                if !n_ocean || here_ocean {
+                // (0x8375..0x839f: kept only by a unit on land seen from the sea)
+                if n_ocean || !here_ocean {
                     self.clear_goto(f);
                 }
                 if !(n_ocean && !here_ocean && !u.is_air()) {
@@ -424,5 +425,33 @@ mod tests {
         assert!(g.ai_memory.persistent[4].iter().all(|p| p.kind != goal::SETTLE));
         assert_eq!(g.find_goal(4, goal::DEFEND, 9, 12, None), (Some(1), 3));
         assert_eq!(g.find_goal(4, goal::ATTACK, 9, 12, None), (None, 999));
+    }
+
+    #[test]
+    fn a_look_from_land_drops_a_ships_goto_and_one_from_the_sea_keeps_a_land_units() {
+        // 0x8375..0x839f: the foreign unit's goto goes when it is at sea or the looker on land
+        use crate::rules::{unit_ids, Terrain};
+        let mut g = game();
+        let ids: Vec<_> = g.all_units().map(|u| u.id).collect();
+        for id in ids {
+            g.remove_unit(id);
+        }
+        for y in 8..13 {
+            for x in 8..14 {
+                g.map.get_mut(x, y).unwrap().terrain = if x <= 10 { Terrain::Ocean } else { Terrain::Grassland };
+                g.map.get_mut(x, y).unwrap().city = None;
+            }
+        }
+        let ship = g.add_unit(2, unit_ids::TRIREME, 10, 10);
+        let land = g.add_unit(3, unit_ids::LEGION, 11, 10);
+        g.unit_mut(ship).goto = Some((5, 10));
+        g.unit_mut(land).goto = Some((13, 12));
+        g.unit_look_goals(land);
+        assert_eq!(g.unit(ship).goto, None, "seen from land, a ship loses its goto");
+        assert_eq!(g.unit(land).goto, Some((13, 12)), "a land unit beside a ship keeps its own");
+        g.unit_mut(ship).goto = Some((5, 10));
+        g.unit_look_goals(ship);
+        assert_eq!(g.unit(land).goto, Some((13, 12)), "seen from the sea, a unit on land keeps its goto");
+        assert_eq!(g.unit(ship).goto, None);
     }
 }
