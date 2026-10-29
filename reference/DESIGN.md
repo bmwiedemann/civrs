@@ -647,9 +647,15 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   the menu (the candidates, names compared without case, 0x157a1) and clicks the right line
   (menu_select follows the mouse pointer, so keys alone would take the line under it); AutoSave
   is turned off (game_turn 0x2796 saves turn 50, 100, ... to CIVIL4..9 and asks for the drive).
-- Effects of the diff method, not differences: a save loaded on a turn with turn & 3 == 0
-  replays the human's politics (0x252b), so the revolution flag already cleared that turn ends
-  the Anarchy of the import (DEMOCRACY's t52); CIV.EXE advances a Settlers' work when its loop
+- Effects of the diff method, not differences: a load replays the human's politics (0x252b),
+  ai_civ_turn and goals, so the result saves are read as written (`--dump state:0`,
+  `sve::import_as_saved`): imported as a load, a save of a turn with turn & 3 == 0 ended the
+  Anarchy a second time (DEMOCRACY's t52) and one of a turn with turn & 15 == 0 let the
+  contacts kept by the human's politics lapse at the replay, which found their MET bit
+  cleared (MONARCHY, REPUBLIC, DEMOCRACY t64, CIVIL3 t80; a probe in the politics loop showed
+  CIV.EXE's memory with the contact kept). A message waiting for a key at the human's turn
+  start (WONDERS t61: Rome's famine in the newspaper) can take the harness's save attempts,
+  so the turn's first save is made after a Space has skipped a unit. CIV.EXE advances a Settlers' work when its loop
   reaches the unit (0x50db), after the save if an earlier unit waits, civrs at the turn start.
   Edited saves keep the cities' saved trade (+0xa) of the original until their next turn, which
   the caravans and routes read, so the scripts set up routes from the second turn on.
@@ -695,12 +701,19 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   barbarians, Berlin captured, Leipzig destroyed and the Germans back as another tribe, the
   Aztecs and Babylon at war) and a new game 40 turns: every draw of the two streams agrees,
   and the fields with them but for one-turn effects (and in WAR a Caravan counter that
-  CIV.EXE's trading-at-once leaves at -1): the diff method's
-  (DEMOCRACY t52, POLLUTION t53 above), a computer Settlers' heading byte after its first
-  step of a new game (t1), a human's Sail with no moves in one save (WONDERS t61), and the
-  contact between the human and a computer lapsing one politics pass earlier in CIV.EXE on
-  a turn & 15 == 0 (MONARCHY, REPUBLIC, DEMOCRACY t64, CIVIL3 t80; cause not found). The
-  seeded runs found and fixed: the move roll for any land move off a road with other than
+  CIV.EXE's trading-at-once leaves at -1). Since the result saves are read as written
+  (above) and the dump lists a square's units by record, the only others left are a human's
+  Sail skipped before the first save of WONDERS t61 (the harness, above) and a computer
+  Settlers' heading byte in a new game's t1: the harness saves through the GAME menu, and a
+  menu choice while the human has no active unit runs the unit code for record 0x80
+  (0x73cc -> 0x4bbe), whose heading reset (0x4bf8) lands on the next civilization's first
+  unit (not copied; probes in a patched CIV.EXE logging the unit commands and that byte
+  showed it). The first WAR save (its Aztecs at 70,37, 70,38 and 69,38, commit 087ab3e)
+  matches now too: a unit created in play looks at once (create_unit 0x8b51 -> unit_look
+  0x8cd3), so the barbarians out of a hut drop the goto of the Legion beside them. A
+  Trireme of the human's at sea (CIVIL4 with a Trireme at 6,27 and a Legion next to a
+  barbarian) rolls its loss when the loop leaves it (0x750f), before the Legion's fight.
+  The seeded runs found and fixed: the move roll for any land move off a road with other than
   one move left (0x634a), the veteran rolls drawn for veterans, the respawn's draw order, the
   AI's square value for non-attackers, the extra defender's lower-record count (0x90dc), the
   losses counted only in the human's fights (0x6075), an attack, a failed move roll or the
