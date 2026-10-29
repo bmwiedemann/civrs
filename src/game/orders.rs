@@ -429,7 +429,10 @@ impl Game {
     ///   a peace treaty", `MoveOutcome::BreakTreaty`), whose land has dropped the goto before
     ///   the question (0x656d), so after either answer the unit waits for orders with the
     ///   moves it has left (0x6d7f -> 0x442c), one step further after "Break treaty.". A land unit whose step fails for want of moves (0x636f)
-    ///   keeps its goto for the next turn.
+    ///   keeps its goto for the next turn. A job kept beside the goto (a Settlers woken to
+    ///   both from under its sentry bit, or an imported save) rides along, the human's step
+    ///   keeping the bits (0x6810 skips him), and once the goto is over the moves left go to
+    ///   the job's key.
     ///
     /// CIV.EXE presses the key again for as long as the unit keeps its order and moves; when
     /// a step neither moves the unit nor spends or clears anything (an aircraft standing on a
@@ -452,7 +455,9 @@ impl Game {
         let mut stop = AutoStop::Done;
         for _ in 0..40 {
             let Some(u) = self.unit_opt(id) else { break };
-            if !matches!(u.order, UnitOrder::Goto | UnitOrder::Home) || u.moves_left == 0 {
+            // a job kept beside a goto waits for its end (0x4bce goes before the key of 0x44bd)
+            let job_on_goto = u.order.is_work() && u.goto.is_some();
+            if !(matches!(u.order, UnitOrder::Goto | UnitOrder::Home) || job_on_goto) || u.moves_left == 0 {
                 break;
             }
             let dest = u.goto;
@@ -500,6 +505,11 @@ impl Game {
                     break;
                 }
             }
+        }
+        // the goto is over and moves are left: the loop comes back to the unit (0x6d7f ->
+        // 0x442c) and presses its job's key (0x44bd)
+        if !matches!(stop, AutoStop::Menu(..)) && self.unit_opt(id).is_some_and(|u| u.goto.is_none() && u.moves_left > 0 && u.order.is_work()) {
+            return self.run_auto_unit(id);
         }
         // what CIV.EXE would press again without end (above)
         if let Some(u) = self.unit_opt(id).filter(|u| matches!(u.order, UnitOrder::Goto | UnitOrder::Home) && u.moves_left > 0 && !matches!(stop, AutoStop::Menu(..))) {
@@ -787,8 +797,9 @@ mod tests {
         assert!(g.map.tile(30, 20).has(tile_flags::IRRIGATION));
         assert_eq!((g.unit(s).order, g.unit(s).order_turns), (UnitOrder::None, 0));
         g.give_order(s, UnitOrder::Mine).unwrap();
+        // (the human's step keeps the job bits, 0x6810 being the computer's)
         g.place_unit(s, 31, 20, 0);
-        assert_eq!((g.unit(s).order, g.unit(s).order_turns), (UnitOrder::None, 0));
+        assert_eq!((g.unit(s).order, g.unit(s).order_turns), (UnitOrder::Mine, 0));
     }
 
     #[test]

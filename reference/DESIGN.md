@@ -572,6 +572,16 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   the view origin past x = 64 it sees no unit on screen and takes the next one anywhere. civrs
   wraps, so near x = 0 a script `select`s the unit when the two would differ. A save loaded from
   slot 4 on gives the human's units their moves back (ds:0xdf60 = 2), the slots 0..3 do not.
+- Map drawing and the random stream: every `draw_map_view` (0x1a68e) draws random(256) once
+  (0x1a6e8, the seed of its square order); draw_tile, draw_tile_with_units, the unit blink and
+  animate_move draw none. It runs on every full map redraw: redraw_main_screen 0x3ec4 (after
+  menus, reports, the city screen, game_turn 0x1bea, move_units 0x4188 ...), scroll_to 0x9505 when
+  a square leaves the inner view (a step of a unit the human sees, 0x6761: his own, and a foreign
+  one with the enemy-moves option ds:0x19c0 bit 0x20), the off-screen unit 0x43c9, a click on an
+  empty square 0x4b96, Alt+keypad 0x6eed, 't' 0x71b8, and overlays 4, 6, 15, 20, 22, 23. civrs
+  draws nothing for it: its view is drawn by the renderer, and the count depends on the screen,
+  so a seeded comparison moves these draws out of CIV.EXE's game stream (civ_seed_patch
+  `--quiet-ui`) rather than civrs replaying them.
 - Results (2026-10-28, scripts above): CIVIL0 10 turns and CIVIL4 12 turns with every field equal;
   then only the computers' random advances (and in CIVIL3 the AI Settlers' goals and the human's
   research bonus that follows from them) differ. The runs found and fixed: the CHANGE menu's first

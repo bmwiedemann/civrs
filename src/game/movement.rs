@@ -441,15 +441,16 @@ impl Game {
         let human = self.is_human(self.unit(id).owner);
         let u = self.unit_mut(id);
         u.moves_left = u.moves_left.saturating_sub(cost);
-        if u.order == UnitOrder::Fortified || u.order == UnitOrder::Fortify || u.order.is_work() {
-            u.order = UnitOrder::None;
-        }
         // a computer's unit but an aircraft keeps only its veteran bits (`and status,0x30`,
         // 0x6810, civ != ds:0xd7ee and domain != 1), the human's keeps them all: a computer's
         // land unit that boarded by its own step (sentried at 0x5e22) ends awake at sea until
-        // its ship's next move sentries it (0x69e5), and the job under its sentry goes too
+        // its ship's next move sentries it (0x69e5), and the job under its sentry goes too.
+        // The human's unit steps with no fortification (his loop skips a fortified one, 0x41fb,
+        // and taking it from the stack box clears its bits, 0xa09f); a job it keeps beside a
+        // goto goes on where the goto ends (0x4bce steps the goto first, 0x44ac presses the
+        // job's key after)
         if !human && !u.is_air() {
-            if u.order == UnitOrder::Sentry {
+            if u.order == UnitOrder::Sentry || u.order == UnitOrder::Fortified || u.order == UnitOrder::Fortify || u.order.is_work() {
                 u.order = UnitOrder::None;
             }
             u.sentry_job = None;
@@ -1647,6 +1648,43 @@ mod zoc_tests {
         g.place_unit(s, 38, 22, 3);
         assert_eq!((g.unit(s).order, g.unit(s).sentry_job), (UnitOrder::None, None));
         let _ = ship;
+    }
+
+    #[test]
+    fn a_human_settlers_with_a_job_beside_its_goto_steps_first_and_works_where_it_ends() {
+        // the human's step keeps the status bits (0x6810 is for the computer only); the loop
+        // steps a goto before the job's key (0x4bce) and presses the key once it is over
+        // (0x6d7f -> 0x442c -> 0x44bd)
+        use crate::game::UnitOrder;
+        let (mut g, _) = open_field();
+        let me = g.human_slot;
+        let s = g.add_unit(me, unit_ids::SETTLERS, 38, 22);
+        g.unit_mut(s).order = UnitOrder::Road;
+        g.unit_mut(s).goto = Some((39, 22));
+        // woken from under the sentry bit with both (the sentry bit kept the job, +6 the goto)
+        g.unit_mut(s).sentry_keeping_job(true);
+        g.unit_mut(s).wake_sentry();
+        assert_eq!((g.unit(s).order, g.unit(s).goto), (UnitOrder::Road, Some((39, 22))));
+        g.unit_mut(s).moves_left = 3;
+        assert!(g.is_auto_unit(s));
+        assert_eq!(g.run_auto_unit(s), crate::game::AutoStop::Done);
+        let u = g.unit(s);
+        assert_eq!((u.pos(), u.order, u.goto, u.moves_left), ((39, 22), UnitOrder::Road, None, 0));
+        // next turn the job goes on at the goto's end
+        g.unit_mut(s).moves_left = 3;
+        assert_eq!(g.run_auto_unit(s), crate::game::AutoStop::Done);
+        let u = g.unit(s);
+        assert_eq!((u.pos(), u.order, u.order_turns), ((39, 22), UnitOrder::Road, 1));
+        // a step by hand keeps a human unit's bits as well; a computer's loses them
+        let f = g.add_unit(me, unit_ids::LEGION, 42, 22);
+        g.unit_mut(f).order = UnitOrder::Fortified;
+        g.place_unit(f, 43, 22, 3);
+        assert_eq!(g.unit(f).order, UnitOrder::Fortified);
+        let ai = if me == 2 { 3 } else { 2 };
+        let c = g.add_unit(ai, unit_ids::LEGION, 42, 28);
+        g.unit_mut(c).order = UnitOrder::Fortified;
+        g.place_unit(c, 43, 28, 3);
+        assert_eq!(g.unit(c).order, UnitOrder::None);
     }
 
     #[test]
