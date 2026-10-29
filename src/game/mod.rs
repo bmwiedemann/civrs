@@ -220,9 +220,11 @@ pub struct Game {
     /// trailer, the rest is not saved.
     #[serde(skip)]
     pub ai_memory: goals::AiMemory,
-    /// Computer players (bit per slot) whose audience with the human is queued but not over:
-    /// CIV.EXE holds the audience while their units move, civrs after their turn, so until
-    /// then their units keep the peace with the human. Not saved.
+    /// Computer players (bit per slot) whose audience with the human is queued but not over.
+    /// CIV.EXE holds the audience while their units move, and so does the turn runner (its
+    /// unit loop stops for the answer, `unit_ai::start_units`); where nobody answers in the
+    /// middle of the loop (`unit_ai::move_units`) their units keep the peace with the human
+    /// until it is over. Not saved.
     #[serde(skip)]
     pub audience_pending: u8,
     /// ds:0x3934 between audiences: -1 (none, the initial value), else 0 after a
@@ -750,7 +752,8 @@ impl Game {
     }
 
     /// `Game::hostile`, except that a computer player keeps the peace with the human while an
-    /// audience between them is queued (`audience_pending`).
+    /// audience between them is queued (`audience_pending`; only where its unit loop does
+    /// not stop for the answer).
     pub fn may_fight(&self, slot: Slot, o: Slot) -> bool {
         self.hostile(slot, o) && !(o == self.human_slot && slot != 0 && self.audience_pending & (1 << slot) != 0)
     }

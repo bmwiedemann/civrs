@@ -1105,4 +1105,31 @@ mod tests {
         assert_eq!(ds.len(), 1);
         assert_eq!(ds[0].proposal, Proposal::Emissary);
     }
+
+    #[test]
+    fn the_computers_unit_loop_waits_for_the_humans_answer_to_its_audience() {
+        use crate::game::turn::TurnStep;
+        let (mut g, human, ai) = meeting_game();
+        // the meeting unit comes first in the loop, a second one later
+        let first = g.units_of(ai)[0];
+        let later = g.add_unit(ai, unit_ids::PHALANX, 24, 24);
+        assert!(g.unit(first).record < g.unit(later).record);
+        let mut asked = Vec::new();
+        let stopped = crate::ai::unit_ai::start_units(&mut g, ai, &mut |t| {
+            if let TurnStep::Event(GameEvent::NeedsDecision(crate::game::Decision::Diplomacy(st))) = t {
+                asked.push(st);
+            }
+        });
+        let s = stopped.expect("the loop stops at the audience (civs_meet 0x1508d)");
+        assert_eq!(asked.len(), 1);
+        assert_eq!(asked[0].proposal, Proposal::Emissary);
+        assert_eq!(g.unit(later).moves_left, g.unit(later).info().moves * 3, "the later unit has not moved yet");
+        assert_eq!(g.ai_memory.moving, None);
+        // receive him, refuse what is asked; the loop then goes on with the rest
+        play(&mut g, asked[0].clone(), &|_| 0);
+        assert_eq!(g.audience_pending, 0);
+        assert!(crate::ai::unit_ai::resume_units(&mut g, s, &mut |_| {}).is_none());
+        assert_eq!(g.unit(later).moves_left, 0, "the later unit has had its turn");
+        let _ = human;
+    }
 }

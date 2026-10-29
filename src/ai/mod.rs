@@ -13,8 +13,10 @@ use crate::game::{Game, Slot};
 use crate::rules::Govt;
 
 pub trait AiDriver {
-    /// Play the whole turn for `slot`: city management, unit moves, diplomacy.
-    fn play_turn(&mut self, g: &mut Game, slot: Slot, sink: &mut dyn FnMut(TurnStep));
+    /// Play the whole turn for `slot`: city management, unit moves, diplomacy. Returns the
+    /// unit loop when it stopped at a question for the human (`unit_ai::start_units`); the
+    /// turn runner goes on with it once it is answered.
+    fn play_turn(&mut self, g: &mut Game, slot: Slot, sink: &mut dyn FnMut(TurnStep)) -> Option<unit_ai::UnitLoop>;
 }
 
 pub struct Ai {
@@ -33,18 +35,17 @@ impl AiDriver for Ai {
     /// also picks the government), then `ai_reset_goals` (0x2541) and `move_units` (0x25af,
     /// `unit_ai::move_units`). The barbarians' and the human's `ai_civ_turn` is the turn
     /// runner's.
-    fn play_turn(&mut self, g: &mut Game, slot: Slot, sink: &mut dyn FnMut(TurnStep)) {
+    fn play_turn(&mut self, g: &mut Game, slot: Slot, sink: &mut dyn FnMut(TurnStep)) -> Option<unit_ai::UnitLoop> {
         if slot == 0 {
-            unit_ai::play_barbarians(g, sink);
-            return;
+            return unit_ai::start_units(g, 0, sink);
         }
         let p = g.player(slot);
         if !p.in_game || !p.alive {
-            return;
+            return None;
         }
         unit_ai::civ_turn(g, slot);
         if !g.player(slot).alive {
-            return;
+            return None;
         }
         g.reset_goals(slot);
         // the rates are set after the cities (`Game::ai_tax_rates`, 0xa699)
@@ -55,7 +56,7 @@ impl AiDriver for Ai {
         }
         // contacts, audiences and the computer players' wars and treaties happen as units
         // meet (`Game::civs_meet`) and in `Game::civ_politics` at the start of the turn
-        unit_ai::move_units(g, slot, sink);
+        unit_ai::start_units(g, slot, sink)
     }
 }
 

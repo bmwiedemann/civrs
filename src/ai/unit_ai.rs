@@ -1577,6 +1577,23 @@ fn execute(g: &mut Game, id: UnitId, cmd: Command, sink: &mut dyn FnMut(TurnStep
     None
 }
 
+/// Where the computer's or the barbarians' unit loop (`move_units`) stands: the pass over
+/// the records, the record it goes on from, and the unit it stopped at with the next of its
+/// commands (0 = its look is done, its turn not yet begun). It stops when the human must
+/// answer (`resume_units`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnitLoop {
+    pub slot: Slot,
+    pass: u8,
+    from: usize,
+    steps: u32,
+    again: bool,
+    at: Option<(UnitId, usize, u8)>,
+    /// Stop at a question for the human (the turn runner); without it the loop runs to its
+    /// end and the questions wait in the sink (tests, tools).
+    stops: bool,
+}
+
 /// The computer's and the barbarians' unit loop (`move_units` 0x403e for a civ the human
 /// does not play). The units get their moves again (0x40a4, `Game::reset_moves`), then the
 /// loop runs over the civ's unit records 0..127 (0x4144..0x4177). Each unit it comes to looks
@@ -1585,17 +1602,54 @@ fn execute(g: &mut Game, id: UnitId, cmd: Command, sink: &mut dyn FnMut(TurnStep
 /// is never set for a computer, so every pass looks again. Then `visit_unit` gives it its
 /// turn. After 'u' the loop goes on from the ship's first passenger (0x4e64, which looks
 /// first too), and the records are gone through again from 0 (0x4e5a, 0x7691 -> 0x4144);
-/// civrs stops after three passes.
+/// civrs stops after three passes. The loop runs to its end; the turn runner stops it at
+/// the human's questions instead (`start_units`).
 pub fn move_units(g: &mut Game, slot: Slot, sink: &mut dyn FnMut(TurnStep)) {
     g.reset_moves(slot);
-    g.ai_memory.moving = Some(slot);
-    for _ in 0..3 {
-        if !unit_pass(g, slot, sink) {
+    let s = UnitLoop { slot, pass: 0, from: 0, steps: 0, again: false, at: None, stops: false };
+    resume_units(g, s, sink);
+}
+
+/// `move_units` as the turn runner plays it: CIV.EXE asks the human in the middle of the
+/// loop (an audience the look or the move of a unit opens, civs_meet 0x1508d into
+/// overlay 6), and his answer holds for the rest of the civ's moves. The loop stops after
+/// the look or the command that raised a question for the human (`TurnStep::Decision`)
+/// and returns where it stands; `resume_units` goes on from the same unit and pass once
+/// it is answered.
+pub fn start_units(g: &mut Game, slot: Slot, sink: &mut dyn FnMut(TurnStep)) -> Option<UnitLoop> {
+    g.reset_moves(slot);
+    resume_units(g, UnitLoop { slot, pass: 0, from: 0, steps: 0, again: false, at: None, stops: true }, sink)
+}
+
+/// Run the unit loop `s` on: to its end (None, the vision refreshed), or to the next
+/// question for the human (`s.stops`).
+pub fn resume_units(g: &mut Game, mut s: UnitLoop, sink: &mut dyn FnMut(TurnStep)) -> Option<UnitLoop> {
+    let asked = std::cell::RefCell::new(Vec::new());
+    let mut watch = |t: TurnStep| {
+        if let TurnStep::Event(crate::game::GameEvent::NeedsDecision(d)) | TurnStep::Decision(d) = &t {
+            asked.borrow_mut().push(d.clone());
+        }
+        sink(t);
+    };
+    // (decisions of a computer player never reach the human, `TurnRunner::step`)
+    let stops = s.stops;
+    let stop = |g: &Game| stops && asked.take().iter().any(|d| g.is_human(crate::game::turn::decision_slot(g, d)));
+    g.ai_memory.moving = Some(s.slot);
+    while s.pass < 3 {
+        if unit_pass(g, &mut s, &mut watch, &stop) {
+            g.ai_memory.moving = None;
+            return Some(s);
+        }
+        if !std::mem::take(&mut s.again) {
             break;
         }
+        s.pass += 1;
+        s.from = 0;
+        s.steps = 0;
     }
     g.ai_memory.moving = None;
-    g.refresh_vision(slot);
+    g.refresh_vision(s.slot);
+    None
 }
 
 /// The barbarians' turn: `move_units` for civ 0, whose units are asked by the barbarian
@@ -1610,48 +1664,78 @@ fn unit_from_record(g: &Game, slot: Slot, from: usize) -> Option<UnitId> {
     g.all_units().filter(|u| u.owner == slot && u.record as usize >= from).min_by_key(|u| u.record).map(|u| u.id)
 }
 
-/// One pass of `move_units` over the records; true when a 'u' asks for another (0x4e5a).
-fn unit_pass(g: &mut Game, slot: Slot, sink: &mut dyn FnMut(TurnStep)) -> bool {
-    let mut again = false;
-    let mut from = 0;
+/// One pass of `move_units` over the records (from where `s` stands); `s.again` when a 'u'
+/// asks for another (0x4e5a). True when it stops at a question (`stop`).
+fn unit_pass(g: &mut Game, s: &mut UnitLoop, sink: &mut dyn FnMut(TurnStep), stop: &dyn Fn(&Game) -> bool) -> bool {
     // (a guard against ships unloading for ever; CIV.EXE has none)
-    for _ in 0..4 * 256 {
-        let Some(id) = unit_from_record(g, slot, from) else { break };
-        let record = g.unit(id).record as usize;
-        g.unit_look(id);
-        flush_events(g, sink);
-        match visit_unit(g, slot, id, sink) {
-            Some(next) => {
-                from = g.unit(next).record as usize;
-                again = true;
+    while s.steps < 4 * 256 {
+        let (id, record, call) = match s.at.take() {
+            Some(at) => at,
+            None => {
+                let Some(id) = unit_from_record(g, s.slot, s.from) else { break };
+                let record = g.unit(id).record as usize;
+                g.unit_look(id);
+                flush_events(g, sink);
+                if stop(g) {
+                    s.at = Some((id, record, 0));
+                    return true;
+                }
+                (id, record, 0)
             }
-            None => from = record + 1,
+        };
+        match visit_unit(g, s.slot, id, call, sink, stop) {
+            Visit::Stopped(call) => {
+                s.at = Some((id, record, call));
+                return true;
+            }
+            Visit::Unloaded(next) => {
+                s.steps += 1;
+                s.from = g.unit(next).record as usize;
+                s.again = true;
+            }
+            Visit::Done => {
+                s.steps += 1;
+                s.from = record + 1;
+            }
         }
     }
-    again
+    false
 }
 
-/// The turn of one unit the loop has come to, after its look. Sentried and fortified units
-/// and those without moves are passed over (0x41fb, 0x4215); a fortifying one completes its
-/// fortification (`Game::complete_fortify`, 0x4239). The others, Settlers at work among
-/// them, take their commands (`run_unit`): the human's loop presses a working unit's key by
-/// itself (0x4492..0x452f), the computer's asks the unit routine, whose key may go on with
-/// the job or leave it. An aircraft that has used its moves counts its fuel (0x750f).
-fn visit_unit(g: &mut Game, slot: Slot, id: UnitId, sink: &mut dyn FnMut(TurnStep)) -> Option<UnitId> {
-    let u = g.unit(id);
-    if matches!(u.order, UnitOrder::Sentry | UnitOrder::Fortified) || u.moves_left == 0 {
-        return None;
+/// How a unit's turn in the loop ended.
+enum Visit {
+    Done,
+    /// After a 'u', the loop goes on with this unit.
+    Unloaded(UnitId),
+    /// Stopped at a question for the human; the unit's next command call.
+    Stopped(u8),
+}
+
+/// The turn of one unit the loop has come to, after its look, from its command call `call`
+/// (0: not begun). Sentried and fortified units and those without moves are passed over
+/// (0x41fb, 0x4215); a fortifying one completes its fortification (`Game::complete_fortify`,
+/// 0x4239). The others, Settlers at work among them, take their commands (`run_unit`): the
+/// human's loop presses a working unit's key by itself (0x4492..0x452f), the computer's asks
+/// the unit routine, whose key may go on with the job or leave it. An aircraft that has
+/// used its moves counts its fuel (0x750f).
+fn visit_unit(g: &mut Game, slot: Slot, id: UnitId, call: u8, sink: &mut dyn FnMut(TurnStep), stop: &dyn Fn(&Game) -> bool) -> Visit {
+    // (an answer may have taken the unit away, or given it to another civ)
+    let Some(u) = g.unit_opt(id).filter(|u| u.owner == slot) else { return Visit::Done };
+    if call == 0 {
+        if matches!(u.order, UnitOrder::Sentry | UnitOrder::Fortified) || u.moves_left == 0 {
+            return Visit::Done;
+        }
+        if u.order == UnitOrder::Fortify {
+            g.complete_fortify(id);
+            return Visit::Done;
+        }
     }
-    if u.order == UnitOrder::Fortify {
-        g.complete_fortify(id);
-        return None;
-    }
-    let next = run_unit(g, slot, id, sink);
-    if next.is_none() && g.unit_opt(id).is_some_and(|u| u.moves_left == 0) {
+    let v = run_unit(g, slot, id, call.max(1), sink, stop);
+    if matches!(v, Visit::Done) && g.unit_opt(id).is_some_and(|u| u.moves_left == 0) {
         g.air_fuel_turn(id);
         flush_events(g, sink);
     }
-    next
+    v
 }
 
 fn trace() -> bool {
@@ -1675,13 +1759,14 @@ fn next_command(g: &mut Game, slot: Slot, id: UnitId) -> Command {
     }
 }
 
-/// The commands of one unit (0x442c..0x6daa): it is asked while it has moves, five times
-/// at most, the fifth answer being ' ' (0x4464, dropping goto and heading). Any command but
-/// 0 drops the goto first; with a goto the key comes from `goto_direction` (an unreachable
-/// goto is dropped there), without one the heading is forgotten before the key is carried
-/// out. Returns the unit the loop goes on with after a 'u'.
-fn run_unit(g: &mut Game, slot: Slot, id: UnitId, sink: &mut dyn FnMut(TurnStep)) -> Option<UnitId> {
-    for call in 1..=5 {
+/// The commands of one unit (0x442c..0x6daa) from call `first` on: it is asked while it has
+/// moves, five times at most, the fifth answer being ' ' (0x4464, dropping goto and
+/// heading). Any command but 0 drops the goto first; with a goto the key comes from
+/// `goto_direction` (an unreachable goto is dropped there), without one the heading is
+/// forgotten before the key is carried out. After a 'u' the loop goes on with the unit
+/// `execute` returns; after a command that asked the human (`stop`) it stops.
+fn run_unit(g: &mut Game, slot: Slot, id: UnitId, first: u8, sink: &mut dyn FnMut(TurnStep), stop: &dyn Fn(&Game) -> bool) -> Visit {
+    for call in first..=5 {
         let Some(u) = g.unit_opt(id) else { break };
         if u.moves_left == 0 || u.owner != slot {
             break;
@@ -1710,10 +1795,13 @@ fn run_unit(g: &mut Game, slot: Slot, id: UnitId, sink: &mut dyn FnMut(TurnStep)
             g.set_heading(id, 0xff);
         }
         if let Some(next) = execute(g, id, cmd, sink) {
-            return Some(next);
+            return Visit::Unloaded(next);
+        }
+        if stop(g) {
+            return Visit::Stopped(call + 1);
         }
     }
-    None
+    Visit::Done
 }
 
 /// Give one computer unit its turn (tests and tools): `run_unit` with the civilization as
@@ -1721,7 +1809,7 @@ fn run_unit(g: &mut Game, slot: Slot, id: UnitId, sink: &mut dyn FnMut(TurnStep)
 pub fn act(g: &mut Game, id: UnitId, sink: &mut dyn FnMut(TurnStep)) {
     let Some(slot) = g.unit_opt(id).map(|u| u.owner) else { return };
     g.ai_memory.moving = Some(slot);
-    run_unit(g, slot, id, sink);
+    run_unit(g, slot, id, 1, sink, &|_| false);
     g.ai_memory.moving = None;
 }
 

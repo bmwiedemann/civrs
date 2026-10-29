@@ -62,6 +62,10 @@ pub struct TurnRunner {
     /// The opening of a new game ran first (`Game::opening`); go on with a whole turn.
     #[serde(default)]
     pub then_turn: bool,
+    /// A computer's or the barbarians' unit loop stopped at a question for the human
+    /// (`unit_ai::start_units`): it goes on, from the same unit, once he has answered.
+    #[serde(skip)]
+    pub units: Option<crate::ai::unit_ai::UnitLoop>,
 }
 
 /// Serialisable subset of TurnStep (events/decisions only).
@@ -123,7 +127,7 @@ pub fn milestone_step(t: u16, pop: i32) -> (u16, String) {
 
 impl TurnRunner {
     pub fn new() -> TurnRunner {
-        TurnRunner { phase: Phase::HumanUnits, ai_index: 0, pending: Default::default(), waiting: None, then_turn: false }
+        TurnRunner { phase: Phase::HumanUnits, ai_index: 0, pending: Default::default(), waiting: None, then_turn: false, units: None }
     }
 
     /// Turn 0 of a new game up to the human's first move: the civilizations before the human
@@ -173,10 +177,24 @@ impl TurnRunner {
         }
     }
 
-    /// Run an AI driver for a slot, collecting what it reports.
+    /// Run an AI driver for a slot, collecting what it reports; its unit loop may stop at a
+    /// question for the human (`units`).
     fn run_ai(&mut self, g: &mut Game, ai: &mut dyn AiDriver, slot: Slot) {
         let mut sink: Vec<TurnStepSer> = Vec::new();
-        ai.play_turn(g, slot, &mut |s: TurnStep| {
+        self.units = ai.play_turn(g, slot, &mut |s: TurnStep| {
+            if let Some(ser) = Option::<TurnStepSer>::from(s) {
+                sink.push(ser);
+            }
+        });
+        self.pending.extend(sink);
+        self.drain_events(g);
+    }
+
+    /// The stopped unit loop goes on after the human's answer (CIV.EXE answers within the
+    /// loop, so the answer holds for the rest of the civ's moves).
+    fn resume_units(&mut self, g: &mut Game, s: crate::ai::unit_ai::UnitLoop) {
+        let mut sink: Vec<TurnStepSer> = Vec::new();
+        self.units = crate::ai::unit_ai::resume_units(g, s, &mut |s: TurnStep| {
             if let Some(ser) = Option::<TurnStepSer>::from(s) {
                 sink.push(ser);
             }
@@ -200,6 +218,10 @@ impl TurnRunner {
                     self.waiting = Some(d.clone());
                 }
                 return s.into();
+            }
+            if let Some(s) = self.units.take() {
+                self.resume_units(g, s);
+                continue;
             }
             match self.phase {
                 Phase::HumanUnits => {
@@ -285,12 +307,12 @@ impl TurnRunner {
     }
 
     pub fn is_done(&self) -> bool {
-        self.phase == Phase::Done && self.pending.is_empty() && self.waiting.is_none()
+        self.phase == Phase::Done && self.pending.is_empty() && self.waiting.is_none() && self.units.is_none()
     }
 }
 
 /// The player a decision belongs to.
-fn decision_slot(g: &Game, d: &Decision) -> Slot {
+pub(crate) fn decision_slot(g: &Game, d: &Decision) -> Slot {
     match d {
         Decision::ChooseResearch { slot, .. } | Decision::ChooseGovernment { slot, .. } | Decision::SellForUpkeep { slot, .. } => *slot,
         Decision::ProductionChoice { city, .. } => g.city_opt(*city).map(|c| c.owner).unwrap_or(g.human_slot),
@@ -2405,8 +2427,9 @@ mod tests {
     struct Recorder(Vec<(Slot, u32)>);
 
     impl AiDriver for Recorder {
-        fn play_turn(&mut self, g: &mut Game, slot: Slot, _sink: &mut dyn FnMut(TurnStep)) {
+        fn play_turn(&mut self, g: &mut Game, slot: Slot, _sink: &mut dyn FnMut(TurnStep)) -> Option<crate::ai::unit_ai::UnitLoop> {
             self.0.push((slot, g.turn));
+            None
         }
     }
 
@@ -2451,8 +2474,9 @@ mod tests {
         g.city_mut(c).food = 1000;
         struct Sizes(CityId, Vec<u8>);
         impl AiDriver for Sizes {
-            fn play_turn(&mut self, g: &mut Game, _slot: Slot, _sink: &mut dyn FnMut(TurnStep)) {
+            fn play_turn(&mut self, g: &mut Game, _slot: Slot, _sink: &mut dyn FnMut(TurnStep)) -> Option<crate::ai::unit_ai::UnitLoop> {
                 self.1.push(g.city(self.0).size);
+                None
             }
         }
         let mut ai = Sizes(c, Vec::new());

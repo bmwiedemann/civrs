@@ -645,3 +645,20 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
 - What draw_tile (0x1aa40) shows of the improvements is the human's view of them, map page band
   (x + 80, y + 100/150) (`Map::seen`, save v26): his units' looks, his own work, pollution,
   his cities' captures and Apollo copy the real bits there (update_seen_improvements 0x1bc87).
+
+## Questions inside a computer's unit loop
+
+CIV.EXE asks the human in the middle of a computer's `move_units` (0x403e): an audience that a
+unit's look or move opens (civs_meet 0x1508d into overlay 6) is held at once, and the answer holds
+for the rest of that civ's moves. The turn runner plays the loop with `unit_ai::start_units`,
+which stops after the look or the command that raised a question for the human
+(`TurnStep::Decision`); `TurnRunner::units` keeps where it stood (the pass, the record, the unit
+and its next command call) and `unit_ai::resume_units` goes on from there once the question is
+answered. `unit_ai::move_units` (tests, tools) runs the loop to its end, with
+`Game::may_fight` keeping the peace while an audience waits.
+
+A human goto stepping onto a treaty partner's developed land (the territory rule 0x64bb) drops
+the goto before "We have signed a peace treaty" (0x656d) and asks; "Cancel action." leaves the
+unit with its moves waiting for orders (0x58c1 -> 0x6d7f -> 0x442c), "Break treaty." makes the
+step and the unit waits for orders after it. Scripts answer that question with `menu ROW`
+(src/save/actions.rs; the harness's `act` needs `menu` as rows + Return).
