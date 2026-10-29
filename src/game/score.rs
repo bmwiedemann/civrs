@@ -234,6 +234,8 @@ impl Game {
         let historian = self.rng.below(4) as u8;
         let alive = self.alive_slots();
         let mut values = [0i32; 8];
+        // every city goes through the city routine, whatever the category (o 0x10c63)
+        self.note_trade_of(None);
         for c in self.all_cities() {
             let o = c.owner as usize & 7;
             let h = self.city_happiness(c.id);

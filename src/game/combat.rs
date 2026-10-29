@@ -482,6 +482,10 @@ impl Game {
         self.place_unit(id, city.x, city.y, 3);
         self.unit_mut(id).order = UnitOrder::None;
         self.auto_assign(c);
+        // a human captor sees the city's screen (capture_city 0x1430d, city routine mode 1)
+        if self.player(by).human {
+            self.note_trade(c);
+        }
         self.rechoose_after_capture(by);
         self.players[by as usize].stats.cities_captured += 1;
         self.players[from as usize].stats.cities_lost += 1;

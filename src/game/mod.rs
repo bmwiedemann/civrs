@@ -973,6 +973,7 @@ impl Game {
             coastal: false,
             hydro_site: false,
             name_index: city::NO_NAME_INDEX,
+            trade: 0,
         };
         c.name_index = city::name_table_index(&c.name);
         c.coastal = self.founding_coastal(owner, x, y);

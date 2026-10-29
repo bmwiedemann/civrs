@@ -63,7 +63,9 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// 26: then by the length of the human's view of the improvements (`Map::seen`, u32 LE, 0
 /// before he has looked at any square) and its words (u16 LE, `tile_flags::SEEN` bits); older
 /// saves show the improvements as they are.
-pub const VERSION: u16 = 26;
+/// 27: then by the number of city slots (u32 LE) and each slot's `City::trade` (i16 LE, 0 for an
+/// empty slot); older saves take the trade each city has now (`Game::visible_trade`).
+pub const VERSION: u16 = 27;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -177,6 +179,11 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     for f in &g.map.seen {
         data.extend_from_slice(&f.to_le_bytes());
     }
+    data.extend_from_slice(&(g.cities.len() as u32).to_le_bytes());
+    for c in &g.cities {
+        let t = c.as_ref().map_or(0, |c| c.trade.clamp(i16::MIN as i32, i16::MAX as i32) as i16);
+        data.extend_from_slice(&t.to_le_bytes());
+    }
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -289,6 +296,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     let mut records: Option<Vec<u8>> = None;
     let mut milestone: Option<u16> = None;
     let mut seen_layer: Option<Vec<u16>> = None;
+    let mut stored_trade: Option<Vec<i16>> = None;
     // version 14: the tribe names, after the counters
     if ver >= 14 {
         let mut at = counters + 112 * g.players.len();
@@ -359,6 +367,11 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
                                 if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 26) {
                                     let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
                                     seen_layer = rest.get(at + 4..at + 4 + 2 * n).map(|b| b.chunks(2).map(|w| u16::from_le_bytes([w[0], w[1]])).collect());
+                                    at += 4 + 2 * n;
+                                    if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 27) {
+                                        let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
+                                        stored_trade = rest.get(at + 4..at + 4 + 2 * n).map(|b| b.chunks(2).map(|w| i16::from_le_bytes([w[0], w[1]])).collect());
+                                    }
                                 }
                             }
                         }
@@ -474,6 +487,17 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     g.milestone_quiet = -3;
     // older saves: the human sees every square's improvements as they are
     g.map.seen = seen_layer.filter(|s| s.len() == g.map.tiles.len()).unwrap_or_default();
+    // older saves: every city's stored trade is its trade as things stand
+    for i in 0..g.cities.len() as crate::game::CityId {
+        if g.city_opt(i).is_none() {
+            continue;
+        }
+        let t = match &stored_trade {
+            Some(b) => b.get(i as usize).map_or(0, |t| *t as i32),
+            None => g.visible_trade(i),
+        };
+        g.city_mut(i).trade = t;
+    }
     Ok(g)
 }
 
@@ -966,6 +990,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
         assert!(old.map.seen.is_empty());
         assert_eq!(old.map.seen_flags(x, y), tile_flags::ROAD);
+    }
+
+    #[test]
+    fn the_stored_trade_survives_a_save_and_old_saves_derive_it() {
+        let mut g = Game::new(GameSetup { seed: 6, ..Default::default() }, None);
+        let h = g.human_slot;
+        let settler = g.units_of(h).into_iter().find(|id| g.unit(*id).kind == crate::rules::unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        let live = g.visible_trade(c);
+        g.city_mut(c).trade = live + 9;
+        let dir = std::env::temp_dir().join(format!("civrs-trade-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        assert_eq!(super::load_game(&path).unwrap().city(c).trade, live + 9);
+        // older saves: the trade as things stand
+        let mut data = std::fs::read(&path).unwrap();
+        data[4..6].copy_from_slice(&26u16.to_le_bytes());
+        std::fs::write(&path, &data).unwrap();
+        let old = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(old.city(c).trade, live);
     }
 
     #[test]

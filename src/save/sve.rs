@@ -448,6 +448,9 @@ fn import_slot(data: &[u8], map_pic: &[u8], moves_back: bool) -> Result<Game, Sa
             // +6 bit 0x8: set at founding next to River or Mountains (o 0x1b6d2)
             hydro_site: st & 0x08 != 0,
             name_index: r[0x16],
+            // +0xa: the trade less corruption of the city's last run of process_city (0xf13d),
+            // read unsigned (CIV.EXE reads it signed, 0xf195)
+            trade: r[0xa] as i32,
         };
         if st & 0x80 != 0 {
             g.players[owner as usize].sold_cities.push(i as u16);
@@ -714,7 +717,7 @@ pub fn state_text(g: &Game) -> String {
         let _ = writeln!(o, "{k}.size {}\n{k}.food {}\n{k}.shields {}\n{k}.production {:?}", c.size, c.food, c.shields, c.production);
         let _ = writeln!(o, "{k}.improvements {:08x} wonders {:08x}", c.improvements, c.wonders);
         let _ = writeln!(o, "{k}.worked {:08x} specialists {:?}", c.worked, c.specialists);
-        let _ = writeln!(o, "{k}.routes {:?}", c.trade_routes);
+        let _ = writeln!(o, "{k}.routes {:?} trade {}", c.trade_routes, c.trade);
         let sold = g.player(c.owner).sold_cities.contains(&c.id);
         let _ = writeln!(o, "{k}.flags disorder {} celebrating {} known_size {} auto {} sold {sold}", c.disorder, c.celebrating, c.known_size, c.auto_build);
         let _ = writeln!(o, "{k}.yield food {}-{} shields {}-{} trade {}-{} tax {} lux {} sci {}", y.food, y.food_upkeep, y.shields, y.shield_upkeep, y.trade, y.corruption, y.tax, y.lux, y.sci);
@@ -1057,5 +1060,18 @@ mod tests {
         let huts = |m: &Map| m.tiles.iter().filter(|t| t.has(tile_flags::HUT)).count();
         assert_eq!((huts(&g.map), huts(&w.map)), (27, 28));
         assert!(squares().filter(|&(x, y)| g.map.site_at(x, y) != w.map.site_at(x, y)).all(|(x, y)| g.all_cities().any(|c| Map::dist(c.pos(), (x, y)) <= 3)));
+    }
+
+    #[test]
+    fn the_stored_trade_civ_exe_saved_is_the_trade_civrs_computes() {
+        let mut nonzero = 0;
+        for n in [0u8, 1, 3, 4] {
+            let Some(g) = sample(n) else { continue };
+            for c in g.all_cities() {
+                assert_eq!(c.trade, g.visible_trade(c.id), "CIVIL{n} {}", c.name);
+                nonzero += (c.trade != 0) as i32;
+            }
+        }
+        assert!(nonzero > 0 || sample(0).is_none());
     }
 }

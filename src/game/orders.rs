@@ -346,6 +346,11 @@ impl Game {
             self.city_mut(c).production = p;
         }
         self.remove_unit(id);
+        // the human's new city opens its screen (process_city_and_redraw, o 0x1b7ff), whose
+        // city routine stores its trade (0xf13d)
+        if self.player(u.owner).human {
+            self.note_trade(c);
+        }
         self.refresh_vision(u.owner);
         self.push_event(super::GameEvent::CityFounded { city: c });
         Ok(c)

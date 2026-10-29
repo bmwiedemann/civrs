@@ -480,7 +480,7 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&P
             "nuke" => civrs::ui::eventpics::over_map(civrs::ui::eventpics::nuke_animation(200, 104)),
             "f1" | "f2" | "f3" | "f4" | "f5" | "f6" | "f7" | "f8" | "f9" | "f10" | "f11" | "f12" => {
                 let n: u8 = parts[0][1..].parse().unwrap_or(1);
-                civrs::ui::reports::advisor(&ctx, n)
+                civrs::ui::reports::advisor(&mut ctx, n)
             }
             "fame" => civrs::ui::halloffame::hall_of_fame(),
             "tax" | "lux" | "options" | "findcity" | "save" | "load" | "loadtitle" => {

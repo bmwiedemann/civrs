@@ -861,6 +861,15 @@ impl CityScreen {
             let abbrev: String = home.chars().take(3).chain(std::iter::once('.')).collect();
             small_text(fb, ctx, x, y + 15, BLACK, &abbrev);
         }
+        // the trade routes, 6 px apart from (98, 179) in colour 10: "<partner>:+N}" with N =
+        // (both cities' stored trade + 4) / 8, / 16 at home (CIV.EXE 0x10f05..0x11073)
+        let c = g.city(self.city);
+        for (i, r) in c.trade_routes.iter().enumerate().take(3) {
+            let Some(other) = g.city_opt(*r) else { continue };
+            let div = if other.owner == c.owner { 16 } else { 8 };
+            let n = (c.trade + other.trade + 4) / div;
+            small_text(fb, ctx, 98, 179 + 6 * i as i32, crate::ui::theme::LIGHT_GREEN, &format!("{}:+{n}}} ", other.name));
+        }
         // the pollution risk: one smokestack (the map's pollution sprite) per pollution point,
         // from x 98 at y 161/162 alternately, at most 8 px apart (CIV.EXE 0x110ad)
         let points = g.pollution_points(self.city);
@@ -1136,6 +1145,8 @@ impl Screen for CityScreen {
         if g.city(self.city).workers() > g.city(self.city).size as u32 {
             g.fix_workers(self.city);
         }
+        // and stores the city's trade less corruption (0xf13d)
+        g.note_trade(self.city);
         self.draw_title(fb, ctx);
         self.draw_resources(fb, ctx);
         self.draw_support(fb, ctx);

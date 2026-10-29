@@ -119,6 +119,15 @@ pub struct City {
     /// (save version 23).
     #[serde(skip)]
     pub name_index: u8,
+    /// CIV.EXE city record +0xa (ds:0x70f6): the trade of the worked squares less its
+    /// corruption, as the city routine last counted it (`process_city` 0xf13d, on every call:
+    /// the city's turn, its screen, the advisor's mode -1 and the reports), 0 at founding (o
+    /// 0x1b570, 0x1b62a). Trade routes (0xf195), a caravan's revenue (0x14712), the route
+    /// weights (0x148af), the computer's caravan target (0xe0df) and the city screen's route
+    /// list (0x10f81) read this, not the city as it is now. See [`Game::note_trade`]. Saved
+    /// after the game body (save version 27).
+    #[serde(skip)]
+    pub trade: i32,
 }
 
 /// `City::name_index` of a city whose name is not in the name table.

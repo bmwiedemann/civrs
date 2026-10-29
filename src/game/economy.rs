@@ -300,12 +300,13 @@ impl Game {
                 y.trade += t;
             }
         }
-        // trade routes (CIV.EXE 0xf141): each adds (partner's trade after corruption + this
-        // city's trade so far + 4) / 8, or / 16 between cities of one civilization
+        // trade routes (CIV.EXE 0xf141): each adds (partner's stored trade, `City::trade`
+        // (0xf195) + this city's trade so far + 4) / 8, or / 16 between cities of one
+        // civilization
         for r in &city.trade_routes {
             if let Some(other) = self.city_opt(*r) {
                 let div = if other.owner == slot { 16 } else { 8 };
-                y.trade += (self.visible_trade(*r) + y.trade + 4) / div;
+                y.trade += (other.trade + y.trade + 4) / div;
             }
         }
         // food upkeep: 2 per citizen plus settlers (1; 2 from the Monarchy on, CIV.EXE 0xcc2d)
@@ -381,11 +382,32 @@ impl Game {
         t
     }
 
-    /// Trade of the worked tiles less their corruption: what trade routes and caravans count
-    /// for a partner city (CIV.EXE city +0xa, set at 0xf13d).
+    /// Trade of the worked tiles less their corruption, as the city is now: what the city
+    /// routine stores in `City::trade` (CIV.EXE city +0xa, 0xf13d).
     pub fn visible_trade(&self, c: CityId) -> i32 {
         let t = self.raw_trade(c);
         t - self.corruption(c, t, true)
+    }
+
+    /// The city routine ran for `c` (CIV.EXE `process_city` 0xc94b, in any mode): it stores
+    /// the city's trade less corruption in the record (0xf13d). CIV.EXE writes a byte and
+    /// reads it back signed (0xf195), so more than 127 would turn negative; civrs keeps the
+    /// whole number.
+    pub fn note_trade(&mut self, c: CityId) {
+        if self.city_opt(c).is_some() {
+            let t = self.visible_trade(c);
+            self.city_mut(c).trade = t;
+        }
+    }
+
+    /// `note_trade` for every city of `slot`, or of everyone with `None`, in record order (the
+    /// reports and `civ_score`, which run the city routine for each such city).
+    pub fn note_trade_of(&mut self, slot: Option<Slot>) {
+        for c in 0..self.cities.len() as CityId {
+            if self.city_opt(c).is_some_and(|city| slot.is_none_or(|s| city.owner == s)) {
+                self.note_trade(c);
+            }
+        }
     }
 
     /// Distance used for corruption (CIV.EXE 0xca04): 0 in a city with a Palace, else the

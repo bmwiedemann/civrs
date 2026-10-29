@@ -334,9 +334,20 @@ impl Screen for Page {
 
 // ---- entry points ------------------------------------------------------------------------------
 
-pub fn advisor(ctx: &UiContext, n: u8) -> Box<dyn Screen> {
+pub fn advisor(ctx: &mut UiContext, n: u8) -> Box<dyn Screen> {
     use crate::ui::report_advisors as a;
     use crate::ui::report_world as w;
+    // the reports that run the city routine store the trade of the cities they count
+    // (`City::trade`): CITY STATUS (o 0x14727), ATTITUDE SURVEY (o 0x143db), TRADE REPORT
+    // (o 0x13792) and civ_score (o 0x1c1d8) the viewer's, Top 5 (o 0x319e) and Demographics
+    // (o 0x10fe0) everyone's
+    let me = ctx.game().human_slot;
+    match n {
+        1 | 4 | 5 | 9 => ctx.game_mut().note_trade_of(Some(me)),
+        8 | 11 => ctx.game_mut().note_trade_of(None),
+        _ => {}
+    }
+    let ctx = &*ctx;
     match n {
         1 => Box::new(a::CityStatus::new(ctx)),
         2 => Box::new(Page::new(BG_BLUE, a::paint_military).then(BG_LOSSES, a::paint_military_losses)),
