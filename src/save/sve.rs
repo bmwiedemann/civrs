@@ -761,7 +761,8 @@ pub fn state_text(g: &Game) -> String {
         let _ = writeln!(o, "{k}.yield food {}-{} shields {}-{} trade {}-{} tax {} lux {} sci {}", y.food, y.food_upkeep, y.shields, y.shield_upkeep, y.trade, y.corruption, y.tax, y.lux, y.sci);
     }
     let mut units: Vec<&Unit> = g.all_units().collect();
-    units.sort_by_key(|u| (u.owner, u.kind, u.x, u.y, u.id));
+    // units on one square in record order (CIV.EXE's identity; civrs's ids are its own)
+    units.sort_by_key(|u| (u.owner, u.kind, u.x, u.y, u.record, u.id));
     let mut last = (u8::MAX, u8::MAX);
     let mut n = 0;
     for u in units {
