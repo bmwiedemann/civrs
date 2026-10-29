@@ -578,7 +578,8 @@ impl Game {
     /// human with 50 at Chieftain (o 0x0476d).
     fn place_starting_units(&mut self, slots: &[(u8, u8, (i32, i32))], world: &mapgen::World, wr: &mut rng::MsRand) {
         for &(slot, _, (x, y)) in slots {
-            self.add_unit(slot, rules::unit_ids::SETTLERS, x, y);
+            // create_unit (o 0x4f40), which looks around (0x8cd3)
+            self.create_unit(slot, rules::unit_ids::SETTLERS, x, y);
             self.players[slot as usize].gold = 0;
             self.map.explore(slot, x, y, 1);
             // civ_init ends by zeroing the unit counters and losses (o5 0x4fc2..0x4fcb)
@@ -592,7 +593,8 @@ impl Game {
         let bonus = mapgen::start_bonuses(&self.map, &world.land_sizes, &starts);
         for (&(slot, (x, y)), b) in starts.iter().zip(&bonus) {
             if b.settlers {
-                self.add_unit(slot, rules::unit_ids::SETTLERS, x, y);
+                // (o 0x55a1)
+                self.create_unit(slot, rules::unit_ids::SETTLERS, x, y);
             }
             for _ in 0..b.advances {
                 // random(4 * value) of the MS C library: signed, so a negative value never wins
