@@ -225,7 +225,9 @@ impl TurnRunner {
             }
             match self.phase {
                 Phase::HumanUnits => {
-                    g.process_unit_hazards(g.human_slot);
+                    // (his Triremes and aircraft were checked as his loop left each one,
+                    // `Game::unit_moves_done`)
+                    g.refresh_vision(g.human_slot);
                     self.drain_events(g);
                     self.phase = Phase::LaterCivs;
                     self.ai_index = g.human_slot as usize + 1;
@@ -1371,22 +1373,24 @@ impl Game {
 
     // ---- units ------------------------------------------------------------------------------
 
-    /// Triremes away from coast, aircraft out of fuel.
-    pub fn process_unit_hazards(&mut self, slot: Slot) {
-        let ids = self.units_of(slot);
-        for id in ids {
-            let Some(u) = self.unit_opt(id).cloned() else { continue };
-            // only the human's Triremes are lost at sea (CIV.EXE 0x75da): random(2) != 0 is
-            // drawn first, then the eight squares around must all be ocean (the unit's own
-            // square, a city's too, is not looked at)
-            if u.kind == unit_ids::TRIREME && self.player(slot).human && self.rng.random(0x75f3, 2) != 0 && self.map.land_mask8(u.x, u.y) == 0 {
-                self.remove_unit(id);
-                self.push_event(GameEvent::UnitLost { slot, kind: u.kind, at: (u.x, u.y), reason: "lost at sea".into() });
-                continue;
-            }
-            self.air_fuel_turn(id);
+    /// The end of a unit's moves in the unit loop (move_units 0x6dad -> 0x750f), as the loop
+    /// leaves a unit without moves: an aircraft counts its fuel (`air_fuel_turn`), and a
+    /// Trireme of the human's may be lost at sea (0x75da): random(2) != 0 is drawn first,
+    /// then the eight squares around must all be ocean (the unit's own square, a city's too,
+    /// is not looked at). A unit the loop never takes (sentried, fortified, without moves
+    /// from the start) is not checked. Nothing for a unit with moves left (0x751f).
+    pub fn unit_moves_done(&mut self, id: UnitId) {
+        let Some(u) = self.unit_opt(id).cloned() else { return };
+        if u.moves_left > 0 {
+            return;
         }
-        self.refresh_vision(slot);
+        self.air_fuel_turn(id);
+        let slot = u.owner;
+        if u.kind == unit_ids::TRIREME && self.is_human(slot) && self.rng.random(0x75f3, 2) != 0 && self.map.land_mask8(u.x, u.y) == 0 {
+            self.remove_unit(id);
+            self.push_event(GameEvent::UnitLost { slot, kind: u.kind, at: (u.x, u.y), reason: "lost at sea".into() });
+            self.refresh_vision(slot);
+        }
     }
 
     /// The fuel of an aircraft at the end of its turn (CIV.EXE 0x752e..0x75c7): in a city (the

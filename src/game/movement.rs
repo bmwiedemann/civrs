@@ -1617,6 +1617,40 @@ mod zoc_tests {
     }
 
     #[test]
+    fn a_trireme_is_checked_as_the_loop_leaves_it() {
+        // 0x6dad -> 0x750f -> 0x75da: the human's Trireme without moves rolls random(2) when
+        // the loop goes on from it; a sentried one, which the loop never takes, does not
+        let (mut g, a) = open_field();
+        let me = g.human_slot;
+        for y in 10..17 {
+            for x in 10..17 {
+                g.map.get_mut(x, y).unwrap().terrain = Terrain::Ocean;
+            }
+        }
+        let t = g.add_unit(me, unit_ids::TRIREME, 13, 13);
+        let s = g.add_unit(me, unit_ids::TRIREME, 11, 11);
+        g.unit_mut(s).order = UnitOrder::Sentry;
+        g.reset_moves(me);
+        g.unit_mut(a).moves_left = 0;
+        g.reset_unit_loop();
+        g.active_unit = None;
+        crate::game::rng::trace_start();
+        assert_eq!(g.next_active_unit(), Some(t));
+        assert!(crate::game::rng::trace_take().is_empty(), "no roll before the loop takes it");
+        g.active_unit = Some(t);
+        g.skip_unit(t);
+        let lost = g.next_active_unit().is_none() && g.unit_opt(t).is_none();
+        let draws = crate::game::rng::trace_take();
+        assert_eq!(draws.iter().map(|d| (d.at, d.n)).collect::<Vec<_>>(), vec![(0x75f3, 2)]);
+        assert_eq!(lost, draws[0].r != 0);
+        // the end of the turn rolls for no one
+        let mut r = g.end_turn();
+        let _ = r.step(&mut g, &mut crate::ai::Ai::new(1));
+        assert!(crate::game::rng::trace_take().iter().all(|d| d.at != 0x75f3));
+        assert!(g.unit_opt(s).is_some());
+    }
+
+    #[test]
     fn an_aircraft_returning_to_base_is_taken_outside_the_view() {
         // bit 0x02 skips the view test (0x4345 -> 0x43f4): no centring, no new mark
         let (mut g, a) = open_field();

@@ -1212,6 +1212,12 @@ impl Game {
     /// mark on, not the first after the unit that just finished.
     fn next_active_unit_from(&mut self, from: Option<UnitId>, skip: usize, prefer_view: bool) -> Option<UnitId> {
         let slot = self.human_slot;
+        // the loop leaves the unit it had: without moves, its end-of-moves checks (0x6dad ->
+        // 0x750f, `unit_moves_done`). (After 'u' CIV.EXE runs them on the record before the
+        // unit it goes on with, 0x4e71; not copied.)
+        if let Some(f) = from.filter(|f| skip == 1 && self.unit_opt(*f).is_some_and(|u| u.owner == slot)) {
+            self.unit_moves_done(f);
+        }
         let ids = self.units_of(slot);
         let mut by_record: [Option<UnitId>; 128] = [None; 128];
         for id in &ids {
