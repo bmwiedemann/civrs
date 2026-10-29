@@ -671,7 +671,8 @@ impl Game {
                     self.recreate_unit(&u, owner);
                 }
             } else {
-                let stack: Vec<UnitId> = self.units_at(u.x, u.y).into_iter().filter(|s| *s != id && self.unit(*s).owner == from).collect();
+                // the rest of its stack ring, from its successor (o 0x15179 follows +0xa)
+                let stack: Vec<UnitId> = self.stack_ring(id, 128).into_iter().skip(1).collect();
                 if home_owner(self, &u) == Some(new_slot) {
                     if let Some(n) = self.recreate_unit(&u, new_slot) {
                         self.keep_flags(n, &u);

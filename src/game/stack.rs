@@ -202,4 +202,24 @@ mod tests {
         assert_eq!(g.unit(b).next, None, "a ring of two falls apart");
         assert!(g.stacks_consistent());
     }
+
+    #[test]
+    fn the_defender_of_equals_is_the_first_in_the_ring() {
+        // best_defender_stack (0x8f7e) from unit_at (0x1bade): a Militia, then two Phalanxes
+        // b and c, ring a -> c -> b: c defends, though b has the lower record
+        let mut g = flat_game();
+        let s = g.human_slot;
+        let a = g.add_unit(s, unit_ids::MILITIA, 10, 10);
+        let b = g.add_unit(s, unit_ids::PHALANX, 10, 10);
+        let c = g.add_unit(s, unit_ids::PHALANX, 10, 10);
+        assert!(g.unit(b).record < g.unit(c).record);
+        assert_eq!(g.unit_at(10, 10), Some(a));
+        assert_eq!(g.best_defender(10, 10, None), Some(c));
+        assert_eq!(crate::ui::tilerender::top_unit(&g, 10, 10), Some(c));
+        assert_eq!(g.best_defender_at(b), c, "the stack box's default (0x8ee5)");
+        // b steps off and back: a -> b -> c
+        g.relocate_unit(b, 11, 10);
+        g.relocate_unit(b, 10, 10);
+        assert_eq!(g.best_defender(10, 10, None), Some(b));
+    }
 }

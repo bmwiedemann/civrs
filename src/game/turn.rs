@@ -2052,8 +2052,19 @@ impl Game {
         for u in self.all_units().filter(|u| u.owner == to) {
             used[u.record as usize] = true;
         }
-        for u in self.units.iter_mut().flatten().filter(|u| u.owner == from) {
-            if Map::dist((u.x, u.y), pos) <= 1 && !self.map.is_ocean(u.x, u.y) {
+        for id in self.units_of(from) {
+            let near = {
+                let u = self.unit(id);
+                Map::dist((u.x, u.y), pos) <= 1 && !self.map.is_ocean(u.x, u.y)
+            };
+            if near && room != 0 {
+                // out of the old owner's stack ring, into the new owner's (delete_unit and
+                // create_unit)
+                self.stack_unlink(id);
+            }
+            let turn = self.turn;
+            let Some(u) = self.units[id as usize].as_mut() else { continue };
+            if near {
                 if room == 0 {
                     full = true;
                     gone.push(u.id);
@@ -2066,11 +2077,13 @@ impl Game {
                 // re-created for the new owner by create_unit (0x8b51: no veteran status,
                 // orders or goto), seen by the old owner and homed to the city (o 0x1e3af,
                 // 0x1e3b6); its moves are left alone
-                let fresh = super::Unit::new(u.id, to, u.kind, u.x, u.y, self.turn);
+                let fresh = super::Unit::new(u.id, to, u.kind, u.x, u.y, turn);
                 let record = used.iter().position(|b| !b).unwrap_or(255);
                 used[record] = true;
                 *u = super::Unit { moves_left: u.moves_left, home: Some(c), seen_by: 1 << to | 1 << from, record: record as u8, ..fresh };
-                gone_heading.push(u.id);
+                gone_heading.push(id);
+                let (x, y) = (u.x, u.y);
+                self.stack_link(id, x, y);
             } else if u.home == Some(c) {
                 gone.push(u.id);
             }
@@ -2633,6 +2646,31 @@ mod tests {
         g.transfer_city(other, me);
         assert!(g.unit_opt(guard).is_none());
         assert_eq!(g.units_of(me).len(), crate::game::MAX_UNITS);
+    }
+
+    #[test]
+    fn a_revolting_city_s_units_join_the_new_owner_s_rings() {
+        // city_revolt (o 0x1de40 / 0x1de6e) deletes and re-creates them, record by record
+        let (mut g, c) = fixture();
+        let me = g.human_slot;
+        let (x, y) = g.city(c).pos();
+        let o = (1..8).find(|s| *s != me).unwrap();
+        g.players[o as usize].alive = true;
+        for dx in 4..8 {
+            g.map.get_mut(x + dx, y).unwrap().terrain = crate::rules::Terrain::Grassland;
+        }
+        let other = g.add_city(o, "Other".into(), x + 4, y);
+        let (ox, oy) = g.city(other).pos();
+        let a = g.add_unit(o, unit_ids::PHALANX, ox, oy);
+        let b = g.add_unit(o, unit_ids::LEGION, ox, oy);
+        let far = g.add_unit(o, unit_ids::LEGION, ox + 3, oy);
+        let far2 = g.add_unit(o, unit_ids::LEGION, ox + 3, oy);
+        g.unit_mut(far).home = None;
+        g.unit_mut(far2).home = None;
+        g.transfer_city(other, me);
+        assert!(g.stacks_consistent());
+        assert_eq!(g.stack_ring(a, 10), vec![a, b]);
+        assert_eq!(g.stack_ring(far, 10), vec![far, far2]);
     }
 
     #[test]
