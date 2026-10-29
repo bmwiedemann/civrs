@@ -219,7 +219,11 @@ pub struct MapView {
     loose_decision: Option<Decision>,
     /// Frames to pause before continuing processing (enemy move animation).
     pause: u32,
+    /// The active unit's blink phase: shown (true) or hidden; see `update`.
     blink: bool,
+    /// The frame the current wait for a key began (each key or click starts `blink_wait`
+    /// 0x8932 again, which begins with the hidden phase).
+    blink_from: u64,
     last_centered: Option<UnitId>,
     bar_menu_open: Option<usize>,
     /// The last pull-down menu, and the one left on the screen behind the Options list
@@ -269,6 +273,7 @@ impl MapView {
             loose_decision: None,
             pause: 0,
             blink: true,
+            blink_from: 0,
             last_centered: None,
             bar_menu_open: None,
             last_pulldown: None,
@@ -1279,8 +1284,11 @@ impl MapView {
         let mut y = 99;
         match self.mode {
             Mode::EndOfTurn => {
+                // blink_wait with unit 0x80 (0x8a31 / 0x8aed): in 7 while a unit would be
+                // hidden, then in 0
                 if !g.options.end_turn_confirm {
-                    draw_text(fb, &ctx.fonts, &st, 4, 124, "End of Turn");
+                    let flash = TextStyle::new(0, if self.blink { theme::TEXT } else { theme::GREY });
+                    draw_text(fb, &ctx.fonts, &flash, 4, 124, "End of Turn");
                 }
                 draw_text(fb, &ctx.fonts, &st, 4, 136, "Press Enter");
                 draw_text(fb, &ctx.fonts, &st, 4, 144, "to continue");
@@ -1398,7 +1406,9 @@ impl Screen for MapView {
     }
 
     fn update(&mut self, ctx: &mut UiContext) -> Transition {
-        self.blink = (ctx.frame / 16) % 2 == 0;
+        // blink_wait (0x8932): the square without the active unit for 10 ticks, then with it
+        // for 10 (0x8a1b / 0x8ad4 delay 10), as long as no key is waiting
+        self.blink = (ctx.frame.saturating_sub(self.blink_from) / 10) % 2 == 1;
         // the goto choice with a mouse shows the GO pointer (`app::draw_cursor`)
         ctx.goto_pointer = self.mode == Mode::Goto && !ctx.keyboard_only;
         if let Some((n, vx, vy)) = self.recentre.take() {
@@ -1707,6 +1717,9 @@ impl Screen for MapView {
     fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
         if self.mode == Mode::Processing || self.recentre.is_some() {
             return Transition::None;
+        }
+        if matches!(ev, Event::Key { down: true, key, .. } if *key != Key::Unknown) || matches!(ev, Event::MouseButton { down: true, .. }) {
+            self.blink_from = ctx.frame;
         }
         // 't' waits for any key or click (0x13d7:0x91e) and then draws the units again
         if self.terrain_only {

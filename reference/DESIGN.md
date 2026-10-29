@@ -639,9 +639,9 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
   against `civrs --dump screen:map --load-sve CIVILn.SVE --out F.ppm`. The water and rivers turn
-  three palette rings every 15 ticks (`mapview::water_cycles`) and the active unit blinks every 16
-  frames, so compare a capture against the renders at `CIVRS_FRAMES` = 15k and 15k + 16 (k = 0..15)
-  and take the best. With that, captures of CIVIL0, 1, 3 and 4 match pixel for pixel, map and
+  three palette rings every 15 ticks (`mapview::water_cycles`) and the active unit blinks every 10
+  frames (blink_wait 0x8932: hidden 10 ticks, shown 10), so compare a capture against the renders at
+  `CIVRS_FRAMES` = 15k and 15k + 10 (k = 0..15) and take the best. With that, captures of CIVIL0, 1, 3 and 4 match pixel for pixel, map and
   sidebar. `reference/tools/sve_edit.py` `imp:` and `unit:...:SEEN` stage improvements (real and
   as the human saw them) and foreign units next to the human's.
 - Known differences of a staged save: the squares around added human units are explored in civrs
