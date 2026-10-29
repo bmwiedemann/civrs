@@ -440,8 +440,9 @@ impl Game {
                 continue;
             }
             // deviation: CIV.EXE compares the neighbours' costs alone, so a road on this
-            // step never counted; add the step as the flood would price it
-            let gv = gv + edge(road_here, self.exe_road(wx, ny), here);
+            // step never counted; add the step as the flood would price it (not with
+            // `exe_quirks`, 0x1eae2)
+            let gv = if self.exe_quirks { gv } else { gv + edge(road_here, self.exe_road(wx, ny), here) };
             let crowd = |g: &Game| 4 * g.units_at(wx, ny).len() as i32 + Map::civ_distance(w, (wx, ny));
             if gv < best {
                 best = gv;

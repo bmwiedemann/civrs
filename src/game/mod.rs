@@ -320,7 +320,8 @@ pub struct Game {
     pub leader_traits: [rules::Traits; 16],
     /// Play CIV.EXE's mistakes that civrs otherwise leaves out where they decide what is
     /// drawn from the random stream (for the differential test's state dump only, as
-    /// `use_exe_land_links`): the Chieftain wonder purchase's prerequisite (0x3c4a).
+    /// `use_exe_land_links`): the Chieftain wonder purchase's prerequisite (0x3c4a), the goto's
+    /// local search choosing a step by the neighbours' costs alone (0x1eae2).
     #[serde(skip)]
     pub exe_quirks: bool,
 }
