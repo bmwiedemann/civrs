@@ -466,6 +466,13 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
   attackers in groups when at war, caravans/wonders in best city); unit roles (settle via best_city_site, fortify, group attack when A/(A+D) > 0.4, explore);
   rates of update_civ_tax_rates (0xa699: lux +-1 by disorder, sci = civilized + (10 - lux)/2, +1 when rich, 0 with Robotics; set_government tax 4 - gov/2);
   revolution to Monarchy/Republic; difficulty scales AI cost %, content, starting techs.
+- [spec] Unit stack ring (unit +0xa, `game/stack.rs`, save v28, imported from SVE): each civ's units on a square form a
+  circular list; a unit created on or stepping onto a square goes in right after the square's lowest-record unit
+  (`unit_at` 0x1bade, link 0x1a68:0x13d1 / 0x1972:0xb5c, unlink 0x1972:0xbbf). The ring order decides the defender
+  of equals (best_defender_stack 0x8f7e from unit_at, first ten units), the unit drawn on top, the stack box rows
+  and default (0x9dc5, 0x8ee5), the unit panel's other units, the martial-law units (0xf818), the AI stack sums
+  (0x92a7, ten units), the cargo a ship takes along and the stack killed in combat. Not copied: walks that stop
+  after ten units also limit which units die with a stack or a sunk ship.
 
 ## Input model
 Keyboard: numpad 1-9/arrows move (Home/PgUp/End/PgDn diagonals); Space skip; w wait; f fortify; s sentry; g goto; r road/rail; i irrigate; m mine;
