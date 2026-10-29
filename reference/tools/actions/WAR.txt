@@ -11,8 +11,8 @@
 # Catapult and a Chariot against two German Legions on river and mountains and against Berlin
 # (City Walls, a fortified veteran Phalanx); German counter-attacks; a barbarian Legion and
 # Cavalry at Caesarea (City Walls, a veteran Phalanx); the Aztecs (three Legions, one veteran)
-# at war with Babylon. Turns 53-54 the Legions take Berlin (the capture's messages take
-# a Return each), turn 57 one destroys Leipzig: the Germans come back as another tribe.
+# at war with Babylon. Turn 53 the Legions take Berlin (the capture's messages take a
+# Return each), turn 56 one destroys Leipzig: the Germans come back as another tribe.
 # Then the human only skips while the computers fight on.
 turn 50
 unit 11,22 k7
@@ -34,15 +34,14 @@ unit 11,21 k8
 unit 9,23 f
 turn 53
 unit 11,21 k8
-unit 11,21 k8
-turn 54
-unit 11,21 k8
 unit 11,21 k8 ret ret
-turn 55
+turn 54
 unit 11,21 k8
 unit 11,20 k9
 unit 11,20 f
-turn 56
+unit 11,21 k8
+unit 11,20 f
+turn 55
 unit 12,19 k9
-turn 57
-unit 13,18 k9
+turn 56
+unit 13,18 k9 ret ret
