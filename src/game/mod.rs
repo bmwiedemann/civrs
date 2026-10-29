@@ -990,7 +990,7 @@ impl Game {
             t.set(tile_flags::MINE, false);
             t.set(tile_flags::ROAD, true);
             // and irrigation where it adds food without changing the terrain (o 0x1b525:
-            // terrain table ds:0x44a < -1), which stays when the city is gone
+            // terrain table ds:0x44a < -1)
             if matches!(t.terrain.info().irrigate, rules::Terraform::Bonus(_)) {
                 t.set(tile_flags::IRRIGATION, true);
             }
@@ -1035,8 +1035,15 @@ impl Game {
         Map::neighbours8(x, y).any(|(nx, ny)| matches!(self.map.terrain(nx, ny), Terrain::River | Terrain::Mountains))
     }
 
-    /// Remove a city from the map (destroyed).
+    /// Remove a city from the map (destroyed) in its owner's turn; see `destroy_city`.
     pub fn remove_city(&mut self, id: CityId) {
+        let owner = self.city(id).owner;
+        self.destroy_city(id, owner);
+    }
+
+    /// `destroy_city` (CIV.EXE 0xa76a): remove city `id` in the turn of civ `by` (ds:0x6b90,
+    /// whose action or city turn destroys it).
+    pub fn destroy_city(&mut self, id: CityId, by: Slot) {
         // destroy_city 0xa793 logs the city as gone
         self.replay_city(replay::kind::CITY, 0xff, id);
         let (x, y, owner) = {
@@ -1048,11 +1055,15 @@ impl Game {
                 t.worked_by = None;
             }
         }
+        // add_improvement(0) (0xa7da -> 0x1bcd9) clears both improvement nibbles of the
+        // square: the city's road and irrigation go, and so does the river-sprite bit 0x80
         if let Some(t) = self.map.get_mut(x, y) {
             t.city = None;
+            t.flags &= tile_flags::HUT;
         }
-        // a human who knows the square sees what is left (destroy_city 0xa80a)
-        if self.explored(self.human_slot, x, y) {
+        // it shows the human the bare square in his own turn (0x1bd5e); else a human who knows
+        // the square sees it (destroy_city 0xa80a)
+        if by == self.human_slot || self.explored(self.human_slot, x, y) {
             self.map.update_seen(x, y);
         }
         // destroy_city (CIV.EXE 0xa76a) disbands the owner's units homed here (0x7e6:0xf0c)
@@ -1450,10 +1461,10 @@ mod new_game_tests {
             t.flags = tile_flags::POLLUTION | tile_flags::MINE;
         }
         let c = g.add_city(s, first, 20, 20);
-        g.remove_city(c);
         // the founding left road and irrigation, took the mine and kept the pollution
         let t = g.map.tile(20, 20);
         assert_eq!(t.flags & (tile_flags::ROAD | tile_flags::IRRIGATION | tile_flags::MINE | tile_flags::POLLUTION), tile_flags::ROAD | tile_flags::IRRIGATION | tile_flags::POLLUTION);
+        g.remove_city(c);
         // a destroyed city's name stays used (es:0x540, o 0x1b3c5)
         assert_eq!(g.next_city_name(s), list[1]);
         // a renamed city keeps its entry, so its first name is not given again
@@ -1464,6 +1475,27 @@ mod new_game_tests {
             g.add_city(s, n.to_string(), 2 + 2 * i as i32, 30);
         }
         assert_eq!(g.next_city_name(s), rules::SPARE_CITY_NAMES[0]);
+    }
+
+    #[test]
+    fn a_destroyed_city_leaves_a_bare_square() {
+        // destroy_city 0xa7da: add_improvement(0) clears every improvement bit, river sprite
+        // bit 0x80 included; the human sees it at once in his own turn or where he has looked
+        let mut g = Game::new(GameSetup { seed: 7, ..Default::default() }, None);
+        let me = g.human_slot;
+        let other = g.civ_slots().into_iter().find(|s| *s != me && *s != 0).unwrap();
+        for (x, by) in [(20, me), (30, other)] {
+            g.map.get_mut(x, 20).unwrap().terrain = rules::Terrain::River;
+            let c = g.add_city(other, format!("C{x}"), x, 20);
+            g.map.get_mut(x, 20).unwrap().flags |= tile_flags::RAILROAD | tile_flags::RIVER_ALT;
+            g.map.update_seen(x, 20);
+            g.destroy_city(c, by);
+            assert_eq!(g.map.tile(x, 20).flags, 0);
+        }
+        assert_eq!(g.map.seen[Map::idx(20, 20)], 0);
+        if !g.explored(me, 30, 20) {
+            assert_ne!(g.map.seen[Map::idx(30, 20)], 0);
+        }
     }
 
     #[test]

@@ -205,7 +205,7 @@ impl Game {
                         self.push_event(GameEvent::CityShrank(c));
                     } else if shrinks {
                         let from = city.owner;
-                        self.remove_city(c);
+                        self.destroy_city(c, attacker.owner);
                         self.push_event(GameEvent::CityDestroyed { name: city.name.clone(), at: (x, y), by: attacker.owner, from });
                         self.players[from as usize].stats.cities_lost += 1;
                         if !losers.contains(&from) {
@@ -435,7 +435,7 @@ impl Game {
         }
         if city.size <= 1 || weak_barbarian {
             let name = city.name.clone();
-            self.remove_city(c);
+            self.destroy_city(c, by);
             self.push_event(GameEvent::CityDestroyed { name, at: (city.x, city.y), by, from });
             // steal_advance runs for a destroyed city too (0x14232)
             self.capture_steal(by, from);
