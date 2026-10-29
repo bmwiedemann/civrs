@@ -134,6 +134,12 @@ impl Game {
         }
         let Some(def_id) = self.best_defender(x, y, Some(&attacker)) else { return MoveOutcome::Blocked };
         let defender = self.unit(def_id).clone();
+        // a fight of the human's or one he sees scrolls his view to the defender (combat
+        // 0x19a78..0x19af4; the move code's attack on his unit, 0x604d, goes to the same square)
+        let h = self.human_slot;
+        if attacker.owner == h || defender.owner == h || (attacker.seen_by | defender.seen_by) & (1 << h) != 0 {
+            self.scroll_view_to(x, y);
+        }
         let (mut a, d, second_roll) = self.combat_strengths(&attacker, &defender);
         // the resolution's difficulty factors (CIV.EXE 0x199c2..): a civilization's attack is
         // halved against the human below Prince and doubled for the human at Chieftain

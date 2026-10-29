@@ -48,12 +48,38 @@ impl Game {
 
     /// Try to move the unit one step. Handles combat, city capture, huts and boarding.
     pub fn try_move(&mut self, id: UnitId, d: Dir8) -> Result<MoveOutcome, RuleError> {
-        self.step(id, d, true)
+        let r = self.step(id, d, true);
+        self.enemy_move_seen(id, &r);
+        r
     }
 
     /// Complete a move that stopped with `MoveOutcome::CaravanArrived` ("Keep moving").
     pub fn move_on(&mut self, id: UnitId, d: Dir8) -> Result<MoveOutcome, RuleError> {
-        self.step(id, d, false)
+        let r = self.step(id, d, false);
+        self.enemy_move_seen(id, &r);
+        r
+    }
+
+    /// A computer's or barbarian unit that the human sees after its step scrolls his map
+    /// view to it with Enemy Moves on (`scroll_to` 0x6761: unit +9 has the human's bit, option
+    /// bit 0x20); the human's own units follow in the move loops (`view_follows`).
+    fn enemy_move_seen(&mut self, id: UnitId, r: &Result<MoveOutcome, RuleError>) {
+        if !matches!(r, Ok(MoveOutcome::Moved | MoveOutcome::EnteredHut | MoveOutcome::Boarded(_))) || !self.options.enemy_moves {
+            return;
+        }
+        let h = self.human_slot;
+        if let Some(u) = self.unit_opt(id).filter(|u| u.owner != h && u.seen_by & (1 << h) != 0) {
+            let (x, y) = u.pos();
+            self.scroll_view_to(x, y);
+        }
+    }
+
+    /// `scroll_to(human, x, y)` (0x9505): the human's map view moves when the square is not
+    /// well inside it.
+    pub fn scroll_view_to(&mut self, x: i32, y: i32) {
+        if let Some(v) = self.view {
+            self.view = Some(Self::view_scrolled_to(v, x, y));
+        }
     }
 
     fn step(&mut self, id: UnitId, d: Dir8, ask_caravan: bool) -> Result<MoveOutcome, RuleError> {
@@ -741,6 +767,33 @@ mod tests {
             assert!(matches!(g.try_move(id, Dir8::E), Ok(MoveOutcome::Moved)));
             let n = crate::game::rng::trace_take().iter().filter(|d| d.at == 0x635e).count();
             assert_eq!(n, draws, "moves {moves}");
+        }
+    }
+
+    /// A computer unit the human sees scrolls his view to its square with Enemy Moves on
+    /// (0x6761); one he does not see leaves the view alone.
+    #[test]
+    fn a_seen_enemy_move_scrolls_the_human_view() {
+        for (seen, scrolls) in [(true, true), (false, false)] {
+            let (mut g, _) = militia_before_mountains(3, 3);
+            let h = g.human_slot;
+            let other = (1..8).find(|s| *s != h && g.player(*s).alive).unwrap();
+            let (x, y) = (40, 20);
+            for dx in -3..=1 {
+                let t = g.map.get_mut(x + dx, y).unwrap();
+                t.terrain = Terrain::Grassland;
+                t.flags = 0;
+            }
+            if seen {
+                // a unit of the human's next to the square the computer's unit goes to
+                g.add_unit(h, unit_ids::MILITIA, x - 2, y);
+                g.refresh_vision(h);
+            }
+            let id = g.add_unit(other, unit_ids::MILITIA, x, y);
+            g.view = Some((0, 0));
+            g.options.enemy_moves = true;
+            assert!(matches!(g.try_move(id, Dir8::W), Ok(MoveOutcome::Moved)));
+            assert_eq!(g.view != Some((0, 0)), scrolls, "seen {seen}");
         }
     }
 
