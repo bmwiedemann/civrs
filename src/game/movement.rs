@@ -245,6 +245,7 @@ impl Game {
                     // board a ship with room (0x5e0d): the unit is sentried, loses the fortify
                     // bits and gets exactly one move (moves = 3, 0x5e2c), which the step to the
                     // sea then costs without a roll (0x634a), and the move goes on as any other
+                    // (a computer's unit ends it awake, `place_unit` 0x6810)
                     let Some(s) = self.boarding_ship(&u, (tx, ty)) else { return Ok(MoveOutcome::Blocked) };
                     let um = self.unit_mut(id);
                     um.sentry_keeping_job(false);
@@ -444,8 +445,13 @@ impl Game {
             u.order = UnitOrder::None;
         }
         // a computer's unit but an aircraft keeps only its veteran bits (`and status,0x30`,
-        // 0x6810), the human's keeps them all: the job under a boarder's sentry goes
+        // 0x6810, civ != ds:0xd7ee and domain != 1), the human's keeps them all: a computer's
+        // land unit that boarded by its own step (sentried at 0x5e22) ends awake at sea until
+        // its ship's next move sentries it (0x69e5), and the job under its sentry goes too
         if !human && !u.is_air() {
+            if u.order == UnitOrder::Sentry {
+                u.order = UnitOrder::None;
+            }
             u.sentry_job = None;
         }
         // a move resets the work counter (unit +5 = the type's fuel, 0x6d00) and who has seen

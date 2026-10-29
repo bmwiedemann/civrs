@@ -1411,7 +1411,7 @@ fn score_direction(g: &mut Game, c: &Ctx, k: usize, peaceful: bool) -> Option<(i
 ///
 /// A land unit stepping onto a ship with room has been sentried with one move (0x5e22..0x5e2c)
 /// before these checks, so the step leaves it no points and a refused boarding leaves it
-/// sentried ashore.
+/// sentried ashore; a boarding step clears the bit again (0x6810, `Game::place_unit`).
 fn do_step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) -> bool {
     let k = d as i32 + 1;
     let u = g.unit(id).clone();
@@ -1902,8 +1902,10 @@ mod tests {
     }
 
     #[test]
-    fn a_computer_unit_boarding_has_no_move_left_and_a_refused_boarding_leaves_it_sentried() {
-        // 0x5e22..0x5e2c: sentry bit and moves = 3 before the cost, so the stack limit is 2
+    fn a_computer_unit_boarding_has_no_move_left_ends_awake_and_a_refused_boarding_leaves_it_sentried() {
+        // 0x5e22..0x5e2c: sentry bit and moves = 3 before the cost, so the stack limit is 2;
+        // the step itself goes on to `and status,0x30` (0x6810): awake at sea until the ship
+        // moves (0x69e5)
         let mut g = arena();
         let s = ai(&g);
         let ship = g.add_unit(s, unit_ids::SAIL, 40, 10);
@@ -1917,8 +1919,9 @@ mod tests {
         g.unit_mut(c).order = UnitOrder::None;
         g.set_heading(c, 0xff);
         assert!(do_step(&mut g, c, Dir8::E, &mut |_| {}));
-        assert_eq!((g.unit(c).pos(), g.unit(c).moves_left, g.unit(c).order, g.aboard(c)), ((40, 10), 0, UnitOrder::Sentry, true));
-        let _ = ship;
+        assert_eq!((g.unit(c).pos(), g.unit(c).moves_left, g.unit(c).order, g.aboard(c)), ((40, 10), 0, UnitOrder::None, true));
+        assert_eq!(g.try_move(ship, Dir8::E), Ok(crate::game::MoveOutcome::Moved));
+        assert_eq!((g.unit(c).pos(), g.unit(c).order), ((41, 10), UnitOrder::Sentry));
     }
 
     #[test]
