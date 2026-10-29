@@ -66,8 +66,9 @@ pub struct Unit {
     pub home: Option<CityId>,
     /// Turns spent in the air since last landing (air units).
     pub fuel: u8,
-    /// Ship carrying this unit (land units at sea / aircraft on carriers).
-    pub carried_by: Option<UnitId>,
+    /// Unused, always `None`: kept for the layout of older saves. CIV.EXE links no unit to
+    /// its ship; a ship's move takes along what its stack holds (`Game::take_cargo`).
+    pub legacy_cargo: Option<UnitId>,
     /// Barbarian leader flag (uses the Diplomat sprite).
     pub leader: bool,
     /// Turn the unit was created (for AI bookkeeping / barbarian expiry).
@@ -108,7 +109,7 @@ impl Unit {
             goto: None,
             home: None,
             fuel: 0,
-            carried_by: None,
+            legacy_cargo: None,
             leader: false,
             created_turn: turn,
             seen_by: 1 << owner,
@@ -131,9 +132,14 @@ impl Unit {
     pub fn is_sea(&self) -> bool {
         self.info().domain == crate::rules::Domain::Sea
     }
-    /// A ship land units can board (the Carrier only takes air units).
+    /// A ship land units can board: one with a capacity (the Carrier has none, it takes air
+    /// units).
     pub fn carries_land_units(&self) -> bool {
-        self.is_sea() && self.info().capacity > 0 && self.kind != crate::rules::unit_ids::CARRIER
+        self.is_sea() && self.info().capacity > 0
+    }
+    /// A ship with a capacity or the Carrier (CIV.EXE 0x4e1a, 0x68cb).
+    pub fn carries_units(&self) -> bool {
+        self.info().capacity > 0 || self.kind == crate::rules::unit_ids::CARRIER
     }
     pub fn is_air(&self) -> bool {
         self.info().domain == crate::rules::Domain::Air

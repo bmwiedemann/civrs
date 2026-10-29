@@ -874,17 +874,12 @@ impl Game {
         // owner on the square along, a Carrier every aircraft too (delete_unit 0x8dba,
         // 0x8e06); elsewhere what it carried stays
         let Some(dead) = self.unit_opt(id).cloned() else { return };
-        let lost: Vec<UnitId> = if dead.info().capacity > 0 && self.map.tile(dead.x, dead.y).is_ocean() {
+        let lost: Vec<UnitId> = if dead.carries_units() && self.map.tile(dead.x, dead.y).is_ocean() {
             let carrier = dead.kind == rules::unit_ids::CARRIER;
-            self.all_units().filter(|u| u.id != id && u.owner == dead.owner && u.pos() == dead.pos() && (u.is_land() || (carrier && u.is_air()))).map(|u| u.id).collect()
+            self.all_units().filter(|u| u.id != id && u.owner == dead.owner && u.pos() == dead.pos() && if carrier { u.is_air() } else { u.is_land() }).map(|u| u.id).collect()
         } else {
             Vec::new()
         };
-        for u in self.units.iter_mut().flatten() {
-            if u.carried_by == Some(id) {
-                u.carried_by = None;
-            }
-        }
         for c in lost.into_iter().chain([id]) {
             // out of the square's stack ring (delete_unit 0x8e83)
             if self.unit_opt(c).is_some() {

@@ -564,7 +564,7 @@ impl Game {
     /// nothing. Not copied: CIV.EXE then runs the end-of-unit fuel and Trireme code on the
     /// record before that unit, which may be any unit (0x4e71 -> 0x6dad -> 0x750f).
     pub fn unload(&mut self, id: UnitId) -> Option<UnitId> {
-        if self.unit(id).info().capacity == 0 {
+        if !self.unit(id).carries_units() {
             return None;
         }
         let stack = self.stack_from(id);
@@ -895,7 +895,6 @@ mod tests {
         let b = g.add_unit(slot, unit_ids::MILITIA, x, y);
         assert!(g.unit(a).record < g.unit(ship).record && g.unit(ship).record < g.unit(b).record);
         for p in [a, b] {
-            g.unit_mut(p).carried_by = Some(ship);
             g.give_order(p, UnitOrder::Sentry).unwrap();
             assert_eq!((g.unit(p).order, g.unit(p).moves_left), (UnitOrder::Sentry, 0));
         }

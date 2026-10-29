@@ -1406,7 +1406,7 @@ impl Game {
         }
         let slot = u.owner;
         let in_city = self.city_at(u.x, u.y).is_some();
-        let on_carrier = u.carried_by.map(|cr| self.unit_opt(cr).is_some()).unwrap_or(false);
+        let on_carrier = self.on_carrier(id);
         if in_city || on_carrier {
             self.unit_mut(id).fuel = 0;
             return;

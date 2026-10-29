@@ -713,23 +713,13 @@ impl Game {
 
     /// Delete unit `u` and create one of its type on its square for `owner` (`delete_unit`
     /// 0x8d6c, which drowns a ship's cargo, then `create_unit` 0x8b51 with its home rule).
-    /// Cargo re-created before its ship rides on in the new one; the old owner's drowns.
-    /// With all of `owner`'s unit slots in use the unit is only deleted (civil_war does not
-    /// check and writes to slot -1, o 0x15088).
+    /// Cargo re-created before its ship rides on with the new one's stack; the old owner's
+    /// drowns. With all of `owner`'s unit slots in use the unit is only deleted (civil_war
+    /// does not check and writes to slot -1, o 0x15088).
     fn recreate_unit(&mut self, u: &Unit, owner: Slot) -> Option<UnitId> {
-        let aboard: Vec<UnitId> = self.all_units().filter(|c| c.carried_by == Some(u.id) && c.owner != u.owner).map(|c| c.id).collect();
-        for c in &aboard {
-            self.unit_mut(*c).carried_by = None;
-        }
         self.remove_unit(u.id);
         let n = self.try_add_unit(owner, u.kind, u.x, u.y)?;
         self.players[owner as usize].stats.units_built -= 1;
-        if self.city_at(u.x, u.y).is_none() {
-            self.unit_mut(n).carried_by = u.carried_by;
-        }
-        for c in aboard {
-            self.unit_mut(c).carried_by = Some(n);
-        }
         Some(n)
     }
 

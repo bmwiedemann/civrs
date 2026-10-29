@@ -70,7 +70,7 @@ mod tests {
         assert_eq!(UNITS[unit_ids::SETTLERS as usize].cost, 4);
         let bs = &UNITS[unit_ids::BATTLESHIP as usize];
         assert_eq!((bs.att, bs.def, bs.moves), (18, 12, 4));
-        assert_eq!(UNITS[unit_ids::CARRIER as usize].capacity, 8);
+        assert_eq!(UNITS[unit_ids::CARRIER as usize].capacity, 0);
         assert_eq!(UNITS[unit_ids::MECH_INF as usize].name, "Mech. Inf.");
         assert_eq!(unit_by_name("Trireme"), Some(unit_ids::TRIREME));
         assert_eq!(UNITS[unit_ids::CARAVAN as usize].name, "Caravan");

@@ -1907,7 +1907,6 @@ mod tests {
         let s = ai(&g);
         let ship = g.add_unit(s, unit_ids::SAIL, 40, 10);
         let m = g.add_unit(s, unit_ids::MILITIA, 40, 10);
-        g.unit_mut(m).carried_by = Some(ship);
         let c = g.add_unit(s, unit_ids::CAVALRY, 39, 10);
         assert_eq!(g.unit(c).moves_left, 6);
         assert!(!do_step(&mut g, c, Dir8::E, &mut |_| {}));
@@ -1917,7 +1916,8 @@ mod tests {
         g.unit_mut(c).order = UnitOrder::None;
         g.set_heading(c, 0xff);
         assert!(do_step(&mut g, c, Dir8::E, &mut |_| {}));
-        assert_eq!((g.unit(c).pos(), g.unit(c).moves_left, g.unit(c).order, g.unit(c).carried_by), ((40, 10), 0, UnitOrder::Sentry, Some(ship)));
+        assert_eq!((g.unit(c).pos(), g.unit(c).moves_left, g.unit(c).order, g.aboard(c)), ((40, 10), 0, UnitOrder::Sentry, true));
+        let _ = ship;
     }
 
     #[test]
@@ -1928,18 +1928,15 @@ mod tests {
         let t = g.add_unit(s, unit_ids::TRANSPORT, 3, 3);
         let t2 = g.add_unit(s, unit_ids::TRANSPORT, 3, 3);
         let a = g.add_unit(s, unit_ids::MILITIA, 3, 3);
-        g.unit_mut(a).carried_by = Some(t);
         let b = g.add_unit(s, unit_ids::MILITIA, 3, 3);
-        g.unit_mut(b).carried_by = Some(t2);
         g.remove_unit(t);
         assert!(g.unit_opt(a).is_none() && g.unit_opt(b).is_none());
         assert!(g.unit_opt(t2).is_some());
         g.add_city(s, "Port".into(), 5, 5);
         let p = g.add_unit(s, unit_ids::TRANSPORT, 5, 5);
         let m = g.add_unit(s, unit_ids::MILITIA, 5, 5);
-        g.unit_mut(m).carried_by = Some(p);
         g.remove_unit(p);
-        assert_eq!(g.unit_opt(m).map(|u| u.carried_by), Some(None));
+        assert!(g.unit_opt(m).is_some_and(|_| !g.aboard(m)));
     }
 
     #[test]

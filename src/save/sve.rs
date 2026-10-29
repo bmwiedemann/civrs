@@ -547,21 +547,7 @@ fn import_slot(data: &[u8], map_pic: &[u8], moves_back: bool) -> Result<Game, Sa
             u.next = n;
         }
     }
-    // cargo: land units at sea on a ship, aircraft at sea on a Carrier, in record order
-    let mut room: Vec<i32> = units.iter().map(|u| u.as_ref().map_or(0, |u| u.info().capacity as i32)).collect();
-    for i in 0..units.len() {
-        let Some(u) = units[i].clone() else { continue };
-        if !(u.is_land() || u.is_air()) || !g.map.is_ocean(u.x, u.y) {
-            continue;
-        }
-        let ship = (0..units.len()).find(|&j| {
-            units[j].as_ref().is_some_and(|s| s.owner == u.owner && s.pos() == u.pos() && room[j] > 0 && if u.is_land() { s.carries_land_units() } else { s.kind == rules::unit_ids::CARRIER })
-        });
-        if let Some(j) = ship {
-            room[j] -= 1;
-            units[i].as_mut().unwrap().carried_by = Some(j as u16);
-        }
-    }
+    // the cargo of the ships is their stacks' (CIV.EXE keeps no other link)
     g.units = units;
     // a ring that does not hold all of a civ's units on its square (none in the sample
     // saves) is linked up again from the records

@@ -196,8 +196,8 @@ pub static UNITS: [UnitType; 28] = [
     unit("Cruiser", Sea, 6, 0, 6, 6, 8, 3, 0, SeaAttack, Some(adv::COMBUSTION), None),
     unit("Battleship", Sea, 4, 0, 18, 12, 16, 3, 0, SeaAttack, Some(adv::STEEL), None),
     unit("Submarine", Sea, 3, 0, 8, 2, 5, 3, 0, SeaAttack, Some(adv::MASS_PRODUCTION), None),
-    // Raw table capacity is 0; the game code lets a Carrier carry 8 air units.
-    unit("Carrier", Sea, 5, 0, 1, 12, 16, 3, 8, SeaAttack, Some(adv::ADVANCED_FLIGHT), None),
+    // capacity 0 as in CIV.EXE's table: a Carrier takes any number of air units (0x6a53)
+    unit("Carrier", Sea, 5, 0, 1, 12, 16, 3, 0, SeaAttack, Some(adv::ADVANCED_FLIGHT), None),
     unit("Transport", Sea, 4, 0, 0, 3, 5, 0, 8, Transport, Some(adv::INDUSTRIALIZATION), None),
     unit("Nuclear", DAir, 16, 1, 99, 0, 16, 0, 0, Attack, Some(adv::ROCKETRY), None),
     unit("Diplomat", Land, 2, 0, 0, 0, 3, 0, 0, Civilian, Some(adv::WRITING), None),

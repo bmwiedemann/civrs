@@ -362,10 +362,10 @@ impl Game {
             let kind = if i == count { unit_ids::DIPLOMAT } else { troops };
             let Some(u) = self.add_barbarian(kind, x, y) else { break };
             let um = self.unit_mut(u);
-            um.carried_by = Some(ship);
             um.order = UnitOrder::Sentry;
             um.leader = kind == unit_ids::DIPLOMAT;
         }
+        let _ = ship;
         self.refresh_vision(0);
     }
 
@@ -937,7 +937,6 @@ mod tests {
         // the ship one square west of the coast at (4, 10)
         let ship = g.add_barbarian(unit_ids::SAIL, 4, 10).unwrap();
         let l = g.add_barbarian(unit_ids::LEGION, 4, 10).unwrap();
-        g.unit_mut(l).carried_by = Some(ship);
         g.unit_mut(l).order = UnitOrder::Sentry;
         g.take_events();
         assert_eq!(g.barbarian_command(ship), BarbarianCommand::Unload);
@@ -961,7 +960,6 @@ mod tests {
         let city = g.add_city(human, "Bare".into(), 5, 9);
         let ship = g.add_barbarian(unit_ids::SAIL, 4, 10).unwrap();
         let l = g.add_barbarian(unit_ids::LEGION, 4, 10).unwrap();
-        g.unit_mut(l).carried_by = Some(ship);
         g.unit_mut(l).order = UnitOrder::Sentry;
         // 0x18ef3 skips city squares for the landing, 0x18e8d attacks only units
         let cmd = g.barbarian_command(ship);
@@ -982,7 +980,6 @@ mod tests {
         for kind in [unit_ids::LEGION, unit_ids::LEGION, unit_ids::DIPLOMAT] {
             let u = g.add_barbarian(kind, 4, 10).unwrap();
             let um = g.unit_mut(u);
-            um.carried_by = Some(ship);
             um.order = UnitOrder::Sentry;
             um.leader = kind == unit_ids::DIPLOMAT;
             troops.push(u);
@@ -994,7 +991,7 @@ mod tests {
         for t in &troops[..2] {
             let u = g.unit(*t);
             assert!(g.map.is_land(u.x, u.y), "{:?}", u.pos());
-            assert!(u.carried_by.is_none());
+            assert!(!g.aboard(*t));
         }
     }
 

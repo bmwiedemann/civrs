@@ -154,7 +154,8 @@ impl Game {
                 if u.kind == unit_ids::SUBMARINE && target.is_land() {
                     return Ok(MoveOutcome::Blocked);
                 }
-                if u.carried_by.is_some() && u.is_land() {
+                // no attack from a ship: a land unit on an ocean square (0x5ec3)
+                if u.is_land() && self.map.is_ocean(u.x, u.y) {
                     return Err(RuleError::Amphib);
                 }
                 // below one full move the human is asked to confirm the weakened attack, and
@@ -246,7 +247,6 @@ impl Game {
                     // sea then costs without a roll (0x634a), and the move goes on as any other
                     let Some(s) = self.boarding_ship(&u, (tx, ty)) else { return Ok(MoveOutcome::Blocked) };
                     let um = self.unit_mut(id);
-                    um.carried_by = Some(s);
                     um.order = UnitOrder::Sentry;
                     um.moves_left = 3;
                     boarded = Some(s);
@@ -275,50 +275,15 @@ impl Game {
             return Ok(MoveOutcome::Blocked);
         }
         let had_hut = target.has(tile_flags::HUT);
-        // the units the step takes along go in the order of the square's stack ring from the
-        // unit's successor (0x6799 keeps its +0xa, 0x6a15 follows the links)
-        let ring: Vec<UnitId> = self.stack_ring(id, 128).into_iter().skip(1).collect();
-        // a ship leaving a city takes along the sentried units of its kind there, land units
-        // onto transports and aircraft onto a Carrier, up to its capacity (CIV.EXE 0x6932); a
-        // computer's ship takes every unit that is not fortified or fortifying (0x693f), and
-        // they travel sentried (0x69e5). Deviation: civrs leaves units at work behind. Only at
-        // sea does the whole stack go along, so what it brought in is chosen again here.
-        if u.is_sea() && u.info().capacity > 0 && self.map.tile(u.x, u.y).is_land() {
-            for o in self.all_units().filter(|o| o.carried_by == Some(id)).map(|o| o.id).collect::<Vec<_>>() {
-                self.unit_mut(o).carried_by = None;
-            }
-            let air = u.kind == unit_ids::CARRIER;
-            let computer = !self.is_human(slot);
-            let waiting: Vec<UnitId> = ring
-                .iter()
-                .map(|o| self.unit(*o))
-                .filter(|o| o.carried_by.is_none())
-                .filter(|o| o.order == UnitOrder::Sentry || (computer && !matches!(o.order, UnitOrder::Fortify | UnitOrder::Fortified) && o.order_turns == 0))
-                .filter(|o| if air { o.is_air() } else { o.is_land() })
-                .map(|o| o.id)
-                .collect();
-            let room = (u.info().capacity as usize).saturating_sub(self.cargo_count(id));
-            for o in waiting.into_iter().take(room) {
-                let ou = self.unit_mut(o);
-                ou.carried_by = Some(id);
-                // the sentry bit comes with a ship whose table capacity is not 0, so not
-                // with the Carrier (0x69d6)
-                if !air {
-                    ou.order = UnitOrder::Sentry;
-                }
-                self.ai_memory.heading.remove(&o);
-            }
-        }
+        // the step keeps the unit's successor in its old square's ring (0x6799): a ship's
+        // cargo is taken from there
+        let old_next = self.unit(id).next;
         // a step onto a square another civ owns on the site/owner layer clears it (0x6815)
         let owner_there = self.map.claim_at(tx, ty);
         if (1..8).contains(&owner_there) && owner_there != slot {
             self.map.set_claim(tx, ty, 0);
         }
         self.place_unit(id, tx, ty, cost);
-        // land unit leaving a ship
-        if u.carried_by.is_some() && target.is_land() {
-            self.unit_mut(id).carried_by = None;
-        }
         // a unit reaching its goto square forgets it, and a computer's unit stops there
         // (CIV.EXE 0x6848..0x6878); coming ashore from the sea ends the move of all but
         // aircraft, a ship's into port too (0x687d..0x68a8)
@@ -332,31 +297,7 @@ impl Game {
         if self.map.is_ocean(u.x, u.y) && target.is_land() && !u.is_air() {
             self.unit_mut(id).moves_left = 0;
         }
-        // units aboard move with ship; in port they are units of the city again, to be
-        // activated, and go along only when sentried. Each one carried loses its heading
-        // (+8, 0x69b9), is sentried aboard a transport but not a Carrier (0x69d6..0x69e5) and,
-        // with a range, gets a full tank (+5 = range - 1, 0x6a02: civrs's 0 turns flown)
-        if u.is_sea() {
-            let cargo: Vec<UnitId> = ring.iter().copied().filter(|c| self.unit(*c).carried_by == Some(id)).collect();
-            let port = target.is_land();
-            let transport = u.carries_land_units();
-            for c in cargo {
-                self.set_heading(c, 0xff);
-                // each one out of the old square's ring and into the new one's (0x697a/0x698e)
-                self.relocate_unit(c, tx, ty);
-                let cu = self.unit_mut(c);
-                cu.seen_by = 0;
-                if transport {
-                    cu.order = UnitOrder::Sentry;
-                }
-                if cu.info().range != 0 {
-                    cu.fuel = 0;
-                }
-                if port {
-                    cu.carried_by = None;
-                }
-            }
-        }
+        self.take_cargo(id, old_next, (u.x, u.y), (tx, ty));
         // aircraft landing in a city / carrier refuels; landing ends the aircraft's turn, its
         // goto and its return to base (bit 0x02, CIV.EXE 0x6c71..0x6d00)
         if u.is_air() {
@@ -368,18 +309,10 @@ impl Game {
                     self.unit_mut(id).order = UnitOrder::None;
                 }
             }
-            // a Carrier takes up to 8 air units, Nuclear included
-            let carrier = self.units_at(tx, ty).into_iter().find(|s| {
-                *s != id && self.unit(*s).kind == unit_ids::CARRIER && self.unit(*s).owner == slot && self.cargo_count(*s) < self.unit(*s).info().capacity as usize
-            });
-            if self.city_at(tx, ty).map(|c| self.city(c).owner == slot).unwrap_or(false) {
+            // a Carrier in the stack takes any number of air units, Nuclear included
+            // (stack_has_type 0x918d, 0x6cd1; the table gives it no capacity)
+            if self.city_at(tx, ty).map(|c| self.city(c).owner == slot).unwrap_or(false) || self.on_carrier(id) {
                 self.unit_mut(id).fuel = 0;
-                self.unit_mut(id).carried_by = None;
-            } else if let Some(cr) = carrier {
-                self.unit_mut(id).fuel = 0;
-                self.unit_mut(id).carried_by = Some(cr);
-            } else {
-                self.unit_mut(id).carried_by = None;
             }
         }
         // a unit that enters a foreign city is seen by its owner (0x6a65)
@@ -410,13 +343,93 @@ impl Game {
         Ok(boarded.map_or(MoveOutcome::Moved, MoveOutcome::Boarded))
     }
 
-    /// The ship a land unit of `u`'s owner boards stepping onto the sea square `to`: one of
-    /// the owner's transports there with room (CIV.EXE 0x5e0d, `stack_free_capacity` 0x9231).
+    /// The ship a land unit of `u`'s owner boards stepping onto the sea square `to`: the
+    /// first transport of the owner's stack there, when the stack has room (CIV.EXE 0x5e0d,
+    /// `stack_free_capacity` 0x9231 > 0). Which ship carries it is not kept: every move of a
+    /// ship takes along what its stack holds (`take_cargo`).
     pub fn boarding_ship(&self, u: &super::Unit, to: (i32, i32)) -> Option<UnitId> {
-        self.units_at(to.0, to.1).into_iter().find(|s| {
-            let su = self.unit(*s);
-            su.owner == u.owner && su.carries_land_units() && self.cargo_count(*s) < su.info().capacity as usize
-        })
+        let head = self.units_at(to.0, to.1).into_iter().find(|h| self.unit(*h).owner == u.owner)?;
+        if self.stack_free_capacity(head) <= 0 {
+            return None;
+        }
+        self.stack_ring(head, 128).into_iter().find(|s| self.unit(*s).carries_land_units())
+    }
+
+    /// `stack_free_capacity` (CIV.EXE 0x9231) of `head`'s stack: the capacities of its
+    /// transports (AI role 5) less one for each of its land units. Not copied: the walk
+    /// (`for_each_in_stack` 0x92a7) stops after ten units.
+    pub fn stack_free_capacity(&self, head: UnitId) -> i32 {
+        self.stack_ring(head, 128)
+            .into_iter()
+            .map(|s| {
+                let su = self.unit(s);
+                let room = if su.info().role == crate::rules::AiRole::Transport { su.info().capacity as i32 } else { 0 };
+                room - su.is_land() as i32
+            })
+            .sum()
+    }
+
+    /// Is unit `id` aboard a ship? CIV.EXE keeps no link from a unit to its ship: a land unit
+    /// on an ocean square is a passenger (`wake_if_not_at_sea_cb` 0x92fe, the amphibious
+    /// attack 0x5ec3), an aircraft rides a Carrier of its stack (`on_carrier`).
+    pub fn aboard(&self, id: UnitId) -> bool {
+        let u = self.unit(id);
+        (u.is_land() && self.map.is_ocean(u.x, u.y)) || (u.is_air() && self.on_carrier(id))
+    }
+
+    /// Does `id`'s stack ring hold a Carrier (`stack_has_type(civ, unit, 0x17)` 0x918d)? Not
+    /// copied: the walk stops after ten units.
+    pub fn on_carrier(&self, id: UnitId) -> bool {
+        self.stack_ring(id, 128).into_iter().any(|s| s != id && self.unit(s).kind == unit_ids::CARRIER)
+    }
+
+    /// The units a ship that stepped from `from` to `to` takes along (move_units
+    /// 0x68ad..0x6a62): only a ship with a capacity, or a Carrier. CIV.EXE keeps no cargo
+    /// list; it walks the old square's stack ring from the ship's old successor `first`
+    /// (+0xa, 0x6799) and takes the units of its domain, land units onto transports and
+    /// aircraft onto a Carrier (0x6916): every one from the sea, else (a ship leaving a city)
+    /// the sentried ones, and of a computer's stack also every one neither fortifying nor
+    /// fortified (status & 0xc) that is not the last left on the square (+0xa = 0xff,
+    /// 0x6964). Each one out of the old ring and into the new (0x697a/0x698e) loses its
+    /// heading (+8, 0x69b9), is sentried by a ship with a table capacity, so not by the
+    /// Carrier (0x69d6), and with a range gets a full tank (+5 = range - 1, 0x6a02: civrs's 0
+    /// turns flown). The walk ends after 20 links, at the end of the ring, or once the
+    /// capacity is reached; a Carrier and a barbarian ship have no limit (0x6a1e..0x6a62).
+    /// Units over the capacity stay where they are, at sea too.
+    fn take_cargo(&mut self, id: UnitId, first: Option<UnitId>, from: (i32, i32), to: (i32, i32)) {
+        let u = self.unit(id).clone();
+        let carrier = u.kind == unit_ids::CARRIER;
+        let capacity = u.info().capacity as i32;
+        if !u.is_sea() || (capacity == 0 && !carrier) {
+            return;
+        }
+        let at_sea = self.map.is_ocean(from.0, from.1);
+        let human = self.is_human(u.owner);
+        let (mut cur, mut links, mut loaded) = (first, 0, 0);
+        while let Some(c) = cur {
+            let Some(cu) = self.unit_opt(c).cloned().filter(|cu| cu.owner == u.owner && cu.pos() == from) else { break };
+            let after = cu.next;
+            let domain = if carrier { cu.is_air() } else { cu.is_land() };
+            let fortified = matches!(cu.order, UnitOrder::Fortify | UnitOrder::Fortified);
+            if domain && (cu.order == UnitOrder::Sentry || at_sea || (!human && !fortified && cu.next.is_some())) {
+                self.set_heading(c, 0xff);
+                self.relocate_unit(c, to.0, to.1);
+                let m = self.unit_mut(c);
+                m.seen_by = 0;
+                if capacity != 0 {
+                    m.order = UnitOrder::Sentry;
+                }
+                if m.info().range != 0 {
+                    m.fuel = 0;
+                }
+                loaded += 1;
+            }
+            links += 1;
+            if links >= 20 || !(capacity > loaded || carrier || u.owner == 0) {
+                break;
+            }
+            cur = after;
+        }
     }
 
     /// Move a unit to a tile and deduct movement cost (thirds).
@@ -529,8 +542,10 @@ impl Game {
             self.unit_mut(h).seen_by |= 1 << l;
         }
         for h in woken {
+            // a passenger at sea sleeps on (wake_if_not_at_sea_cb 0x92fe)
+            let passenger = self.aboard(h) && self.unit(h).is_land();
             let hu = self.unit_mut(h);
-            if hu.order == UnitOrder::Sentry && hu.carried_by.is_none() {
+            if hu.order == UnitOrder::Sentry && !passenger {
                 hu.order = UnitOrder::None;
             }
             hu.goto = None;
@@ -564,12 +579,19 @@ impl Game {
         false
     }
 
-    pub fn cargo_count(&self, ship: UnitId) -> usize {
-        self.all_units().filter(|u| u.carried_by == Some(ship)).count()
+    /// What a ship at sea has aboard: the land units of its stack, for a Carrier the
+    /// aircraft (the units its next move takes along, capacity aside).
+    pub fn cargo_of(&self, ship: UnitId) -> Vec<UnitId> {
+        let s = self.unit(ship);
+        if !self.map.is_ocean(s.x, s.y) {
+            return Vec::new();
+        }
+        let carrier = s.kind == unit_ids::CARRIER;
+        self.stack_ring(ship, 128).into_iter().filter(|o| if carrier { self.unit(*o).is_air() } else { self.unit(*o).is_land() }).collect()
     }
 
-    pub fn cargo_of(&self, ship: UnitId) -> Vec<UnitId> {
-        self.all_units().filter(|u| u.carried_by == Some(ship)).map(|u| u.id).collect()
+    pub fn cargo_count(&self, ship: UnitId) -> usize {
+        self.cargo_of(ship).len()
     }
 
     /// Can the unit (by rules of terrain only) enter the tile? Used by pathfinding.
@@ -895,7 +917,9 @@ mod tests {
     }
 
     #[test]
-    fn carriers_take_eight_aircraft_and_no_land_units() {
+    fn carriers_take_any_number_of_aircraft_and_no_land_units() {
+        // the table gives the Carrier no capacity: aircraft land on it whatever their number
+        // (0x6cd1) and its moves take them all along (0x6a53)
         let mut g = Game::new(GameSetup { seed: 1, ..Default::default() }, None);
         let slot = g.human_slot;
         let (x, y) = (40, 25);
@@ -908,17 +932,19 @@ mod tests {
         let carrier = g.add_unit(slot, unit_ids::CARRIER, x, y);
         let militia = g.add_unit(slot, unit_ids::MILITIA, x - 1, y);
         assert_eq!(g.try_move(militia, Dir8::E), Ok(MoveOutcome::Blocked));
-        for n in 0..9 {
+        for n in 0..12 {
             let f = g.add_unit(slot, unit_ids::FIGHTER, x + 1, y);
             assert_eq!(g.try_move(f, Dir8::W), Ok(MoveOutcome::Moved));
-            assert_eq!(g.unit(f).carried_by.is_some(), n < 8, "fighter {n}");
+            assert!(g.aboard(f), "fighter {n}");
             // landing on a Carrier ends the aircraft's turn (CIV.EXE 0x6cea)
             assert_eq!(g.unit(f).moves_left, 0);
         }
         let f = g.add_unit(slot, unit_ids::FIGHTER, x + 1, y + 1);
         assert_eq!(g.try_move(f, Dir8::N), Ok(MoveOutcome::Moved));
         assert_eq!(g.unit(f).moves_left, g.unit(f).full_moves() - 3, "flying on over the sea");
-        assert_eq!(g.cargo_count(carrier), 8);
+        assert_eq!(g.cargo_count(carrier), 12);
+        assert_eq!(g.try_move(carrier, Dir8::E), Ok(MoveOutcome::Moved));
+        assert_eq!(g.units_at(x + 1, y).len(), 14, "the carrier, its 12 fighters and the one flying on");
     }
 
     #[test]
@@ -956,7 +982,7 @@ mod tests {
         let idle = g.add_unit(slot, unit_ids::MILITIA, x, y);
         assert_eq!(g.try_move(ship, Dir8::E), Ok(MoveOutcome::Moved));
         assert_eq!(g.unit(sentried).pos(), (x + 1, y));
-        assert_eq!(g.unit(sentried).carried_by, Some(ship));
+        assert!(g.aboard(sentried));
         assert_eq!(g.unit(idle).pos(), (x, y));
     }
 
@@ -976,7 +1002,8 @@ mod tests {
         g.unit_mut(c).goto = Some((x + 1, y));
         assert_eq!(g.try_move(c, Dir8::E), Ok(MoveOutcome::Boarded(ship)));
         let u = g.unit(c);
-        assert_eq!((u.pos(), u.moves_left, u.order, u.carried_by, u.goto), ((x + 1, y), 0, UnitOrder::Sentry, Some(ship), None));
+        assert_eq!((u.pos(), u.moves_left, u.order, u.goto), ((x + 1, y), 0, UnitOrder::Sentry, None));
+        assert!(g.aboard(c));
         g.unit_mut(c).order = UnitOrder::None;
         assert_eq!(g.try_move(ship, Dir8::E), Ok(MoveOutcome::Moved));
         assert_eq!((g.unit(c).pos(), g.unit(c).order), ((x + 2, y), UnitOrder::Sentry));
@@ -992,7 +1019,6 @@ mod tests {
         g.map.get_mut(x + 1, y).unwrap().terrain = Terrain::Ocean;
         let carrier = g.add_unit(slot, unit_ids::CARRIER, x, y);
         let bomber = g.add_unit(slot, unit_ids::BOMBER, x, y);
-        g.unit_mut(bomber).carried_by = Some(carrier);
         g.unit_mut(bomber).fuel = 1;
         assert_eq!(g.try_move(carrier, Dir8::E), Ok(MoveOutcome::Moved));
         assert_eq!((g.unit(bomber).pos(), g.unit(bomber).fuel), ((x + 1, y), 0));
@@ -1000,7 +1026,8 @@ mod tests {
 
     #[test]
     fn a_computer_carrier_takes_its_aircraft_along_awake() {
-        // 0x69d6: only a ship with a table capacity (not the Carrier) sentries what it takes
+        // 0x69d6: only a ship with a table capacity (not the Carrier) sentries what it takes;
+        // the last unit left in the city stays (0x6964)
         use crate::game::UnitOrder;
         let mut g = Game::new(GameSetup { seed: 1, ..Default::default() }, None);
         let ai = g.civ_slots().into_iter().find(|s| *s != g.human_slot).unwrap();
@@ -1010,9 +1037,13 @@ mod tests {
         g.add_city(ai, "Port".into(), x, y);
         let carrier = g.add_unit(ai, unit_ids::CARRIER, x, y);
         let fighter = g.add_unit(ai, unit_ids::FIGHTER, x, y);
+        let last = g.add_unit(ai, unit_ids::FIGHTER, x, y);
+        // the ring: carrier, last, fighter
+        assert_eq!(g.stack_ring(carrier, 10), vec![carrier, last, fighter]);
         assert_eq!(g.try_move(carrier, Dir8::E), Ok(MoveOutcome::Moved));
-        assert_eq!((g.unit(fighter).pos(), g.unit(fighter).carried_by), ((x + 1, y), Some(carrier)));
-        assert_eq!(g.unit(fighter).order, UnitOrder::None);
+        assert_eq!((g.unit(last).pos(), g.unit(fighter).pos()), ((x + 1, y), (x, y)));
+        assert!(g.aboard(last));
+        assert_eq!(g.unit(last).order, UnitOrder::None);
     }
 
     #[test]
@@ -1048,6 +1079,95 @@ mod tests {
         assert_eq!(g.player(third).gold, 50);
     }
 
+    /// Sea squares (x..x+2, 25) east of a land square at x - 1.
+    fn sea_lane() -> (Game, i32, i32) {
+        let mut g = Game::new(GameSetup { seed: 1, ..Default::default() }, None);
+        let (x, y) = (40, 25);
+        for xx in x - 1..=x + 2 {
+            let t = g.map.get_mut(xx, y).unwrap();
+            t.terrain = if xx < x { Terrain::Grassland } else { Terrain::Ocean };
+            t.city = None;
+        }
+        (g, x, y)
+    }
+
+    #[test]
+    fn a_ship_at_sea_takes_its_stack_in_ring_order_up_to_its_capacity() {
+        // 0x6939: from the sea every land unit of the stack goes, sentried or not, whichever
+        // ship it boarded; 0x6a4e: no more than the capacity, the rest stays at sea
+        use crate::game::UnitOrder;
+        let (mut g, x, y) = sea_lane();
+        let slot = g.human_slot;
+        let sail = g.add_unit(slot, unit_ids::SAIL, x, y);
+        let trireme = g.add_unit(slot, unit_ids::TRIREME, x, y);
+        let land: Vec<UnitId> = (0..5).map(|_| g.add_unit(slot, unit_ids::MILITIA, x, y)).collect();
+        g.unit_mut(land[0]).order = UnitOrder::None;
+        // ring: sail, then the others in reverse: trireme last
+        let ring = g.stack_ring(trireme, 10);
+        assert_eq!(ring[1], sail);
+        let expected: Vec<UnitId> = ring[2..4].to_vec();
+        assert_eq!(g.try_move(trireme, Dir8::E), Ok(MoveOutcome::Moved));
+        let moved: Vec<UnitId> = land.iter().copied().filter(|l| g.unit(*l).pos() == (x + 1, y)).collect();
+        assert_eq!(moved.len(), 2, "a Trireme takes two");
+        assert!(expected.iter().all(|e| moved.contains(e)), "the first two after the ship");
+        assert!(moved.iter().all(|m| g.unit(*m).order == UnitOrder::Sentry));
+        assert_eq!(g.try_move(sail, Dir8::E), Ok(MoveOutcome::Moved));
+        assert_eq!(g.units_at(x + 1, y).len(), 7);
+        // two Triremes with three units aboard have room for one more
+        let (mut g, x, y) = sea_lane();
+        let t = [g.add_unit(slot, unit_ids::TRIREME, x, y), g.add_unit(slot, unit_ids::TRIREME, x, y)];
+        for _ in 0..3 {
+            g.add_unit(slot, unit_ids::MILITIA, x, y);
+        }
+        assert_eq!(g.stack_free_capacity(t[0]), 1);
+        let a = g.add_unit(slot, unit_ids::MILITIA, x - 1, y);
+        let b = g.add_unit(slot, unit_ids::MILITIA, x - 1, y);
+        assert!(matches!(g.try_move(a, Dir8::E), Ok(MoveOutcome::Boarded(_))));
+        assert_eq!(g.try_move(b, Dir8::E), Ok(MoveOutcome::Blocked));
+    }
+
+    #[test]
+    fn a_ship_leaving_port_takes_the_sentried_units_and_a_computer_s_all_but_the_last() {
+        // 0x6932..0x6964: in port the human's ship takes sentried units only; a computer's also
+        // every unit not fortifying or fortified, working ones too, but not the last one left
+        use crate::game::UnitOrder;
+        let (mut g, x, y) = sea_lane();
+        let human = g.human_slot;
+        let ai = g.civ_slots().into_iter().find(|s| *s != human).unwrap();
+        g.add_city(human, "Port".into(), x - 1, y);
+        let ship = g.add_unit(human, unit_ids::SAIL, x - 1, y);
+        let units: Vec<UnitId> = (0..5).map(|_| g.add_unit(human, unit_ids::MILITIA, x - 1, y)).collect();
+        for u in &units[..4] {
+            g.unit_mut(*u).order = UnitOrder::Sentry;
+        }
+        assert_eq!(g.try_move(ship, Dir8::E), Ok(MoveOutcome::Moved));
+        let gone = units.iter().filter(|u| g.unit(**u).pos() == (x, y)).count();
+        assert_eq!(gone, 3, "three of the four sentried, the awake one stays");
+        assert_eq!(g.unit(units[4]).pos(), (x - 1, y));
+        let (mut g, x, y) = sea_lane();
+        g.add_city(ai, "Haven".into(), x - 1, y);
+        let ship = g.add_unit(ai, unit_ids::TRANSPORT, x - 1, y);
+        let fortified = g.add_unit(ai, unit_ids::MILITIA, x - 1, y);
+        g.unit_mut(fortified).order = UnitOrder::Fortified;
+        let settlers = g.add_unit(ai, unit_ids::SETTLERS, x - 1, y);
+        g.unit_mut(settlers).order = UnitOrder::Road;
+        let idle = g.add_unit(ai, unit_ids::MILITIA, x - 1, y);
+        assert_eq!(g.try_move(ship, Dir8::E), Ok(MoveOutcome::Moved));
+        assert_eq!((g.unit(settlers).pos(), g.unit(idle).pos(), g.unit(fortified).pos()), ((x, y), (x, y), (x - 1, y)));
+        // the fortified unit gone, the last one stays
+        g.relocate_unit(fortified, x + 2, y);
+        g.unit_mut(ship).moves_left = 3;
+        assert_eq!(g.try_move(ship, Dir8::W), Ok(MoveOutcome::Moved));
+        g.unit_mut(ship).moves_left = 3;
+        let left: Vec<UnitId> = [settlers, idle].into_iter().filter(|u| g.unit(*u).pos() == (x - 1, y)).collect();
+        assert_eq!(left.len(), 2);
+        for u in &left {
+            g.unit_mut(*u).order = UnitOrder::None;
+        }
+        assert_eq!(g.try_move(ship, Dir8::E), Ok(MoveOutcome::Moved));
+        assert_eq!(left.iter().filter(|u| g.unit(**u).pos() == (x, y)).count(), 1);
+    }
+
     #[test]
     fn a_ship_leaves_the_awake_units_it_brought_into_port() {
         use crate::game::UnitOrder;
@@ -1060,17 +1180,15 @@ mod tests {
         let ship = g.add_unit(slot, unit_ids::SAIL, x + 1, y);
         let (awake, asleep) = (g.add_unit(slot, unit_ids::MILITIA, x + 1, y), g.add_unit(slot, unit_ids::MILITIA, x + 1, y));
         for u in [awake, asleep] {
-            g.unit_mut(u).carried_by = Some(ship);
             g.unit_mut(u).order = UnitOrder::Sentry;
         }
         assert_eq!(g.try_move(ship, Dir8::W), Ok(MoveOutcome::Moved));
-        assert_eq!(g.unit(awake).carried_by, None);
         // in port the units can be given orders like any other
         g.unit_mut(awake).order = UnitOrder::None;
         g.unit_mut(ship).moves_left = 3;
         assert_eq!(g.try_move(ship, Dir8::E), Ok(MoveOutcome::Moved));
         assert_eq!(g.unit(awake).pos(), (x, y));
-        assert_eq!((g.unit(asleep).pos(), g.unit(asleep).carried_by), ((x + 1, y), Some(ship)));
+        assert_eq!(g.unit(asleep).pos(), (x + 1, y));
     }
 
     /// A human Diplomat at (39,25) beside a city of a civ at peace with the human at (40,25).
@@ -1185,9 +1303,8 @@ mod zoc_tests {
         let (mut g, id) = open_field();
         let slot = g.human_slot;
         g.map.get_mut(41, 25).unwrap().terrain = Terrain::Ocean;
-        let ship = g.add_unit(slot, unit_ids::TRIREME, 41, 25);
+        let _ship = g.add_unit(slot, unit_ids::TRIREME, 41, 25);
         let l = g.add_unit(slot, unit_ids::LEGION, 41, 25);
-        g.unit_mut(l).carried_by = Some(ship);
         g.unit_mut(l).moves_left = 3;
         assert_eq!(g.try_move(l, Dir8::E), Ok(MoveOutcome::Moved));
         assert_eq!(g.unit(l).moves_left, 0);

@@ -253,7 +253,7 @@ impl Game {
         let (owner, pos) = (city.owner, city.pos());
         let fortified: Vec<UnitId> = self
             .all_units()
-            .filter(|u| u.owner == owner && u.pos() == pos && u.home == Some(c) && u.order == UnitOrder::Fortified && u.carried_by.is_none())
+            .filter(|u| u.owner == owner && u.pos() == pos && u.home == Some(c) && u.order == UnitOrder::Fortified)
             .map(|u| u.id)
             .collect();
         for id in fortified.into_iter().skip(1) {

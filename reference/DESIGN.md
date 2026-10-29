@@ -139,7 +139,7 @@ Historians: Herodotus, Pliny, Toynbee, Gibbon. Adjectives: Glorious, Great, Fine
 20 Cruiser: -,2,6,0,6,6,8,3,0,seaattack,Combustion
 21 Battleship: -,2,4,0,18,12,16,3,0,seaattack,Steel
 22 Submarine: -,2,3,0,8,2,5,3,0,seaattack,Mass Production
-23 Carrier: -,2,5,0,1,12,16,3,0(code: carries 8 air),seaattack,Advanced Flight
+23 Carrier: -,2,5,0,1,12,16,3,0(code: any number of air units, 0x6a53),seaattack,Advanced Flight
 24 Transport: -,2,4,0,0,3,5,0,8,transport,Industrialization
 25 Nuclear: -,1,16,1,99,0,16,0,0,attack,Rocketry
 26 Diplomat: -,0,2,0,0,0,3,0,0,civilian,Writing
@@ -473,6 +473,14 @@ box (56,16)-(264,6n+26), black centred title, HELP/ERROR.TXT line breaks kept, t
   and default (0x9dc5, 0x8ee5), the unit panel's other units, the martial-law units (0xf818), the AI stack sums
   (0x92a7, ten units), the cargo a ship takes along and the stack killed in combat. Not copied: walks that stop
   after ten units also limit which units die with a stack or a sunk ship.
+- [spec] Cargo (2026-10-29): no unit-to-ship link, as in CIV.EXE (the old `carried_by` field is
+  `Unit::legacy_cargo`, always `None`, kept for the save layout). A land unit on an ocean square is aboard
+  (wake 0x92fe, no attack 0x5ec3); boarding needs `stack_free_capacity` > 0 (0x9231: transports' capacity
+  minus land units); an aircraft is on a Carrier when its stack has one (0x918d). A moving ship with a
+  capacity, or a Carrier, takes units of its domain from its old successor in ring order (`take_cargo`,
+  0x68ad..0x6a62): all from the sea, in port the sentried ones and a computer's not fortified ones but the
+  last left; up to the capacity (Carrier and barbarians unlimited), at most 20 links. Units over the
+  capacity stay, at sea too.
 
 ## Input model
 Keyboard: numpad 1-9/arrows move (Home/PgUp/End/PgDn diagonals); Space skip; w wait; f fortify; s sentry; g goto; r road/rail; i irrigate; m mine;
