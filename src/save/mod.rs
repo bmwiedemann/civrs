@@ -68,7 +68,10 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// 28: then by the number of unit slots (u32 LE) and each slot's `Unit::next` (u16 LE unit id,
 /// 0xffff for none or an empty slot); older saves link each square's units up in record order
 /// (`Game::rebuild_stacks`).
-pub const VERSION: u16 = 28;
+/// 29: then by the length of the site/owner layer (`Map::claims`, u32 LE, 0 while no city has
+/// claimed anything) and its bytes; older saves rebuild it from the cities
+/// (`Game::rebuild_claims`).
+pub const VERSION: u16 = 29;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -191,6 +194,8 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     for u in &g.units {
         data.extend_from_slice(&u.as_ref().and_then(|u| u.next).unwrap_or(0xffff).to_le_bytes());
     }
+    data.extend_from_slice(&(g.map.claims.len() as u32).to_le_bytes());
+    data.extend_from_slice(&g.map.claims);
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -305,6 +310,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     let mut seen_layer: Option<Vec<u16>> = None;
     let mut stored_trade: Option<Vec<i16>> = None;
     let mut links: Option<Vec<u16>> = None;
+    let mut claims: Option<Vec<u8>> = None;
     // version 14: the tribe names, after the counters
     if ver >= 14 {
         let mut at = counters + 112 * g.players.len();
@@ -383,6 +389,11 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
                                         if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 28) {
                                             let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
                                             links = rest.get(at + 4..at + 4 + 2 * n).map(|b| b.chunks(2).map(|w| u16::from_le_bytes([w[0], w[1]])).collect());
+                                            at += 4 + 2 * n;
+                                            if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 29) {
+                                                let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
+                                                claims = rest.get(at + 4..at + 4 + n).map(|b| b.to_vec());
+                                            }
                                         }
                                     }
                                 }
@@ -520,6 +531,10 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
             None => g.visible_trade(i),
         };
         g.city_mut(i).trade = t;
+    }
+    match claims.filter(|c| c.is_empty() || c.len() == g.map.tiles.len()) {
+        Some(c) => g.map.claims = c,
+        None => g.rebuild_claims(),
     }
     Ok(g)
 }
@@ -1059,6 +1074,29 @@ mod tests {
         // as if created in record order: a, then b after a, then c after a
         assert_eq!(old.stack_ring(a, 10), vec![a, c, b]);
         assert!(old.stacks_consistent());
+    }
+
+    #[test]
+    fn the_site_owner_layer_survives_a_save_and_old_saves_rebuild_it() {
+        let mut g = Game::new(GameSetup { seed: 6, ..Default::default() }, None);
+        let h = g.human_slot;
+        let settler = g.units_of(h).into_iter().find(|id| g.unit(*id).kind == crate::rules::unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        let (x, y) = g.city(c).pos();
+        g.map.set_claim(x + 1, y, 0);
+        let dir = std::env::temp_dir().join(format!("civrs-claims-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        let l = super::load_game(&path).unwrap();
+        assert_eq!(l.map.claims, g.map.claims);
+        assert_eq!(l.map.claim_at(x + 1, y), 0);
+        // older saves: the founding claims again
+        let mut data = std::fs::read(&path).unwrap();
+        data[4..6].copy_from_slice(&27u16.to_le_bytes());
+        std::fs::write(&path, &data).unwrap();
+        let old = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(old.map.claim_at(x + 1, y), h);
     }
 
     #[test]

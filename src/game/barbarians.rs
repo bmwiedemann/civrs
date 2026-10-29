@@ -16,9 +16,9 @@ const DIR_DX: [i32; 9] = [0, 0, 1, 1, 1, 0, -1, -1, -1];
 const DIR_DY: [i32; 9] = [0, -1, -1, 0, 1, 1, 1, 0, -1];
 
 /// The 45 squares a new city claims on the site-value layer (ds:0x1882 / ds:0x18e4 indices
-/// 0..0x2c, found_city o 0x1b375).
+/// 0..0x2c, found_city o 0x1b375); 0..20 are the city radius.
 #[rustfmt::skip]
-const CLAIM: [(i32, i32); 45] = [
+pub(crate) const CLAIM: [(i32, i32); 45] = [
     (0, 0), (0, -1), (1, -1), (1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1),
     (0, -2), (1, -2), (2, -1), (2, 0), (2, 1), (1, 2), (0, 2), (-1, 2), (-2, 1), (-2, 0), (-2, -1), (-1, -2),
     (2, 2), (2, -2), (-2, -2), (-2, 2),
@@ -131,24 +131,44 @@ impl Game {
         m[Map::idx(Map::wrap_x(x), y)] = slot;
     }
 
-    /// The site-value layer (page 2, x+80) at a square: the value the world generator left
-    /// there (`Map::site_at`, `mapgen::site_value_with`, o 0x09c5f), then the claims of the
-    /// cities in founding order (found_city o 0x1b702): the 21 squares of a city radius take
-    /// the founder's number, the other 24 squares within 3 lower values >= 8 to 8.
-    /// Unverified: CIV.EXE also writes the owner over the squares a city works (0x13233),
-    /// clears another civ's number where a unit steps (0x683a) and restores the generator's
-    /// values (kept at (x+80, y+50)) when a city is destroyed (0xa8f3); none of that is modelled.
+    /// The site-value layer (page 2, x+80) at a square as hut_outcome reads it (0x9867):
+    /// `Map::claim_at`.
     pub fn hut_site_value(&self, x: i32, y: i32) -> i32 {
-        let x = Map::wrap_x(x);
-        let mut value = self.map.site_at(x, y) as i32;
-        for c in self.all_cities() {
-            match CLAIM.iter().position(|(dx, dy)| (Map::wrap_x(c.x + dx), c.y + dy) == (x, y)) {
-                Some(0..=20) => value = c.owner as i32,
-                Some(_) if value >= 8 => value = 8,
-                _ => {}
+        self.map.claim_at(x, y) as i32
+    }
+
+    /// A new city's claim on the site/owner layer (found_city o 0x1b7ae..0x1b731): the 21
+    /// squares of its radius take the founder's number, of the other 24 site values (8 and
+    /// more) drop to 8.
+    pub fn claim_city_site(&mut self, owner: Slot, x: i32, y: i32) {
+        for (k, (dx, dy)) in CLAIM.iter().enumerate() {
+            let (nx, ny) = (Map::wrap_x(x + dx), y + dy);
+            if k <= 20 {
+                self.map.set_claim(nx, ny, owner);
+            } else if Map::in_bounds(nx, ny) && self.map.claim_at(nx, ny) >= 8 {
+                self.map.set_claim(nx, ny, 8);
             }
         }
-        value
+    }
+
+    /// The site/owner layer of an old save (before version 29) or a map made without it: the
+    /// generator's values, the cities' claims in record order, then each city's owner on its
+    /// square and the squares it works.
+    pub fn rebuild_claims(&mut self) {
+        self.map.claims.clear();
+        let cities: Vec<(i32, i32, Slot, Vec<(i32, i32)>)> = self
+            .all_cities()
+            .map(|c| (c.x, c.y, c.owner, (1..21u8).filter(|i| c.works(*i)).filter_map(|i| self.radius_tile(c.id, i)).collect()))
+            .collect();
+        for (x, y, owner, _) in &cities {
+            self.claim_city_site(*owner, *x, *y);
+        }
+        for (x, y, owner, worked) in cities {
+            self.map.set_claim(x, y, owner);
+            for (wx, wy) in worked {
+                self.map.set_claim(wx, wy, owner);
+            }
+        }
     }
 
     /// The site value as `compute_site_values` (o 0x09c5f) wrote it, before any city claimed
@@ -158,18 +178,10 @@ impl Game {
         self.map.site_at(Map::wrap_x(x), y) as i32
     }
 
-    /// The square's byte of map layer (x+80, y) as the computer's units read it (0x16ac5): the
-    /// owner of the city that works the square (written by the city routine, 0x13233; civrs
-    /// takes `territory_owner`), else `hut_site_value` (the generator's value with the city
-    /// claims). Values of 8 and more are city sites, lower ones owners.
+    /// The square's byte of map layer (x+80, y) as the computer's units read it (0x16ac5),
+    /// `Map::claim_at`. Values of 8 and more are city sites, lower ones owners.
     pub fn site_layer(&self, x: i32, y: i32) -> i32 {
-        if !Map::in_bounds(x, y) {
-            return 0;
-        }
-        match self.territory_owner(Map::wrap_x(x), y) {
-            Some(o) => o as i32,
-            None => self.hut_site_value(x, y),
-        }
+        self.map.claim_at(x, y) as i32
     }
 
     /// Unit `id` has just entered a hut tile (`hut_outcome` 0x0978d): barbarians and air
@@ -703,6 +715,39 @@ mod tests {
                 _ => None,
             })
             .expect("hut message")
+    }
+
+    #[test]
+    fn the_site_owner_layer_follows_founding_work_steps_capture_and_destruction() {
+        let mut g = plain_world(3);
+        let (x, y) = (15, 15);
+        let pristine = |g: &Game, dx: i32, dy: i32| g.map.site_at(x + dx, y + dy);
+        // found_city (o 0x1b7ae): the radius takes the owner, site values beyond drop to 8
+        let c = g.add_city(2, "A".into(), x, y);
+        assert_eq!(g.map.claim_at(x - 1, y - 2), 2);
+        assert_eq!(g.map.claim_at(x + 3, y), if pristine(&g, 3, 0) >= 8 { 8 } else { pristine(&g, 3, 0) });
+        // another civ's unit stepping there clears it (0x6815), the owner's does not
+        let u = g.add_unit(3, unit_ids::MILITIA, x + 3, y + 1);
+        g.try_move(u, Dir8::W).unwrap();
+        assert_eq!(g.map.claim_at(x + 2, y + 1), 0);
+        let own = g.add_unit(2, unit_ids::MILITIA, x + 3, y - 1);
+        g.try_move(own, Dir8::W).unwrap();
+        assert_eq!(g.map.claim_at(x + 2, y - 1), 2);
+        // the city's turn writes its owner on the squares it works (work_tile 0x132e3)
+        g.assign_workers(c, true);
+        let worked = (1..21u8).find(|i| g.city(c).works(*i)).and_then(|i| g.radius_tile(c, i)).unwrap();
+        assert_eq!(g.map.claim_at(worked.0, worked.1), 2);
+        // a capture puts the new owner on the radius (0x13fbc)
+        g.city_mut(c).owner = 4;
+        g.city_changed_hands(c, 2, 4);
+        assert_eq!(g.map.claim_at(x + 2, y + 1), 4);
+        // destroy_city gives the generator's values back (0xa8f3): the radius always (B's
+        // squares among them), beyond only without another city within 3
+        g.add_city(4, "B".into(), x + 4, y);
+        g.destroy_city(c, 4);
+        assert_eq!(g.map.claim_at(x + 2, y + 1), pristine(&g, 2, 1));
+        assert_eq!(g.map.claim_at(x - 3, y), pristine(&g, -3, 0));
+        assert_eq!(g.map.claim_at(x + 3, y), 4, "next to B the claim stays");
     }
 
     #[test]

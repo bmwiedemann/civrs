@@ -1030,6 +1030,7 @@ impl Game {
         if owner == self.human_slot {
             self.map.update_seen(x, y);
         }
+        self.claim_city_site(owner, x, y);
         self.auto_assign(id);
         // a city sees only its 3x3 block (14_city_screen / 26_turn_12 captures)
         self.map.explore(owner, x, y, 1);
@@ -1132,6 +1133,20 @@ impl Game {
             self.players[owner as usize].capital = None;
         }
         self.cities[id as usize] = None;
+        // the site/owner layer gets the generator's values back (0xa8f3..0xa968): on the city
+        // radius, and on the 24 squares beyond where no other city is within 3 (nearest
+        // city 0x1d43:0xf8)
+        for (k, (dx, dy)) in barbarians::CLAIM.iter().enumerate() {
+            let (nx, ny) = (Map::wrap_x(x + dx), y + dy);
+            if !Map::in_bounds(nx, ny) {
+                continue;
+            }
+            let (near, d) = self.nearest_city_exe(nx, ny);
+            if k <= 20 || near.is_none() || d > 3 {
+                let v = self.map.site_at(nx, ny);
+                self.map.set_claim(nx, ny, v);
+            }
+        }
     }
 
     /// The next unit of the human player the loop comes to (move_units 0x4144..0x43d8): the

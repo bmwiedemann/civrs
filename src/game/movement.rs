@@ -309,6 +309,11 @@ impl Game {
                 self.ai_memory.heading.remove(&o);
             }
         }
+        // a step onto a square another civ owns on the site/owner layer clears it (0x6815)
+        let owner_there = self.map.claim_at(tx, ty);
+        if (1..8).contains(&owner_there) && owner_there != slot {
+            self.map.set_claim(tx, ty, 0);
+        }
         self.place_unit(id, tx, ty, cost);
         // land unit leaving a ship
         if u.carried_by.is_some() && target.is_land() {

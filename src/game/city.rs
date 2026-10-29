@@ -341,6 +341,13 @@ impl Game {
             let (x, y) = self.city(c).pos();
             self.map.update_seen(x, y);
         }
+        // the new owner's number goes on the city radius of the site/owner layer (0x13fbc).
+        // CIV.EXE stops at index 19 (`< 0x14`, 0x13fff) and leaves (-1, -2) out, unlike
+        // destroy_city's `<= 0x14` (0xa929); civrs takes all 21 squares.
+        let (x, y) = self.city(c).pos();
+        for (dx, dy) in &super::barbarians::CLAIM[..21] {
+            self.map.set_claim(Map::wrap_x(x + dx), y + dy, to);
+        }
     }
 
     /// CIV.EXE 0x7e6:0x18cc `foreign_unit_adjacent(civ, x, y)`: a unit of another civilization

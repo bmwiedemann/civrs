@@ -98,6 +98,15 @@ pub struct Map {
     /// appends it), empty for maps made otherwise.
     #[serde(skip)]
     pub site: Vec<u8>,
+    /// The site-value layer as the game changes it, map page band (x+80, y), 80x50 row-major:
+    /// the generator's values; a new city's number on its radius and site values beyond
+    /// lowered to 8 (found_city o 0x1b7ae, 0x1b702), the owner's number on the squares a city
+    /// works (work_tile 0x132e3) and around a captured city (0x13ff4), 0 where another civ's
+    /// unit steps (0x683a), the generator's again where a city is destroyed (0xa959). Values below 8 are owners, 8 and more sites. Empty: the
+    /// same as `site` (no city has claimed anything yet). Not part of the bincode body (the
+    /// save appends it). Read with `claim_at`.
+    #[serde(skip)]
+    pub claims: Vec<u8>,
     /// The human's view of each square's improvements (`tile_flags::SEEN` bits), the map
     /// page's band (x+80, y+100/150) that draw_tile (0x1aa40) reads with
     /// `tile_improvements_seen` (0x1bc47) and `update_seen_improvements` (0x1bc87) copies
@@ -169,7 +178,7 @@ impl Dir8 {
 
 impl Map {
     pub fn empty(params: WorldParams, seed: u32) -> Map {
-        Map { tiles: vec![Tile::default(); MAP_W * MAP_H], params, earth: false, seed, site: Vec::new(), seen: Vec::new() }
+        Map { tiles: vec![Tile::default(); MAP_W * MAP_H], params, earth: false, seed, site: Vec::new(), claims: Vec::new(), seen: Vec::new() }
     }
 
     /// The improvements of (x, y) as the human last saw them.
@@ -382,6 +391,28 @@ impl Map {
             Some(v) => *v,
             None => super::mapgen::site_value(self, Map::wrap_x(x), y),
         }
+    }
+
+    /// The site/owner layer at (x,y) (see `Map::claims`), 0 off the map.
+    pub fn claim_at(&self, x: i32, y: i32) -> u8 {
+        if !Map::in_bounds(x, y) {
+            return 0;
+        }
+        match self.claims.get(Map::idx(Map::wrap_x(x), y)) {
+            Some(v) => *v,
+            None => self.site_at(x, y),
+        }
+    }
+
+    /// Write the site/owner layer at (x,y) (set_pixel(x+80, y, v, 2), 0x1a68:0x17d5).
+    pub fn set_claim(&mut self, x: i32, y: i32, v: u8) {
+        if !Map::in_bounds(x, y) {
+            return;
+        }
+        if self.claims.len() != MAP_W * MAP_H {
+            self.claims = (0..MAP_H as i32).flat_map(|y| (0..MAP_W as i32).map(move |x| (x, y))).map(|(x, y)| self.site_at(x, y)).collect();
+        }
+        self.claims[Map::idx(Map::wrap_x(x), y)] = v;
     }
 
     /// Grassland and River squares that give a shield (CIV.EXE 0x134b0): bit 1 of the low

@@ -296,7 +296,10 @@ fn import_slot(data: &[u8], map_pic: &[u8], moves_back: bool) -> Result<Game, Sa
             map.tiles[Map::idx(x, y)] = t;
         }
     }
-    map.site = (0..MAP_H as i32).flat_map(|y| (0..MAP_W as i32).map(move |x| (x, y))).map(|(x, y)| px(x + 80, y)).collect();
+    // the generator's site values (the copy at (x+80, y+50), which nothing changes later) and
+    // the layer as the game changed it (x+80, y)
+    map.site = (0..MAP_H as i32).flat_map(|y| (0..MAP_W as i32).map(move |x| (x, y))).map(|(x, y)| px(x + 80, y + 50)).collect();
+    map.claims = (0..MAP_H as i32).flat_map(|y| (0..MAP_W as i32).map(move |x| (x, y))).map(|(x, y)| px(x + 80, y)).collect();
     map.seen = (0..MAP_H as i32)
         .flat_map(|y| (0..MAP_W as i32).map(move |x| (x, y)))
         .map(|(x, y)| tile_bits(px(x + 80, y + 100) & 15 | (px(x + 80, y + 150) & 15) << 4) & tile_flags::SEEN)
@@ -784,6 +787,11 @@ pub fn state_text(g: &Game) -> String {
             }
         }
     }
+    // the site/owner layer (x+80, y), a hex digit per square
+    for y in 0..MAP_H as i32 {
+        let row: String = (0..MAP_W as i32).map(|x| char::from_digit(g.map.claim_at(x, y) as u32 & 15, 16).unwrap()).collect();
+        let _ = writeln!(o, "claims.y{y} {row}");
+    }
     let _ = writeln!(o, "polluted {}\nwarming {}", g.polluted_tiles, g.warming_counter);
     o
 }
@@ -1098,7 +1106,10 @@ mod tests {
         }
         let huts = |m: &Map| m.tiles.iter().filter(|t| t.has(tile_flags::HUT)).count();
         assert_eq!((huts(&g.map), huts(&w.map)), (27, 28));
-        assert!(squares().filter(|&(x, y)| g.map.site_at(x, y) != w.map.site_at(x, y)).all(|(x, y)| g.all_cities().any(|c| Map::dist(c.pos(), (x, y)) <= 3)));
+        // the copy of the generator's values at (x+80, y+50) is untouched; the layer the game
+        // changes differs only around the cities
+        assert!(squares().all(|(x, y)| g.map.site_at(x, y) == w.map.site_at(x, y)));
+        assert!(squares().filter(|&(x, y)| g.map.claim_at(x, y) != w.map.site_at(x, y)).all(|(x, y)| g.all_cities().any(|c| Map::dist(c.pos(), (x, y)) <= 3)));
     }
 
     #[test]

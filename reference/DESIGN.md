@@ -687,3 +687,14 @@ step and the unit waits for orders after it. Scripts answer that question with `
   px down (a third row runs into the square below, which a later square may cover again).
 - Not matched: the martial law units of the HAPPY tab follow CIV.EXE's stack ring (unit +0xa,
   walked from 0x1a68:0x145e), which civrs does not keep.
+
+## The site/owner layer (map page 2, x+80)
+
+`Map::claims` (save v29) is CIV.EXE's band (x+80, y): the generator's site values (its copy at
+(x+80, y+50) is `Map::site` and never changes), the founder's number on a new city's radius and
+8 for site values beyond (o 0x1b7ae), the owner on each square a city works in its turn (work_tile
+0x132e3), the captor's on a captured city's radius (0x13fbc), 0 where another civ's unit steps
+(0x6815), the generator's values back where a city is destroyed (0xa8f3; beyond the radius only
+without another city within 3). The territory rule, huts, the computer's Settlers and landings,
+the BUILDCITY hint and the respawn search read it. `state:N` dumps it as `claims.yN` rows; it
+matches CIV.EXE's saves over the CIVIL0 (10 turns) and CIVIL4 (20 turns) scripts.

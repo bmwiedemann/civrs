@@ -13,7 +13,7 @@
 
 use super::map::{Map, Slot};
 use super::{Game, GameEvent, Relation};
-use crate::rules::{self, unit_ids, wonder_ids as won, Govt};
+use crate::rules::{unit_ids, wonder_ids as won, Govt};
 use serde::{Deserialize, Serialize};
 
 /// The bits of a diplomacy word (decoded from all readers and writers of ds:0xe498).
@@ -833,15 +833,14 @@ impl Game {
         }
     }
 
-    /// The civilization whose city works the tile in CIV.EXE's owner layer (map page 2 at x+80,
-    /// written by `work_tile` 0x132e3 for every square a city evaluates): civrs takes the city
-    /// of the nearest civ whose 21 squares include it (an approximation of "the last city that
-    /// looked at it").
+    /// The civilization in CIV.EXE's owner layer at the square (map page 2 at x+80, read by
+    /// the territory rule 0x64c9; `Map::claim_at`): the owner of the last city founded around
+    /// it (o 0x1b7ae), that worked it (work_tile 0x132e3) or was taken over (0x13ff4), unless
+    /// another civ's unit stepped there since (0x683a). None for 0 and for site values (8 and
+    /// more).
     pub fn territory_owner(&self, x: i32, y: i32) -> Option<Slot> {
-        self.all_cities()
-            .filter(|c| rules::CITY_RADIUS.iter().any(|(dx, dy)| Map::wrap_x(c.x + *dx as i32) == x && c.y + *dy as i32 == y))
-            .min_by_key(|c| (Map::civ_distance(c.pos(), (x, y)), c.id))
-            .map(|c| c.owner)
+        let v = self.map.claim_at(x, y);
+        (1..8).contains(&v).then_some(v)
     }
 
     /// The territory rule of the move routine (CIV.EXE 0x64bb..0x65b5): a military land unit

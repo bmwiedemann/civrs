@@ -918,7 +918,8 @@ impl Game {
             let y = 8 + self.rng.below(34) as i32;
             let near = self.nearest_city_exe(x, y);
             let near = if near.0.is_none() { 30 } else { near.1 };
-            let site = self.map.site_at(x, y) as i32;
+            // the site/owner layer as it is now (o5 0x4c99)
+            let site = self.map.claim_at(x, y) as i32;
             k += 1;
             // the 2001st try ends the search, and a square found on the 2000th is dropped
             // too (count >= 2000, o5 0x4e41)

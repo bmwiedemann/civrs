@@ -690,6 +690,16 @@ impl Game {
         while cm.specialists.len() < n {
             cm.specialists.push(Specialist::Entertainer);
         }
+        // work_tile (0x132c1..0x132e3) writes the owner on the site/owner layer for the city
+        // square and each square it works, outside the city screen's drawing pass (mode 1).
+        // civrs writes in the city's turn only; CIV.EXE's other quiet runs of the city
+        // routine (reports, score) write the same squares unless they were changed since.
+        if turn {
+            let squares: Vec<(i32, i32)> = (0..21u8).filter(|i| *i == 0 || self.city(c).works(*i)).filter_map(|i| self.radius_tile(c, i)).collect();
+            for (x, y) in squares {
+                self.map.set_claim(x, y, slot);
+            }
+        }
     }
 
     /// A click on radius square `idx` in the city screen (CIV.EXE 0x123b4..0x125aa): a worked
