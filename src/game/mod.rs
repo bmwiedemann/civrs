@@ -1106,6 +1106,28 @@ impl Game {
 
     /// `destroy_city` (CIV.EXE 0xa76a): remove city `id` in the turn of civ `by` (ds:0x6b90,
     /// whose action or city turn destroys it).
+    /// `exe_quirks`: destroy_city's sweep of its square (0xa8bc..0xa8eb) takes the first unit
+    /// there by the map page's mark, after a capture the conqueror's (0x6a65 placed it first),
+    /// and walks the stack of the old owner's unit of that record number
+    /// (for_each_in_stack(owner, unit, kill_nonland_cb 0x949f)). An empty record's type 0xff
+    /// reads a domain from before the unit table, not land, so delete_unit counts the type -1:
+    /// the Caravan counter of the civilization before the owner goes down (0x8e63). Not copied
+    /// in play (a sane sweep finds the conqueror's own land unit and deletes nothing).
+    pub fn exe_destroy_sweep(&mut self, owner: Slot, record: u8) {
+        let first = self.all_units().find(|u| u.owner == owner && u.record == record).map(|u| u.id);
+        match first {
+            Some(f) => {
+                for o in self.stack_from(f) {
+                    if self.unit_opt(o).is_some_and(|u| !u.is_land()) {
+                        self.remove_unit(o);
+                    }
+                }
+            }
+            None if owner > 0 => self.players[owner as usize - 1].unit_counter[27] -= 1,
+            None => {}
+        }
+    }
+
     pub fn destroy_city(&mut self, id: CityId, by: Slot) {
         // destroy_city 0xa793 logs the city as gone
         self.replay_city(replay::kind::CITY, 0xff, id);

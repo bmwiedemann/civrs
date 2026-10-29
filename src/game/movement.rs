@@ -143,17 +143,22 @@ impl Game {
                 // "Break treaty." (senate_check_attack 0x1a3b4 from combat 0x199fd and from the
                 // territory rule 0x6575); the computer keeps the peace
                 let acts = !units_here.is_empty() || (city_here.is_some() && u.is_land() && u.info().att > 0);
-                if !(acts && self.is_human(slot) && self.treaty(slot, o)) {
+                // a computer's land unit walks into an empty city of another computer it has a
+                // treaty with and takes it, the treaty standing: only an attack waits on the
+                // treaty, and the territory rule (0x6523..0x6530) guards the human's land alone
+                // (the capture at 0x6a65 -> 0x13d76)
+                let grab = !self.is_human(slot) && o != self.human_slot && units_here.is_empty() && city_here.is_some() && u.is_land() && u.info().att > 0;
+                if !(acts && self.is_human(slot) && self.treaty(slot, o)) && !grab {
                     return Ok(MoveOutcome::Blocked);
                 }
                 // an attack asks in combat, after the move code's questions (below)
-                if units_here.is_empty() && self.treaty_break_ok != Some(o) {
+                if !grab && units_here.is_empty() && self.treaty_break_ok != Some(o) {
                     // the territory rule drops the unit's goto before it asks, whatever the
                     // answer (0x656d)
                     self.clear_goto(id);
                     return Ok(MoveOutcome::BreakTreaty(o));
                 }
-                if units_here.is_empty() {
+                if !grab && units_here.is_empty() {
                     // the territory rule ends the treaty (0x6583); a fight ends it in combat
                     // (the answer holds until the fight, past "Attack at N/3 strength?")
                     self.treaty_break_ok = None;
@@ -234,7 +239,13 @@ impl Game {
                 if matches!(u.kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN) {
                     return Ok(MoveOutcome::EnteredForeignCity(c));
                 }
-                return Ok(self.capture_city(id, c));
+                let out = self.capture_city(id, c);
+                // the step has made the city's old owner see the unit (0x6a83, before the
+                // capture at 0x6aa9), and the capture's placing does not clear that
+                if let Some(cu) = self.units.get_mut(id as usize).and_then(|u| u.as_mut()) {
+                    cu.seen_by |= 1 << o;
+                }
+                return Ok(out);
             }
         }
 
@@ -1848,5 +1859,49 @@ mod zoc_tests {
         crate::ai::unit_ai::move_units(&mut g, other, &mut |_| {});
         assert_eq!(g.unit(id).order, crate::game::UnitOrder::None);
         assert_eq!(g.unit(m).pos(), (41, 25));
+    }
+
+    #[test]
+    fn a_computer_takes_an_empty_city_of_a_computer_treaty_partner() {
+        // only the attack waits on a treaty; the territory rule (0x6523) guards the human's
+        // land alone, so the move goes on to the capture (0x6a65 -> 0x13d76), the treaty
+        // standing, and the city's old owner sees the unit (0x6a83)
+        let (mut g, _) = open_field();
+        let h = g.human_slot;
+        let (a, b) = if h == 2 { (3, 4) } else if h == 3 { (2, 4) } else { (2, 3) };
+        g.make_peace(a, b);
+        let c = g.add_city(b, "Pond".into(), 41, 25);
+        g.city_mut(c).size = 3;
+        g.add_city(b, "Far".into(), 36, 21);
+        let cav = g.add_unit(a, unit_ids::CAVALRY, 40, 26);
+        g.unit_mut(cav).moves_left = 6;
+        assert!(matches!(g.try_move(cav, Dir8::NE), Ok(MoveOutcome::CapturedCity(_))));
+        assert_eq!(g.city(c).owner, a);
+        assert!(g.treaty(a, b), "the treaty stands");
+        assert_ne!(g.unit(cav).seen_by & (1 << b), 0);
+        // the human's empty city stays shut to a treaty partner
+        g.make_peace(a, h);
+        let mine = g.add_city(h, "Home".into(), 43, 27);
+        let leg = g.add_unit(a, unit_ids::LEGION, 43, 28);
+        g.unit_mut(leg).moves_left = 3;
+        assert_eq!(g.try_move(leg, Dir8::N), Ok(MoveOutcome::Blocked));
+        assert_eq!(g.city(mine).owner, h);
+    }
+
+    #[test]
+    fn exe_quirks_sweep_the_old_owners_record_of_the_conquerors_unit() {
+        // destroy_city 0xa8bc..0xa8eb with the conqueror on the square: the old owner's empty
+        // record of that number counts as a type -1 unit, the previous civilization's Caravan
+        let (mut g, _) = open_field();
+        let h = g.human_slot;
+        let o = if h == 3 { 4 } else { 3 };
+        let c = g.add_city(o, "Pond".into(), 41, 25);
+        g.city_mut(c).size = 1;
+        let leg = g.add_unit(h, unit_ids::LEGION, 40, 25);
+        g.unit_mut(leg).moves_left = 3;
+        g.exe_quirks = true;
+        let before = g.player(o - 1).unit_counter[unit_ids::CARAVAN as usize];
+        assert_eq!(g.try_move(leg, Dir8::E), Ok(MoveOutcome::DestroyedCity));
+        assert_eq!(g.player(o - 1).unit_counter[unit_ids::CARAVAN as usize], before - 1);
     }
 }

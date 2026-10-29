@@ -453,6 +453,9 @@ impl Game {
             // steal_advance runs for a destroyed city too (0x14232)
             self.capture_steal(by, from);
             self.place_unit(id, city.x, city.y, 3);
+            if self.exe_quirks {
+                self.exe_destroy_sweep(from, attacker.record);
+            }
             self.players[from as usize].stats.cities_lost += 1;
             if was_capital {
                 self.lose_capital(from, c);
