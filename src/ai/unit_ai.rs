@@ -290,6 +290,9 @@ fn update_policies(g: &mut Game, census: &Census, slot: Slot) {
 fn task_units(g: &mut Game, slot: Slot, reserve: i32) {
     let mut assigned = [reserve; crate::game::goals::GOALS];
     let turn = g.turn as i32;
+    if trace() {
+        eprintln!("TRACE t{} s{} GOALS {:?}", g.turn, slot, g.ai_memory.goals[slot as usize].iter().filter(|o| !o.is_free()).map(|o| (o.kind, o.pos(), o.priority)).collect::<Vec<_>>());
+    }
     for id in g.units_of(slot) {
         let Some(u) = g.unit_opt(id).cloned() else { continue };
         // units at work are tasked too (0x161af tests only flag 0x10 and the Nuclear type);

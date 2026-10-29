@@ -277,8 +277,9 @@ impl Game {
     ///   is dropped unless it is on land and the looker at sea; the looker's goto is dropped
     ///   unless it stands on land beside a ship (aircraft always). Between land units on land
     ///   without a treaty the looker's civ gets an attack goal on n (priority 3, or 1 against
-    ///   barbarians, a Diplomat or a fortified defender) and, unless the looker is a Diplomat,
-    ///   o2 a defend goal on the looker's square (priority 2, 1 when the looker is a barbarian);
+    ///   barbarians, a Diplomat or a fortified defender); treaty or not, unless the looker is a
+    ///   Diplomat, o2 gets a defend goal on the looker's square (priority 2, 1 when the looker
+    ///   is a barbarian);
     ///   a foreign ship (not barbarian, no treaty) is a sea goal (3, 2) of the looker's civ.
     ///
     /// For the 16 squares of the outer ring: a looker that sees two squares far (sight bit 2,
@@ -331,9 +332,11 @@ impl Game {
                         let defender = fu.order == super::UnitOrder::Fortified && fu.info().role == AiRole::Defend;
                         let p = if o2 != 0 && fu.kind != unit_ids::DIPLOMAT && !defender { 3 } else { 1 };
                         self.add_goal(civ, nx, ny, goal::ATTACK, p);
-                        if u.kind != unit_ids::DIPLOMAT {
-                            self.add_goal(o2, u.x, u.y, goal::DEFEND, if civ == 0 { 1 } else { 2 });
-                        }
+                    }
+                    // the defend goal comes after the treaty test, whatever its outcome
+                    // (0x84a7 skips only the attack goal; 0x84ff..0x8525)
+                    if u.kind != unit_ids::DIPLOMAT {
+                        self.add_goal(o2, u.x, u.y, goal::DEFEND, if civ == 0 { 1 } else { 2 });
                     }
                 }
                 if n_ocean && o2 != 0 && !peace(self, civ, o2) {
@@ -453,5 +456,36 @@ mod tests {
         g.unit_look_goals(ship);
         assert_eq!(g.unit(land).goto, Some((13, 12)), "seen from the sea, a unit on land keeps its goto");
         assert_eq!(g.unit(ship).goto, None);
+    }
+
+    #[test]
+    fn a_look_gives_the_neighbours_civ_a_defend_goal_even_at_peace() {
+        // 0x84a7 skips only the attack goal for a treaty partner; the defend goal of the
+        // neighbour's civ on the looker's square follows anyway (0x84ff..0x8525)
+        use crate::rules::{unit_ids, Terrain};
+        let mut g = game();
+        let ids: Vec<_> = g.all_units().map(|u| u.id).collect();
+        for id in ids {
+            g.remove_unit(id);
+        }
+        for y in 8..13 {
+            for x in 8..14 {
+                g.map.get_mut(x, y).unwrap().terrain = Terrain::Grassland;
+                g.map.get_mut(x, y).unwrap().city = None;
+            }
+        }
+        g.make_peace(5, 6);
+        let looker = g.add_unit(6, unit_ids::MILITIA, 10, 10);
+        g.add_unit(5, unit_ids::MILITIA, 11, 11);
+        g.reset_goals(5);
+        g.reset_goals(6);
+        g.unit_look_goals(looker);
+        assert!(g.ai_memory.goals[5].iter().any(|o| *o == Goal { x: 10, y: 10, kind: goal::DEFEND, priority: 2 }));
+        assert!(g.ai_memory.goals[6].iter().all(|o| o.is_free()), "no attack goal on a treaty partner");
+        // a Diplomat looking leaves none
+        g.reset_goals(5);
+        let dip = g.add_unit(6, unit_ids::DIPLOMAT, 12, 12);
+        g.unit_look_goals(dip);
+        assert!(g.ai_memory.goals[5].iter().all(|o| o.is_free()));
     }
 }
