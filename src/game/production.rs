@@ -338,6 +338,14 @@ impl Game {
         self.build_advice_with(c, false)
     }
 
+    /// The valuation of the city screen's CHANGE (0x117ae..0x117ef): the city's own unit is
+    /// taken off the count of cities building it (ds:0xd308, 0x117e4) before choose_production
+    /// values the menu, for the human too, the advisors shown or not (its Diplomat line draws
+    /// random(5), 0xb3e0).
+    pub fn change_advice(&mut self, c: CityId) -> Result<BuildAdvice, Production> {
+        self.build_advice_with(c, true)
+    }
+
     /// `build_advice`; with `rechoose` the city's own unit does not count as in production.
     fn build_advice_with(&mut self, c: CityId, rechoose: bool) -> Result<BuildAdvice, Production> {
         // choose_production starts with the city routine in mode -1 (0xaa1b)

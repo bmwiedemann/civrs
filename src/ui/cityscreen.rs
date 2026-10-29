@@ -362,6 +362,9 @@ impl CityScreen {
     }
 
     fn change_page(&mut self, ctx: &mut UiContext, page: ChangePage) -> Transition {
+        // choose_production first runs the city routine in mode -1 and values every item,
+        // whatever the options (Game::change_advice)
+        let advice = ctx.game_mut().change_advice(self.city).ok().filter(|_| ctx.game().options.instant_advice);
         let g = ctx.game();
         let c = g.city(self.city);
         let y = g.city_yield(self.city);
@@ -408,7 +411,6 @@ impl CityScreen {
             .collect();
         // with Instant Advice the advisors name the best unit ([bp-0xc]) and the best
         // improvement ([bp-0x48]) of the valuation (0xb8b4..0xb9ed)
-        let advice = if ctx.game().options.instant_advice { ctx.game_mut().build_advice(self.city).ok() } else { None };
         let g = ctx.game();
         let c = g.city(self.city);
         let military = advice.as_ref().and_then(|a| a.unit).map(|(p, _)| advisor_lines(ctx, "Military Advisor:", p.name()));

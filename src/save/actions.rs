@@ -236,8 +236,10 @@ pub fn apply(g: &mut Game, a: &Action) -> Result<(), String> {
             g.view = Some(Game::view_centred_on(at.0, at.1));
             match op {
                 CityOp::Change { row, expect } => {
-                    // CHANGE turns AUTO off (0x117ae)
+                    // CHANGE turns AUTO off (0x117ae); choose_production values the menu for
+                    // the human too (0x117ef -> 0xa9fd), the advisors shown or not
                     g.city_mut(c).auto_build = false;
+                    let _ = g.change_advice(c);
                     let list = g.available_production(c);
                     if 1 + list.len() > 30 {
                         return Err("the production menu has two pages".into());
@@ -461,6 +463,27 @@ pub fn play(g: &mut Game, ai: &mut crate::ai::Ai, actions: &[(u32, Action)], tur
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn change_values_the_menu_for_the_human_too() {
+        // CHANGE 0x117ef -> choose_production 0xa9fd: the valuation runs with the advisors
+        // off, and its Diplomat line draws random(5) (0xb3e0) once the human can build one
+        use crate::game::GameSetup;
+        use crate::rules::{advance_ids as adv, unit_ids};
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        let me = g.human_slot;
+        g.options.instant_advice = false;
+        let settler = g.units_of(me).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        g.player_mut(me).learn(adv::WRITING);
+        let (name, at) = (g.city(c).name.clone(), g.city(c).pos());
+        let row = g.available_production(c).iter().position(|p| *p == crate::game::Production::Unit(unit_ids::MILITIA)).unwrap();
+        crate::game::rng::trace_start();
+        apply(&mut g, &Action::City { name, at, op: CityOp::Change { row, expect: Some("Militia".into()) } }).unwrap();
+        let draws = crate::game::rng::trace_take();
+        assert_eq!(draws.iter().map(|d| (d.at, d.n)).collect::<Vec<_>>(), vec![(0xb3e0, 5)]);
+        assert_eq!(g.city(c).production, crate::game::Production::Unit(unit_ids::MILITIA));
+    }
 
     #[test]
     fn parses_the_script_lines() {
