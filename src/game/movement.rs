@@ -199,8 +199,9 @@ impl Game {
                 }
                 self.weak_attack_ok = false;
                 self.treaty_break_ok = None;
-                // move_units counts the units lost in the fight (ds:0x70d8, o 0x6075..0x60ae)
-                self.counting_losses = true;
+                // move_units counts the units lost in a fight of the human's (ds:0x70d8, set at
+                // 0x6075 only when the attacker or the defender is the human, cleared at 0x60ae)
+                self.counting_losses = slot == self.human_slot || o == self.human_slot;
                 let out = if u.kind == unit_ids::NUCLEAR {
                     self.nuke(id, tx, ty);
                     MoveOutcome::Attacked { won: true, at: (tx, ty), defender: unit_ids::NUCLEAR }

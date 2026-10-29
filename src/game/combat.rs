@@ -1109,6 +1109,30 @@ mod tests {
         wins * 100 / trials
     }
 
+    /// The units lost in a fight count in `units_lost_by_type` only when the human fights
+    /// (ds:0x70d8 set at 0x6075 for his attack or a defender of his).
+    #[test]
+    fn losses_count_only_in_fights_of_the_human() {
+        let mut g = flat_game();
+        let h = g.human_slot;
+        let (a, b) = if h == 1 { (1u8, 2u8) } else { (2, 1) };
+        // 2 attacks 3: not counted
+        g.players[3].in_game = true;
+        g.players[3].alive = true;
+        g.set_relation(2, 3, Relation::War);
+        let other = if h == 2 { 3 } else { 2 };
+        let x = g.add_unit(other, unit_ids::ARMOR, 10, 10);
+        let def = if other == 2 { 3 } else { 2 };
+        g.add_unit(def, unit_ids::MILITIA, 11, 10);
+        let _ = g.try_move(x, crate::game::Dir8::E);
+        assert_eq!(g.player(def).units_lost_by_type.iter().sum::<i16>() + g.player(other).units_lost_by_type.iter().sum::<i16>(), 0);
+        // the human attacks: counted
+        let y = g.add_unit(a, unit_ids::ARMOR, 20, 20);
+        g.add_unit(b, unit_ids::MILITIA, 21, 20);
+        let _ = g.try_move(y, crate::game::Dir8::E);
+        assert_eq!(g.player(a).units_lost_by_type.iter().sum::<i16>() + g.player(b).units_lost_by_type.iter().sum::<i16>(), 1);
+    }
+
     /// The winner's veteran roll is drawn even for a veteran (0x1a20a / 0x1a253), right after
     /// the two combat rolls.
     #[test]

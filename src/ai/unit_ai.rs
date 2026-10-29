@@ -1425,6 +1425,26 @@ fn do_step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) ->
     let (nx, ny) = (Map::wrap_x(u.x + dx), u.y + dy);
     let boards = u.is_land() && Map::in_bounds(nx, ny) && g.map.is_ocean(nx, ny) && g.boarding_ship(&u, (nx, ny)).is_some();
     let heading = g.heading(id);
+    // an attack, a bribe or a Diplomat's or Caravan's entry into a foreign city leaves the move
+    // code before its step-back test and the heading store (0x5b91..0x60e4 come before
+    // 0x63cc..0x6433)
+    let foreign_units = Map::in_bounds(nx, ny) && g.units_at(nx, ny).iter().any(|o| g.unit(*o).owner != u.owner);
+    let foreign_city = g.city_at(nx, ny).is_some_and(|c| g.city(c).owner != u.owner) && matches!(u.kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN);
+    if foreign_units || foreign_city {
+        let slot = u.owner;
+        match step(g, id, d, sink) {
+            _ if slot == 0 => {}
+            Ok(MoveOutcome::EnteredForeignCity(c)) => {
+                if u.kind == unit_ids::DIPLOMAT {
+                    g.ai_diplomat_action(id, c);
+                } else if u.kind == unit_ids::CARAVAN {
+                    let _ = g.caravan_action(id, crate::game::turn::CaravanAction::TradeRoute(c));
+                }
+            }
+            _ => {}
+        }
+        return true;
+    }
     if heading != 0xff && (heading as i32 ^ 4) == k && stack_count(g, id) <= 2 {
         g.set_heading(id, 0xff);
         g.clear_goto(id);
@@ -1877,6 +1897,22 @@ mod tests {
         g.map.site.clear();
         g.ai_memory = Default::default();
         g
+    }
+
+    /// An attack leaves the move code before the heading store (0x6433): the attacker keeps
+    /// the heading of its last step, a plain step stores its direction.
+    #[test]
+    fn an_attack_keeps_the_heading() {
+        let mut g = arena();
+        g.set_relation(2, 3, crate::game::Relation::War);
+        let a = g.add_unit(2, unit_ids::ARMOR, 10, 10);
+        g.set_heading(a, 3);
+        g.add_unit(3, unit_ids::MILITIA, 11, 10);
+        let mut sink = |_s: TurnStep| {};
+        do_step(&mut g, a, Dir8::E, &mut sink);
+        assert_eq!(g.heading(a), 3);
+        do_step(&mut g, a, Dir8::S, &mut sink);
+        assert_eq!(g.heading(a), Dir8::S as u8 + 1);
     }
 
     /// `stack_sum` what 4 counts the Defend-role units of lower record (0x90dc), not of an
