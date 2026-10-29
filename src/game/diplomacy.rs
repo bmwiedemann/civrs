@@ -1112,6 +1112,26 @@ mod tests {
     }
 
     #[test]
+    fn a_goto_onto_a_partners_land_asks_and_loses_its_goto_whatever_the_answer() {
+        use crate::game::{AutoStop, Dir8, MoveOutcome, UnitOrder};
+        let mut g = game();
+        g.set_relation(1, 2, Relation::Peace);
+        g.add_city(2, "A".into(), 20, 10);
+        g.map.get_mut(19, 11).unwrap().set(crate::game::tile_flags::ROAD, true);
+        let me = g.add_unit(1, unit_ids::LEGION, 18, 11);
+        g.unit_mut(me).goto = Some((19, 11));
+        g.unit_mut(me).order = UnitOrder::Goto;
+        assert_eq!(g.run_auto_unit(me), AutoStop::Menu(MoveOutcome::BreakTreaty(2), Dir8::E));
+        let u = g.unit(me);
+        assert_eq!((u.pos(), u.goto, u.order, u.moves_left), ((18, 11), None, UnitOrder::None, 3), "asked with its moves, the goto gone (0x656d)");
+        // "Break treaty.": the step is made, and the unit is off its goto
+        g.treaty_break_ok = Some(2);
+        assert_eq!(g.try_move(me, Dir8::E), Ok(MoveOutcome::Moved));
+        assert_eq!((g.unit(me).pos(), g.unit(me).goto), ((19, 11), None));
+        assert!(!g.treaty(1, 2));
+    }
+
+    #[test]
     fn a_computer_unit_stops_at_a_treaty_partners_border() {
         use crate::game::{Dir8, MoveOutcome};
         let mut g = game();

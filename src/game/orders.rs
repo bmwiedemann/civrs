@@ -408,7 +408,10 @@ impl Game {
     ///   0x1db0:0x4). It ends at its square, when no step is left or a step is refused (the
     ///   zone of control clears it, 0x5b44); a step that needs the player's answer (a caravan
     ///   at one of his cities, a Diplomat at a foreign city or unit) ends it too and comes
-    ///   back as `AutoStop::Menu`. A land unit whose step fails for want of moves (0x636f)
+    ///   back as `AutoStop::Menu`; so does a treaty partner's land or unit ("We have signed
+    ///   a peace treaty", `MoveOutcome::BreakTreaty`), whose land has dropped the goto before
+    ///   the question (0x656d), so after either answer the unit waits for orders with the
+    ///   moves it has left (0x6d7f -> 0x442c), one step further after "Break treaty.". A land unit whose step fails for want of moves (0x636f)
     ///   keeps its goto for the next turn.
     ///
     /// CIV.EXE presses the key again for as long as the unit keeps its order and moves; when
@@ -463,6 +466,13 @@ impl Game {
                     stop = AutoStop::Menu(out, dir);
                     break;
                 }
+                // "We have signed a peace treaty" (senate_check_attack 0x1a3b4): the human is
+                // asked as for a move by hand; the territory rule has dropped the goto (0x656d),
+                // a fight drops it on "Cancel action." (0x19a1a)
+                Ok(out @ M::BreakTreaty(_)) => {
+                    stop = AutoStop::Menu(out, dir);
+                    break;
+                }
                 // a land unit short of moves fails its step with its moves gone (0x636f) and
                 // keeps the goto
                 Ok(M::Blocked) if self.unit_opt(id).is_some_and(|u| u.moves_left == 0) => break,
@@ -475,7 +485,7 @@ impl Game {
             }
         }
         // what CIV.EXE would press again without end (above)
-        if let Some(u) = self.unit_opt(id).filter(|u| matches!(u.order, UnitOrder::Goto | UnitOrder::Home) && u.moves_left > 0) {
+        if let Some(u) = self.unit_opt(id).filter(|u| matches!(u.order, UnitOrder::Goto | UnitOrder::Home) && u.moves_left > 0 && !matches!(stop, AutoStop::Menu(..))) {
             if self.city_at(u.x, u.y).is_some() {
                 self.clear_goto(id);
                 self.unit_mut(id).order = UnitOrder::None;

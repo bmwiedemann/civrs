@@ -122,6 +122,9 @@ impl Game {
                 }
                 // an attack asks in combat, after the move code's questions (below)
                 if units_here.is_empty() && self.treaty_break_ok != Some(o) {
+                    // the territory rule drops the unit's goto before it asks, whatever the
+                    // answer (0x656d)
+                    self.clear_goto(id);
                     return Ok(MoveOutcome::BreakTreaty(o));
                 }
                 if units_here.is_empty() {
@@ -221,6 +224,8 @@ impl Game {
         if let Some(o) = self.territory_crossed(&u, (tx, ty)) {
             if self.is_human(slot) && self.treaty(slot, o) {
                 if self.treaty_break_ok != Some(o) {
+                    // (the goto goes before the question, whatever the answer, 0x656d)
+                    self.clear_goto(id);
                     return Ok(MoveOutcome::BreakTreaty(o));
                 }
                 self.treaty_break_ok = None;

@@ -1077,6 +1077,7 @@ impl MapView {
                 MoveOutcome::CaravanArrived(c) => return self.caravan_menu(ctx, id, c, dir),
                 MoveOutcome::EnteredForeignCity(c) => return self.foreign_city_menu(ctx, id, c),
                 MoveOutcome::BribeOffer(t) => return self.bribe_offer(ctx, id, t, dir),
+                MoveOutcome::BreakTreaty(o) => return self.treaty_question(ctx, id, dir, o),
                 _ => {}
             }
         }

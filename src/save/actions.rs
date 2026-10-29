@@ -17,6 +17,10 @@
 //!                          Senate overrules with a message box: add `ret`) and its row;
 //!                          a caravan entering a foreign city sets up its route, a move onto a
 //!                          foreign unit attacks
+//! menu 1                  answers the menu a unit's goto opened as the loop came to it
+//!                          (a treaty partner's land or unit: 0 cancel, 1 break the
+//!                          treaty), as kN:ROW does for a move by hand; the next action
+//!                          must be this one
 //! select 7,23 Caesarea 9,25   FindCity, a click on the square and Return: its one unit
 //!                          of the human's becomes the active unit
 //! tax +1 / lux -2          the rate menus ('+' / '-'): rows down from the current rate
@@ -43,6 +47,20 @@ pub enum Action {
     Rate { lux: bool, rows: i32 },
     Revolution,
     City { name: String, at: (i32, i32), op: CityOp },
+    /// The row for the menu a goto opened (`run_autos`).
+    Menu(usize),
+}
+
+thread_local! {
+    /// The treaty question a goto step opened (`run_autos`): the unit, its step, the partner.
+    static OPEN: std::cell::Cell<Option<(crate::game::UnitId, Dir8, crate::game::Slot)>> = const { std::cell::Cell::new(None) };
+}
+
+fn open_question() -> Result<(), String> {
+    match OPEN.get() {
+        Some((_, _, o)) => Err(format!("a goto's treaty question (civ {o}) waits for its `menu` answer")),
+        None => Ok(()),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -79,6 +97,7 @@ pub fn parse(text: &str) -> Result<Vec<(u32, Action)>, String> {
             "unit" => Action::Unit { at: pos(w.get(1).ok_or_else(|| err("missing X,Y"))?)?, keys: w[2..].iter().map(|s| s.to_string()).collect() },
             "tax" | "lux" => Action::Rate { lux: w[0] == "lux", rows: num(w.get(1))? },
             "revolution" => Action::Revolution,
+            "menu" => Action::Menu(num(w.get(1))? as usize),
             "select" => Action::Select {
                 at: pos(w.get(1).ok_or_else(|| err("missing X,Y"))?)?,
                 city: w.get(2).ok_or_else(|| err("missing city"))?.to_string(),
@@ -123,7 +142,14 @@ fn run_autos(g: &mut Game) -> Result<(), String> {
     loop {
         settle(g);
         let Some(id) = g.active_unit.filter(|id| g.is_auto_unit(*id)) else { return Ok(()) };
-        if let AutoStop::Menu(out, _) = g.run_auto_unit(id) {
+        let stop = g.run_auto_unit(id);
+        // "We have signed a peace treaty" for a goto's step (0x656d, 0x1a3b4): the unit
+        // waits for the script's `menu` answer
+        if let AutoStop::Menu(MoveOutcome::BreakTreaty(o), d) = stop {
+            OPEN.set(Some((id, d, o)));
+            return Ok(());
+        }
+        if let AutoStop::Menu(out, _) = stop {
             return Err(format!("the goto of the unit at {:?} opens a menu: {out:?}", g.unit(id).pos()));
         }
         if g.unit_opt(id).is_some_and(|u| u.order == UnitOrder::None && u.moves_left > 0) {
@@ -146,7 +172,15 @@ fn settle(g: &mut Game) {
 /// Perform one action for the human, as the map view and the city screen do on its keys.
 pub fn apply(g: &mut Game, a: &Action) -> Result<(), String> {
     let me = g.human_slot;
+    if !matches!(a, Action::Menu(_)) {
+        open_question()?;
+    }
     match a {
+        Action::Menu(row) => {
+            let (id, d, o) = OPEN.take().ok_or("no menu is open")?;
+            answer_treaty(g, id, d, o, Some(*row), "menu")?;
+            unit_done(g, id)
+        }
         Action::Unit { at, keys } => {
             let id = g.active_unit.ok_or("no active unit")?;
             if g.unit(id).pos() != *at {
@@ -289,33 +323,10 @@ fn unit_key(g: &mut Game, id: crate::game::UnitId, k: &str) -> Result<(), String
             }
             // "We have signed a peace treaty with the X!" (0x1a3cf): 0 Cancel action., 1 Break
             // treaty. (no Senate asks), and the move goes on
-            MoveOutcome::BreakTreaty(o) => match row {
-                Some(0) => {}
-                // the Senate of a Republic or Democracy: "Overruled by the Senate. Action
-                // canceled." (0x1a42d), a message box the script answers with `ret`
-                Some(1) if g.senate_overrules(g.human_slot) => {}
-                Some(1) => {
-                    g.treaty_break_ok = Some(o);
-                    let out = g.try_move(id, d).map_err(|e| e.message().to_string());
-                    g.treaty_break_ok = None;
-                    g.weak_attack_ok = false;
-                    match out? {
-                        MoveOutcome::Moved | MoveOutcome::Attacked { .. } => {}
-                        out => return Err(format!("move {k} after breaking the treaty: {out:?}")),
-                    }
-                }
-                _ => return Err(format!("move {k}: no treaty menu row {row:?}")),
-            },
+            MoveOutcome::BreakTreaty(o) => answer_treaty(g, id, d, o, row, k)?,
             out => return Err(format!("move {k}: {out:?}")),
         }
-        // the map view follows the unit (scroll_to 0x9505, MapView::ensure_visible)
-        if let (Some(u), Some(view)) = (g.unit_opt(id), g.view) {
-            g.view = Some(Game::view_scrolled_to(view, u.x, u.y));
-        }
-        if g.unit_opt(id).map(|u| u.moves_left == 0 || u.order != UnitOrder::None).unwrap_or(true) {
-            activate_next(g)?;
-        }
-        return Ok(());
+        return unit_done(g, id);
     }
     match k {
         "space" => {
@@ -365,12 +376,50 @@ fn unit_key(g: &mut Game, id: crate::game::UnitId, k: &str) -> Result<(), String
     }
 }
 
+/// After a move: the map view follows the unit (scroll_to 0x9505, MapView::ensure_visible);
+/// a unit with moves left and no order keeps the focus (0x6d7f -> 0x442c), else the loop
+/// goes on.
+fn unit_done(g: &mut Game, id: crate::game::UnitId) -> Result<(), String> {
+    if let (Some(u), Some(view)) = (g.unit_opt(id), g.view) {
+        g.view = Some(Game::view_scrolled_to(view, u.x, u.y));
+    }
+    if g.unit_opt(id).map(|u| u.moves_left == 0 || u.order != UnitOrder::None).unwrap_or(true) {
+        activate_next(g)?;
+    }
+    Ok(())
+}
+
+/// "We have signed a peace treaty with the X!" (0x1a3cf): row 0 Cancel action. (a fight's
+/// question drops the goto then, 0x19a1a; the territory rule has dropped it before asking,
+/// 0x656d), 1 Break treaty., and the move goes on (no Senate asks).
+fn answer_treaty(g: &mut Game, id: crate::game::UnitId, d: Dir8, o: crate::game::Slot, row: Option<usize>, k: &str) -> Result<(), String> {
+    match row {
+        Some(0) => g.clear_goto(id),
+        // the Senate of a Republic or Democracy: "Overruled by the Senate. Action canceled."
+        // (0x1a42d), a message box the script answers with `ret`
+        Some(1) if g.senate_overrules(g.human_slot) => g.clear_goto(id),
+        Some(1) => {
+            g.treaty_break_ok = Some(o);
+            let out = g.try_move(id, d).map_err(|e| e.message().to_string());
+            g.treaty_break_ok = None;
+            g.weak_attack_ok = false;
+            match out? {
+                MoveOutcome::Moved | MoveOutcome::Attacked { .. } => {}
+                out => return Err(format!("move {k} after breaking the treaty: {out:?}")),
+            }
+        }
+        _ => return Err(format!("move {k}: no treaty menu row {row:?}")),
+    }
+    Ok(())
+}
+
 /// Play `turns` turns from an imported save with the script's actions at the start of the
 /// human's turns, the rest as `--dump state:N` plays them (decisions get their first choice).
 /// After the actions every unit still waiting gets a Space, as the harness presses it until
 /// the turn ends, so the loop goes through the units that move by themselves.
 pub fn play(g: &mut Game, ai: &mut crate::ai::Ai, actions: &[(u32, Action)], turns: u32) -> Result<(), String> {
     use crate::game::turn::TurnStep;
+    OPEN.set(None);
     run_autos(g)?;
     for _ in 0..turns {
         let turn = g.turn;
@@ -378,6 +427,7 @@ pub fn play(g: &mut Game, ai: &mut crate::ai::Ai, actions: &[(u32, Action)], tur
             apply(g, a).map_err(|e| format!("turn {}: {a:?}: {e}", g.turn))?;
             settle(g);
         }
+        open_question().map_err(|e| format!("turn {}: {e}", g.turn))?;
         while let Some(id) = g.active_unit {
             g.skip_unit(id);
             activate_next(g)?;
@@ -411,6 +461,7 @@ mod tests {
         assert_eq!(a[4], (37, Action::Revolution));
         assert_eq!(a[5], (37, rome(CityOp::Tile(1, -1))));
         assert_eq!(parse("turn 3\nselect 7,23 Caesarea 9,25\n").unwrap()[0], (3, Action::Select { at: (7, 23), city: "Caesarea".into(), city_at: (9, 25) }));
+        assert_eq!(parse("turn 3\nmenu 1\n").unwrap()[0], (3, Action::Menu(1)));
         assert!(parse("unit 1,1 r").is_err());
     }
 }

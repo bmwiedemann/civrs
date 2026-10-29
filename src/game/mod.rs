@@ -373,7 +373,9 @@ pub enum AutoStop {
     /// The unit has used its moves, or waits for orders.
     Done,
     /// A step in direction `Dir8` needs the player's answer (`CaravanArrived`,
-    /// `EnteredForeignCity` or `BribeOffer`); the goto is gone.
+    /// `EnteredForeignCity` or `BribeOffer`; the goto is gone), or `BreakTreaty` (the goto
+    /// is gone for a partner's land, 0x656d; a fight's question keeps it until "Cancel
+    /// action.", 0x19a1a).
     Menu(MoveOutcome, Dir8),
     /// The Settlers' job is no longer possible: the order is gone and the unit, its moves
     /// kept, waits for orders; the key's message, if CIV.EXE has one, is shown.
