@@ -305,6 +305,8 @@ fn unit_key(g: &mut Game, id: crate::game::UnitId, k: &str) -> Result<(), String
         let caravan = g.unit(id).kind == rules::unit_ids::CARAVAN;
         match g.try_move(id, d).map_err(|e| e.message().to_string())? {
             MoveOutcome::Moved | MoveOutcome::Attacked { .. } if row.is_none() => {}
+            // a city taken (its messages take a `ret` each in CIV.EXE)
+            MoveOutcome::CapturedCity(_) if row.is_none() => {}
             // a caravan in a foreign city sets up the route at once (0x5d15)
             MoveOutcome::EnteredForeignCity(c) if caravan && row.is_none() => g.caravan_action(id, CaravanAction::TradeRoute(c)).map_err(|e| e.message().to_string())?,
             // "Will you?" (0x5cbe): Keep moving, Establish trade route (greyed for a wonder

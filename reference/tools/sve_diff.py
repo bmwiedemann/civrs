@@ -314,13 +314,13 @@ def play(game, slot, turns, out, script=None, seed=None):
         shutil.copy(log, os.path.join(out, 'random.log'))
 
 
-def state(civrs, sve, turns, script=None, seed=None):
+def state(civrs, sve, turns, script=None, seed=None, links=None):
     """civrs's state text after `turns` turns, and with a seed its draws [(at, n, r)]."""
     with tempfile.NamedTemporaryFile(suffix='.txt', delete=False) as f:
         path = f.name
     spec = 'state:%d' % turns + (':%d' % int(seed) if seed is not None else '')
     extra = ['--rng-log', path + '.rng'] if seed is not None else []
-    load = [] if sve == 'new' else ['--load-sve', sve]
+    load = (['--exe-links', links] if links else []) if sve == 'new' else ['--load-sve', sve]
     subprocess.run([civrs] + load + ['--dump', spec, '--out', path] + (['--actions', script] if script else []) + extra, check=True)
     with open(path) as f:
         lines = f.read().splitlines()
@@ -387,7 +387,9 @@ def diff(civrs, start, results, script=None, seed=None):
         exe_log = exe_draws(os.path.join(os.path.dirname(os.path.abspath(results[0])), 'random.log'))
     for r in results:
         n = turn_of(r) - t0
-        (exe, _), (rs, draws) = state(civrs, r, 0), state(civrs, start, n, script, seed)
+        # a new game takes CIV.EXE's land links from its first save (they never change)
+        links = results[0] if start == 'new' else None
+        (exe, _), (rs, draws) = state(civrs, r, 0), state(civrs, start, n, script, seed, links)
         keys = sorted(set(exe) | set(rs), key=lambda k: (k.split('.')[0].rstrip('0123456789,'), k))
         bad = [k for k in keys if exe.get(k) != rs.get(k)]
         print('== %s: %d turn(s), %d of %d fields differ' % (os.path.basename(r), n, len(bad), len(keys)))

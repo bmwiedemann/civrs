@@ -11,7 +11,7 @@ fn usage() -> ! {
          dump targets: pic:NAME | sheet:NAME | fonts | pal:NAME | all-pics:DIR\n\
                        sound:ID[:LEVEL[:SECONDS]] (WAV) | sound-regs:ID[:LEVEL[:TICKS]] (OPL2 register log)\n\
                        state:TURNS[:SEED] (text, with --load-sve or a new game from SEED; [--actions SCRIPT]\n\
-                       [--rng-log FILE]; reference/tools/sve_diff.py)\n\
+                       [--rng-log FILE] [--exe-links CIVILn.SVE]; reference/tools/sve_diff.py)\n\
          --load-sve: start from (or, with screen:NAME, render) an original CIVILn.SVE + .MAP"
     );
     std::process::exit(2);
@@ -34,10 +34,12 @@ struct Cli {
     actions: Option<PathBuf>,
     /// Where `--dump state:N` writes its random draws (`rng::trace_start`).
     rng_log: Option<PathBuf>,
+    /// A CIV.EXE save whose goto land links a new game's `--dump state:N:SEED` takes.
+    exe_links: Option<PathBuf>,
 }
 
 fn parse_cli() -> Cli {
-    let mut cli = Cli { assets: None, scale: None, fullscreen: false, dump: None, out: None, zoom: 1, skip_intro: false, keyboard_only: false, seed: None, load_sve: None, actions: None, rng_log: None };
+    let mut cli = Cli { assets: None, scale: None, fullscreen: false, dump: None, out: None, zoom: 1, skip_intro: false, keyboard_only: false, seed: None, load_sve: None, actions: None, rng_log: None, exe_links: None };
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -52,6 +54,7 @@ fn parse_cli() -> Cli {
             "--load-sve" => cli.load_sve = args.next().map(PathBuf::from),
             "--actions" => cli.actions = args.next().map(PathBuf::from),
             "--rng-log" => cli.rng_log = args.next().map(PathBuf::from),
+            "--exe-links" => cli.exe_links = args.next().map(PathBuf::from),
             "--zoom" => cli.zoom = args.next().and_then(|s| s.parse().ok()).unwrap_or(1),
             "-h" | "--help" => usage(),
             _ => {
@@ -63,7 +66,7 @@ fn parse_cli() -> Cli {
     cli
 }
 
-fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&Path>, actions: Option<&Path>, rng_log: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
+fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&Path>, actions: Option<&Path>, rng_log: Option<&Path>, exe_links: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(spec) = target.strip_prefix("sound:") {
         return dump_sound(assets, spec, out, false);
     }
@@ -98,7 +101,13 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&P
                 if rng_log.is_some() {
                     civrs::game::rng::trace_start();
                 }
-                civrs::game::Game::new(civrs::game::GameSetup { seed, ..Default::default() }, None)
+                let mut game = civrs::game::Game::new(civrs::game::GameSetup { seed, ..Default::default() }, None);
+                // CIV.EXE builds a new world's land links from the wrong map page (overlay 7
+                // 0x9edd); its first save of the game (--exe-links) has them
+                if let Some(f) = exe_links {
+                    game.use_exe_land_links(&civrs::save::sve::exe_land_links(f)?);
+                }
+                game
             }
         };
         let script = match actions {
@@ -663,7 +672,7 @@ fn main() {
     };
     if let Some(target) = &cli.dump {
         let out = cli.out.clone().unwrap_or_else(|| PathBuf::from("dump.ppm"));
-        if let Err(e) = dump(&assets, target, &out, cli.zoom, cli.load_sve.as_deref(), cli.actions.as_deref(), cli.rng_log.as_deref()) {
+        if let Err(e) = dump(&assets, target, &out, cli.zoom, cli.load_sve.as_deref(), cli.actions.as_deref(), cli.rng_log.as_deref(), cli.exe_links.as_deref()) {
             eprintln!("dump failed: {e}");
             std::process::exit(1);
         }
