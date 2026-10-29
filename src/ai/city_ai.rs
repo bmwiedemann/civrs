@@ -202,10 +202,21 @@ mod tests {
         g.set_relation(h, slot, crate::game::Relation::War);
         // big enough to survive the loss of its defender (CIV.EXE 0x618e)
         g.city_mut(c).size = 3;
-        g.add_unit(slot, unit_ids::PHALANX, x, y);
-        let a = g.add_unit(h, unit_ids::LEGION, x + 1, y);
-        g.attack(a, x, y);
-        assert!(g.city(c).auto_build, "set win or lose");
+        // only an attacker that survives puts it on alert (0x60cd jumps past 0x6141)
+        let d = g.add_unit(slot, unit_ids::PHALANX, x, y);
+        g.unit_mut(d).veteran = true;
+        let a = g.add_unit(h, unit_ids::MILITIA, x + 1, y);
+        let out = g.attack(a, x, y);
+        assert!(matches!(out, crate::game::MoveOutcome::Attacked { won: false, .. }), "{out:?}");
+        assert!(!g.city(c).auto_build, "not after a beaten attacker");
+        for _ in 0..50 {
+            let a = g.add_unit(h, unit_ids::CATAPULT, x + 1, y);
+            if matches!(g.attack(a, x, y), crate::game::MoveOutcome::Attacked { won: true, .. }) {
+                break;
+            }
+            assert!(!g.city(c).auto_build);
+        }
+        assert!(g.city(c).auto_build, "set when the defender loses");
         // the human's own city keeps its AUTO setting
         let hc = g.add_city(h, "Mine".into(), x + 6, y);
         g.city_mut(hc).size = 3;

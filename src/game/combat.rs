@@ -162,9 +162,10 @@ impl Game {
         }
         self.last_combat = Some(((attacker.x, attacker.y), (x, y), won));
         self.fight_diplomacy(attacker.owner, defender.owner);
-        // a computer city that is attacked, whoever wins, goes on alert (city status 0x10,
-        // CIV.EXE 0x6114..0x6141): its next turn re-chooses production and buys
-        if let Some(c) = self.city_at(x, y) {
+        // a computer city whose defender loses goes on alert (city status 0x10, CIV.EXE
+        // 0x6114..0x6141): its next turn re-chooses production and buys. A beaten attacker
+        // ends the move before that (0x60cd -> 0x6d7f)
+        if let Some(c) = self.city_at(x, y).filter(|_| won) {
             if self.city(c).owner != self.human_slot {
                 self.city_mut(c).auto_build = true;
             }
