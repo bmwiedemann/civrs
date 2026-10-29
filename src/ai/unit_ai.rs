@@ -1475,7 +1475,15 @@ fn do_step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) ->
         }
     }
     let slot = u.owner;
-    match step(g, id, d, sink) {
+    g.step_rolled_out = false;
+    let r = step(g, id, d, sink);
+    // a failed move roll or the zone of control leaves the move code before the heading
+    // store (0x636f, 0x5ac7 come before 0x6433)
+    if g.step_rolled_out || matches!(r, Err(crate::game::RuleError::Zoc)) {
+        g.set_heading(id, heading);
+    }
+    g.step_rolled_out = false;
+    match r {
         // (CIV.EXE takes a barbarian leader into a foreign city through the Diplomat's
         // overlay too, 0x5baa; civrs leaves the barbarians out)
         _ if slot == 0 => {}
@@ -1897,6 +1905,29 @@ mod tests {
         g.map.site.clear();
         g.ai_memory = Default::default();
         g
+    }
+
+    /// A failed move roll (0x636f) comes before the heading store (0x6433) too.
+    #[test]
+    fn a_failed_move_roll_keeps_the_heading() {
+        let mut failed = 0;
+        for seed in 0..20 {
+            let mut g = arena();
+            g.rng = crate::game::Rng::new(seed * 1637);
+            g.map.get_mut(11, 10).unwrap().terrain = Terrain::Mountains;
+            let a = g.add_unit(2, unit_ids::LEGION, 10, 10);
+            g.unit_mut(a).moves_left = 1;
+            g.set_heading(a, 0xff);
+            let mut sink = |_s: TurnStep| {};
+            do_step(&mut g, a, Dir8::E, &mut sink);
+            if g.unit(a).pos() == (10, 10) {
+                failed += 1;
+                assert_eq!(g.heading(a), 0xff, "seed {seed}");
+            } else {
+                assert_eq!(g.heading(a), Dir8::E as u8 + 1);
+            }
+        }
+        assert!(failed > 0);
     }
 
     /// An attack leaves the move code before the heading store (0x6433): the attacker keeps

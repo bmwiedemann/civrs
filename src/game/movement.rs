@@ -301,6 +301,7 @@ impl Game {
         let moves = self.unit(id).moves_left;
         if u.is_land() && cost >= 3 && moves != 3 && self.rng.random(0x635e, cost as i32) > moves as i32 {
             self.unit_mut(id).moves_left = 0;
+            self.step_rolled_out = true;
             return Ok(MoveOutcome::Blocked);
         }
         let had_hut = target.has(tile_flags::HUT);
