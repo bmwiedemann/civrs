@@ -7,7 +7,8 @@
     python3 -I dosciv.py click X Y               mouse click at (X, Y) of the 320x200 screen
     python3 -I dosciv.py stop                    kill the dosbox and Xvfb this tool started
 
-Environment: CIVDISPLAY (default :79). The pids of the started processes are kept in
+Environment: CIVDISPLAY (default :79). CIVSEED=N is passed on to the DOS environment; a CIV.EXE
+built by civ_seed_patch.py then seeds its RNG with N & 0x7fff instead of the clock. The pids of the started processes are kept in
 $CIVSTATE (default: a file per display in the temp directory) so `stop` kills only those. GAME_DIR must be a private, writable copy of
 the original game directory (CIV.EXE and its files); dosbox mounts it as C:.
 """
@@ -34,6 +35,8 @@ def win():
 def start(game, cycles='max'):
     game = os.path.abspath(game)
     conf = os.path.join(os.path.dirname(game), 'dosciv.conf')
+    seed = os.environ.get('CIVSEED')
+    seed = f'set CIVSEED={int(seed)}\n' if seed else ''
     with open(conf, 'w') as f:
         f.write(f"""[sdl]
 fullscreen = false
@@ -64,7 +67,7 @@ mouse_raw_input = false
 [autoexec]
 mount c {game}
 c:
-civ
+{seed}civ
 """)
     x = subprocess.Popen(['Xvfb', DISPLAY, '-screen', '0', '1280x800x24', '-nolisten', 'tcp'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(2)
