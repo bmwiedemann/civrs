@@ -51,7 +51,8 @@ impl Game {
             // the moves back (`unload`)
             UnitOrder::Sentry => {
                 let um = self.unit_mut(id);
-                um.order = o;
+                // `or status,1`: the other bits stay under it
+                um.sentry_keeping_job(true);
                 um.goto = None;
                 um.moves_left = 0;
                 Ok(())
@@ -576,7 +577,8 @@ impl Game {
                 continue;
             }
             let cu = self.unit_mut(c);
-            cu.order = UnitOrder::None;
+            // `and status,0xfe` (0x936e): a job kept under the sentry bit comes back
+            cu.wake_sentry();
             cu.moves_left = cu.full_moves();
             if cu.info().range > 0 {
                 cu.fuel = 0;
@@ -621,7 +623,8 @@ impl Game {
     /// bits is cleared (flags &= 0x30) and so is the goto.
     pub fn wake_picked_unit(&mut self, id: UnitId) {
         let u = self.unit_mut(id);
-        if matches!(u.order, UnitOrder::Road | UnitOrder::Irrigate | UnitOrder::Mine | UnitOrder::Fortress | UnitOrder::CleanPollution) {
+        // (a job under the sentry bit too)
+        if u.order_under_sentry().is_work() {
             u.moves_left = u.full_moves();
         }
         u.order = UnitOrder::None;

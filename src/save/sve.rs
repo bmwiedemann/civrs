@@ -173,7 +173,8 @@ fn slot_of(sve: &Path) -> Option<u8> {
 
 /// The order a unit's flag byte (+0) and goto (+6) stand for (the order keys of `move_units`
 /// 0x403e: 0x01 sentry, 0x04 fortify ('f' 0x5160), 0x08 fortified (0x4239), the Settlers jobs
-/// in bits 0xc2: 0x02 road, 0x40 irrigation, 0x80 mine, 0xc0 fortress, 0x82 pollution).
+/// in bits 0xc2: 0x02 road, 0x40 irrigation, 0x80 mine, 0xc0 fortress, 0x82 pollution). The
+/// import puts a sentry bit over the job or fortification this returns (`Unit::sentry_job`).
 fn unit_order(flags: u8, goto: bool, air: bool) -> UnitOrder {
     // bit 0x02 on an aircraft is its return to base ('h', 0x4f94), shown with no letter
     if air && flags & 0x02 != 0 {
@@ -521,6 +522,11 @@ fn import_slot(data: &[u8], map_pic: &[u8], moves_back: bool) -> Result<Game, Sa
             u.veteran = r[0] & 0x20 != 0;
             u.goto = (r[6] != 0xff).then_some((r[6] as i32, r[7] as i32));
             u.order = unit_order(r[0], u.goto.is_some(), u.is_air());
+            // the sentry bit over a job or a fortification (take_cargo 0x69e5): both stay
+            if r[0] & 0x01 != 0 && (u.order.is_work() || matches!(u.order, UnitOrder::Fortify | UnitOrder::Fortified)) {
+                u.sentry_job = Some(u.order);
+                u.order = UnitOrder::Sentry;
+            }
             // +5: the turns of fuel left of an aircraft, else the Settlers' work counter; the turn
             // end refuels to the range and counts the turn at once (0x7597, 0x75ab), so a full
             // tank is saved as range - 1 and civrs's turns flown are range - 1 - fuel

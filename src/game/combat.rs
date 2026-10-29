@@ -283,13 +283,15 @@ impl Game {
     /// goto is cleared.
     pub fn reset_unit(&mut self, id: UnitId) {
         let u = self.unit_mut(id);
-        if u.order.is_work() {
+        // (the job bits under a sentry count too)
+        if u.order_under_sentry().is_work() {
             u.order_turns = 0;
         }
         if u.order.is_work() || matches!(u.order, UnitOrder::Sentry | UnitOrder::Fortified) {
             u.moves_left = u.full_moves();
         }
         u.order = UnitOrder::None;
+        u.sentry_job = None;
         u.goto = None;
     }
 
@@ -727,7 +729,8 @@ impl Game {
     fn keep_flags(&mut self, n: UnitId, u: &Unit) {
         let m = self.unit_mut(n);
         m.veteran = u.veteran;
-        m.order = match u.order {
+        // (`and al,0xfe`: a job or fortification under the sentry bit stays)
+        m.order = match u.order_under_sentry() {
             UnitOrder::Sentry | UnitOrder::Goto => UnitOrder::None,
             o => o,
         };

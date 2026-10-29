@@ -91,6 +91,15 @@ pub struct Unit {
     /// trailer.
     #[serde(skip)]
     pub next: Option<UnitId>,
+    /// The order a sentried unit keeps under its sentry bit (CIV.EXE status bits 0xce besides
+    /// bit 0): a ship's move ORs the sentry bit into its passengers' status (take_cargo
+    /// `or status,1` 0x69e5), so a Settlers at work keeps its job (0x02 road, 0x40
+    /// irrigation, 0x80 mine, 0xc0 fortress, 0x82 pollution) and a fortified unit its
+    /// fortification; waking clears bit 0 only (0x85cd, 0x934a, 0x936e) and gives the order
+    /// back (`Unit::wake_sentry`). Meaningful only while `order` is `Sentry`. Saved in the
+    /// version-30 trailer.
+    #[serde(skip)]
+    pub sentry_job: Option<UnitOrder>,
 }
 
 impl Unit {
@@ -115,6 +124,38 @@ impl Unit {
             seen_by: 1 << owner,
             record: 0,
             next: None,
+            sentry_job: None,
+        }
+    }
+
+    /// Set the sentry bit (`or status,1`) over the unit's order: a Settlers job, and with
+    /// `fortify` a fortification too, stays under it (`sentry_job`); a sentried unit keeps
+    /// what it kept. Boarding drops the fortify bits first (`and status,0xf3`, 0x5e27).
+    pub fn sentry_keeping_job(&mut self, fortify: bool) {
+        let o = self.order;
+        if o != UnitOrder::Sentry {
+            let kept = o.is_work() || (fortify && matches!(o, UnitOrder::Fortify | UnitOrder::Fortified));
+            self.sentry_job = kept.then_some(o);
+        } else if !fortify && matches!(self.sentry_job, Some(UnitOrder::Fortify | UnitOrder::Fortified)) {
+            self.sentry_job = None;
+        }
+        self.order = UnitOrder::Sentry;
+    }
+
+    /// Clear the sentry bit only (`and status,0xfe`, CIV.EXE 0x85cd, 0x934a, 0x936e): the
+    /// order kept under it comes back, else the unit has none.
+    pub fn wake_sentry(&mut self) {
+        if self.order == UnitOrder::Sentry {
+            self.order = self.sentry_job.take().unwrap_or(UnitOrder::None);
+        }
+    }
+
+    /// The order the status bits stand for but the sentry bit: the kept one of a sentried
+    /// unit, else its order.
+    pub fn order_under_sentry(&self) -> UnitOrder {
+        match (self.order, self.sentry_job) {
+            (UnitOrder::Sentry, Some(o)) => o,
+            (o, _) => o,
         }
     }
 

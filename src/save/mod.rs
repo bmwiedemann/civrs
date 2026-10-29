@@ -3,7 +3,7 @@
 pub mod actions;
 pub mod sve;
 
-use crate::game::Game;
+use crate::game::{Game, UnitOrder};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -71,7 +71,11 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// 29: then by the length of the site/owner layer (`Map::claims`, u32 LE, 0 while no city has
 /// claimed anything) and its bytes; older saves rebuild it from the cities
 /// (`Game::rebuild_claims`).
-pub const VERSION: u16 = 29;
+/// 30: then by the number of unit slots (u32 LE) and each slot's `Unit::sentry_job` as its
+/// CIV.EXE status bits (u8: 0x02 road, 0x40 irrigation, 0x80 mine, 0xc0 fortress, 0x82
+/// pollution, 0x04 fortifying, 0x08 fortified, 0 for none or an empty slot); older saves keep
+/// no order under a sentry.
+pub const VERSION: u16 = 30;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -196,6 +200,8 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     }
     data.extend_from_slice(&(g.map.claims.len() as u32).to_le_bytes());
     data.extend_from_slice(&g.map.claims);
+    data.extend_from_slice(&(g.units.len() as u32).to_le_bytes());
+    data.extend(g.units.iter().map(|u| u.as_ref().filter(|u| u.order == UnitOrder::Sentry).and_then(|u| u.sentry_job).map_or(0, job_bits)));
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -311,6 +317,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     let mut stored_trade: Option<Vec<i16>> = None;
     let mut links: Option<Vec<u16>> = None;
     let mut claims: Option<Vec<u8>> = None;
+    let mut sentry_jobs: Option<Vec<u8>> = None;
     // version 14: the tribe names, after the counters
     if ver >= 14 {
         let mut at = counters + 112 * g.players.len();
@@ -393,6 +400,11 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
                                             if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 29) {
                                                 let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
                                                 claims = rest.get(at + 4..at + 4 + n).map(|b| b.to_vec());
+                                                at += 4 + n;
+                                                if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 30) {
+                                                    let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
+                                                    sentry_jobs = rest.get(at + 4..at + 4 + n).map(|b| b.to_vec());
+                                                }
                                             }
                                         }
                                     }
@@ -435,6 +447,13 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
             }
         }
         None => g.number_unit_records(),
+    }
+    if let Some(b) = sentry_jobs {
+        for (u, j) in g.units.iter_mut().zip(b) {
+            if let Some(u) = u.as_mut().filter(|u| u.order == UnitOrder::Sentry) {
+                u.sentry_job = bits_job(j);
+            }
+        }
     }
     match links {
         Some(b) => {
@@ -534,6 +553,33 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
         None => g.rebuild_claims(),
     }
     Ok(g)
+}
+
+/// The status bits (CIV.EXE unit +0) of an order kept under a sentry (version-30 trailer).
+fn job_bits(o: UnitOrder) -> u8 {
+    match o {
+        UnitOrder::Road => 0x02,
+        UnitOrder::Irrigate => 0x40,
+        UnitOrder::Mine => 0x80,
+        UnitOrder::Fortress => 0xc0,
+        UnitOrder::CleanPollution => 0x82,
+        UnitOrder::Fortify => 0x04,
+        UnitOrder::Fortified => 0x08,
+        _ => 0,
+    }
+}
+
+fn bits_job(b: u8) -> Option<UnitOrder> {
+    Some(match b {
+        0x02 => UnitOrder::Road,
+        0x40 => UnitOrder::Irrigate,
+        0x80 => UnitOrder::Mine,
+        0xc0 => UnitOrder::Fortress,
+        0x82 => UnitOrder::CleanPollution,
+        0x04 => UnitOrder::Fortify,
+        0x08 => UnitOrder::Fortified,
+        _ => return None,
+    })
 }
 
 /// Bytes per civilization of the version-20 census trailer: three rows of 16 i32, the

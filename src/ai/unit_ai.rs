@@ -1424,7 +1424,7 @@ fn do_step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) ->
         g.clear_goto(id);
         g.unit_mut(id).moves_left = 0;
         if boards {
-            g.unit_mut(id).order = UnitOrder::Sentry;
+            g.unit_mut(id).sentry_keeping_job(false);
         }
         return false;
     }
@@ -1441,7 +1441,8 @@ fn do_step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) ->
             if stack_count(g, first) >= if left != 0 { 4 } else { 2 } {
                 g.unit_mut(id).moves_left = left;
                 if boards {
-                    g.unit_mut(id).order = UnitOrder::Sentry;
+                    // (0x5e22 `or status,1`, 0x5e27 `and 0xf3`: a job stays under it)
+                    g.unit_mut(id).sentry_keeping_job(false);
                 }
                 return false;
             }

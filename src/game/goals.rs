@@ -191,13 +191,14 @@ impl Game {
     /// A goto given by the AI (unit bytes +6/+7, flag 0x10 set and the low order bits
     /// 0x0f — sentry, road 0x02, fortifying, fortified — cleared, 0x1641b / 0x18901). The
     /// Settlers job bits 0xc0 and the work counter (+5) stay: irrigation, mine and fortress go
-    /// on as orders beside the goto, pollution (0x82) becomes mine (0x80).
+    /// on as orders beside the goto, pollution (0x82) becomes mine (0x80); a sentried unit
+    /// wakes to the job kept under its sentry bit.
     pub fn ai_set_goto(&mut self, id: UnitId, to: (i32, i32)) {
         use super::UnitOrder as O;
         self.ai_memory.busy.insert(id);
         let u = self.unit_mut(id);
         u.goto = Some(to);
-        u.order = match u.order {
+        u.order = match u.order_under_sentry() {
             O::Irrigate | O::Mine | O::Fortress => u.order,
             O::CleanPollution => O::Mine,
             _ => O::Goto,
@@ -310,8 +311,8 @@ impl Game {
                 // the first ten of its stack ring (for_each_in_stack, 0x836f)
                 for w in self.stack_from(f) {
                     let wu = self.unit_mut(w);
-                    if wu.order == super::UnitOrder::Sentry && !(n_ocean && wu.is_land()) {
-                        wu.order = super::UnitOrder::None;
+                    if !(n_ocean && wu.is_land()) {
+                        wu.wake_sentry();
                     }
                 }
                 if !n_ocean || here_ocean {
@@ -345,10 +346,7 @@ impl Game {
                     self.add_goal(civ, nx, ny, goal::SEA, 2);
                 }
                 if fu.info().sight & 2 != 0 && (fu.info().domain != Domain::Sea || here_ocean) {
-                    let fm = self.unit_mut(f);
-                    if fm.order == super::UnitOrder::Sentry {
-                        fm.order = super::UnitOrder::None;
-                    }
+                    self.unit_mut(f).wake_sentry();
                     self.clear_goto(f);
                     if n_ocean && o2 != 0 && !peace(self, civ, o2) {
                         self.add_goal(o2, u.x, u.y, goal::SEA, 2);

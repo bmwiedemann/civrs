@@ -340,7 +340,9 @@ pub fn draw_unit_in_font(fb: &mut Surface, ctx: &UiContext, game: &Game, id: cra
         crate::gfx::text::draw_text(fb, &ctx.fonts, &crate::gfx::TextStyle::new(font, 0), px + 4, py + 8, s);
         crate::gfx::text::draw_text(fb, &ctx.fonts, &crate::gfx::TextStyle::new(font, letter_colour), px + 4, py + 7, s);
     };
-    match u.order {
+    // (the bits under a sentry show as well: a passenger's job letter, 0x1b723)
+    let shown = u.order_under_sentry();
+    match shown {
         UnitOrder::Fortified => fb.blit_part(&ctx.sp.surf, sp::icon7(sp::FORTIFIED.0), px, py, Some(0)),
         UnitOrder::Fortify => letter(fb, "F"),
         _ => {}
@@ -348,7 +350,7 @@ pub fn draw_unit_in_font(fb: &mut Surface, ctx: &UiContext, game: &Game, id: cra
     if u.owner == game.human_slot && u.goto.is_some() {
         letter(fb, "G");
     }
-    let job = match u.order {
+    let job = match shown {
         UnitOrder::Road => Some("R"),
         UnitOrder::Irrigate => Some("I"),
         UnitOrder::Mine => Some("M"),

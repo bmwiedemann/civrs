@@ -247,7 +247,7 @@ impl Game {
                     // sea then costs without a roll (0x634a), and the move goes on as any other
                     let Some(s) = self.boarding_ship(&u, (tx, ty)) else { return Ok(MoveOutcome::Blocked) };
                     let um = self.unit_mut(id);
-                    um.order = UnitOrder::Sentry;
+                    um.sentry_keeping_job(false);
                     um.moves_left = 3;
                     boarded = Some(s);
                 } else if self.zoc_blocks(&u, (u.x, u.y), (tx, ty)) {
@@ -392,7 +392,7 @@ impl Game {
     /// fortified (status & 0xc) that is not the last left on the square (+0xa = 0xff,
     /// 0x6964). Each one out of the old ring and into the new (0x697a/0x698e) loses its
     /// heading (+8, 0x69b9), is sentried by a ship with a table capacity, so not by the
-    /// Carrier (0x69d6), and with a range gets a full tank (+5 = range - 1, 0x6a02: civrs's 0
+    /// Carrier (0x69d6), keeping its other status bits (`Unit::sentry_job`), and with a range gets a full tank (+5 = range - 1, 0x6a02: civrs's 0
     /// turns flown). The walk ends after 20 links, at the end of the ring, or once the
     /// capacity is reached; a Carrier and a barbarian ship have no limit (0x6a1e..0x6a62).
     /// Units over the capacity stay where they are, at sea too.
@@ -416,8 +416,9 @@ impl Game {
                 self.relocate_unit(c, to.0, to.1);
                 let m = self.unit_mut(c);
                 m.seen_by = 0;
+                // `or status,1` (0x69e5): a job or fortification stays under the sentry bit
                 if capacity != 0 {
-                    m.order = UnitOrder::Sentry;
+                    m.sentry_keeping_job(true);
                 }
                 if m.info().range != 0 {
                     m.fuel = 0;
@@ -436,10 +437,16 @@ impl Game {
     pub fn place_unit(&mut self, id: UnitId, x: i32, y: i32, cost: u8) {
         // out of the old square's stack ring, into the new one's (0x67ae/0x67ce)
         self.relocate_unit(id, x, y);
+        let human = self.is_human(self.unit(id).owner);
         let u = self.unit_mut(id);
         u.moves_left = u.moves_left.saturating_sub(cost);
         if u.order == UnitOrder::Fortified || u.order == UnitOrder::Fortify || u.order.is_work() {
             u.order = UnitOrder::None;
+        }
+        // a computer's unit but an aircraft keeps only its veteran bits (`and status,0x30`,
+        // 0x6810), the human's keeps them all: the job under a boarder's sentry goes
+        if !human && !u.is_air() {
+            u.sentry_job = None;
         }
         // a move resets the work counter (unit +5 = the type's fuel, 0x6d00) and who has seen
         // the unit (+9, 0x67e4)
@@ -469,8 +476,9 @@ impl Game {
     /// - two squares away, for a unit that sees 5x5 (ships: ocean squares only, 0x878d): the
     ///   first unit of a foreign stack outside a city is seen, never a Submarine (0x87f6);
     /// - two squares away whatever the unit (0x8546..0x8715): unless it is a Submarine, a
-    ///   foreign stack whose first unit sees 5x5 (a ship only when this unit is at sea) wakes
-    ///   from sentry, loses its goto and sees this unit unless it is in a city; otherwise one
+    ///   foreign stack's first unit that sees 5x5 (a ship only when this unit is at sea) wakes
+    ///   from sentry (that unit alone, 0x85cd), loses its goto and sees this unit unless it is
+    ///   in a city; otherwise one
     ///   of the human's cities there sees it, when the human knows this unit's square.
     pub fn mark_sightings(&mut self, id: UnitId) {
         let Some(u) = self.unit_opt(id).cloned() else { return };
@@ -541,13 +549,11 @@ impl Game {
         for h in marked {
             self.unit_mut(h).seen_by |= 1 << l;
         }
+        // only the first unit of the stack: 0x85cd clears its sentry bit whatever it is (no
+        // stack walk, no passenger test: no land unit sees two squares far)
         for h in woken {
-            // a passenger at sea sleeps on (wake_if_not_at_sea_cb 0x92fe)
-            let passenger = self.aboard(h) && self.unit(h).is_land();
             let hu = self.unit_mut(h);
-            if hu.order == UnitOrder::Sentry && !passenger {
-                hu.order = UnitOrder::None;
-            }
+            hu.wake_sentry();
             hu.goto = None;
         }
     }
@@ -1169,6 +1175,49 @@ mod tests {
     }
 
     #[test]
+    fn a_working_unit_taken_aboard_keeps_its_job_under_the_sentry_bit() {
+        // 0x69e5 `or status,1`: a computer's Settlers at work goes along and keeps its job and
+        // counter; 'u' clears bit 0 only (wake_cb 0x936e), so the job is back after landing
+        use crate::game::UnitOrder;
+        let (mut g, x, y) = sea_lane();
+        let human = g.human_slot;
+        let ai = g.civ_slots().into_iter().find(|s| *s != human).unwrap();
+        g.add_city(ai, "Haven".into(), x - 1, y);
+        let ship = g.add_unit(ai, unit_ids::TRANSPORT, x - 1, y);
+        let settlers = g.add_unit(ai, unit_ids::SETTLERS, x - 1, y);
+        let militia = g.add_unit(ai, unit_ids::MILITIA, x - 1, y);
+        g.unit_mut(settlers).order = UnitOrder::Irrigate;
+        g.unit_mut(settlers).order_turns = 2;
+        g.unit_mut(militia).order = UnitOrder::Fortify;
+        let idle = g.add_unit(ai, unit_ids::MILITIA, x - 1, y);
+        assert_eq!(g.try_move(ship, Dir8::E), Ok(MoveOutcome::Moved));
+        let s = g.unit(settlers);
+        assert_eq!((s.pos(), s.order, s.sentry_job, s.order_turns), ((x, y), UnitOrder::Sentry, Some(UnitOrder::Irrigate), 2));
+        assert_eq!(s.order_under_sentry(), UnitOrder::Irrigate);
+        assert_eq!(g.unit(militia).pos(), (x - 1, y), "fortifying: stays (0x694a)");
+        assert_eq!(g.unit(idle).order, UnitOrder::Sentry);
+        // the ship's move from the sea keeps it so
+        g.unit_mut(ship).moves_left = 3;
+        assert_eq!(g.try_move(ship, Dir8::E), Ok(MoveOutcome::Moved));
+        assert_eq!(g.unit(settlers).order_under_sentry(), UnitOrder::Irrigate);
+        // the save keeps it (version 30)
+        let dir = std::env::temp_dir().join(format!("civrs-sentry-job-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        crate::save::save_game(&path, &g).unwrap();
+        let l = crate::save::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!((l.unit(settlers).order, l.unit(settlers).sentry_job), (UnitOrder::Sentry, Some(UnitOrder::Irrigate)));
+        g.unload(ship);
+        let s = g.unit(settlers);
+        assert_eq!((s.order, s.order_turns, s.moves_left), (UnitOrder::Irrigate, 2, s.full_moves()));
+        assert_eq!(g.unit(idle).order, UnitOrder::None);
+        // reset_unit (0x9403) clears the counter of a job under the sentry bit too
+        g.unit_mut(settlers).sentry_keeping_job(true);
+        g.reset_unit(settlers);
+        assert_eq!((g.unit(settlers).order, g.unit(settlers).order_turns), (UnitOrder::None, 0));
+    }
+
+    #[test]
     fn a_ship_leaves_the_awake_units_it_brought_into_port() {
         use crate::game::UnitOrder;
         let mut g = Game::new(GameSetup { seed: 1, ..Default::default() }, None);
@@ -1346,6 +1395,32 @@ mod zoc_tests {
         g.add_city(g.human_slot, "Rome".into(), 42, 25);
         assert_eq!(g.move_cost(&u, (42, 25), (41, 25)), 1);
         assert_eq!(g.move_cost(&u, (41, 25), (42, 25)), 1);
+    }
+
+    #[test]
+    fn a_far_seeing_stack_two_squares_away_wakes_only_its_first_unit() {
+        // 0x85cd: the first unit (0x1a68:0x145e) loses its sentry bit and goto, no stack walk
+        // (only the 3x3 one walks the ring, 0x836f); the looker is seen by its civ
+        use crate::game::UnitOrder;
+        let (mut g, id) = open_field();
+        let me = g.human_slot;
+        let other = if me == 2 { 3 } else { 2 };
+        let bombers: Vec<crate::game::UnitId> = (0..3).map(|_| g.add_unit(other, unit_ids::BOMBER, 42, 25)).collect();
+        for b in &bombers {
+            g.unit_mut(*b).order = UnitOrder::Sentry;
+            g.unit_mut(*b).goto = Some((30, 30));
+        }
+        let ring = g.units_at(42, 25);
+        g.unit_mut(id).seen_by = 1 << me;
+        g.mark_sightings(id);
+        let head = g.unit(ring[0]);
+        assert_eq!((head.order, head.goto), (UnitOrder::None, None));
+        for b in &ring[1..] {
+            assert_eq!((g.unit(*b).order, g.unit(*b).goto), (UnitOrder::Sentry, Some((30, 30))));
+        }
+        assert!(g.unit_seen_by(id, other));
+        g.unit_look_goals(id);
+        assert!(ring[1..].iter().all(|b| g.unit(*b).order == UnitOrder::Sentry));
     }
 
     #[test]
