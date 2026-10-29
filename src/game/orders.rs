@@ -642,7 +642,8 @@ impl Game {
 
     /// Wake a unit clicked in the map's stack box (`pick_unit_from_stack`, CIV.EXE 0xa075): a
     /// Settlers job (flags 0xc2) gives back the full moves, then every order but the veteran
-    /// bits is cleared (flags &= 0x30) and so is the goto.
+    /// bits is cleared (flags &= 0x30) and so is the goto. The work counter (+5) stays
+    /// (0xa075..0xa0a4 do not write it): the Settlers' next job goes on counting from it.
     pub fn wake_picked_unit(&mut self, id: UnitId) {
         let u = self.unit_mut(id);
         // (a job under the sentry bit too)
@@ -650,7 +651,7 @@ impl Game {
             u.moves_left = u.full_moves();
         }
         u.order = UnitOrder::None;
-        u.order_turns = 0;
+        u.sentry_job = None;
         u.goto = None;
         self.pick_unit(id);
     }
@@ -715,9 +716,12 @@ mod tests {
         let u = g.unit_mut(id);
         u.order = UnitOrder::Road;
         u.moves_left = 0;
+        u.order_turns = 2;
         g.wake_picked_unit(id);
         assert_eq!(g.unit(id).order, UnitOrder::None);
         assert_eq!(g.unit(id).moves_left, g.unit(id).full_moves());
+        // the work counter stays (0xa09f leaves +5)
+        assert_eq!(g.unit(id).order_turns, 2);
         // a sentry keeps its moves as they are (0xa075 tests flags 0xc2 only)
         let u = g.unit_mut(id);
         u.order = UnitOrder::Sentry;
