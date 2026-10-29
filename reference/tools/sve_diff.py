@@ -209,6 +209,9 @@ def play(game, slot, turns, out, script=None):
             if palace(px):
                 print('palace screen', flush=True)
                 improve_palace()
+            elif quiz.is_quiz(px) and not quiz.is_question(px):
+                # the quiz's verdict ("*CORRECT") waits for a key
+                k(['Escape', 'sleep3'])
             elif quiz.is_quiz(px):
                 # the copy-protection quiz (overlay 16): a second wrong answer would delete
                 # every unit of the human. The menu follows the mouse pointer (menu_select
@@ -219,13 +222,21 @@ def play(game, slot, turns, out, script=None):
                 dosciv.shot(q)
                 adv, lines, y = quiz.solve(game, q)
                 print('quiz', adv, y, lines, flush=True)
-                # no icon: the page of the verdict ("*CORRECT"), which waits for a key; an
-                # icon but not all the lines: the menu is still being drawn
+                # not all the lines: the menu is still being drawn
                 if y is not None:
                     dosciv.click(160, y)
-                    k(['sleep3'])
-                elif adv is None:
-                    k(['Escape', 'sleep3'])
+                    k(['sleep6'])
+                    # the verdict waits for a key on the quiz's page (its palette dimmed, the
+                    # title still black); left alone, the next alt+g would close it
+                    for _ in range(3):
+                        p2 = screen()
+                        bg = p2(5, 5)
+                        if not (p2(300, 20) == p2(214, 20) == b'\0\0\0' and p2(600, 390) == bg and len(set(bg)) == 1 and bg[0] > 100):
+                            break
+                        # a second question (after a wrong answer) asks again
+                        if quiz.is_question(p2):
+                            break
+                        k(['Escape', 'sleep3'])
                 else:
                     k(['sleep2'])
             else:

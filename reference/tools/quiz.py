@@ -141,6 +141,12 @@ def menu_rows(spx):
     return out
 
 
+def is_question(px):
+    """The quiz page asks (black "Which civilization advances are required ..." below the
+    tutor text); the verdict page has no such line."""
+    return any(px(x, y) in (b'\0\0\0', (0, 0, 0)) for y in range(112, 126, 2) for x in range(48, 560, 2))
+
+
 def is_quiz(px):
     """The quiz page: grey (235) all round, the black title "CIVILIZATION QUIZ" at the top
     and a cyan menu bar."""
