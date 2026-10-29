@@ -677,7 +677,8 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   civrs needs only srand(N) after the import; a new game's stream goes on from the world
   generator into civ_init and start_report and then the turns.
 - `--trace` makes random(n) append (caller ip, caller cs - load segment, n, result, the
-  caller's return ip and cs) to C:\RANDOM.LOG (opened, appended and closed per draw, so the
+  caller's return ip and cs and its first two arguments, e.g. civ and unit of ai_unit_command)
+  to RANDOM.LOG in the current directory, C:\ (opened, appended and closed per draw, so the
   log survives the harness killing dosbox). Overlay calls log the overlay load area 0x22f30 +
   the offset in the overlay's code, which sve_diff.py matches against the overlay's flat
   address.

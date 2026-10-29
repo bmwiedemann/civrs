@@ -479,6 +479,13 @@ impl Game {
         let mut players: Vec<Player> = (0..8u8).map(|s| {
             let mut p = Player::new(s, s, false);
             p.in_game = s == 0;
+            if s == 0 {
+                // civ_init's start for every slot (o 0x4975..): no research done, taxes and
+                // science 4 tenths each; the rest of it is skipped for the barbarians
+                p.research_count = 0;
+                p.tax = 40;
+                p.lux = 20;
+            }
             p
         }).collect();
         for (s, civ, _) in &slots {
@@ -1628,6 +1635,13 @@ mod new_game_tests {
         assert_eq!(g.alive_slots(), vec![1, 2, 3]);
         let g = Game::new(GameSetup { seed: 77, num_civs: 3, human_civ: 14, ..Default::default() }, None);
         assert_eq!(g.alive_slots(), vec![1, 2, 6]);
+    }
+
+    #[test]
+    fn the_barbarians_start_with_civ_inits_rates() {
+        let g = Game::new(GameSetup { seed: 4763, ..Default::default() }, None);
+        let b = g.player(0);
+        assert_eq!((b.tax, b.lux, b.research_count), (40, 20, 0));
     }
 
     #[test]

@@ -420,6 +420,16 @@ fn answer_treaty(g: &mut Game, id: crate::game::UnitId, d: Dir8, o: crate::game:
 pub fn play(g: &mut Game, ai: &mut crate::ai::Ai, actions: &[(u32, Action)], turns: u32) -> Result<(), String> {
     use crate::game::turn::TurnStep;
     OPEN.set(None);
+    // a new game's turn 0 runs up to the human's first move first, as the map view starts it
+    if let Some(mut r) = g.take_opening() {
+        loop {
+            match r.step(g, ai) {
+                TurnStep::Done => break,
+                TurnStep::Decision(_) => r.resolve(g, crate::game::DecisionReply::Choice(0)),
+                _ => {}
+            }
+        }
+    }
     run_autos(g)?;
     for _ in 0..turns {
         let turn = g.turn;
