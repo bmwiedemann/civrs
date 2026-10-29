@@ -143,10 +143,12 @@ impl Unit {
     }
 
     /// Clear the sentry bit only (`and status,0xfe`, CIV.EXE 0x85cd, 0x934a, 0x936e): the
-    /// order kept under it comes back, else the unit has none.
+    /// order kept under it comes back, else a goto it kept (+6, which no wake touches; the
+    /// loop steps it before any key, 0x44b3, 0x4bce), else the unit has none.
     pub fn wake_sentry(&mut self) {
         if self.order == UnitOrder::Sentry {
-            self.order = self.sentry_job.take().unwrap_or(UnitOrder::None);
+            let goto = if self.goto.is_some() { UnitOrder::Goto } else { UnitOrder::None };
+            self.order = self.sentry_job.take().unwrap_or(goto);
         }
     }
 

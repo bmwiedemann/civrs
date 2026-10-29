@@ -85,6 +85,13 @@ impl Game {
     /// One turn of Settlers work on order `o`: the key handlers 'r' 0x5288, 'i' 0x53ca,
     /// 'm' 0x559a, 'f' 0x51be and 'p' 0x5048. Checks the job, spends the unit's moves, counts
     /// the turn (unit +5) and finishes the job when the count reaches its time.
+    ///
+    /// Not copied: the handlers OR their bit into the status without clearing another job's
+    /// ('r' 0x532f, 'i' 0x54d5, 'm' 0x5670, 'f' 0x520b, 'p' 0x50ba), so a computer's Settlers
+    /// whose unit routine (0x17748, which never reads the status) switches jobs merges them,
+    /// e.g. 'm' while irrigating gives 0xc0 = fortress. The human's never can (his loop asks
+    /// for keys only with no job bits, 0x44ac, and presses the job's own key); civrs's new job
+    /// replaces the old one, the counter going on as in CIV.EXE.
     fn work_step(&mut self, id: UnitId, o: UnitOrder) -> Result<(), RuleError> {
         let u = self.unit(id).clone();
         if u.kind != unit_ids::SETTLERS {
@@ -96,7 +103,11 @@ impl Game {
         let knows = |g: &Game, a: u8| g.player(u.owner).knows(a);
         let turns = match o {
             UnitOrder::Road => {
-                // (civrs refuses roads and fortresses at sea; CIV.EXE only reads the flags)
+                // (civrs refuses roads and fortresses at sea; CIV.EXE only reads the flags
+                // and the River, 0x52b6..0x5304, so a human's Settlers woken aboard with a
+                // road job kept under its sentry bit, whose loop presses 'r' for it (0x44bd),
+                // lays a road on the ocean (+0x28e ocean cost 1: 2 turns). Not copied: the
+                // job is refused as at 0x52eb, the unit waits for orders with its moves)
                 if t.is_ocean() {
                     return Err(RuleError::Other("Roads cannot be built at sea."));
                 }
@@ -558,8 +569,8 @@ impl Game {
     /// 'u' (CIV.EXE 0x4dfc), for the human and the computer alike: a ship that carries units
     /// (a Carrier included) and does not stand alone wakes the sentried units of its stack
     /// (`for_each_in_stack` 0x92a7 with `wake_cb` 0x9352): the sentry bit goes, the moves are
-    /// full again (3 x the type's moves), aircraft get their fuel back and the goto and
-    /// heading are forgotten. Returns the unit the order loop goes on with
+    /// full again (3 x the type's moves) and aircraft get their fuel back; every unit the walk
+    /// visits, the ship and awake ones too, forgets its goto and heading (0x939e). Returns the unit the order loop goes on with
     /// (`next_unit_in_stack` 0x7d8f): of the stack's units but ships, the first after the
     /// ship in record order (round the table), else the ship itself; `None` when the key does
     /// nothing. Not copied: CIV.EXE then runs the end-of-unit fuel and Trireme code on the
@@ -573,6 +584,9 @@ impl Game {
             return None;
         }
         for &c in &stack {
+            // +6 and +8 = 0xff before the bit goes, so no kept goto comes back
+            self.clear_goto(c);
+            self.set_heading(c, 0xff);
             if self.unit(c).order != UnitOrder::Sentry {
                 continue;
             }
@@ -583,8 +597,6 @@ impl Game {
             if cu.info().range > 0 {
                 cu.fuel = 0;
             }
-            self.clear_goto(c);
-            self.set_heading(c, 0xff);
         }
         let rec = self.unit(id).record as i32;
         // 0x7d8f follows the ring for 16 units at most

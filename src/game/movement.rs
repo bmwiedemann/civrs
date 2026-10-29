@@ -558,9 +558,8 @@ impl Game {
         // only the first unit of the stack: 0x85cd clears its sentry bit whatever it is (no
         // stack walk, no passenger test: no land unit sees two squares far)
         for h in woken {
-            let hu = self.unit_mut(h);
-            hu.wake_sentry();
-            hu.goto = None;
+            self.unit_mut(h).wake_sentry();
+            self.clear_goto(h);
         }
     }
 
@@ -1586,6 +1585,92 @@ mod zoc_tests {
         let walker = g.add_unit(me, unit_ids::LEGION, 39, 22);
         g.unit_look_goals(walker);
         assert!(g.ai_memory.goals[other as usize].iter().any(|q| q.kind == goal::ATTACK && (q.x as i32, q.y as i32) == g.city(c).pos()));
+    }
+
+    #[test]
+    fn a_unit_woken_by_a_look_goes_on_with_its_goto_and_unload_drops_every_goto() {
+        // wake_if_not_at_sea_cb 0x934a clears bit 0 only: a goto (+6) kept under the sentry
+        // bit comes back, but the first unit of the stack loses its own; wake_cb 0x939e
+        // clears +6 and +8 of every unit the walk visits, the ship and awake ones too
+        use crate::game::UnitOrder;
+        let (mut g, _) = open_field();
+        let me = g.human_slot;
+        let other = if me == 2 { 3 } else { 2 };
+        let a = g.add_unit(other, unit_ids::MILITIA, 43, 21);
+        let b = g.add_unit(other, unit_ids::MILITIA, 43, 21);
+        for u in [a, b] {
+            g.set_goto(u, 45, 21);
+            g.unit_mut(u).sentry_keeping_job(true);
+        }
+        let looker = g.add_unit(me, unit_ids::LEGION, 42, 21);
+        g.unit_look_goals(looker);
+        let first = g.units_at(43, 21)[0];
+        let second = if first == a { b } else { a };
+        assert_eq!((g.unit(first).order, g.unit(first).goto), (UnitOrder::None, None));
+        assert_eq!((g.unit(second).order, g.unit(second).goto), (UnitOrder::Goto, Some((45, 21))));
+        // a woken human unit with its goto is the loop's to move
+        let mine = g.add_unit(me, unit_ids::MILITIA, 38, 21);
+        g.set_goto(mine, 36, 21);
+        g.unit_mut(mine).sentry_keeping_job(true);
+        g.unit_mut(mine).wake_sentry();
+        g.unit_mut(mine).moves_left = 3;
+        assert!(g.is_auto_unit(mine));
+        // 'u': the sentried rider wakes, the awake one and the ship lose their gotos
+        for x in 35..38 {
+            g.map.get_mut(x, 24).unwrap().terrain = Terrain::Ocean;
+        }
+        let ship = g.add_unit(other, unit_ids::SAIL, 36, 24);
+        let asleep = g.add_unit(other, unit_ids::MILITIA, 36, 24);
+        let awake = g.add_unit(other, unit_ids::MILITIA, 36, 24);
+        for u in [ship, asleep, awake] {
+            g.set_goto(u, 35, 24);
+        }
+        g.unit_mut(asleep).sentry_keeping_job(true);
+        g.unload(ship);
+        for u in [ship, asleep, awake] {
+            assert_eq!((g.unit(u).order, g.unit(u).goto), (UnitOrder::None, None), "{u}");
+        }
+    }
+
+    #[test]
+    fn a_computer_s_sentried_unit_that_steps_ends_awake() {
+        // `and status,0x30` (0x6810) after every step of a computer's unit but an aircraft:
+        // a passenger stepping ashore loses its sentry bit and the job kept under it
+        use crate::game::UnitOrder;
+        let (mut g, _) = open_field();
+        let ai = if g.human_slot == 2 { 3 } else { 2 };
+        g.map.get_mut(37, 22).unwrap().terrain = Terrain::Ocean;
+        let ship = g.add_unit(ai, unit_ids::SAIL, 37, 22);
+        let s = g.add_unit(ai, unit_ids::SETTLERS, 37, 22);
+        g.unit_mut(s).order = UnitOrder::Mine;
+        g.unit_mut(s).sentry_keeping_job(true);
+        g.place_unit(s, 38, 22, 3);
+        assert_eq!((g.unit(s).order, g.unit(s).sentry_job), (UnitOrder::None, None));
+        let _ = ship;
+    }
+
+    #[test]
+    fn a_settlers_woken_at_sea_with_a_road_job_is_refused_and_waits_for_orders() {
+        // the loop presses 'r' for the kept 0x02 (0x44bd); CIV.EXE 0x52f3 checks only the
+        // River and would lay a road on the ocean: civrs refuses as 0x52eb, moves kept
+        use crate::game::UnitOrder;
+        let (mut g, _) = open_field();
+        let (x, y) = (37, 22);
+        g.map.get_mut(x, y).unwrap().terrain = Terrain::Ocean;
+        let me = g.human_slot;
+        let ship = g.add_unit(me, unit_ids::SAIL, x, y);
+        let s = g.add_unit(me, unit_ids::SETTLERS, x, y);
+        g.unit_mut(s).order = UnitOrder::Road;
+        g.unit_mut(s).order_turns = 1;
+        g.unit_mut(s).sentry_keeping_job(true);
+        g.unit_mut(s).wake_sentry();
+        assert_eq!(g.unit(s).order, UnitOrder::Road);
+        assert!(g.is_auto_unit(s));
+        assert!(matches!(g.run_auto_unit(s), crate::game::AutoStop::Refused(_)));
+        let u = g.unit(s);
+        assert_eq!((u.order, u.order_turns, u.moves_left), (UnitOrder::None, 0, u.full_moves()));
+        assert!(!g.map.tile(x, y).has(crate::game::tile_flags::ROAD));
+        let _ = ship;
     }
 
     #[test]
