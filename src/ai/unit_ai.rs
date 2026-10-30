@@ -381,6 +381,14 @@ struct Ctx {
     terrain: Terrain,
     cont: u8,
     policy: u8,
+    /// A Diplomat disbanded because the nearest city is its own (0x16a95). CIV.EXE runs the
+    /// rest of the routine for the freed record (type 0xff), which civrs plays only for
+    /// `exe_quirks`: the record's type reads the table entry before the Settlers' as a unit
+    /// of domain 27 (neither land, sea nor air) and defence 127 (ds:0x1116, 0x111e), so the
+    /// scoring takes ocean squares and no zone of control and an own stack next to it costs
+    /// 127 (0x17e85, 0x17f2f, 0x1850c); `unit_command` removes the unit once the command is
+    /// made.
+    ghost: bool,
 }
 
 impl Ctx {
@@ -437,37 +445,60 @@ pub fn unit_command(g: &mut Game, slot: Slot, id: UnitId) -> Command {
         terrain: g.map.terrain(u.x, u.y),
         cont,
         policy: policy(g, slot, cont),
+        ghost: false,
     };
     if u.kind == unit_ids::NUCLEAR {
         return nuclear(g, &c);
     }
     if u.kind == unit_ids::DIPLOMAT {
-        if let Some(cmd) = diplomat(g, &c) {
+        if let Some(cmd) = diplomat(g, &mut c) {
             return cmd;
         }
     }
-    if let Some(cmd) = city_site(g, &c) {
+    if c.ghost && !g.exe_quirks {
+        // civrs disbands it and goes no further than asking for a defender (0x16e25) where
+        // it leaves a city empty
+        g.remove_unit(c.id);
+        g.refresh_vision(c.slot);
+        if g.city_at(c.x, c.y).is_some() && c.unit_dist > 0 {
+            g.add_goal(c.slot, c.x, c.y, goal::DEFEND, 4);
+        }
+        return Command::Skip;
+    }
+    let cmd = command_after_diplomat(g, &mut c);
+    if c.ghost {
+        // the command is carried out on the freed record: nothing moves (0x4bbe)
+        g.remove_unit(c.id);
+        g.refresh_vision(c.slot);
+        return Command::Skip;
+    }
+    cmd
+}
+
+/// The rest of `ai_unit_command` after the Diplomat's part (0x16a9d on).
+fn command_after_diplomat(g: &mut Game, c: &mut Ctx) -> Command {
+    if let Some(cmd) = city_site(g, c) {
         return cmd;
     }
     if g.city_at(c.x, c.y).is_some() {
-        if let Some(cmd) = in_city(g, &c) {
+        if let Some(cmd) = in_city(g, c) {
             return cmd;
         }
     }
     if matches!(c.role, AiRole::Transport | AiRole::SeaAttack) {
-        if let Some(cmd) = transport(g, &c) {
+        if let Some(cmd) = transport(g, c) {
             return cmd;
         }
     }
-    if let Some(cmd) = pillage(g, &c) {
+    if let Some(cmd) = pillage(g, c) {
         return cmd;
     }
     if c.role == AiRole::Settle {
-        if let Some(cmd) = settlers_work(g, &c) {
+        if let Some(cmd) = settlers_work(g, c) {
             return cmd;
         }
     }
-    military(g, &mut c)
+    military(g, c)
 }
 
 /// Fighters without a goto (0x16499): home when half their moves are spent; else after the
@@ -578,10 +609,12 @@ fn nuclear(g: &mut Game, c: &Ctx) -> Command {
     Command::Skip
 }
 
-/// The Diplomat (0x16a39): a goto goes on; else toward the nearest city if foreign; in its own
-/// city it is disbanded (and the routine runs on for the deleted unit: a defender is asked for
-/// when no other unit is there, 0x16e25).
-fn diplomat(g: &mut Game, c: &Ctx) -> Option<Command> {
+/// The Diplomat (0x16a39): a goto goes on; else toward the nearest city if foreign; when the
+/// nearest city is its own it is disbanded (delete_unit 0x16a95) and the routine runs on for
+/// the deleted record from 0x16a9d (`Ctx::ghost`): alone in a city it asks for a defender
+/// (0x16e25), with other units there it scores the directions as any unit does (0x17e1a),
+/// drawing for each.
+fn diplomat(g: &mut Game, c: &mut Ctx) -> Option<Command> {
     if g.unit(c.id).goto.is_some() {
         return Some(Command::Goto);
     }
@@ -591,12 +624,8 @@ fn diplomat(g: &mut Game, c: &Ctx) -> Option<Command> {
         set_goto(g, c.id, p);
         return Some(Command::Goto);
     }
-    g.remove_unit(c.id);
-    g.refresh_vision(c.slot);
-    if g.city_at(c.x, c.y).is_some() && c.unit_dist > 0 {
-        g.add_goal(c.slot, c.x, c.y, goal::DEFEND, 4);
-    }
-    Some(Command::Skip)
+    c.ghost = true;
+    None
 }
 
 /// City sites (0x16a9d), for Settlers, attackers and defenders on a square of the site layer
@@ -1263,7 +1292,11 @@ fn score_direction(g: &mut Game, c: &Ctx, k: usize, peaceful: bool) -> Option<(i
     }
     let owner = g.last_occupant(nx, ny);
     let t = g.map.terrain(nx, ny);
-    let land_unit = u.is_land();
+    // the freed record of a disbanded Diplomat (`Ctx::ghost`): domain 27, defence 127
+    let ghost = c.ghost;
+    let land_unit = u.is_land() && !ghost;
+    let sea_unit = u.is_sea() && !ghost;
+    let own_defence = if ghost { 127 } else { u.info().def as i32 };
     let here_ocean = c.terrain == Terrain::Ocean;
     if t == Terrain::Ocean && land_unit {
         return None;
@@ -1283,7 +1316,7 @@ fn score_direction(g: &mut Game, c: &Ctx, k: usize, peaceful: bool) -> Option<(i
         return None;
     }
     // ships (domain 2, unit type +0xe, 0x17fb1) go ashore only to attack
-    if u.is_sea() && t != Terrain::Ocean && (s.is_none() || owner == slot || c.kind == unit_ids::SUBMARINE || !here_ocean) {
+    if sea_unit && t != Terrain::Ocean && (s.is_none() || owner == slot || c.kind == unit_ids::SUBMARINE || !here_ocean) {
         return None;
     }
     if let Some(first) = s {
@@ -1318,7 +1351,7 @@ fn score_direction(g: &mut Game, c: &Ctx, k: usize, peaceful: bool) -> Option<(i
                 _ => v += 4 * t.info().defense as i32,
             }
         }
-        if u.is_air() {
+        if u.is_air() && !ghost {
             v = g.rng.random(0x18178, 3);
         }
     }
@@ -1338,7 +1371,7 @@ fn score_direction(g: &mut Game, c: &Ctx, k: usize, peaceful: bool) -> Option<(i
                 v += 20;
             }
         }
-        Some(_) if owner == slot => v -= u.info().def as i32,
+        Some(_) if owner == slot => v -= own_defence,
         Some(first) => {
             enemy = true;
             if c.role == AiRole::Settle {
@@ -1394,7 +1427,7 @@ fn score_direction(g: &mut Game, c: &Ctx, k: usize, peaceful: bool) -> Option<(i
             if !exe_in_map(ex, ey) {
                 continue;
             }
-            if !g.explored(slot, ex, ey) && (g.map.is_land(ex, ey) || u.is_sea()) {
+            if !g.explored(slot, ex, ey) && (g.map.is_land(ex, ey) || sea_unit) {
                 v += 2;
             }
             if g.unit_owner_at(ex, ey).is_some() {
@@ -1892,6 +1925,27 @@ mod tests {
         g.map.site.clear();
         g.ai_memory = Default::default();
         g
+    }
+
+    /// A Diplomat whose nearest city is its own is disbanded (0x16a95); for `exe_quirks` the
+    /// routine runs on for the freed record, which scores every square around, the ocean too
+    /// (domain 27 from the table entry before the Settlers', 0x17e85), one draw each.
+    #[test]
+    fn a_disbanded_diplomat_scores_the_squares_around_for_exe_quirks() {
+        for quirks in [false, true] {
+            let mut g = arena();
+            g.exe_quirks = quirks;
+            let s = ai(&g);
+            g.add_city(s, "Shore".into(), 5, 10);
+            g.add_unit(s, unit_ids::MILITIA, 5, 10);
+            let d = g.add_unit(s, unit_ids::DIPLOMAT, 5, 10);
+            crate::game::rng::trace_start();
+            assert_eq!(unit_command(&mut g, s, d), Command::Skip);
+            let draws = crate::game::rng::trace_take();
+            assert!(g.unit_opt(d).is_none());
+            let scored = draws.iter().filter(|r| matches!(r.at, 0x18068 | 0x18085)).count();
+            assert_eq!(scored, if quirks { 8 } else { 0 }, "exe_quirks {quirks}");
+        }
     }
 
     /// The five calls of a unit are counted from its last step (0x6c6c): a Chariot on a
