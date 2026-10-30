@@ -358,13 +358,15 @@ impl CityScreen {
     fn change(&mut self, ctx: &mut UiContext) -> Transition {
         // CHANGE (the "AUTO." button too) turns AUTO off before the menu opens (CIV.EXE 0x117ae)
         ctx.game_mut().city_mut(self.city).auto_build = false;
-        self.change_page(ctx, ChangePage::All)
+        self.change_page(ctx, ChangePage::All, true)
     }
 
-    fn change_page(&mut self, ctx: &mut UiContext, page: ChangePage) -> Transition {
+    fn change_page(&mut self, ctx: &mut UiContext, page: ChangePage, first: bool) -> Transition {
         // choose_production first runs the city routine in mode -1 and values every item,
-        // whatever the options (Game::change_advice)
-        let advice = ctx.game_mut().change_advice(self.city).ok().filter(|_| ctx.game().options.instant_advice);
+        // whatever the options, twice with Instant Advice (Game::change_menu_advice); a
+        // "more..." page values once more (0xba3f -> 0xaa23)
+        let advice = if first { ctx.game_mut().change_menu_advice(self.city) } else { ctx.game_mut().change_advice(self.city) };
+        let advice = advice.ok().filter(|_| ctx.game().options.instant_advice);
         let g = ctx.game();
         let c = g.city(self.city);
         let y = g.city_yield(self.city);
@@ -1237,7 +1239,7 @@ impl Screen for CityScreen {
         let r = match (pending, result) {
             (Pending::Change(list, next), DialogResult::Choice(i)) => match list.get(i) {
                 Some(Some(p)) => ctx.game_mut().set_production(self.city, *p),
-                Some(None) => return self.change_page(ctx, next),
+                Some(None) => return self.change_page(ctx, next, false),
                 None => Ok(()),
             },
             (Pending::Buy, DialogResult::Yes) => ctx.game_mut().buy(self.city),

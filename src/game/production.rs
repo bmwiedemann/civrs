@@ -346,6 +346,21 @@ impl Game {
         self.build_advice_with(c, true)
     }
 
+    /// The valuation of a newly opened production menu (choose_production 0xa9fd for the
+    /// human): with Instant Advice the advisors' notes come from a first pass (0xb899..0xb9ed),
+    /// after which the routine starts over from its listing (`jmp 0xaa23`, the city routine's
+    /// mode -1 at 0xaa1b not again) and values the menu a second time, so the valuation's
+    /// draws come twice. A "more..." page (0xba3f, 0xaedd) and a Civilopedia look (0xbaa6) go
+    /// back to 0xaa23 as well, with the notes already shown: one pass. The notes are the
+    /// first pass's.
+    pub fn change_menu_advice(&mut self, c: CityId) -> Result<BuildAdvice, Production> {
+        let advice = self.change_advice(c);
+        if self.options.instant_advice && self.city(c).owner == self.human_slot {
+            let _ = self.build_advice_with(c, true);
+        }
+        advice
+    }
+
     /// `build_advice`; with `rechoose` the city's own unit does not count as in production.
     fn build_advice_with(&mut self, c: CityId, rechoose: bool) -> Result<BuildAdvice, Production> {
         // choose_production starts with the city routine in mode -1 (0xaa1b), whose worker
@@ -695,6 +710,25 @@ mod tests {
         // even a city building the Palace: the Palace test comes after the advisor (0xb857)
         g.city_mut(c).production = Production::Improvement(imp::PALACE);
         assert_eq!(g.ai_production(c), Production::Unit(unit_ids::MILITIA));
+    }
+
+    #[test]
+    fn instant_advice_values_the_new_menu_twice() {
+        // with Instant Advice choose_production shows the notes and starts over from its
+        // listing (0xb9ed -> 0xaa23): the Diplomat line's random(5) (0xb3e0) comes twice
+        let mut g = Game::new(crate::game::GameSetup { seed: 42, ..Default::default() }, None);
+        let me = g.human_slot;
+        let settler = g.units_of(me).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        g.player_mut(me).learn(adv::WRITING);
+        for (on, n) in [(false, 1), (true, 2)] {
+            g.options.instant_advice = on;
+            crate::game::rng::trace_start();
+            let _ = g.change_menu_advice(c);
+            let draws = crate::game::rng::trace_take();
+            assert_eq!(draws.iter().filter(|d| d.at == 0xb3e0).count(), n, "instant advice {on}");
+            assert_eq!(draws.len(), n);
+        }
     }
 
     #[test]

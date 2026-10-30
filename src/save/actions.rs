@@ -239,7 +239,7 @@ pub fn apply(g: &mut Game, a: &Action) -> Result<(), String> {
                     // CHANGE turns AUTO off (0x117ae); choose_production values the menu for
                     // the human too (0x117ef -> 0xa9fd), the advisors shown or not
                     g.city_mut(c).auto_build = false;
-                    let _ = g.change_advice(c);
+                    let _ = g.change_menu_advice(c);
                     let list = g.available_production(c);
                     if 1 + list.len() > 30 {
                         return Err("the production menu has two pages".into());
