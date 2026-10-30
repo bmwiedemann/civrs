@@ -240,6 +240,15 @@ impl Game {
                     return Ok(MoveOutcome::EnteredForeignCity(c));
                 }
                 let out = self.capture_city(id, c);
+                // the step has reached a goto there before the capture (0x6848..0x6878 come
+                // before 0x6aa9): the goto goes, and a computer's unit stops
+                if u.goto == Some((tx, ty)) && self.unit_opt(id).is_some() {
+                    self.clear_goto(id);
+                    self.set_heading(id, 0xff);
+                    if !self.is_human(slot) {
+                        self.unit_mut(id).moves_left = 0;
+                    }
+                }
                 // the step has made the city's old owner see the unit (0x6a83, before the
                 // capture at 0x6aa9), and the capture's placing does not clear that
                 if let Some(cu) = self.units.get_mut(id as usize).and_then(|u| u.as_mut()) {
@@ -290,6 +299,9 @@ impl Game {
                     um.moves_left = 3;
                     boarded = Some(s);
                 } else if self.zoc_blocks(&u, (u.x, u.y), (tx, ty)) {
+                    // the refused step drops the unit's goto (CIV.EXE 0x5b44: +6 = 0xff), so a
+                    // computer's unit asks its routine afresh on its next call
+                    self.clear_goto(id);
                     return Err(RuleError::Zoc);
                 }
             }
@@ -1400,6 +1412,12 @@ mod zoc_tests {
         let other = if g.human_slot == 2 { 3 } else { 2 };
         g.add_unit(other, unit_ids::MILITIA, 41, 26);
         assert_eq!(g.try_move(id, Dir8::E), Err(RuleError::Zoc));
+        // the refusal drops a goto (0x5b44)
+        let mut going = g.clone();
+        going.unit_mut(id).goto = Some((44, 25));
+        going.unit_mut(id).order = UnitOrder::Goto;
+        assert_eq!(going.try_move(id, Dir8::E), Err(RuleError::Zoc));
+        assert_eq!((going.unit(id).goto, going.unit(id).order), (None, UnitOrder::None));
         // away from the foreign unit is fine
         let mut away = g.clone();
         assert_eq!(away.try_move(id, Dir8::N), Ok(MoveOutcome::Moved));
@@ -1886,6 +1904,24 @@ mod zoc_tests {
         g.unit_mut(leg).moves_left = 3;
         assert_eq!(g.try_move(leg, Dir8::N), Ok(MoveOutcome::Blocked));
         assert_eq!(g.city(mine).owner, h);
+    }
+
+    #[test]
+    fn taking_the_city_of_its_goto_drops_the_goto() {
+        // 0x6848..0x6878 run before the capture at 0x6aa9: the goto goes and a computer's unit
+        // has no moves left
+        let (mut g, _) = open_field();
+        let h = g.human_slot;
+        let (a, o) = if h == 3 { (4, 5) } else if h == 4 { (3, 5) } else { (3, 4) };
+        let c = g.add_city(o, "Pond".into(), 41, 25);
+        g.city_mut(c).size = 1;
+        let leg = g.add_unit(a, unit_ids::LEGION, 40, 25);
+        g.unit_mut(leg).moves_left = 6;
+        g.unit_mut(leg).goto = Some((41, 25));
+        g.unit_mut(leg).order = UnitOrder::Goto;
+        assert_eq!(g.try_move(leg, Dir8::E), Ok(MoveOutcome::DestroyedCity));
+        let u = g.unit(leg);
+        assert_eq!((u.goto, u.order, u.moves_left), (None, UnitOrder::None, 0));
     }
 
     #[test]
