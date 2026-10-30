@@ -1104,6 +1104,21 @@ impl Game {
         id
     }
 
+    /// Gives every city square the road, and the irrigation where it adds food, that founding
+    /// puts there (o 0x1b4f2, 0x1b525), for saves from before civrs stored them. A mine on the
+    /// square stays and keeps the irrigation out.
+    pub fn repair_city_squares(&mut self) {
+        let squares: Vec<(i32, i32)> = self.cities.iter().flatten().map(|c| (c.x, c.y)).collect();
+        for (x, y) in squares {
+            if let Some(t) = self.map.get_mut(x, y) {
+                t.set(tile_flags::ROAD, true);
+                if !t.has(tile_flags::MINE) && matches!(t.terrain.info().irrigate, rules::Terraform::Bonus(_)) {
+                    t.set(tile_flags::IRRIGATION, true);
+                }
+            }
+        }
+    }
+
     /// The coastal bit a city founded by `owner` at (x,y) gets (o 0x1b667..0x1b6b9): an Ocean
     /// square among the eight around whose body of water is larger than 256 squares
     /// (`continent_size` 0x1a68:0x1963), or any Ocean square for the human.

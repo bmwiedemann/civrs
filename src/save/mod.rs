@@ -535,6 +535,11 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     }
     // the load routine (o 0xf0ce): the next two turn changes pass the milestone in silence
     g.milestone_quiet = -3;
+    // saves up to 18 can hold cities founded before civrs stored the road and irrigation that
+    // founding gives the square (o 0x1b4f2, 0x1b525); add them as found_city would
+    if ver <= 18 {
+        g.repair_city_squares();
+    }
     // older saves: the human sees every square's improvements as they are
     g.map.seen = seen_layer.filter(|s| s.len() == g.map.tiles.len()).unwrap_or_default();
     // older saves: every city's stored trade is its trade as things stand
@@ -1038,6 +1043,35 @@ mod tests {
         let old = super::load_game(&path).unwrap();
         let _ = std::fs::remove_dir_all(dir);
         assert_eq!(old.pop_milestone, 2, "from 1, as CIV.EXE after loading");
+    }
+
+    #[test]
+    fn old_saves_get_the_city_square_road_and_irrigation() {
+        use crate::game::tile_flags;
+        let mut g = Game::new(GameSetup { seed: 6, ..Default::default() }, None);
+        let c = g.cities.iter().flatten().find(|c| matches!(g.map.tile(c.x, c.y).terrain.info().irrigate, crate::rules::Terraform::Bonus(_)));
+        let (x, y) = match c {
+            Some(c) => (c.x, c.y),
+            None => {
+                let (x, y) = (0..80).flat_map(|x| (1..49).map(move |y| (x, y))).find(|&(x, y)| g.map.is_land(x, y) && g.city_at(x, y).is_none() && matches!(g.map.tile(x, y).terrain.info().irrigate, crate::rules::Terraform::Bonus(_))).unwrap();
+                g.add_city(g.human_slot, "Old".into(), x, y);
+                (x, y)
+            }
+        };
+        // a city as civrs founded it before it stored the square's improvements
+        g.map.get_mut(x, y).unwrap().set(tile_flags::ROAD | tile_flags::IRRIGATION, false);
+        let dir = std::env::temp_dir().join(format!("civrs-citysq-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        let now = super::load_game(&path).unwrap();
+        assert!(!now.map.tile(x, y).has(tile_flags::ROAD), "a current save is read as written");
+        let mut data = std::fs::read(&path).unwrap();
+        data[4..6].copy_from_slice(&18u16.to_le_bytes());
+        std::fs::write(&path, &data).unwrap();
+        let old = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        let t = old.map.tile(x, y);
+        assert!(t.has(tile_flags::ROAD) && t.has(tile_flags::IRRIGATION));
     }
 
     #[test]
