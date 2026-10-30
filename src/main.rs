@@ -138,6 +138,11 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&P
             None => Vec::new(),
         };
         game.exe_quirks = true;
+        // the harness plays CIV.EXE with Instant Advice off (sve_diff.py play), which the
+        // production menu's valuation reads (Game::change_menu_advice)
+        if turns > 0 {
+            game.options.instant_advice = false;
+        }
         let mut ai = civrs::ai::Ai::new(seed.unwrap_or(1));
         let played = civrs::save::actions::play(&mut game, &mut ai, &script, turns);
         if let Some(p) = rng_log {
