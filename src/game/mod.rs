@@ -351,8 +351,10 @@ pub struct Game {
     /// sweep walking the old owner's record of the conqueror's unit (0xa8bc), the local
     /// search's grid read past its end (0x1e765), the first-city test reading the free
     /// city records (o 0x1b5df), the block search starting from the goto square taken as
-    /// a block (0x1e19d, while it stays inside the tables) and the capture of an empty city
-    /// refused by a stale square owner of the mover's civ (0x6a65).
+    /// a block (0x1e19d, while it stays inside the tables), the capture of an empty city
+    /// refused by a stale square owner of the mover's civ (0x6a65), the unit routine running
+    /// on for a Diplomat it has disbanded (0x16a95) and the production advice counting the
+    /// units on squares numbered as the city's continent, ocean bodies too (0xb0c1).
     #[serde(skip)]
     pub exe_quirks: bool,
     /// The owner byte (+0xb) CIV.EXE's free city records keep: destroy_city frees a record by
