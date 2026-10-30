@@ -98,17 +98,6 @@ impl AssetDir {
         ))
     }
 
-    /// The game directory holding CIV.EXE's sample saves (CIVIL0/1/3/4) as shipped, for the
-    /// tests that check their contents: `$CIV_SAMPLES`, or `civ-samples` beside the crate. The
-    /// player's own game directory is not used, as playing there replaces the samples.
-    #[cfg(test)]
-    pub fn samples() -> Result<Self> {
-        if let Ok(env) = std::env::var("CIV_SAMPLES") {
-            return Self::open(Path::new(&env));
-        }
-        Self::open(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../civ-samples"))
-    }
-
     pub fn root(&self) -> &Path {
         &self.root
     }

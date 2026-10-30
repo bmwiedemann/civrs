@@ -164,6 +164,13 @@ pub fn import(sve: &Path) -> Result<Game, SaveError> {
     Ok(g)
 }
 
+/// The directory of CIV.EXE's sample saves CIVIL0/1/3/4 as shipped, tracked in the repository
+/// for the tests that check their contents (`$CIV_SAMPLES` overrides it).
+#[cfg(test)]
+pub(crate) fn samples_dir() -> PathBuf {
+    std::env::var_os("CIV_SAMPLES").map(PathBuf::from).unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data"))
+}
+
 /// The slot n of a CIVILn.SVE file name.
 fn slot_of(sve: &Path) -> Option<u8> {
     let name = sve.file_name()?.to_str()?.to_ascii_uppercase();
@@ -842,8 +849,8 @@ mod tests {
     }
 
     fn sample(n: u8) -> Option<Game> {
-        let dir = crate::assets::AssetDir::samples().ok()?;
-        let path = slot_file(dir.root(), n)?;
+        let dir = crate::save::sve::samples_dir();
+        let path = slot_file(&dir, n)?;
         Some(import(&path).expect("import"))
     }
 
@@ -929,8 +936,8 @@ mod tests {
     fn a_full_aircraft_is_saved_with_range_minus_one_turns_of_fuel() {
         // the turn end sets +5 to the range and counts the turn at once (0x7597, 0x75ab): a
         // Bomber saved with 1 has flown no turn, one saved with 0 has flown one
-        let Ok(dir) = crate::assets::AssetDir::samples() else { return };
-        let Some(path) = slot_file(dir.root(), 0) else { return };
+        let dir = crate::save::sve::samples_dir();
+        let Some(path) = slot_file(&dir, 0) else { return };
         let (mut data, map) = (std::fs::read(&path).unwrap(), std::fs::read(map_file(&path)).unwrap());
         let (c, i) = (0..8).flat_map(|c| (0..128).map(move |i| (c, i))).find(|(c, i)| data[off::UNITS + 0x600 * c + 12 * i + 3] != 0xff).unwrap();
         let at = off::UNITS + 0x600 * c + 12 * i;
@@ -963,8 +970,8 @@ mod tests {
         // kept a contact that had met and cleared its MET bit (0x14a5c..0x14b53): a load
         // replays his politics (0x252b), which finds no MET bit and drops the contact; the
         // save as written still has it
-        let Ok(dir) = crate::assets::AssetDir::samples() else { return };
-        let Some(path) = slot_file(dir.root(), 0) else { return };
+        let dir = crate::save::sve::samples_dir();
+        let Some(path) = slot_file(&dir, 0) else { return };
         let (mut data, map) = (std::fs::read(&path).unwrap(), std::fs::read(map_file(&path)).unwrap());
         let h = Sve(&data).w(off::HUMAN) as usize & 7;
         let o = (1..8).find(|o| *o != h).unwrap();
@@ -984,8 +991,8 @@ mod tests {
         // CIVIL4 with a Sail of the human's at 14,29 in record 1: 0x40c0 gives the Militia
         // (record 0, saved without moves) its moves before the loop looks for a unit, so with
         // neither in the view (5, 19) of the capital the loop's round takes the Militia
-        let Ok(dir) = crate::assets::AssetDir::samples() else { return };
-        let Some(path) = slot_file(dir.root(), 4) else { return };
+        let dir = crate::save::sve::samples_dir();
+        let Some(path) = slot_file(&dir, 4) else { return };
         let (mut data, map) = (std::fs::read(&path).unwrap(), std::fs::read(map_file(&path)).unwrap());
         let at = off::UNITS + 0x600 + 12;
         assert_eq!(data[at + 3], 0xff);
@@ -1014,8 +1021,8 @@ mod tests {
     }
 
     fn sample_bytes(n: u8) -> Option<(Vec<u8>, Vec<u8>)> {
-        let dir = crate::assets::AssetDir::samples().ok()?;
-        let path = slot_file(dir.root(), n)?;
+        let dir = crate::save::sve::samples_dir();
+        let path = slot_file(&dir, n)?;
         Some((std::fs::read(&path).ok()?, std::fs::read(map_file(&path)).ok()?))
     }
 
@@ -1086,16 +1093,16 @@ mod tests {
         assert!(text.starts_with("turn 73\nyear -2540\n"));
         assert!(text.contains("\ncity0.name Rome owner 1 at 12,29\n"));
         assert!(text.contains("\nciv1.gold 147\n"));
-        let dir = crate::assets::AssetDir::samples().unwrap();
-        let land = exe_land_links(&slot_file(dir.root(), 3).unwrap()).unwrap();
+        let dir = crate::save::sve::samples_dir();
+        let land = exe_land_links(&slot_file(&dir, 3).unwrap()).unwrap();
         g.use_exe_land_links(&land);
         assert_eq!(g.ai_memory.links.as_ref().unwrap().land, land);
     }
 
     #[test]
    fn reads_the_load_menu_line() {
-        let Ok(dir) = crate::assets::AssetDir::samples() else { return };
-        let Some(path) = slot_file(dir.root(), 3) else { return };
+        let dir = crate::save::sve::samples_dir();
+        let Some(path) = slot_file(&dir, 3) else { return };
         let h = read_header(&path).unwrap();
         assert_eq!(crate::ui::loadgame::slot_line(&Some(h)), "Chief Caesar, Romans/2540 BC");
     }

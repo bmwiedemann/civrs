@@ -2068,8 +2068,8 @@ mod tests {
         // 0x622b..0x625e: CIVIL4's Berlin (Granary) loses its only Militia to a Roman
         // Catapult and re-chooses before its turn (0x18bef), as CIV.EXE did in a differential
         // run from an edited CIVIL4
-        let Ok(dir) = crate::assets::AssetDir::samples() else { return };
-        let Some(path) = crate::save::sve::slot_file(dir.root(), 4) else { return };
+        let dir = crate::save::sve::samples_dir();
+        let Some(path) = crate::save::sve::slot_file(&dir, 4) else { return };
         let base = crate::save::sve::import(&path).unwrap();
         let berlin = base.city_at(11, 20).unwrap();
         assert_eq!(base.city(berlin).production, crate::game::Production::Improvement(imp::GRANARY));

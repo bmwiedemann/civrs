@@ -339,11 +339,13 @@ mod tests {
 
     #[test]
     fn the_load_menu_offers_the_original_saves() {
-        let Ok(assets) = crate::assets::AssetDir::samples() else { return };
-        if crate::save::sve::slot_file(assets.root(), 3).is_none() {
-            return;
-        }
+        let Ok(assets) = crate::assets::AssetDir::locate(None) else { return };
+        // CIVIL3 as shipped, in the save directory (searched before the game directory)
         let dir = std::env::temp_dir().join(format!("civrs-sve-menu-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in ["CIVIL3.SVE", "CIVIL3.MAP"] {
+            std::fs::copy(crate::save::sve::samples_dir().join(f), dir.join(f)).unwrap();
+        }
         let mut ctx = UiContext::new(assets, dir.clone()).expect("ui context");
         let mut page = SlotPage::new(SlotMode::LoadTitle);
         page.on_enter(&mut ctx);
