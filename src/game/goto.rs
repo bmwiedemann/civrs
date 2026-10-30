@@ -480,10 +480,17 @@ impl Game {
     /// else the neighbour block with links nearest to (x,y) that a scratch unit can reach (a
     /// local search of limit 18 from its first square of the right kind).
     fn block_entry(&mut self, x: i32, y: i32, sea: bool) -> Option<(i32, i32)> {
+        self.block_entry_probed(x, y, sea).0
+    }
+
+    /// `block_entry`, and whether it ran a local search toward (x,y) (goto_block_cost 0x1ec12
+    /// then leaves (x,y) in ds:0x6590/0x6592, 0x1ec5b).
+    fn block_entry_probed(&mut self, x: i32, y: i32, sea: bool) -> (Option<(i32, i32)>, bool) {
         let (bx, by) = (x / 4, y / 4);
         if self.block_mask(bx, by, sea) != 0 {
-            return Some((bx, by));
+            return (Some((bx, by)), false);
         }
+        let mut probed = false;
         let mut best = 99;
         let mut pick = None;
         for k in 1..=8 {
@@ -499,12 +506,13 @@ impl Game {
             let tile = [(sx, sy), (sx + 1, sy), (sx + 1, sy + 1), (sx, sy + 1)].into_iter().find(|&(tx, ty)| (!exe_in_map(tx, ty) || self.map.is_ocean(tx, ty)) == sea);
             let Some(t) = tile else { continue };
             let probe = Probe { x: t.0, y: t.1, sea, one_move: !sea };
+            probed |= (probe.x - x).abs() <= 7 || (probe.y - y).abs() <= 7;
             if self.probe_cost(probe, (x, y), 18).is_some() {
                 best = d;
                 pick = Some((nx, ny));
             }
         }
-        pick
+        (pick, probed)
     }
 
     /// `goto_block_search` 0x1e0dc: breadth-first over the block links from the target's block
@@ -520,54 +528,18 @@ impl Game {
             // CIV.EXE returns the goto's y here, true unless it is row 0 (0x1e18a)
             return (goto.1 != 0, goto);
         };
-        // a target without a block of its own leaves the start block as the target (0x1e19d;
-        // after a tried neighbour block, goto_block_cost 0x1ec12 has left the goto square in
-        // ds:0x6590/0x6592 and CIV.EXE searches from that "block", past its tables: not copied)
-        let target = self.block_entry(goto.0, goto.1, sea).unwrap_or(start);
-        let mut dist = vec![0u8; (BW * BH) as usize];
-        let mut qx = [0i32; 256];
-        let mut qy = [0i32; 256];
-        qx[0] = target.0;
-        qy[0] = target.1;
-        let (mut head, mut tail) = (0usize, 1usize);
-        dist[(target.0 * BH + target.1) as usize] = 1;
-        let mut found = false;
-        loop {
-            let (bx, by) = (qx[head], qy[head]);
-            if (bx, by) == start {
-                found = true;
-                break;
-            }
-            let here = dist[(bx * BH + by) as usize];
-            head = (head + 1) & 0xff;
-            let mask = self.block_mask(bx, by, sea);
-            for k in 1..=8 {
-                if mask & (1 << (k - 1)) == 0 {
-                    continue;
-                }
-                let mut nx = bx + DX[k];
-                if nx == BW {
-                    nx = 0;
-                }
-                if nx == -1 {
-                    nx = BW - 1;
-                }
-                let ny = by + DY[k];
-                if !(0..BH).contains(&ny) {
-                    continue;
-                }
-                let i = (nx * BH + ny) as usize;
-                if dist[i] == 0 {
-                    dist[i] = here.saturating_add(1);
-                    qx[tail] = nx;
-                    qy[tail] = ny;
-                    tail = (tail + 1) & 0xff;
-                }
-            }
-            if head == tail {
-                break;
-            }
-        }
+        // a target without a block of its own leaves the start block as the target (0x1e19d
+        // reads ds:0x6590/0x6592 whatever the entry returned). After a tried neighbour block
+        // goto_block_cost 0x1ec12 has left the goto square there, and CIV.EXE searches from
+        // that square taken as a block, (gx, gy): with `exe_quirks` civrs does so as long as
+        // the search stays inside the 20x13 tables (13 x + y, no row check); past them it reads
+        // the AI statistics after ds:0x7f38 and the picture file buffer ds:0xd936 after the
+        // distances ds:0xd816 (the last 512 bytes of a .PIC read or written), which civrs does
+        // not have, and it searches from the start block as without the quirk
+        let (entry, probed) = self.block_entry_probed(goto.0, goto.1, sea);
+        let quirk = (entry.is_none() && probed && self.exe_quirks).then(|| self.block_flood(goto, start, sea, true)).flatten();
+        let target = entry.unwrap_or(start);
+        let Some((found, dist)) = quirk.or_else(|| self.block_flood(target, start, sea, false)) else { return (false, goto) };
         if !found {
             return (false, goto);
         }
@@ -614,6 +586,60 @@ impl Game {
             }
         }
         (true, w)
+    }
+
+    /// The breadth-first part of 0x1e0dc (0x1e1a3..0x1e308): block distances (1 at `from`)
+    /// over the links until `start` is taken from the queue (whether it was) and the
+    /// distance table, 13 x + y. `raw` as CIV.EXE indexes it, rows unchecked; None when that
+    /// leaves the tables.
+    fn block_flood(&mut self, from: (i32, i32), start: (i32, i32), sea: bool, raw: bool) -> Option<(bool, Vec<u8>)> {
+        let index = |x: i32, y: i32| -> Option<usize> {
+            let l = x * BH + y;
+            (0..BW * BH).contains(&l).then_some(l as usize)
+        };
+        let mut dist = vec![0u8; (BW * BH) as usize];
+        let mut qx = [0i32; 256];
+        let mut qy = [0i32; 256];
+        qx[0] = from.0;
+        qy[0] = from.1;
+        let (mut head, mut tail) = (0usize, 1usize);
+        dist[index(from.0, from.1)?] = 1;
+        loop {
+            let (bx, by) = (qx[head], qy[head]);
+            if (bx, by) == start {
+                return Some((true, dist));
+            }
+            let l = index(bx, by)?;
+            let here = dist[l];
+            head = (head + 1) & 0xff;
+            let mask = self.block_mask(l as i32 / BH, l as i32 % BH, sea);
+            for k in 1..=8 {
+                if mask & (1 << (k - 1)) == 0 {
+                    continue;
+                }
+                let mut nx = bx + DX[k];
+                if nx == BW {
+                    nx = 0;
+                }
+                if nx == -1 {
+                    nx = BW - 1;
+                }
+                let ny = by + DY[k];
+                if !raw && !(0..BH).contains(&ny) {
+                    continue;
+                }
+                let i = index(nx, ny)?;
+                if dist[i] == 0 {
+                    dist[i] = here.wrapping_add(1);
+                    qx[tail] = nx;
+                    qy[tail] = ny;
+                    tail = (tail + 1) & 0xff;
+                }
+            }
+            if head == tail {
+                return Some((false, dist));
+            }
+        }
     }
 
     /// The greedy step of 0x1dcfe toward `w`: for each neighbour the unit may enter (empty or
@@ -832,6 +858,25 @@ mod tests {
         assert_eq!(w, (9, 9));
         let d = g.goto_direction(id);
         assert_eq!(d, 4, "south-east");
+    }
+
+    #[test]
+    fn exe_quirks_search_the_blocks_from_the_goto_square_after_a_tried_entry() {
+        // 0x1e19d: an island square without a block whose neighbour blocks were tried (0x1ec12
+        // leaves the square in ds:0x6590/0x6592): the search starts from "block" (8, 2), which
+        // is in the tables, and leads the unit north-west; without the quirk from its own
+        // block, which gives no waypoint
+        let run = |quirks: bool| {
+            let mut g = flat();
+            g.exe_quirks = quirks;
+            g.map.get_mut(8, 2).unwrap().terrain = Terrain::Grassland;
+            let slot = (1..8).find(|s| *s != g.human_slot).unwrap();
+            let id = g.add_unit(slot, unit_ids::LEGION, 30, 25);
+            g.set_goto(id, 8, 2);
+            g.block_search(id)
+        };
+        assert_eq!(run(false), (true, (8, 2)));
+        assert_eq!(run(true), (true, (25, 21)));
     }
 
     #[test]

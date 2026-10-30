@@ -334,8 +334,9 @@ pub struct Game {
     /// test reading the one word ds:0x6ed4 of the last ai_civ_turn (0xb7c7), a capture leaving
     /// the last square of the radius out of the site/owner layer (0x13fff), destroy_city's
     /// sweep walking the old owner's record of the conqueror's unit (0xa8bc), the local
-    /// search's grid read past its end (0x1e765) and the first-city test reading the free
-    /// city records (o 0x1b5df).
+    /// search's grid read past its end (0x1e765), the first-city test reading the free
+    /// city records (o 0x1b5df) and the block search starting from the goto square taken as
+    /// a block (0x1e19d, while it stays inside the tables).
     #[serde(skip)]
     pub exe_quirks: bool,
     /// The owner byte (+0xb) CIV.EXE's free city records keep: destroy_city frees a record by
