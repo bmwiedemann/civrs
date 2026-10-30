@@ -259,6 +259,21 @@ pub struct Game {
     /// Not saved.
     #[serde(skip)]
     pub city_attention: bool,
+    /// The cases for Despotism and for the Republic, ds:0xe3c2 and ds:0xdb42, which the
+    /// government choice of `ai_civ_turn` reads (0x15fe6, `ai::govern`). One pair for all:
+    /// cleared as a civilization's cities come up (update_civ_tax_rates 0xa5ec), then every
+    /// run of the city routine but the drawing one adds its worked squares (work_tile 0x132c1
+    /// sets ds:0x2494 for the square values 0x1353a / 0x13552) and its turn its units
+    /// (0x102f5), whatever the city's owner. Not saved: a civilization's cities come before
+    /// its government choice in its turn.
+    #[serde(skip)]
+    pub gov_case: (i32, i32),
+    /// The human's science of this turn's cities on Chieftain while the research menu they
+    /// brought up is unanswered: CIV.EXE's menu is answered at once and the cities after it
+    /// count their science twice when someone else already found the chosen goal (0x12c93);
+    /// civrs adds it when the menu is answered (`Game::apply_decision`). Not saved.
+    #[serde(skip)]
+    pub chieftain_science: i32,
     /// The global warming counter ds:0xb1ea (0..99): one step a turn towards twice the
     /// polluted squares minus four per warming so far (`global_warming_check`); stored after
     /// the game body in version-9 saves.
@@ -566,6 +581,8 @@ impl Game {
             pop_milestone: 1,
             milestone_quiet: -1,
             score_acc: [0; 8],
+            gov_case: (0, 0),
+            chieftain_science: 0,
             first_discoverer: vec![0; 72],
             historian_timer: 80 + historian,
             history: replay::History::default(),

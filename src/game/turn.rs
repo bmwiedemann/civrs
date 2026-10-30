@@ -447,6 +447,7 @@ impl Game {
         // update_civ_tax_rates (0xa5e2) notes a city above size 5 with as many unhappy as
         // happy citizens (bit 0) and a city in disorder (bit 1)
         let mut flags = 0u8;
+        self.gov_case = (0, 0);
         for c in self.cities_of(slot) {
             if self.city_opt(c).is_some() {
                 let balance = self.process_city(c);
@@ -723,6 +724,15 @@ impl Game {
         if !self.process_food(c) {
             return None;
         }
+        // the military units homed here with an attack outside the city square, aircraft
+        // anywhere (ds:0x6546, counted at 0xd26b before the workers)
+        let abroad = {
+            let city = self.city(c);
+            self.supported_units(c).iter().filter(|u| {
+                let u = self.unit(**u);
+                u.kind < unit_ids::DIPLOMAT && u.info().att > 0 && (u.is_air() || u.pos() != city.pos())
+            }).count() as i32
+        };
         self.assign_workers(c, true);
         let y = self.city_yield_raw(c);
         let was_disorder = self.city(c).disorder;
@@ -758,7 +768,17 @@ impl Game {
         // stores the city's trade less corruption first (0xf13d)
         self.note_trade(c);
         let h = self.city_happiness(c);
-        self.disband_unsupported(c, y.shields);
+        let military = self.disband_unsupported(c, y.shields);
+        // the government cases (0x102f5..0x10374): Despotism +5 for each military unit the
+        // shields do not cover and + those units up to the city size; the Republic - (7, or 5
+        // with a Marketplace, less the leader's "civilized" trait) for each unit abroad
+        {
+            let city = self.city(c);
+            let market = if city.has_improvement(imp::MARKETPLACE) { 5 } else { 7 };
+            let civilized = self.traits(slot).civilized as i32;
+            self.gov_case.0 += 5 * (military - y.shields).max(0) + military.clamp(0, city.size as i32);
+            self.gov_case.1 -= (market - civilized) * abroad;
+        }
         self.city_moods(c, &h, y.food - (y.food_upkeep - 2 * self.city(c).size as i32));
         // gold & science (0x12955: no taxes in disorder or under Anarchy, none for the
         // barbarians, 0x125e1; 0x12bde: science whatever the disorder, none under Anarchy)
@@ -859,21 +879,55 @@ impl Game {
     }
 
     /// Units the city's shields cannot support go, the farthest from the city first (CIV.EXE
-    /// 0xfbe6..0xff75): while the support of the units homed here, counted again with those
-    /// built this turn, exceeds `shields` (ds:0x70dc, the shields of the worked squares after
-    /// Factory and power, disorder or not, from before the production), the unit with the
-    /// longest travel distance (0x1d43:0x27f) from it is disbanded, the first in unit order on
-    /// a tie ("CITY can't support UNIT. Unit Disbanded." for the human).
-    fn disband_unsupported(&mut self, c: CityId, shields: i32) {
-        loop {
-            let upkeep = self.shield_costs(c).iter().filter(|(_, cost)| *cost).count() as i32 + self.garrison_upkeep(c);
-            if upkeep <= shields {
-                return;
+    /// 0xfbe6..0xff75): the support of the units homed here is counted again in record order
+    /// with those built this turn (after the stashed garrison), and once it exceeds `shields`
+    /// (ds:0x70dc, the shields of the worked squares after Factory and power, disorder or not,
+    /// from before the production) the unit with the longest travel distance (0x1d43:0x27f)
+    /// from the city is disbanded, the first in unit order on a tie ("CITY can't support
+    /// UNIT. Unit Disbanded." for the human), and the count starts over.
+    ///
+    /// With the support met, a computer's city of the Republic or Democracy whose disorder
+    /// bit is set from its last turn disbands, at a homed unit whose record + turn is a
+    /// multiple of 8 (0xfd3e), its farthest unit if that is a land unit other than Settlers
+    /// away from the city, and its disorder bit is cleared (0xfe7d..0xfedf): this turn's
+    /// disorder then counts as new, and the city asks for production again (0x1275a). When
+    /// the world gangs up on the human, a civilization with fewer advances than the human
+    /// keeps the unit and its case for the Republic becomes -999 (0xfe51..0xfe74).
+    ///
+    /// Returns the count of the military units below the Diplomat with the stashed garrison
+    /// (ds:0xdeb8) as the last count left it.
+    fn disband_unsupported(&mut self, c: CityId, shields: i32) -> i32 {
+        'count: loop {
+            let slot = self.city(c).owner;
+            let mut support = self.garrison_upkeep(c);
+            let mut military = self.city(c).garrison_count();
+            for (id, cost) in self.shield_costs(c) {
+                if self.unit_opt(id).is_none() {
+                    continue;
+                }
+                support += cost as i32;
+                military += (self.unit(id).kind < unit_ids::DIPLOMAT) as i32;
+                if support > shields {
+                    let Some(victim) = self.farthest_supported_unit(c) else { return military };
+                    let kind = self.unit(victim).kind;
+                    self.remove_unit(victim);
+                    self.push_event(GameEvent::UnitDisbanded { unit_kind: kind, city: c, reason: "shortage of shields".into() });
+                    continue 'count;
+                }
+                let p = self.player(slot);
+                if self.city(c).disorder && (self.unit(id).record as u32 + self.turn) & 7 == 0 && !p.human && p.govt as u8 >= Govt::Republic as u8 {
+                    let Some(victim) = self.farthest_supported_unit(c) else { continue };
+                    let behind = self.ai_memory.gang_up && p.research_count < self.player(self.human_slot).research_count;
+                    let (u, city) = (self.unit(victim), self.city(c));
+                    if behind {
+                        self.gov_case.1 = -999;
+                    } else if Map::civ_distance(u.pos(), city.pos()) > 0 && u.is_land() && u.kind != unit_ids::SETTLERS {
+                        self.remove_unit(victim);
+                        self.city_mut(c).disorder = false;
+                    }
+                }
             }
-            let Some(victim) = self.farthest_supported_unit(c) else { return };
-            let kind = self.unit(victim).kind;
-            self.remove_unit(victim);
-            self.push_event(GameEvent::UnitDisbanded { unit_kind: kind, city: c, reason: "shortage of shields".into() });
+            return military;
         }
     }
 
@@ -1562,6 +1616,10 @@ impl Game {
                 };
                 if let Some(a) = pick {
                     self.set_research(*slot, a);
+                    let sci = std::mem::take(&mut self.chieftain_science);
+                    if self.first_discoverer(a) != 0 {
+                        self.player_mut(*slot).beakers += sci;
+                    }
                     self.research_chosen(*slot);
                 }
             }
@@ -2383,6 +2441,58 @@ mod tests {
         let left = [a, b, near].iter().filter(|id| g.unit_opt(**id).is_some()).count() as i32;
         assert_eq!(left, shields.min(3));
         assert!(g.unit_opt(near).is_some() || shields == 0);
+    }
+
+    /// A computer's city of the Republic still in disorder from its last turn sends its
+    /// farthest land unit home at a unit whose record + turn is a multiple of 8, and the
+    /// disorder counts as new (0xfd3e, 0xfe7d..0xfedf); Settlers and the human's cities stay.
+    #[test]
+    fn a_rioting_republic_disbands_its_farthest_unit_every_eighth_turn() {
+        for (turn, human, kind, gone) in [(8, false, unit_ids::LEGION, true), (9, false, unit_ids::LEGION, false), (8, true, unit_ids::LEGION, false), (8, false, unit_ids::SETTLERS, false)] {
+            let (mut g, c) = fixture();
+            let slot = g.city(c).owner;
+            let (x, y) = g.city(c).pos();
+            for id in g.units_of(slot) {
+                g.remove_unit(id);
+            }
+            g.player_mut(slot).human = human;
+            if !human {
+                g.human_slot = (slot % 7) + 1;
+            }
+            g.player_mut(slot).govt = Govt::Republic;
+            g.turn = turn;
+            g.city_mut(c).disorder = true;
+            let far = g.add_unit(slot, kind, x + 4, y);
+            g.unit_mut(far).home = Some(c);
+            g.unit_mut(far).record = 0;
+            let military = g.disband_unsupported(c, 99);
+            assert_eq!(g.unit_opt(far).is_none(), gone, "turn {turn} human {human} kind {kind}");
+            assert_eq!(g.city(c).disorder, !gone);
+            assert_eq!(military, 1);
+        }
+    }
+
+    /// The government choice reads the cases the city routine runs leave (0x102f5, 0x1353a):
+    /// cleared as the civ's cities come up, the turn adds each city's units and squares.
+    #[test]
+    fn the_government_cases_come_from_this_turns_city_runs() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        let (x, y) = g.city(c).pos();
+        g.gov_case = (100, 100);
+        g.process_player_cities(slot);
+        let before = g.gov_case;
+        assert!(before.0 < 100 && before.1 < 100, "{before:?}");
+        // a unit abroad costs the Republic's case (7 - civilized) and counts for Despotism
+        let u = g.add_unit(slot, unit_ids::LEGION, x + 2, y);
+        g.unit_mut(u).home = Some(c);
+        g.process_player_cities(slot);
+        let civilized = g.traits(slot).civilized as i32;
+        assert!(g.gov_case.1 <= before.1 - (7 - civilized), "{:?} {before:?}", g.gov_case);
+        // a quiet run of the city routine adds its squares again
+        let after = g.gov_case;
+        g.city_routine_quiet(c);
+        assert!(g.gov_case.1 >= after.1 && g.gov_case.0 <= after.0);
     }
 
     #[test]

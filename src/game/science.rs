@@ -123,6 +123,9 @@ impl Game {
             let goal = self.player(slot).researching;
             if goal.is_some_and(|a| self.first_discoverer(a) != 0) {
                 self.player_mut(slot).beakers += sci;
+            } else if goal.is_none() && self.research_menu_queued(slot) {
+                // the goal is the menu's answer, which CIV.EXE has by now
+                self.chieftain_science += sci;
             }
         }
         if self.owner_has_wonder(slot, won::SETI_PROGRAM) {
@@ -490,6 +493,33 @@ mod tests {
         g.events.push_back(GameEvent::NeedsDecision(crate::game::Decision::ChooseResearch { slot: me, options: vec![goal] }));
         g.city_science(c, 2);
         assert_eq!(g.player(me).beakers, 5);
+    }
+
+    /// On Chieftain the science counts twice towards a goal somebody else found first
+    /// (0x12c93); CIV.EXE has the goal of a research menu the city brought up at once, so
+    /// civrs adds the second count when the menu is answered.
+    #[test]
+    fn chieftain_science_doubles_for_the_answer_of_the_menu() {
+        let (mut g, c, ai) = fixture();
+        let me = g.human_slot;
+        g.setup.difficulty = rules::Difficulty::Chieftain;
+        let goal = g.researchable(me)[0];
+        g.first_discoverer[goal as usize] = ai;
+        g.player_mut(me).researching = None;
+        g.player_mut(me).beakers = 7;
+        g.city_science(c, 3);
+        g.city_science(c, 2);
+        assert_eq!(g.player(me).beakers, 5);
+        let d = g.take_events().into_iter().find_map(|e| match e {
+            GameEvent::NeedsDecision(d @ crate::game::Decision::ChooseResearch { .. }) => Some(d),
+            _ => None,
+        });
+        let d = d.unwrap();
+        let crate::game::Decision::ChooseResearch { options, .. } = d.clone() else { unreachable!() };
+        assert_eq!(options[0], goal);
+        g.apply_decision(&d, crate::game::DecisionReply::Choice(0));
+        assert_eq!(g.player(me).researching, Some(goal));
+        assert_eq!(g.player(me).beakers, 10);
     }
 
     #[test]

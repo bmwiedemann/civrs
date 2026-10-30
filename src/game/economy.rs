@@ -84,6 +84,39 @@ impl Game {
     /// Yield (food, shields, trade) of a tile when worked by a city of `slot`.
     pub fn tile_yield(&self, slot: Slot, x: i32, y: i32, city: Option<CityId>) -> (i32, i32, i32) {
         let Some(t) = self.map.get(x, y) else { return (0, 0, 0) };
+        let (mut f, mut s, mut tr) = self.tile_yield_base(x, y, city);
+        let govt = self.player(slot).govt;
+        // government
+        let g = rules::GOVERNMENTS[govt as usize];
+        let celebrating = city.and_then(|c| self.city_opt(c)).map(|c| c.celebrating).unwrap_or(false);
+        if g.tile_penalty && !celebrating {
+            if f > 2 {
+                f -= 1;
+            }
+            if s > 2 {
+                s -= 1;
+            }
+            if tr > 2 {
+                tr -= 1;
+            }
+        }
+        // Republic/Democracy trade bonus; a celebrating Monarchy/Communism gets the same
+        if (g.trade_bonus || (celebrating && matches!(govt, Govt::Monarchy | Govt::Communism))) && tr >= 1 {
+            tr += 1;
+        }
+        // pollution halves each value, rounding up (CIV.EXE 0x1357d)
+        if t.has(tile_flags::POLLUTION) {
+            f = (f + 1) / 2;
+            s = (s + 1) / 2;
+            tr = (tr + 1) / 2;
+        }
+        (f, s, tr)
+    }
+
+    /// A square's values before the government rules and pollution (CIV.EXE tile_value up to
+    /// 0x1350d): terrain, special, irrigation, mine, road, the Colossus, railroad.
+    fn tile_yield_base(&self, x: i32, y: i32, city: Option<CityId>) -> (i32, i32, i32) {
+        let Some(t) = self.map.get(x, y) else { return (0, 0, 0) };
         let info = t.terrain.info();
         let (mut f, mut s, mut tr) = match (&info.special, t.special) {
             (Some(sp), true) => (sp.food as i32, sp.shields as i32, sp.trade as i32),
@@ -94,7 +127,6 @@ impl Game {
             s = t.shield as i32;
         }
         let is_centre = city.is_some() && t.city == city;
-        let govt = self.player(slot).govt;
         // irrigation / mines (the city centre counts as irrigated where irrigation is possible)
         let irrigated = t.has(tile_flags::IRRIGATION) || (is_centre && info.irrigate != rules::Terraform::No);
         if irrigated {
@@ -128,30 +160,6 @@ impl Game {
             f += f / 2;
             s += s / 2;
             tr += tr / 2;
-        }
-        // government
-        let g = rules::GOVERNMENTS[govt as usize];
-        let celebrating = city.and_then(|c| self.city_opt(c)).map(|c| c.celebrating).unwrap_or(false);
-        if g.tile_penalty && !celebrating {
-            if f > 2 {
-                f -= 1;
-            }
-            if s > 2 {
-                s -= 1;
-            }
-            if tr > 2 {
-                tr -= 1;
-            }
-        }
-        // Republic/Democracy trade bonus; a celebrating Monarchy/Communism gets the same
-        if (g.trade_bonus || (celebrating && matches!(govt, Govt::Monarchy | Govt::Communism))) && tr >= 1 {
-            tr += 1;
-        }
-        // pollution halves each value, rounding up (CIV.EXE 0x1357d)
-        if t.has(tile_flags::POLLUTION) {
-            f = (f + 1) / 2;
-            s = (s + 1) / 2;
-            tr = (tr + 1) / 2;
         }
         (f, s, tr)
     }
@@ -709,12 +717,23 @@ impl Game {
 
     /// work_tile (CIV.EXE 0x132c1..0x132e3) writes the city's owner on the site/owner layer
     /// for the city square and each square it works, in every run of the city routine but
-    /// the city screen's drawing pass (mode 1).
+    /// the city screen's drawing pass (mode 1). Its square values add to the government
+    /// cases (`Game::gov_case`): 2 less for Despotism for each food, shield or trade value
+    /// above 2 before the government rules, outside a celebrating city (0x1350d..0x1353a),
+    /// 1 more for the Republic for each square with trade (0x13552).
     fn claim_worked_squares(&mut self, c: CityId) {
         let slot = self.city(c).owner;
+        let celebrating = self.city(c).celebrating;
         let squares: Vec<(i32, i32)> = (0..21u8).filter(|i| self.city(c).works(*i)).filter_map(|i| self.radius_tile(c, i)).collect();
         for (x, y) in squares {
             self.map.set_claim(x, y, slot);
+            let (f, s, t) = self.tile_yield_base(x, y, Some(c));
+            if !celebrating {
+                self.gov_case.0 -= 2 * [f, s, t].iter().filter(|v| **v > 2).count() as i32;
+            }
+            if t > 0 {
+                self.gov_case.1 += 1;
+            }
         }
     }
 
