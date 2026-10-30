@@ -799,7 +799,17 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   With `exe_quirks` civrs starts from the goto square as a block when that stays inside the
   tables (a goto square with 13x + y below 260 and its search staying in them), else from the
   start block. The barbarians' later draws part at t82; from CIV.EXE's t82 save the Sail (goto
-  Rome, re-searched every turn) parts at once (t83 at 3,2 in CIV.EXE, 7,7 in civrs). A human's step that crosses a treaty partner's border is asked about
+  Rome, re-searched every turn) parts at once (t83 at 3,2 in CIV.EXE, 7,7 in civrs). The
+  barbarians' raids aim at Rome (inland) again and again, so stretches were played from CIV.EXE's
+  saves between raids: t92..t102 (10 turns of draws, parting when the next raid's Sail parts) and
+  from t106. They found: the census's land squares and sites are the world generator's tables
+  ds:0xdcfe and ds:0xb1ee (overlay 7 writes them, nothing in play), which leave out the two rows
+  at either pole (civrs counted the map now, so a continent with polar land looked three times
+  its size and lost its offensive policy; imported from SVE 0x0a88/0x0b88, saved in v31); and a
+  computer's Phalanx stepping into an empty enemy city whose square the map layer x+160 still
+  gave its own civ (a respawned tribe's city) walked in and stayed beside the city (0x6a65 tests
+  tile_owner, read at 0x65f0; `exe_quirks`). That city then works two squares at size 1 with
+  the enemy unit inside (t107, not followed further). A human's step that crosses a treaty partner's border is asked about
   after the move roll now (0x634a before 0x64bb), see "Questions inside a computer's unit loop".
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
