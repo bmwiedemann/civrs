@@ -61,7 +61,9 @@ pub struct City {
     pub improvements: u32,
     /// Bit per WonderId (1..=21).
     pub wonders: u32,
-    /// Bit per CITY_RADIUS index (1..=20) of worked tiles (index 0, the centre, is implicit).
+    /// Bit per CITY_RADIUS index (1..=20) of worked tiles. Bit 0 (`CENTRE_IDLE`) is set when
+    /// the centre is not worked: CIV.EXE drops it from the worked mask (bit 20) while a foreign
+    /// unit stands on the city square (0xd454..0xd5b1) and its citizen works another square.
     pub worked: u32,
     pub specialists: Vec<Specialist>,
     /// The three route slots of the record (+0x17..+0x19), in slot order; `NO_ROUTE` marks a
@@ -133,6 +135,8 @@ pub struct City {
     pub trade: i32,
 }
 
+/// `City::worked` bit 0: the centre is not worked (CIV.EXE's worked bit 20 clear).
+pub const CENTRE_IDLE: u32 = 1;
 /// `City::name_index` of a city whose name is not in the name table.
 pub const NO_NAME_INDEX: u8 = 0xff;
 /// A free trade route slot (0xff in the record).
@@ -195,20 +199,24 @@ impl City {
         self.wonders |= 1u32 << id;
     }
     pub fn works(&self, radius_idx: u8) -> bool {
-        radius_idx == 0 || self.worked & (1u32 << radius_idx) != 0
+        (radius_idx == 0) != (self.worked & (1u32 << radius_idx) != 0)
     }
     pub fn set_worked(&mut self, radius_idx: u8, on: bool) {
         if radius_idx == 0 {
-            return;
-        }
-        if on {
+            if on {
+                self.worked &= !CENTRE_IDLE;
+            } else {
+                self.worked |= CENTRE_IDLE;
+            }
+        } else if on {
             self.worked |= 1u32 << radius_idx;
         } else {
             self.worked &= !(1u32 << radius_idx);
         }
     }
+    /// Worked squares besides the centre.
     pub fn workers(&self) -> u32 {
-        self.worked.count_ones()
+        (self.worked & !CENTRE_IDLE).count_ones()
     }
     pub fn improvement_list(&self) -> Vec<ImprovementId> {
         (1..=24u8).filter(|i| self.has_improvement(*i)).collect()

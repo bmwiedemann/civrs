@@ -429,11 +429,14 @@ fn import_slot_with(data: &[u8], map_pic: &[u8], moves_back: bool, resume: bool)
                 worked |= 1 << idx;
             }
         }
+        if worked_exe & 1 << 20 == 0 {
+            worked |= crate::game::city::CENTRE_IDLE;
+        }
         let size = r[7];
         // the specialists are counted in the top 6 bits of the worked word (process_city
         // 0xcce3: ds:0xe8b8 = worked >> 26); citizens neither working nor counted there are
         // placed by the next worker assignment
-        let spare = ((size as i32 - worked.count_ones() as i32).max(0) as usize).min((worked_exe >> 26) as usize);
+        let spare = ((size as i32 - (worked & !crate::game::city::CENTRE_IDLE).count_ones() as i32).max(0) as usize).min((worked_exe >> 26) as usize);
         // 2-bit codes at +0x14 (0xc91:0x6d97: 1 taxman, 2 scientist, 3 entertainer; past the
         // eighth always 1)
         let specialists = (0..spare)

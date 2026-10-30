@@ -183,8 +183,10 @@ impl Game {
         if idx != 0 && t.city.is_some() {
             return false;
         }
-        // any foreign unit, military or not (CIV.EXE 0xd4fa)
-        if self.all_units().any(|u| (u.x, u.y) == (x, y) && u.owner != owner) {
+        // a foreign unit, military or not: the owner of the units the map layer x+160 records
+        // (CIV.EXE 0xd4fa, 0x1a68:0x14e6), so of two civs' units on a city square (a computer's
+        // unit that walked in, 0x6a65) the one placed last decides
+        if self.unit_at(x, y).is_some_and(|u| self.unit(u).owner != owner) {
             return false;
         }
         true
@@ -225,14 +227,17 @@ impl Game {
         !rules::GOVERNMENTS[self.player(city.owner).govt as usize].free_units_up_to_size || paying + 1 > city.size as i32
     }
 
-    /// Units drawing shield upkeep from the city (every unit homed there, Settlers included).
+    /// Units drawing shield upkeep from the city (every unit of the owner homed there, Settlers
+    /// included). Only the owner's: CIV.EXE's loops go over the owner's unit table (0xd2ec,
+    /// 0xfc86), so another civ's unit homed here (a computer's unit fortifying in a city it
+    /// walked into, 0x6a65) costs nothing.
     pub fn supported_units(&self, c: CityId) -> Vec<super::UnitId> {
         // in the order of the owner's unit records, as CIV.EXE's loops over the civ's units
         // count (0xd26b) and draw (0xfc6e) them
         let owner = self.city(c).owner;
-        let mut v: Vec<(bool, u8, super::UnitId)> = self.all_units().filter(|u| u.home == Some(c)).map(|u| (u.owner != owner, u.record, u.id)).collect();
+        let mut v: Vec<(u8, super::UnitId)> = self.all_units().filter(|u| u.home == Some(c) && u.owner == owner).map(|u| (u.record, u.id)).collect();
         v.sort_unstable();
-        v.into_iter().map(|(_, _, id)| id).collect()
+        v.into_iter().map(|(_, id)| id).collect()
     }
 
     /// The city gets power from its own plant or a Hoover Dam on its continent.
@@ -553,11 +558,12 @@ impl Game {
         let disorder = self.city(c).disorder;
         // CIV.EXE radius order (ds:0x2498 / ds:0x24c2) mapped to ours; the centre comes last
         let order: Vec<u8> = EXE_RADIUS.iter().map(|d| rules::CITY_RADIUS.iter().position(|r| r == d).unwrap() as u8).collect();
-        // unavailable squares (0xd454..0xd5b1); a unit of the human in the radius of a computer
-        // city freezes its layout (ds:0x70e8)
+        // unavailable squares (0xd454..0xd5b1), the centre among them (ds:0x6540 = 21): a
+        // foreign unit on the city square idles it; a unit of the human in the radius of a
+        // computer city freezes its layout (ds:0x70e8)
         let mut taken = [false; 21];
         let mut human_near = false;
-        for &idx in &order[..20] {
+        for &idx in &order {
             if !self.tile_workable(c, idx) {
                 taken[idx as usize] = true;
                 if self.city(c).works(idx) {
@@ -573,7 +579,7 @@ impl Game {
         let mut specialists = self.city(c).specialists.len() as i32;
         if turn && !human {
             if disorder {
-                for idx in 1..21u8 {
+                for idx in 0..21u8 {
                     if self.city(c).works(idx) {
                         self.release_tile(c, idx);
                     }
@@ -595,7 +601,8 @@ impl Game {
         let keep = human || (c as u32 + self.turn) & 3 != 0 || disorder || human_near;
         let mut assign = !keep;
         if keep {
-            let worked = 1 + self.city(c).workers() as i32;
+            // the bits of the worked mask, the centre's among them (0xd621)
+            let worked = self.city(c).workers() as i32 + self.city(c).works(0) as i32;
             if worked > remaining {
                 // "Population decrease in CITY." for the human's city in its turn (0xd70d..0xd769,
                 // ds:0x255f) and a fresh start
@@ -603,7 +610,7 @@ impl Game {
                     self.city_attention = true;
                     self.push_event(super::GameEvent::PopulationDecrease(c));
                 }
-                for idx in 1..21u8 {
+                for idx in 0..21u8 {
                     if self.city(c).works(idx) {
                         self.release_tile(c, idx);
                     }
@@ -620,7 +627,7 @@ impl Game {
                 assign = remaining != specialists && remaining != 0;
             }
         } else {
-            for idx in 1..21u8 {
+            for idx in 0..21u8 {
                 if self.city(c).works(idx) {
                     self.release_tile(c, idx);
                 }
@@ -629,6 +636,7 @@ impl Game {
         if assign {
             if remaining > 0 && !taken[0] {
                 taken[0] = true;
+                self.city_mut(c).set_worked(0, true);
                 add!(0);
                 remaining -= 1;
             }
@@ -704,7 +712,7 @@ impl Game {
     /// the city screen's drawing pass (mode 1).
     fn claim_worked_squares(&mut self, c: CityId) {
         let slot = self.city(c).owner;
-        let squares: Vec<(i32, i32)> = (0..21u8).filter(|i| *i == 0 || self.city(c).works(*i)).filter_map(|i| self.radius_tile(c, i)).collect();
+        let squares: Vec<(i32, i32)> = (0..21u8).filter(|i| self.city(c).works(*i)).filter_map(|i| self.radius_tile(c, i)).collect();
         for (x, y) in squares {
             self.map.set_claim(x, y, slot);
         }
@@ -1133,6 +1141,39 @@ mod tests {
         g.take_events();
         g.assign_workers(c, true);
         assert!(!g.take_events().iter().any(|e| matches!(e, GameEvent::PopulationDecrease(_))));
+    }
+
+    #[test]
+    fn a_foreign_unit_on_the_city_square_idles_the_centre_until_the_city_starts_over() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        let (x, y) = g.city(c).pos();
+        for id in g.units_at(x, y) {
+            g.remove_unit(id);
+        }
+        g.auto_assign(c);
+        let other = (slot % 7) + 1;
+        let foreign = g.add_unit(other, unit_ids::PHALANX, x, y);
+        g.unit_mut(foreign).home = Some(c);
+        // another civ's unit homed here costs the city nothing (0xd2ec)
+        assert!(g.supported_units(c).is_empty());
+        // the centre is dropped (0xd454, ds:0x6540 = 21): the size-1 city works two squares
+        // and leaves the city square unmarked (0xd797)
+        g.map.set_claim(x, y, 0);
+        g.assign_workers(c, true);
+        assert!(!g.city(c).works(0));
+        assert_eq!(g.city(c).workers(), 2);
+        assert_eq!(g.map.claim_at(x, y), 0);
+        // a unit of the owner placed after it makes the square the owner's on the map layer:
+        // the kept layout stays as it is (every citizen counted) until it starts over
+        let own = g.add_unit(slot, unit_ids::MILITIA, x, y);
+        g.unit_mut(own).home = None;
+        g.assign_workers(c, true);
+        assert!(!g.city(c).works(0));
+        assert_eq!(g.city(c).workers(), 2);
+        g.auto_assign(c);
+        assert!(g.city(c).works(0));
+        assert_eq!(g.city(c).workers(), 1);
     }
 
     #[test]
