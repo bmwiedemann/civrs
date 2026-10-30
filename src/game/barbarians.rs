@@ -59,6 +59,16 @@ pub enum BarbarianCommand {
 }
 
 impl Game {
+    /// A goto the barbarian routine writes (unit bytes +6/+7): an idle unit is then on its way
+    /// (`UnitOrder::Goto`, as a save shows it).
+    fn set_barbarian_goto(&mut self, id: UnitId, to: (i32, i32)) {
+        let u = self.unit_mut(id);
+        u.goto = Some(to);
+        if u.order == UnitOrder::None {
+            u.order = UnitOrder::Goto;
+        }
+    }
+
     /// Has any civilisation discovered the advance after turn 0? CIV.EXE reads the first
     /// discoverer at far 0x26f1:[0x4b0 + 2 * adv] & 7 (set by grant_advance 0xc756), which
     /// survives the discoverer's destruction.
@@ -527,7 +537,8 @@ impl Game {
                 let other = self.all_units().filter(|o| o.owner == 0 && o.id != id).map(|o| (Map::civ_distance(o.pos(), u.pos()), o.id)).min();
                 if let Some((od, o)) = other {
                     if od <= 3 && self.unit(o).kind != unit_ids::DIPLOMAT {
-                        self.unit_mut(id).goto = Some(self.unit(o).pos());
+                        let to = self.unit(o).pos();
+                        self.set_barbarian_goto(id, to);
                         return BarbarianCommand::Goto;
                     }
                 }
@@ -663,7 +674,7 @@ impl Game {
                 }
             }
             match best.1 {
-                Some(p) => self.unit_mut(id).goto = Some(p),
+                Some(p) => self.set_barbarian_goto(id, p),
                 None => return self.drop_barbarian(id),
             }
         }

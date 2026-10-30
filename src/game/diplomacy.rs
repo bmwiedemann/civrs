@@ -573,7 +573,9 @@ impl Game {
     /// land unit on land meets, square by square in the order of the neighbour table
     /// (ds:0x1882), the civilization of the first unit (0x1a68:0x145e) on each land square
     /// next to it unless that unit is an aircraft (`civs_meet(civ, other, x, y)` with the
-    /// looker's square). Two squares of the same civ are two meetings.
+    /// looker's square). Two squares of the same civ are two meetings. `unit_look_goals` makes
+    /// these meetings square by square between its goals; this is the contact part alone.
+    #[cfg(test)]
     pub fn look_for_contacts(&mut self, id: super::UnitId) {
         let Some(u) = self.unit_opt(id).cloned() else { return };
         if u.owner == 0 || !u.is_land() || self.map.is_ocean(u.x, u.y) {

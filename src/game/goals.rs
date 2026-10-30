@@ -264,11 +264,10 @@ impl Game {
 }
 
 impl Game {
-    /// The goal and goto side of `unit_look` (0x8038), run where civrs's unit looks around
-    /// (after every move and when its civilization's unit loop comes to it, with
-    /// `look_for_contacts`).
+    /// The goal, goto and contact side of `unit_look` (0x8038), run where civrs's unit looks
+    /// around (after every move and when its civilization's unit loop comes to it).
     ///
-    /// For each of the 8 neighbours n:
+    /// For each of the 8 neighbours n, in the order of the neighbour table (ds:0x1882):
     /// - a city of another civ o next to a land unit (0x82c5) whose civ has no treaty with o
     ///   gets o's attack (1, priority 4) and defend (2, priority 2) goals on itself (0x82ea);
     /// - units of another civ o2 there: their sentried units (ten of the ring from the first)
@@ -276,7 +275,8 @@ impl Game {
     ///   (wake_if_not_at_sea 0x92fe, so ships wake too), the first one's goto
     ///   is dropped unless it is on land and the looker at sea; the looker's goto is dropped
     ///   unless it stands on land beside a ship (aircraft always). Between land units on land
-    ///   without a treaty the looker's civ gets an attack goal on n (priority 3, or 1 against
+    ///   (not an aircraft there) the two civilizations meet (`civs_meet` 0x8491); then without
+    ///   a treaty the looker's civ gets an attack goal on n (priority 3, or 1 against
     ///   barbarians, a Diplomat or a fortified defender); treaty or not, unless the looker is a
     ///   Diplomat, o2 gets a defend goal on the looker's square (priority 2, 1 when the looker
     ///   is a barbarian);
@@ -328,6 +328,10 @@ impl Game {
                     self.clear_goto(id);
                 }
                 if land && !here_ocean && !n_ocean && !fu.is_air() {
+                    // the two civilizations meet here, square by square, before the treaty
+                    // test of this square's goals (0x8491 before 0x84a7; the city goals of
+                    // the square came before the meeting, 0x82e3)
+                    self.civs_meet(civ, o2, u.x, u.y);
                     if !peace(self, civ, o2) {
                         let defender = fu.order == super::UnitOrder::Fortified && fu.info().role == AiRole::Defend;
                         let p = if o2 != 0 && fu.kind != unit_ids::DIPLOMAT && !defender { 3 } else { 1 };
@@ -456,6 +460,37 @@ mod tests {
         g.unit_look_goals(ship);
         assert_eq!(g.unit(land).goto, Some((13, 12)), "seen from the sea, a unit on land keeps its goto");
         assert_eq!(g.unit(ship).goto, None);
+    }
+
+    #[test]
+    fn a_look_meets_square_by_square_between_the_goals() {
+        // the city part of a square (0x82e3) tests the treaty before its units meet (0x8491),
+        // the attack goal after (0x84a7): a meeting that ends the treaty leaves the city
+        // without the owner's goals and gives the looker's civ its attack goal
+        use crate::rules::{unit_ids, Terrain};
+        let mut g = game();
+        let ids: Vec<_> = g.all_units().map(|u| u.id).collect();
+        for id in ids {
+            g.remove_unit(id);
+        }
+        for y in 8..13 {
+            for x in 8..14 {
+                g.map.get_mut(x, y).unwrap().terrain = Terrain::Grassland;
+                g.map.get_mut(x, y).unwrap().city = None;
+            }
+        }
+        g.make_peace(5, 6);
+        g.turn = 1; // (5 + 6 + turn) & 3 == 0: the two weigh war
+        g.add_city(5, "Pond".into(), 11, 11);
+        g.add_unit(5, unit_ids::MILITIA, 11, 11);
+        let looker = g.add_unit(6, unit_ids::LEGION, 10, 10);
+        g.reset_goals(5);
+        g.reset_goals(6);
+        assert!(g.ai_wants_war(6, 5), "with no census at all");
+        g.unit_look_goals(looker);
+        assert!(!g.treaty(5, 6), "the meeting ends the treaty");
+        assert!(!g.ai_memory.goals[5].iter().any(|o| o.kind == goal::ATTACK), "no goals on the city: the treaty stood at its test");
+        assert!(g.ai_memory.goals[6].iter().any(|o| *o == Goal { x: 11, y: 11, kind: goal::ATTACK, priority: 3 }));
     }
 
     #[test]

@@ -43,6 +43,11 @@ pub fn trace_start() {
     TRACE.with(|t| *t.borrow_mut() = Some(Vec::new()));
 }
 
+/// The number of draws recorded since `trace_start` (for the AI traces).
+pub fn trace_len() -> usize {
+    TRACE.with(|t| t.borrow().as_ref().map(|v| v.len()).unwrap_or(0))
+}
+
 /// The draws recorded since `trace_start` (recording goes on).
 pub fn trace_take() -> Vec<Draw> {
     TRACE.with(|t| t.borrow_mut().as_mut().map(std::mem::take).unwrap_or_default())

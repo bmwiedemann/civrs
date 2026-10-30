@@ -160,6 +160,9 @@ impl Game {
             let rd = self.rng.random(0x19a5a, d);
             won = self.rng.random(0x19a67, a) >= rd;
         }
+        if std::env::var("CIVRS_AI_TRACE").is_ok() {
+            eprintln!("TRACE FIGHT t{} {} {} at {:?} -> {} {} at {:?} a {a} d {d} won {won} draws {}", self.turn, attacker.owner, attacker.info().name, attacker.pos(), defender.owner, defender.info().name, (x, y), super::rng::trace_len());
+        }
         self.last_combat = Some(((attacker.x, attacker.y), (x, y), won));
         self.fight_diplomacy(attacker.owner, defender.owner);
         // a computer city whose defender loses goes on alert (city status 0x10, CIV.EXE
@@ -406,8 +409,9 @@ impl Game {
         by == self.human_slot && (self.player(by).govt as u8) < Govt::Republic as u8
     }
 
-    /// Ground unit `id` enters undefended enemy city `c`.
-    pub fn capture_city(&mut self, id: UnitId, c: CityId) -> MoveOutcome {
+    /// Ground unit `id` enters undefended enemy city `c` by a step that costs `cost` (the
+    /// move code's, 0x62b1..0x63c9, before the capture at 0x6aa9).
+    pub fn capture_city(&mut self, id: UnitId, c: CityId, cost: u8) -> MoveOutcome {
         // the captor next to the city has let its garrison out (unit_look 0x828f), so a
         // stashed unit is never captured with the record
         self.unstash_garrison(c);
@@ -453,7 +457,7 @@ impl Game {
             self.push_event(GameEvent::CityDestroyed { name, at: (city.x, city.y), by, from });
             // steal_advance runs for a destroyed city too (0x14232)
             self.capture_steal(by, from);
-            self.place_unit(id, city.x, city.y, 3);
+            self.place_unit(id, city.x, city.y, cost);
             if self.exe_quirks {
                 self.exe_destroy_sweep(from, attacker.record);
             }
@@ -496,7 +500,7 @@ impl Game {
         for h in homed {
             self.remove_unit(h);
         }
-        self.place_unit(id, city.x, city.y, 3);
+        self.place_unit(id, city.x, city.y, cost);
         self.unit_mut(id).order = UnitOrder::None;
         // the worked squares stay (capture_city 0x13d76 leaves city +0x10 alone); the city
         // routine that follows (0x1430d) fits them to the smaller size
@@ -1445,6 +1449,7 @@ mod tests {
         let mut g = flat_game();
         let c = g.add_city(2, "Loot".into(), 20, 20);
         let other = g.add_city(2, "Home".into(), 40, 30);
+        g.map.get_mut(30, 10).unwrap().terrain = crate::rules::Terrain::Grassland;
         let tiny = g.add_city(2, "Tiny".into(), 30, 10);
         g.city_mut(c).size = 3;
         g.city_mut(c).trade_routes = vec![other];

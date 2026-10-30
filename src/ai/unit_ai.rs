@@ -1413,10 +1413,11 @@ fn score_direction(g: &mut Game, c: &Ctx, k: usize, peaceful: bool) -> Option<(i
 
 // ---- carrying the commands out ----------------------------------------------------------
 
-/// A move key (0x5946 for the computer and the barbarians): a step back against the heading (heading ^ 4) by a
-/// unit with at most one other unit beside it ends its turn and its goto (0x63cc); a land unit
-/// (or an aircraft with fuel) does not join an own stack of four or more outside a city
-/// (0x6437, the move is simply not made). Returns whether a move was tried.
+/// A move key (0x5946 for the computer and the barbarians): after the step's cost and move
+/// roll, a step back against the heading (heading ^ 4) by a unit with at most one other unit
+/// beside it ends its turn and its goto (0x63cc); a land unit (or an aircraft with fuel) does
+/// not join an own stack of four or more outside a city (0x6437, the move is simply not made;
+/// `Game::ai_step`). Returns whether a move was tried.
 ///
 /// A land unit stepping onto a ship with room has been sentried with one move (0x5e22..0x5e2c)
 /// before these checks, so the step leaves it no points and a refused boarding leaves it
@@ -1426,7 +1427,6 @@ fn do_step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) ->
     let u = g.unit(id).clone();
     let (dx, dy) = d.delta();
     let (nx, ny) = (Map::wrap_x(u.x + dx), u.y + dy);
-    let boards = u.is_land() && Map::in_bounds(nx, ny) && g.map.is_ocean(nx, ny) && g.boarding_ship(&u, (nx, ny)).is_some();
     let heading = g.heading(id);
     // an attack, a bribe or a Diplomat's or Caravan's entry into a foreign city leaves the move
     // code before its step-back test and the heading store (0x5b91..0x60e4 come before
@@ -1448,44 +1448,16 @@ fn do_step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) ->
         }
         return true;
     }
-    if heading != 0xff && (heading as i32 ^ 4) == k && stack_count(g, id) <= 2 {
-        g.set_heading(id, 0xff);
-        g.clear_goto(id);
-        g.unit_mut(id).moves_left = 0;
-        if boards {
-            g.unit_mut(id).sentry_keeping_job(false);
-        }
+    // the step-back and stack tests and the heading store follow the step's cost and roll
+    // in the move code (`Game::ai_step`); a failed roll or the zone of control leaves before
+    // them (0x636f, 0x5ac7)
+    let slot = u.owner;
+    g.ai_step = Some(crate::game::movement::AiStep { k, heading, refused: false });
+    let r = step(g, id, d, sink);
+    let refused = g.ai_step.take().is_some_and(|s| s.refused);
+    if refused {
         return false;
     }
-    g.set_heading(id, k as u8);
-    // the stack limit (0x6437..0x64b8), checked after the step's cost is taken (0x62b1..0x63c9):
-    // no joining an own stack outside a city of 4 units, or of 2 when the step leaves no move
-    // points; the refused step keeps its cost. (The stack is the mover's: ds:0xd20a is the
-    // owner `unit_at` found there, 0x5a91.)
-    if let Some(first) = g.units_at(nx, ny).first().copied() {
-        let counts = u.is_land() || (u.is_air() && fuel_left(&u) != 0);
-        if g.unit(first).owner == u.owner && g.city_at(nx, ny).is_none() && counts {
-            // a partial move ends with no points whether its roll succeeds or not (0x634a)
-            let left = if boards { 0 } else { u.moves_left.saturating_sub(g.move_cost(&u, u.pos(), (nx, ny))) };
-            if stack_count(g, first) >= if left != 0 { 4 } else { 2 } {
-                g.unit_mut(id).moves_left = left;
-                if boards {
-                    // (0x5e22 `or status,1`, 0x5e27 `and 0xf3`: a job stays under it)
-                    g.unit_mut(id).sentry_keeping_job(false);
-                }
-                return false;
-            }
-        }
-    }
-    let slot = u.owner;
-    g.step_rolled_out = false;
-    let r = step(g, id, d, sink);
-    // a failed move roll or the zone of control leaves the move code before the heading
-    // store (0x636f, 0x5ac7 come before 0x6433)
-    if g.step_rolled_out || matches!(r, Err(crate::game::RuleError::Zoc)) {
-        g.set_heading(id, heading);
-    }
-    g.step_rolled_out = false;
     match r {
         // (CIV.EXE takes a barbarian leader into a foreign city through the Diplomat's
         // overlay too, 0x5baa; civrs leaves the barbarians out)
@@ -1819,7 +1791,7 @@ fn run_unit(g: &mut Game, slot: Slot, id: UnitId, first: u8, sink: &mut dyn FnMu
         let mut cmd = next_command(g, slot, id);
         if trace() {
             if let Some(u) = g.unit_opt(id) {
-                eprintln!("TRACE t{} s{} #{} {} at {:?} cmd {:?} goto {:?} order {:?} moves {} site {}", g.turn, slot, id, u.info().name, u.pos(), cmd, u.goto, u.order, u.moves_left, g.site_layer(u.x, u.y));
+                eprintln!("TRACE t{} s{} #{} {} at {:?} cmd {:?} goto {:?} order {:?} moves {} site {} d{}", g.turn, slot, id, u.info().name, u.pos(), cmd, u.goto, u.order, u.moves_left, g.site_layer(u.x, u.y), crate::game::rng::trace_len());
             }
         }
         if g.unit_opt(id).is_none() {
@@ -1835,6 +1807,9 @@ fn run_unit(g: &mut Game, slot: Slot, id: UnitId, first: u8, sink: &mut dyn FnMu
         }
         if g.unit(id).goto.is_some() {
             let d = g.goto_direction(id);
+            if trace() {
+                eprintln!("TRACE   goto_direction {d} goto now {:?}", g.unit(id).goto);
+            }
             cmd = if (1..=8).contains(&d) { dir(d as usize) } else { Command::Goto };
         } else {
             g.set_heading(id, 0xff);

@@ -182,6 +182,11 @@ impl Game {
         if o == UnitOrder::CleanPollution || (u.owner == self.human_slot && !terraform) {
             self.map.update_seen(x, y);
         }
+        // a finished road, railroad or fortress has the unit look around again (unit_look
+        // 0x53aa, 0x5268: meetings and goals as after a move)
+        if matches!(o, UnitOrder::Road | UnitOrder::Fortress) {
+            self.unit_look(id);
+        }
         Ok(())
     }
 
@@ -750,6 +755,23 @@ mod tests {
         assert!(!g.map.tile(30, 20).has(tile_flags::ROAD));
         turns(&mut g, 1);
         assert!(g.map.tile(30, 20).has(tile_flags::ROAD));
+    }
+
+    #[test]
+    fn a_finished_road_has_the_settlers_look_around() {
+        // unit_look 0x53aa after the road: a foreign unit that came next to the working
+        // Settlers is met then, not only at the next move
+        let (mut g, _) = settlers_on(Terrain::Grassland);
+        let h = g.human_slot;
+        let (a, b) = if h == 2 { (3, 4) } else if h == 3 { (2, 4) } else { (2, 3) };
+        let s = g.add_unit(a, unit_ids::SETTLERS, 31, 21);
+        g.give_order(s, UnitOrder::Road).unwrap();
+        g.add_unit(b, unit_ids::MILITIA, 32, 21);
+        assert_eq!(g.diplo(a, b) & crate::game::diplomacy::flags::CONTACT, 0);
+        g.reset_moves(a);
+        g.progress_work(a);
+        assert!(g.map.tile(31, 21).has(tile_flags::ROAD));
+        assert_ne!(g.diplo(a, b) & crate::game::diplomacy::flags::CONTACT, 0, "the two met");
     }
 
     #[test]

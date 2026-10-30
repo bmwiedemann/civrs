@@ -294,10 +294,11 @@ pub struct Game {
     /// `Player::units_lost_by_type` (delete_unit 0x8d71). Not saved.
     #[serde(skip)]
     pub counting_losses: bool,
-    /// The last step failed its move roll (0x636f), which leaves the move code before the
-    /// heading store (0x6433); read by the computer's step (`unit_ai::do_step`). Not saved.
+    /// A computer's step as `unit_ai::do_step` hands it to the move code, which runs the
+    /// computer's own tests on it after the step's cost and move roll (`movement::AiStep`).
+    /// Not saved.
     #[serde(skip)]
-    pub step_rolled_out: bool,
+    pub ai_step: Option<movement::AiStep>,
     /// The research catch-up bonus ds:0xd2de of this turn (`update_research_catch_up`); not
     /// saved, recomputed on loading.
     #[serde(skip)]
@@ -560,7 +561,7 @@ impl Game {
             historian_timer: 80 + historian,
             history: replay::History::default(),
             counting_losses: false,
-            step_rolled_out: false,
+            ai_step: None,
             catch_up: 0,
             free_research: 0,
             opening: true,

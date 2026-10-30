@@ -5,6 +5,16 @@ use super::unit::UnitOrder;
 use super::{Game, MoveOutcome, RuleError};
 use crate::rules::{self, unit_ids, Domain};
 
+/// A computer's step as `unit_ai::do_step` hands it to the move code (`Game::ai_step`): its
+/// direction 1..8 and the unit's heading before it; `refused` is set when the computer's
+/// step-back or stack test (0x63cc..0x64b8) turned it down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AiStep {
+    pub k: i32,
+    pub heading: u8,
+    pub refused: bool,
+}
+
 impl Game {
     /// Movement cost in thirds for `unit` moving from (fx,fy) to (tx,ty), ignoring legality.
     ///
@@ -103,6 +113,10 @@ impl Game {
         let slot = u.owner;
         let foreign_owner = self.owner_at(tx, ty).filter(|o| *o != slot);
 
+        // an empty foreign city a land unit takes: the step goes through the move code first,
+        // its cost, roll and the computer's tests, and the capture comes after the unit is
+        // placed (0x6a65 -> 0x6aa9)
+        let mut capture = None;
         // Interaction with foreign units/cities.
         if let Some(o) = foreign_owner {
             let hostile = self.may_fight(slot, o);
@@ -239,22 +253,7 @@ impl Game {
                 if matches!(u.kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN) {
                     return Ok(MoveOutcome::EnteredForeignCity(c));
                 }
-                let out = self.capture_city(id, c);
-                // the step has reached a goto there before the capture (0x6848..0x6878 come
-                // before 0x6aa9): the goto goes, and a computer's unit stops
-                if u.goto == Some((tx, ty)) && self.unit_opt(id).is_some() {
-                    self.clear_goto(id);
-                    self.set_heading(id, 0xff);
-                    if !self.is_human(slot) {
-                        self.unit_mut(id).moves_left = 0;
-                    }
-                }
-                // the step has made the city's old owner see the unit (0x6a83, before the
-                // capture at 0x6aa9), and the capture's placing does not clear that
-                if let Some(cu) = self.units.get_mut(id as usize).and_then(|u| u.as_mut()) {
-                    cu.seen_by |= 1 << o;
-                }
-                return Ok(out);
+                capture = Some((c, o));
             }
         }
 
@@ -268,8 +267,10 @@ impl Game {
 
         // the territory rule (CIV.EXE 0x64bb..0x65b5): a military land unit stepping onto
         // developed land of a treaty partner's city; the human is asked first ("Break
-        // treaty."), a computer's unit stops at the human's border
-        if let Some(o) = self.territory_crossed(&u, (tx, ty)) {
+        // treaty."), a computer's unit stops at the human's border (after the step's cost
+        // and roll, below)
+        let territory = self.territory_crossed(&u, (tx, ty));
+        if let Some(o) = territory {
             if self.is_human(slot) && self.treaty(slot, o) {
                 if self.treaty_break_ok != Some(o) {
                     // (the goto goes before the question, whatever the answer, 0x656d)
@@ -278,9 +279,6 @@ impl Game {
                 }
                 self.treaty_break_ok = None;
                 self.clear_diplo_flag(slot, o, super::diplomacy::flags::PEACE);
-            } else if !self.is_human(slot) && self.treaty(o, slot) {
-                self.unit_mut(id).moves_left = 0;
-                return Ok(MoveOutcome::Blocked);
             }
         }
 
@@ -324,8 +322,61 @@ impl Game {
         let moves = self.unit(id).moves_left;
         if u.is_land() && cost >= 3 && moves != 3 && self.rng.random(0x635e, cost as i32) > moves as i32 {
             self.unit_mut(id).moves_left = 0;
-            self.step_rolled_out = true;
             return Ok(MoveOutcome::Blocked);
+        }
+        // a computer's step, its cost taken and its roll passed (0x62b1..0x63c9): a step back
+        // against the heading (heading ^ 4) by a unit with at most one other unit beside it
+        // ends its turn, its goto and its heading (0x63cc..0x641d); else the heading is the
+        // step's (0x6433); a land unit (or an aircraft with fuel) joins no own stack outside a
+        // city of 4 units, or of 2 when the step leaves no move points, and the refused step
+        // keeps its cost (0x6437..0x64b8; the stack is the mover's: ds:0xd20a is the owner
+        // `unit_at` found there, 0x5a91); then the human's border stops it (0x64bb)
+        if let Some(st) = self.ai_step.filter(|_| !self.is_human(slot)) {
+            let refuse = |g: &mut Game| {
+                g.ai_step = Some(AiStep { refused: true, ..st });
+                Ok(MoveOutcome::Blocked)
+            };
+            if st.heading != 0xff && (st.heading as i32 ^ 4) == st.k && self.stack_from(id).len() <= 2 {
+                self.set_heading(id, 0xff);
+                self.clear_goto(id);
+                self.unit_mut(id).moves_left = 0;
+                return refuse(self);
+            }
+            self.set_heading(id, st.k as u8);
+            if let Some(first) = self.units_at(tx, ty).first().copied() {
+                let fuel = u.info().range as i32 - 1 - u.fuel as i32;
+                let counts = u.is_land() || (u.is_air() && fuel != 0);
+                if self.unit(first).owner == slot && self.city_at(tx, ty).is_none() && counts {
+                    // a partial move ends with no points whether its roll succeeds or not
+                    let left = if boarded.is_some() { 0 } else { moves.saturating_sub(cost) };
+                    if self.stack_from(first).len() >= if left != 0 { 4 } else { 2 } {
+                        self.unit_mut(id).moves_left = left;
+                        return refuse(self);
+                    }
+                }
+            }
+        }
+        if !self.is_human(slot) && territory.is_some_and(|o| self.treaty(o, slot)) {
+            self.unit_mut(id).moves_left = 0;
+            return Ok(MoveOutcome::Blocked);
+        }
+        if let Some((c, o)) = capture {
+            let out = self.capture_city(id, c, cost);
+            // the step has reached a goto there before the capture (0x6848..0x6878 come
+            // before 0x6aa9): the goto goes, and a computer's unit stops
+            if u.goto == Some((tx, ty)) && self.unit_opt(id).is_some() {
+                self.clear_goto(id);
+                self.set_heading(id, 0xff);
+                if !self.is_human(slot) {
+                    self.unit_mut(id).moves_left = 0;
+                }
+            }
+            // the step has made the city's old owner see the unit (0x6a83, before the
+            // capture at 0x6aa9), and the capture's placing does not clear that
+            if let Some(cu) = self.units.get_mut(id as usize).and_then(|u| u.as_mut()) {
+                cu.seen_by |= 1 << o;
+            }
+            return Ok(out);
         }
         let had_hut = target.has(tile_flags::HUT);
         // the step keeps the unit's successor in its old square's ring (0x6799): a ship's
@@ -380,7 +431,6 @@ impl Game {
         // unit_look: who sees whom, and the civilizations whose units are next to it meet (0x8491)
         let audiences = self.audience_pending;
         self.mark_sightings(id);
-        self.look_for_contacts(id);
         self.unit_look_goals(id);
         if had_hut {
             self.map.get_mut(tx, ty).unwrap().set(tile_flags::HUT, false);
@@ -707,7 +757,6 @@ impl Game {
         }
         self.reveal_garrisons_near(slot, x, y);
         self.mark_sightings(id);
-        self.look_for_contacts(id);
         self.unit_look_goals(id);
     }
 
@@ -1904,6 +1953,23 @@ mod zoc_tests {
         g.unit_mut(leg).moves_left = 3;
         assert_eq!(g.try_move(leg, Dir8::N), Ok(MoveOutcome::Blocked));
         assert_eq!(g.city(mine).owner, h);
+    }
+
+    #[test]
+    fn taking_a_city_costs_the_steps_moves() {
+        // the capture comes after the move code has taken the step's cost (0x62b1 before
+        // 0x6aa9): from a road into the city square a third of a move, so a Chariot goes on
+        let (mut g, _) = open_field();
+        let h = g.human_slot;
+        let o = if h == 3 { 4 } else { 3 };
+        let c = g.add_city(o, "Pond".into(), 41, 25);
+        g.city_mut(c).size = 2;
+        g.map.get_mut(40, 25).unwrap().set(crate::game::tile_flags::ROAD, true);
+        g.map.get_mut(41, 25).unwrap().set(crate::game::tile_flags::ROAD, true);
+        let ch = g.add_unit(h, unit_ids::CHARIOT, 40, 25);
+        g.unit_mut(ch).moves_left = 6;
+        assert_eq!(g.try_move(ch, Dir8::E), Ok(MoveOutcome::CapturedCity(c)));
+        assert_eq!(g.unit(ch).moves_left, 5);
     }
 
     #[test]
