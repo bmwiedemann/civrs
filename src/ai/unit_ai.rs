@@ -2257,7 +2257,7 @@ mod tests {
         // (0x15f26), reading the new policy, which makes Barracks the best (as CIV.EXE did in
         // a differential run from an edited CIVIL4)
         let dir = crate::save::sve::samples_dir();
-        let Some(path) = crate::save::sve::slot_file(&dir, 4) else { return };
+        let path = crate::save::sve::slot_file(&dir, 4).expect("sample save");
         let mut g = crate::save::sve::import(&path).unwrap();
         g.make_peace(1, 3);
         let berlin = g.city_at(11, 20).unwrap();

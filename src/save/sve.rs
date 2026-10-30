@@ -850,7 +850,7 @@ mod tests {
 
     fn sample(n: u8) -> Option<Game> {
         let dir = crate::save::sve::samples_dir();
-        let path = slot_file(&dir, n)?;
+        let path = slot_file(&dir, n).expect("sample save");
         Some(import(&path).expect("import"))
     }
 
@@ -937,7 +937,7 @@ mod tests {
         // the turn end sets +5 to the range and counts the turn at once (0x7597, 0x75ab): a
         // Bomber saved with 1 has flown no turn, one saved with 0 has flown one
         let dir = crate::save::sve::samples_dir();
-        let Some(path) = slot_file(&dir, 0) else { return };
+        let path = slot_file(&dir, 0).expect("sample save");
         let (mut data, map) = (std::fs::read(&path).unwrap(), std::fs::read(map_file(&path)).unwrap());
         let (c, i) = (0..8).flat_map(|c| (0..128).map(move |i| (c, i))).find(|(c, i)| data[off::UNITS + 0x600 * c + 12 * i + 3] != 0xff).unwrap();
         let at = off::UNITS + 0x600 * c + 12 * i;
@@ -971,7 +971,7 @@ mod tests {
         // replays his politics (0x252b), which finds no MET bit and drops the contact; the
         // save as written still has it
         let dir = crate::save::sve::samples_dir();
-        let Some(path) = slot_file(&dir, 0) else { return };
+        let path = slot_file(&dir, 0).expect("sample save");
         let (mut data, map) = (std::fs::read(&path).unwrap(), std::fs::read(map_file(&path)).unwrap());
         let h = Sve(&data).w(off::HUMAN) as usize & 7;
         let o = (1..8).find(|o| *o != h).unwrap();
@@ -992,7 +992,7 @@ mod tests {
         // (record 0, saved without moves) its moves before the loop looks for a unit, so with
         // neither in the view (5, 19) of the capital the loop's round takes the Militia
         let dir = crate::save::sve::samples_dir();
-        let Some(path) = slot_file(&dir, 4) else { return };
+        let path = slot_file(&dir, 4).expect("sample save");
         let (mut data, map) = (std::fs::read(&path).unwrap(), std::fs::read(map_file(&path)).unwrap());
         let at = off::UNITS + 0x600 + 12;
         assert_eq!(data[at + 3], 0xff);
@@ -1022,7 +1022,7 @@ mod tests {
 
     fn sample_bytes(n: u8) -> Option<(Vec<u8>, Vec<u8>)> {
         let dir = crate::save::sve::samples_dir();
-        let path = slot_file(&dir, n)?;
+        let path = slot_file(&dir, n).expect("sample save");
         Some((std::fs::read(&path).ok()?, std::fs::read(map_file(&path)).ok()?))
     }
 
@@ -1102,7 +1102,7 @@ mod tests {
     #[test]
    fn reads_the_load_menu_line() {
         let dir = crate::save::sve::samples_dir();
-        let Some(path) = slot_file(&dir, 3) else { return };
+        let path = slot_file(&dir, 3).expect("sample save");
         let h = read_header(&path).unwrap();
         assert_eq!(crate::ui::loadgame::slot_line(&Some(h)), "Chief Caesar, Romans/2540 BC");
     }

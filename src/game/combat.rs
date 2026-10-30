@@ -2069,7 +2069,7 @@ mod tests {
         // Catapult and re-chooses before its turn (0x18bef), as CIV.EXE did in a differential
         // run from an edited CIVIL4
         let dir = crate::save::sve::samples_dir();
-        let Some(path) = crate::save::sve::slot_file(&dir, 4) else { return };
+        let path = crate::save::sve::slot_file(&dir, 4).expect("sample save");
         let base = crate::save::sve::import(&path).unwrap();
         let berlin = base.city_at(11, 20).unwrap();
         assert_eq!(base.city(berlin).production, crate::game::Production::Improvement(imp::GRANARY));
