@@ -1707,6 +1707,11 @@ impl Screen for MapView {
                             u.order = UnitOrder::None;
                         }
                     }
+                    // the territory rule's question came after the step's cost (0x657d): a
+                    // unit left without moves is done
+                    if !self.active_takes_turn(ctx) {
+                        self.activate_next(ctx);
+                    }
                     Transition::None
                 }
             },

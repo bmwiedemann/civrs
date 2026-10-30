@@ -101,7 +101,9 @@ impl Game {
         };
         self.reveal_garrisons_near(owner, ux, uy);
         let u = self.unit(id).clone();
-        if u.moves_left == 0 {
+        // the step asked about, its cost taken: "Break treaty." goes on with it (0x6583)
+        let asked = self.treaty_step == Some((id, d)) && self.treaty_break_ok.is_some();
+        if u.moves_left == 0 && !asked {
             return Err(RuleError::NoMoves);
         }
         let (dx, dy) = d.delta();
@@ -117,6 +119,8 @@ impl Game {
         // its cost, roll and the computer's tests, and the capture comes after the unit is
         // placed (0x6a65 -> 0x6aa9)
         let mut capture = None;
+        // the treaty partner the territory rule asks the human about (0x656d..0x6583)
+        let mut question = None;
         // Interaction with foreign units/cities.
         if let Some(o) = foreign_owner {
             let hostile = self.may_fight(slot, o);
@@ -165,18 +169,10 @@ impl Game {
                 if !(acts && self.is_human(slot) && self.treaty(slot, o)) && !grab {
                     return Ok(MoveOutcome::Blocked);
                 }
-                // an attack asks in combat, after the move code's questions (below)
-                if !grab && units_here.is_empty() && self.treaty_break_ok != Some(o) {
-                    // the territory rule drops the unit's goto before it asks, whatever the
-                    // answer (0x656d)
-                    self.clear_goto(id);
-                    return Ok(MoveOutcome::BreakTreaty(o));
-                }
+                // an attack asks in combat, after the move code's questions (below); taking
+                // the empty city asks in the territory rule, after the step's cost and roll
                 if !grab && units_here.is_empty() {
-                    // the territory rule ends the treaty (0x6583); a fight ends it in combat
-                    // (the answer holds until the fight, past "Attack at N/3 strength?")
-                    self.treaty_break_ok = None;
-                    self.clear_diplo_flag(slot, o, super::diplomacy::flags::PEACE);
+                    question = Some(o);
                 }
             }
             // At war: attack if there are units; capture empty city with a ground unit.
@@ -270,16 +266,14 @@ impl Game {
         // treaty."), a computer's unit stops at the human's border (after the step's cost
         // and roll, below)
         let territory = self.territory_crossed(&u, (tx, ty));
-        if let Some(o) = territory {
-            if self.is_human(slot) && self.treaty(slot, o) {
-                if self.treaty_break_ok != Some(o) {
-                    // (the goto goes before the question, whatever the answer, 0x656d)
-                    self.clear_goto(id);
-                    return Ok(MoveOutcome::BreakTreaty(o));
-                }
-                self.treaty_break_ok = None;
-                self.clear_diplo_flag(slot, o, super::diplomacy::flags::PEACE);
-            }
+        if let Some(o) = territory.filter(|o| self.is_human(slot) && self.treaty(slot, *o)) {
+            question = question.or(Some(o));
+        }
+        // "Break treaty." answered: the step asked about has paid its cost and passed its
+        // roll already (the move code asks in the middle of the step and goes on, 0x6583)
+        let paid = asked && question.is_some() && self.treaty_break_ok == question;
+        if u.moves_left == 0 && !paid {
+            return Err(RuleError::NoMoves);
         }
 
         // Terrain legality.
@@ -314,15 +308,33 @@ impl Game {
             Domain::Air => {}
         }
 
-        let cost = self.move_cost(&u, (u.x, u.y), (tx, ty));
+        let cost = if paid { 0 } else { self.move_cost(&u, (u.x, u.y), (tx, ty)) };
         // CIV.EXE 0x634a: a land unit off a road (not road to road) with exactly one full
         // move point always gets through; with any other amount it rolls random(3 x the
         // terrain's cost), even when it has the points (a Chariot onto grassland), and the move
         // fails (and ends the unit's turn) when the roll exceeds the points left
         let moves = self.unit(id).moves_left;
         if u.is_land() && cost >= 3 && moves != 3 && self.rng.random(0x635e, cost as i32) > moves as i32 {
+            // (before the territory rule: a human's failed step asks nothing and keeps its
+            // goto, 0x636f before 0x64bb)
             self.unit_mut(id).moves_left = 0;
             return Ok(MoveOutcome::Blocked);
+        }
+        // the human's step onto a treaty partner's land or empty city (the territory rule
+        // 0x6565..0x6583): the step's cost is taken (0x62b1..0x63c9) and the goto dropped
+        // (0x656d) before he is asked, so "Cancel action." leaves the unit where it stood with
+        // those moves spent; after "Break treaty." the step goes on (`paid`) and the treaty ends
+        if let Some(o) = question {
+            if !paid {
+                let um = self.unit_mut(id);
+                um.moves_left = um.moves_left.saturating_sub(cost);
+                self.clear_goto(id);
+                self.treaty_step = Some((id, d));
+                return Ok(MoveOutcome::BreakTreaty(o));
+            }
+            self.treaty_step = None;
+            self.treaty_break_ok = None;
+            self.clear_diplo_flag(slot, o, super::diplomacy::flags::PEACE);
         }
         // a computer's step, its cost taken and its roll passed (0x62b1..0x63c9): a step back
         // against the heading (heading ^ 4) by a unit with at most one other unit beside it

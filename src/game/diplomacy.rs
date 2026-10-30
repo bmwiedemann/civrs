@@ -1124,12 +1124,57 @@ mod tests {
         g.unit_mut(me).order = UnitOrder::Goto;
         assert_eq!(g.run_auto_unit(me), AutoStop::Menu(MoveOutcome::BreakTreaty(2), Dir8::E));
         let u = g.unit(me);
-        assert_eq!((u.pos(), u.goto, u.order, u.moves_left), ((18, 11), None, UnitOrder::None, 3), "asked with its moves, the goto gone (0x656d)");
-        // "Break treaty.": the step is made, and the unit is off its goto
+        assert_eq!((u.pos(), u.goto, u.order, u.moves_left), ((18, 11), None, UnitOrder::None, 0), "asked with the step's cost spent, the goto gone (0x62b1, 0x656d)");
+        // "Break treaty.": the step is made without another cost or roll, and the unit is off
+        // its goto
+        g.treaty_break_ok = Some(2);
+        let before = g.rng.state();
+        assert_eq!(g.try_move(me, Dir8::E), Ok(MoveOutcome::Moved));
+        assert_eq!(g.rng.state(), before);
+        assert_eq!((g.unit(me).pos(), g.unit(me).goto, g.unit(me).moves_left), ((19, 11), None, 0));
+        assert!(!g.treaty(1, 2));
+    }
+
+    #[test]
+    fn the_move_roll_comes_before_the_treaty_question() {
+        // 0x634a before 0x64bb: a failed roll ends the unit's turn and asks nothing, the goto
+        // kept for the next turn; a passed one takes the step's cost before the question, which
+        // "Cancel action." keeps spent
+        use crate::game::{AutoStop, Dir8, MoveOutcome, UnitOrder};
+        let mut g = game();
+        g.set_relation(1, 2, Relation::Peace);
+        g.add_city(2, "A".into(), 20, 10);
+        g.map.get_mut(19, 11).unwrap().set(crate::game::tile_flags::ROAD, true);
+        let me = g.add_unit(1, unit_ids::CHARIOT, 18, 11);
+        let (mut failed, mut asked) = (false, false);
+        for seed in 1..64 {
+            g.rng.srand(seed * 1009);
+            g.set_relation(1, 2, Relation::Peace);
+            let u = g.unit_mut(me);
+            u.moves_left = 1;
+            u.goto = Some((21, 11));
+            u.order = UnitOrder::Goto;
+            let roll = g.rng.clone().random(0, 3);
+            let stop = g.run_auto_unit(me);
+            let u = g.unit(me);
+            if roll > 1 {
+                assert_eq!(stop, AutoStop::Done);
+                assert_eq!((u.pos(), u.goto, u.order, u.moves_left), ((18, 11), Some((21, 11)), UnitOrder::Goto, 0));
+                failed = true;
+            } else {
+                assert_eq!(stop, AutoStop::Menu(MoveOutcome::BreakTreaty(2), Dir8::E));
+                assert_eq!((u.pos(), u.goto, u.order, u.moves_left), ((18, 11), None, UnitOrder::None, 0));
+                asked = true;
+            }
+        }
+        assert!(failed && asked);
+        // by hand with a full move and more: "Cancel action." leaves the step's cost spent
+        g.unit_mut(me).moves_left = 6;
+        assert_eq!(g.try_move(me, Dir8::E), Ok(MoveOutcome::BreakTreaty(2)));
+        assert_eq!((g.unit(me).pos(), g.unit(me).moves_left), ((18, 11), 3));
         g.treaty_break_ok = Some(2);
         assert_eq!(g.try_move(me, Dir8::E), Ok(MoveOutcome::Moved));
-        assert_eq!((g.unit(me).pos(), g.unit(me).goto), ((19, 11), None));
-        assert!(!g.treaty(1, 2));
+        assert_eq!((g.unit(me).pos(), g.unit(me).moves_left), ((19, 11), 3));
     }
 
     #[test]

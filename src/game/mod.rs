@@ -241,6 +241,10 @@ pub struct Game {
     /// civilization: the next move goes ahead (CIV.EXE 0x1a3b4 returned 1). Not saved.
     #[serde(skip)]
     pub treaty_break_ok: Option<Slot>,
+    /// The human's step that the territory rule asked about after taking its cost and roll
+    /// (0x6565): with `treaty_break_ok` the same step goes on without them. Not saved.
+    #[serde(skip)]
+    pub treaty_step: Option<(UnitId, Dir8)>,
     /// The human has confirmed an attack below full strength (`MoveOutcome::WeakAttack`).
     #[serde(skip)]
     pub weak_attack_ok: bool,
@@ -434,7 +438,9 @@ pub enum MoveOutcome {
     /// The human's unit would attack, take a city of or enter the land of this treaty partner:
     /// "We have signed a peace treaty with the X! Cancel action. / Break treaty." (CIV.EXE
     /// 0x1a3b4); after "Break treaty." (and no Senate) the UI sets `Game::treaty_break_ok`
-    /// and moves again. The unit has not moved.
+    /// and moves again. The unit has not moved; for its land or empty city (the territory
+    /// rule, 0x6565) the step's cost is spent and its move roll passed, and the move again
+    /// goes on without them (`Game::treaty_step`).
     BreakTreaty(Slot),
     /// The human's unit would attack with these thirds of a move: "Attack at N/3 strength?
     /// Cancel / Attack" (CIV.EXE 0x5fc4, menu at (100,16)); after "Attack" the UI sets
@@ -550,6 +556,7 @@ impl Game {
             deferred_hut: None,
             diplo_latch: -1,
             treaty_break_ok: None,
+            treaty_step: None,
             weak_attack_ok: false,
             taxes_mark: None,
             city_attention: false,

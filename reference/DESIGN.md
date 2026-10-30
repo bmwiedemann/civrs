@@ -790,9 +790,8 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   past their tables (0x7f38 + 13x + y, ds:0xd816 + 13x + y), and finds a waypoint (73, 25)
   that civrs, starting from the unit's own block as when nothing was tried, does not (it
   steps toward the goto). Not copied (memory beyond the tables); the barbarians' later
-  draws part at t82. Also not copied: a human's step that crosses a treaty partner's border
-  is asked about ("Break treaty.") before the move roll, which CIV.EXE draws first
-  (0x634a before 0x64bb), and a failed roll there asks nothing.
+  draws part at t82. A human's step that crosses a treaty partner's border is asked about
+  after the move roll now (0x634a before 0x64bb), see "Questions inside a computer's unit loop".
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
@@ -825,8 +824,10 @@ answered. `unit_ai::move_units` (tests, tools) runs the loop to its end, with
 
 A human goto stepping onto a treaty partner's developed land (the territory rule 0x64bb) drops
 the goto before "We have signed a peace treaty" (0x656d) and asks; "Cancel action." leaves the
-unit with its moves waiting for orders (0x58c1 -> 0x6d7f -> 0x442c), "Break treaty." makes the
-step and the unit waits for orders after it. Scripts answer that question with `menu ROW`
+unit waiting for orders (0x58c1 -> 0x6d7f -> 0x442c) with the step's cost spent, "Break treaty."
+makes the step and the unit waits for orders after it. The question comes after the step's cost
+and move roll (0x62b1..0x63c9, 0x634a before 0x64bb): a failed roll ends the unit's turn with no
+question and the goto kept, so the next turn's step rolls (and asks) again. Scripts answer that question with `menu ROW`
 (src/save/actions.rs; the harness's `act` needs `menu` as rows + Return).
 
 ### City screen pixel comparison (mapshot.py with clicks)

@@ -432,9 +432,10 @@ impl Game {
     ///   at one of his cities, a Diplomat at a foreign city or unit) ends it too and comes
     ///   back as `AutoStop::Menu`; so does a treaty partner's land or unit ("We have signed
     ///   a peace treaty", `MoveOutcome::BreakTreaty`), whose land has dropped the goto before
-    ///   the question (0x656d), so after either answer the unit waits for orders with the
-    ///   moves it has left (0x6d7f -> 0x442c), one step further after "Break treaty.". A land unit whose step fails for want of moves (0x636f)
-    ///   keeps its goto for the next turn. A job kept beside the goto (a Settlers woken to
+    ///   the question (0x656d) and taken the step's cost (0x62b1), so after either answer
+    ///   the unit waits for orders with the moves it has left (0x6d7f -> 0x442c), one step
+    ///   further after "Break treaty.". A land unit whose step fails for want of moves (0x636f,
+    ///   before the territory rule) keeps its goto for the next turn and is not asked. A job kept beside the goto (a Settlers woken to
     ///   both from under its sentry bit, or an imported save) rides along, the human's step
     ///   keeping the bits (0x6810 skips him), and once the goto is over the moves left go to
     ///   the job's key.
