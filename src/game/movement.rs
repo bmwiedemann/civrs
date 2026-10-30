@@ -249,7 +249,15 @@ impl Game {
                 if matches!(u.kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN) {
                     return Ok(MoveOutcome::EnteredForeignCity(c));
                 }
-                capture = Some((c, o));
+                // CIV.EXE takes the city when the square's owner on the map layer x+160
+                // (tile_owner 0x1a68:0x136f, read at 0x65f0 before the step) is not the mover
+                // (0x6a65): a stale owner of the mover's own civ (a respawned tribe's city keeps
+                // the layer of the last unit there) lets the unit walk in and stay beside the
+                // city. Not copied (civrs takes the city) but with `exe_quirks`
+                let stale = self.exe_quirks && self.barbarian_memory.occupant.get(Map::idx(tx, ty)).is_some_and(|v| *v == slot);
+                if !stale {
+                    capture = Some((c, o));
+                }
             }
         }
 
@@ -1965,6 +1973,32 @@ mod zoc_tests {
         g.unit_mut(leg).moves_left = 3;
         assert_eq!(g.try_move(leg, Dir8::N), Ok(MoveOutcome::Blocked));
         assert_eq!(g.city(mine).owner, h);
+    }
+
+    #[test]
+    fn exe_quirks_walk_into_a_city_whose_square_the_mover_owned_last() {
+        // 0x6a65: the capture needs the square's owner on the layer x+160 (tile_owner, read at
+        // 0x65f0) to be another civ; a stale owner of the mover's civ lets it walk in
+        for quirks in [false, true] {
+            let (mut g, _) = open_field();
+            g.exe_quirks = quirks;
+            let h = g.human_slot;
+            let (a, b) = if h == 2 { (3, 4) } else if h == 3 { (2, 4) } else { (2, 3) };
+            g.set_relation(a, b, crate::game::Relation::War);
+            let c = g.add_city(b, "Pond".into(), 41, 25);
+            g.city_mut(c).size = 2;
+            g.add_city(b, "Far".into(), 30, 20);
+            g.note_occupant(a, 41, 25);
+            let leg = g.add_unit(a, unit_ids::LEGION, 40, 25);
+            g.unit_mut(leg).moves_left = 3;
+            let out = g.try_move(leg, Dir8::E);
+            if quirks {
+                assert_eq!(out, Ok(MoveOutcome::Moved));
+                assert_eq!((g.city(c).owner, g.unit(leg).pos()), (b, (41, 25)));
+            } else {
+                assert_eq!(out, Ok(MoveOutcome::CapturedCity(c)));
+            }
+        }
     }
 
     #[test]
