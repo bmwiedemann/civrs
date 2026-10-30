@@ -1777,17 +1777,23 @@ fn next_command(g: &mut Game, slot: Slot, id: UnitId) -> Command {
 }
 
 /// The commands of one unit (0x442c..0x6daa) from call `first` on: it is asked while it has
-/// moves, five times at most, the fifth answer being ' ' (0x4464, dropping goto and
-/// heading). Any command but 0 drops the goto first; with a goto the key comes from
+/// moves, five times at most since its last step (the count goes back to 0 after a step,
+/// 0x6c6c), the fifth answer being ' ' (0x4464, dropping goto and heading). Any command but 0 drops the goto first; with a goto the key comes from
 /// `goto_direction` (an unreachable goto is dropped there), without one the heading is
 /// forgotten before the key is carried out. After a 'u' the loop goes on with the unit
 /// `execute` returns; after a command that asked the human (`stop`) it stops.
 fn run_unit(g: &mut Game, slot: Slot, id: UnitId, first: u8, sink: &mut dyn FnMut(TurnStep), stop: &dyn Fn(&Game) -> bool) -> Visit {
-    for call in first..=5 {
+    let mut call = first;
+    // (a guard against units circling on railroads for ever; CIV.EXE has none)
+    for _ in 0..1024 {
+        if call > 5 {
+            break;
+        }
         let Some(u) = g.unit_opt(id) else { break };
         if u.moves_left == 0 || u.owner != slot {
             break;
         }
+        let from = u.pos();
         let mut cmd = next_command(g, slot, id);
         if trace() {
             if let Some(u) = g.unit_opt(id) {
@@ -1817,8 +1823,11 @@ fn run_unit(g: &mut Game, slot: Slot, id: UnitId, first: u8, sink: &mut dyn FnMu
         if let Some(next) = execute(g, id, cmd, sink) {
             return Visit::Unloaded(next);
         }
+        // a step the unit made sets the count back (0x6c6c), so the five calls are counted
+        // from its last step
+        call = if g.unit_opt(id).is_some_and(|u| u.pos() != from) { 1 } else { call + 1 };
         if stop(g) {
-            return Visit::Stopped(call + 1);
+            return Visit::Stopped(call);
         }
         deferred_hut(g, sink);
     }
@@ -1883,6 +1892,23 @@ mod tests {
         g.map.site.clear();
         g.ai_memory = Default::default();
         g
+    }
+
+    /// The five calls of a unit are counted from its last step (0x6c6c): a Chariot on a
+    /// road takes all six of its steps toward a far goto, not four.
+    #[test]
+    fn the_call_count_starts_again_after_each_step() {
+        let mut g = arena();
+        for x in 5..25 {
+            g.map.get_mut(x, 10).unwrap().set(crate::game::tile_flags::ROAD, true);
+        }
+        let c = g.add_unit(2, unit_ids::CHARIOT, 10, 10);
+        g.unit_mut(c).moves_left = 6;
+        g.ai_set_goto(c, (20, 10));
+        let mut sink = |_s: TurnStep| {};
+        run_unit(&mut g, 2, c, 1, &mut sink, &|_| false);
+        assert_eq!(g.unit(c).pos(), (16, 10));
+        assert_eq!(g.unit(c).moves_left, 0);
     }
 
     /// A failed move roll (0x636f) comes before the heading store (0x6433) too.
