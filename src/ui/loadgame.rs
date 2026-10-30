@@ -339,7 +339,7 @@ mod tests {
 
     #[test]
     fn the_load_menu_offers_the_original_saves() {
-        let Ok(assets) = crate::assets::AssetDir::locate(None) else { return };
+        let Ok(assets) = crate::assets::AssetDir::samples() else { return };
         if crate::save::sve::slot_file(assets.root(), 3).is_none() {
             return;
         }

@@ -2256,7 +2256,7 @@ mod tests {
         // theirs: the continent turns threatened (0x15dd9..) and Berlin re-chooses at once
         // (0x15f26), reading the new policy, which makes Barracks the best (as CIV.EXE did in
         // a differential run from an edited CIVIL4)
-        let Ok(dir) = crate::assets::AssetDir::locate(None) else { return };
+        let Ok(dir) = crate::assets::AssetDir::samples() else { return };
         let Some(path) = crate::save::sve::slot_file(dir.root(), 4) else { return };
         let mut g = crate::save::sve::import(&path).unwrap();
         g.make_peace(1, 3);
