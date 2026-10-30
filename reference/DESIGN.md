@@ -789,8 +789,17 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   "block" (42, 14), outside the 20x13 grids, reading the masks and marking the distances
   past their tables (0x7f38 + 13x + y, ds:0xd816 + 13x + y), and finds a waypoint (73, 25)
   that civrs, starting from the unit's own block as when nothing was tried, does not (it
-  steps toward the goto). Not copied (memory beyond the tables); the barbarians' later
-  draws part at t82. A human's step that crosses a treaty partner's border is asked about
+  steps toward the goto). Not reproducible: the search reads the distance of every
+  square it reaches (cells 13x + y from 546 down; the queue only takes cells whose distance
+  byte is 0), and any way from cell 560 back into the table (cells below 260, steps of at most
+  14) passes cells 288..559, which are ds:0xd936.., the 512-byte buffer of the PIC reader and
+  writer (pic_file_reader 0x1f83a, lzw_put_code 0x15cd): the end of the last picture read or
+  written (in the harness the .MAP of the last save; after a load the loaded one), not game
+  state (the masks it reads there, ds:0x803c..0x8178, are the AI statistics, which civrs has).
+  With `exe_quirks` civrs starts from the goto square as a block when that stays inside the
+  tables (a goto square with 13x + y below 260 and its search staying in them), else from the
+  start block. The barbarians' later draws part at t82; from CIV.EXE's t82 save the Sail (goto
+  Rome, re-searched every turn) parts at once (t83 at 3,2 in CIV.EXE, 7,7 in civrs). A human's step that crosses a treaty partner's border is asked about
   after the move roll now (0x634a before 0x64bb), see "Questions inside a computer's unit loop".
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
