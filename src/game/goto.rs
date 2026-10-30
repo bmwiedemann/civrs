@@ -520,7 +520,9 @@ impl Game {
             // CIV.EXE returns the goto's y here, true unless it is row 0 (0x1e18a)
             return (goto.1 != 0, goto);
         };
-        // a target without a block of its own leaves the start block as the target (0x1e19d)
+        // a target without a block of its own leaves the start block as the target (0x1e19d;
+        // after a tried neighbour block, goto_block_cost 0x1ec12 has left the goto square in
+        // ds:0x6590/0x6592 and CIV.EXE searches from that "block", past its tables: not copied)
         let target = self.block_entry(goto.0, goto.1, sea).unwrap_or(start);
         let mut dist = vec![0u8; (BW * BH) as usize];
         let mut qx = [0i32; 256];
