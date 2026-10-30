@@ -126,12 +126,17 @@ impl Game {
                 continue;
             }
             let k = continent_index(t.continent);
-            c.squares[k] += 1;
             let (x, y) = (i % rules::MAP_W, i / rules::MAP_W);
+            // the world generator's count leaves out the two rows at either pole and gives
+            // index 15 (every smaller continent) 1 (overlay 7 0x97b1)
+            if (2..48).contains(&y) && k < 15 {
+                c.squares[k] += 1;
+            }
             if (2..78).contains(&x) && (2..48).contains(&y) && matches!(t.terrain, Terrain::Plains | Terrain::Grassland | Terrain::River) {
                 c.sites[k] += 1;
             }
         }
+        c.squares[15] = 1;
         c
     }
 
@@ -150,8 +155,7 @@ impl Game {
         m.cities[s] = live.cities[s];
         m.strength[s] = live.strength[s];
         m.citizens[s] = live.citizens[s];
-        m.squares = live.squares;
-        m.sites = live.sites;
+        (m.squares, m.sites) = self.ai_memory.world_counts.unwrap_or((live.squares, live.sites));
         let h = self.human_slot as usize;
         let faces = h < 8 && (1..15).any(|k| m.defence[s][k] != 0 && m.cities[h][k] > 1);
         m.faces_human = m.faces_human & !(1 << s) | (faces as u8) << s;

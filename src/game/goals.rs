@@ -105,6 +105,12 @@ pub struct AiMemory {
     pub ranks: [u8; 8],
     /// ds:0x8078: the last power ranking turned the world against the human.
     pub gang_up: bool,
+    /// ds:0xdcfe and ds:0xb1ee as the world generator left them (`World::land_sizes`,
+    /// `World::sites`; overlay 7 writes them, nothing in play): the land squares and the
+    /// site squares of each continent number, which the census reads (`Census::squares`,
+    /// `Census::sites`). None for a game from a save before version 31, which counts them
+    /// on the map.
+    pub world_counts: Option<([i32; 16], [i32; 16])>,
 }
 
 impl Default for AiMemory {
@@ -123,6 +129,7 @@ impl Default for AiMemory {
             census: Default::default(),
             ranks: [0; 8],
             gang_up: false,
+            world_counts: None,
         }
     }
 }

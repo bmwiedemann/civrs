@@ -75,7 +75,10 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// CIV.EXE status bits (u8: 0x02 road, 0x40 irrigation, 0x80 mine, 0xc0 fortress, 0x82
 /// pollution, 0x04 fortifying, 0x08 fortified, 0 for none or an empty slot); older saves keep
 /// no order under a sentry.
-pub const VERSION: u16 = 30;
+/// 31: then by the world generator's continent tables (`AiMemory::world_counts`): a byte 1
+/// and 16 land sizes and 16 site counts (i16 LE), or a byte 0; older saves count them on the
+/// map.
+pub const VERSION: u16 = 31;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -202,6 +205,15 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     data.extend_from_slice(&g.map.claims);
     data.extend_from_slice(&(g.units.len() as u32).to_le_bytes());
     data.extend(g.units.iter().map(|u| u.as_ref().filter(|u| u.order == UnitOrder::Sentry).and_then(|u| u.sentry_job).map_or(0, job_bits)));
+    match g.ai_memory.world_counts {
+        Some((land, sites)) => {
+            data.push(1);
+            for v in land.iter().chain(&sites) {
+                data.extend_from_slice(&(*v as i16).to_le_bytes());
+            }
+        }
+        None => data.push(0),
+    }
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -318,6 +330,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     let mut links: Option<Vec<u16>> = None;
     let mut claims: Option<Vec<u8>> = None;
     let mut sentry_jobs: Option<Vec<u8>> = None;
+    let mut world_counts: Option<([i32; 16], [i32; 16])> = None;
     // version 14: the tribe names, after the counters
     if ver >= 14 {
         let mut at = counters + 112 * g.players.len();
@@ -404,6 +417,11 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
                                                 if let Some(n) = rest.get(at..at + 4).filter(|_| ver >= 30) {
                                                     let n = u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize;
                                                     sentry_jobs = rest.get(at + 4..at + 4 + n).map(|b| b.to_vec());
+                                                    at += 4 + n;
+                                                    if let Some(b) = rest.get(at..at + 65).filter(|b| ver >= 31 && b[0] == 1) {
+                                                        let w = |k: usize| i16::from_le_bytes([b[1 + 2 * k], b[2 + 2 * k]]) as i32;
+                                                        world_counts = Some((std::array::from_fn(w), std::array::from_fn(|k| w(16 + k))));
+                                                    }
                                                 }
                                             }
                                         }
@@ -491,6 +509,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
             }
         }
     }
+    g.ai_memory.world_counts = world_counts;
     match census {
         Some(b) => read_census_trailer(&mut g, b),
         None => {
@@ -625,8 +644,7 @@ fn read_census_trailer(g: &mut Game, b: &[u8]) {
     }
     m.census.faces_human = b[8 * CENSUS_TRAILER];
     m.gang_up = b[8 * CENSUS_TRAILER + 1] != 0;
-    m.census.squares = live.squares;
-    m.census.sites = live.sites;
+    (m.census.squares, m.census.sites) = m.world_counts.unwrap_or((live.squares, live.sites));
 }
 
 /// First discoverers for a save from before version 15: the first civilization 1..7 that
@@ -1280,6 +1298,10 @@ mod tests {
         let l = super::load_game(&path).unwrap();
         assert_eq!(l.ai_memory.census, g.ai_memory.census);
         assert_eq!((l.ai_memory.ranks, l.ai_memory.gang_up), (g.ai_memory.ranks, true));
+        // the world generator's continent tables (v31) are the census's squares and sites
+        assert!(g.ai_memory.world_counts.is_some());
+        assert_eq!(l.ai_memory.world_counts, g.ai_memory.world_counts);
+        assert_eq!(Some((g.ai_memory.census.squares, g.ai_memory.census.sites)), g.ai_memory.world_counts);
         // a version-19 file takes the census and ranking of the moment
         let mut data = std::fs::read(&path).unwrap();
         data[4..6].copy_from_slice(&19u16.to_le_bytes());

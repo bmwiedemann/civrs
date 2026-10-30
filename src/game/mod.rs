@@ -595,6 +595,7 @@ impl Game {
     /// advances match the original's for the same seed. Every civ starts without gold, the
     /// human with 50 at Chieftain (o 0x0476d).
     fn place_starting_units(&mut self, slots: &[(u8, u8, (i32, i32))], world: &mapgen::World, wr: &mut rng::MsRand) {
+        self.ai_memory.world_counts = Some((world.land_sizes.map(i32::from), world.sites.map(i32::from)));
         for &(slot, _, (x, y)) in slots {
             // create_unit (o 0x4f40), which looks around (0x8cd3)
             self.create_unit(slot, rules::unit_ids::SETTLERS, x, y);

@@ -61,6 +61,8 @@ mod off {
     pub const CAPITAL_X: usize = 0x0768;
     pub const TRIBE: usize = 0x0778;
     pub const CENSUS: usize = 0x0788;
+    pub const LAND_SIZES: usize = 0x0a88;
+    pub const SITES: usize = 0x0b88;
     pub const POWER: usize = 0x0ba8;
     pub const CITIES: usize = 0x1508;
     pub const UNITS: usize = 0x26c0;
@@ -621,8 +623,10 @@ fn import_slot_with(data: &[u8], map_pic: &[u8], moves_back: bool, resume: bool)
             m.census.strength[c] = s.civ_w(off::STRENGTH, c) as i32;
             m.ranks[c] = s.civ_w(off::RANKS, c).clamp(0, 7) as u8;
         }
-        m.census.squares = live.squares;
-        m.census.sites = live.sites;
+        // ds:0xdcfe (SVE 0x0a88) and ds:0xb1ee (0x0b88), as the world generator left them
+        let table = |at: usize| -> [i32; 16] { std::array::from_fn(|k| s.w(at + 2 * k) as i32) };
+        m.world_counts = Some((table(off::LAND_SIZES), table(off::SITES)));
+        (m.census.squares, m.census.sites) = m.world_counts.unwrap_or((live.squares, live.sites));
         let h = g.human_slot as usize;
         m.census.faces_human = (0..8).filter(|&c| h < 8 && (1..15).any(|k| m.census.defence[c][k] != 0 && m.census.cities[h][k] > 1)).fold(0, |f, c| f | 1 << c);
     }
@@ -889,6 +893,20 @@ mod tests {
         let first = &g.history.records()[0];
         assert_eq!((first.turn, first.kind, first.args[0]), (0, crate::game::replay::kind::CITY, 1));
         assert_eq!(g.history.name(first.args[1]), "Rome");
+    }
+
+    #[test]
+    fn imports_the_world_generators_continent_tables() {
+        // ds:0xdcfe (SVE 0x0a88) and ds:0xb1ee (0x0b88), which the census reads as they are:
+        // the land sizes leave out the two rows at either pole, as civrs's map count does
+        for n in [0u8, 1, 3, 4] {
+            let (Some(g), Some((sve, _))) = (sample(n), sample_bytes(n)) else { continue };
+            let w = |at: usize| -> [i32; 16] { std::array::from_fn(|k| i16::from_le_bytes([sve[at + 2 * k], sve[at + 2 * k + 1]]) as i32) };
+            let (land, sites) = (w(0x0a88), w(0x0b88));
+            assert_eq!(g.ai_memory.world_counts, Some((land, sites)), "CIVIL{n}");
+            assert_eq!((g.ai_memory.census.squares, g.ai_memory.census.sites), (land, sites), "CIVIL{n}");
+            assert_eq!(g.live_census().squares[1..15], land[1..15], "CIVIL{n}");
+        }
     }
 
     #[test]
