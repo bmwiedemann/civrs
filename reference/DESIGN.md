@@ -762,6 +762,37 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   0xffff the loop ends at once (another mode -1 run in the same game placed food first), so
   the citizens go by the weighted loop alone. Not reproducible without CIV.EXE's stack;
   like the fortress's stale [bp-0x3e] above, not copied.
+- A customized new game (2026-10-30): `civrs --dump state:N:SEED --world L,T,C,A --level D`
+  starts the seed's game on a Customize World world (land mass, temperature, climate, age,
+  each 0..2 as the menu rows) at difficulty D; a copy of sve_diff.py that answers the title
+  menu with Customize World (after the intro's Return, the menus start on row 1) and the
+  difficulty menu with D x Down drives CIV.EXE the same way (King has no first-turn help
+  overlay). Seed 13, small land mass, King, the human founding Rome at once and fortifying
+  what it builds: the computers ship Settlers from t110 on. The run found and fixed: a step
+  the zone of control refuses drops the goto (0x5b44); a unit taking the city of its goto
+  drops the goto there (0x6848 before 0x6aa9); a look meets the civilization of each
+  neighbour square in turn between that square's goals (0x8491: the city goals of the square
+  before, its attack goal after, so a treaty signed or ended there counts for the rest of
+  the look); the computer's step-back, heading and stack tests and the border rule follow
+  the step's cost and move roll (0x63cc..0x64bb), and so does the capture of an empty city
+  (its cost is the step's, not a full move: a Chariot from a road goes on); a finished road
+  or fortress has the Settlers look around (0x53aa, 0x5268); a barbarian goto is a Goto
+  order; a computer unit's five calls count from its last step (0x6c6c); and the harness
+  plays with Instant Advice off, which the production menu's valuation now reads (with it
+  on, choose_production values the new menu twice, 0xb9ed -> 0xaa23). Probes in patched
+  copies of CIV.EXE (logging records in RANDOM.LOG from ai_add_goal 0x187e3, from the goto
+  key of move_units 0x4be3 and from its call count 0x4464) showed each. With them the draws
+  agree to t81 (was t9). Left: a barbarian Sail's goto to Rome, inland, at t72. Its block
+  search finds no sea block for the target (goto_block_entry 0x1e522 fails), and every
+  goto_block_cost 0x1ec12 it tried for the target's neighbour blocks has overwritten
+  ds:0x6590/0x6592 with the goto square, so 0x1e0dc runs its breadth-first search from
+  "block" (42, 14), outside the 20x13 grids, reading the masks and marking the distances
+  past their tables (0x7f38 + 13x + y, ds:0xd816 + 13x + y), and finds a waypoint (73, 25)
+  that civrs, starting from the unit's own block as when nothing was tried, does not (it
+  steps toward the goto). Not copied (memory beyond the tables); the barbarians' later
+  draws part at t82. Also not copied: a human's step that crosses a treaty partner's border
+  is asked about ("Break treaty.") before the move roll, which CIV.EXE draws first
+  (0x634a before 0x64bb), and a failed roll there asks nothing.
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
