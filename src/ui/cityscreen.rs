@@ -366,7 +366,7 @@ impl CityScreen {
         // whatever the options, twice with Instant Advice (Game::change_menu_advice); a
         // "more..." page values once more (0xba3f -> 0xaa23)
         let advice = if first { ctx.game_mut().change_menu_advice(self.city) } else { ctx.game_mut().change_advice(self.city) };
-        let advice = advice.ok().filter(|_| ctx.game().options.instant_advice);
+        let advice = advice.ok().filter(|_| ctx.game().options.instant_advice && first);
         let g = ctx.game();
         let c = g.city(self.city);
         let y = g.city_yield(self.city);
@@ -412,12 +412,15 @@ impl CityScreen {
             })
             .collect();
         // with Instant Advice the advisors name the best unit ([bp-0xc]) and the best
-        // improvement ([bp-0x48]) of the valuation (0xb8b4..0xb9ed)
+        // improvement ([bp-0x48]) of the valuation (0xb8b4..0xb9ed), drawn once: a "more..."
+        // page comes back to 0xaa23 with [bp-0x4] set and keeps the notes on the screen
         let g = ctx.game();
         let c = g.city(self.city);
-        let military = advice.as_ref().and_then(|a| a.unit).map(|(p, _)| advisor_lines(ctx, "Military Advisor:", p.name()));
-        let domestic = advice.as_ref().and_then(|a| a.improvement).map(|(p, _)| advisor_lines(ctx, "Domestic Advisor:", p.name()));
-        self.advisors = Some((military, domestic));
+        if first {
+            let military = advice.as_ref().and_then(|a| a.unit).map(|(p, _)| advisor_lines(ctx, "Military Advisor:", p.name()));
+            let domestic = advice.as_ref().and_then(|a| a.improvement).map(|(p, _)| advisor_lines(ctx, "Domestic Advisor:", p.name()));
+            self.advisors = Some((military, domestic));
+        }
         let title = format!("What shall we build in {}?", c.name);
         // the small font (CIV.EXE's font 2) from 21 lines on and on either page (0xb9fe)
         let small = 1 + all.len() > 20 || page != ChangePage::All;
@@ -1232,14 +1235,18 @@ impl Screen for CityScreen {
 
     fn resume(&mut self, result: DialogResult, ctx: &mut UiContext) -> Transition {
         let pending = std::mem::replace(&mut self.pending, Pending::None);
-        self.advisors = None;
+        let advisors = self.advisors.take();
         if ctx.game().city_opt(self.city).is_none() {
             return Transition::Pop(DialogResult::Done);
         }
         let r = match (pending, result) {
             (Pending::Change(list, next), DialogResult::Choice(i)) => match list.get(i) {
                 Some(Some(p)) => ctx.game_mut().set_production(self.city, *p),
-                Some(None) => return self.change_page(ctx, next, false),
+                Some(None) => {
+                    // the notes stay as the first page drew them ([bp-0x4] = 1, 0xb9ed)
+                    self.advisors = advisors;
+                    return self.change_page(ctx, next, false);
+                }
                 None => Ok(()),
             },
             (Pending::Buy, DialogResult::Yes) => ctx.game_mut().buy(self.city),
@@ -1466,6 +1473,23 @@ mod tests {
         cs.handle_event(&key(Key::Esc), &mut ctx);
         assert_eq!(cs.tile_cursor, None);
         assert!(ctx.game().city_opt(cs.city).is_some());
+    }
+
+    #[test]
+    fn a_more_page_keeps_the_first_pages_advisor_notes() {
+        // 0xb899 draws the notes while [bp-0x4] is 0 and sets it (0xb9ed); "more..." goes back
+        // to 0xaa23 (0xba3f) and values the menu again without drawing them
+        let Some((mut ctx, mut cs)) = screen() else { return };
+        ctx.game_mut().options.instant_advice = true;
+        let _ = cs.change_page(&mut ctx, ChangePage::Units, true);
+        assert!(cs.advisors.is_some());
+        let shown = Some((Some(vec!["Military Advisor:".to_string(), "first".to_string()]), None));
+        cs.advisors = shown.clone();
+        let Pending::Change(list, _) = &cs.pending else { panic!("no menu") };
+        let more = list.iter().position(|p| p.is_none()).unwrap();
+        assert!(matches!(cs.resume(DialogResult::Choice(more), &mut ctx), Transition::Push(_)));
+        assert!(matches!(cs.pending, Pending::Change(_, ChangePage::Units)));
+        assert_eq!(cs.advisors, shown);
     }
 
     #[test]
