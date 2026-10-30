@@ -1934,6 +1934,33 @@ mod tests {
         assert!(failed > 0);
     }
 
+    /// An empty foreign city is taken after the step-back test (0x63cc..0x641d come before the
+    /// capture at 0x6a65..0x6aa9): a lone unit stepping back against its heading into it stops
+    /// short, its turn, goto and heading gone; with two others beside it, it takes the city.
+    #[test]
+    fn a_step_back_into_an_empty_city_is_refused() {
+        let mut g = arena();
+        let s = ai(&g);
+        let o = (2..5).find(|t| *t != s && *t != g.human_slot).unwrap();
+        g.set_relation(s, o, crate::game::Relation::War);
+        let c = g.add_city(o, "Pond".into(), 11, 10);
+        g.city_mut(c).size = 2;
+        g.add_city(o, "Far".into(), 30, 20);
+        let a = g.add_unit(s, unit_ids::LEGION, 10, 10);
+        g.unit_mut(a).goto = Some((12, 10));
+        g.set_heading(a, Dir8::W as u8 + 1);
+        assert!(!do_step(&mut g, a, Dir8::E, &mut |_| {}));
+        let u = g.unit(a);
+        assert_eq!((u.pos(), u.moves_left, u.goto, g.heading(a)), ((10, 10), 0, None, 0xff));
+        assert_eq!(g.city(c).owner, o);
+        g.add_unit(s, unit_ids::MILITIA, 10, 10);
+        g.add_unit(s, unit_ids::MILITIA, 10, 10);
+        g.unit_mut(a).moves_left = 3;
+        g.set_heading(a, Dir8::W as u8 + 1);
+        assert!(do_step(&mut g, a, Dir8::E, &mut |_| {}));
+        assert_eq!(g.city(c).owner, s);
+    }
+
     /// An attack leaves the move code before the heading store (0x6433): the attacker keeps
     /// the heading of its last step, a plain step stores its direction.
     #[test]
