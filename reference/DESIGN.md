@@ -756,6 +756,12 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   beyond the window keeps the last grid of the same waypoint (0x1e765: a one-move unit's
   prices then send a Legion through a swamp), and the first-city test reads the owner byte
   of free city records (o 0x1b5df): a slot that lost more than one city gets no Palace.
+  The new game continued from its t100 save matches t101..t107; then a computer city that
+  built Settlers re-chose with its food-first placement skipped: process_city reads the
+  local [bp-0x108] at 0xd81d before anything sets it, and when the stack word left there is
+  0xffff the loop ends at once (another mode -1 run in the same game placed food first), so
+  the citizens go by the weighted loop alone. Not reproducible without CIV.EXE's stack;
+  like the fortress's stale [bp-0x3e] above, not copied.
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
