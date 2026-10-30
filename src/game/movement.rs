@@ -573,13 +573,14 @@ impl Game {
         // job's key after)
         if !human && !u.is_air() {
             if u.order == UnitOrder::Sentry || u.order == UnitOrder::Fortified || u.order == UnitOrder::Fortify || u.order.is_work() {
-                u.order = UnitOrder::None;
+                // (a goto kept beside a job, `ai_set_goto`, is all that is left)
+                u.order = if u.goto.is_some() { UnitOrder::Goto } else { UnitOrder::None };
             }
             u.sentry_job = None;
         }
-        // a move resets the work counter (unit +5 = the type's fuel, 0x6d00) and who has seen
-        // the unit (+9, 0x67e4)
-        u.order_turns = 0;
+        // a move resets who has seen the unit (+9, 0x67e4) but not the work counter (+5): only
+        // an aircraft's landing writes it (the fuel, 0x6a0e, 0x6d00), so a Settlers' count goes
+        // on at the next job
         u.seen_by = 0;
         let owner = u.owner;
         self.note_occupant(owner, x, y);

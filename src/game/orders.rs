@@ -813,8 +813,10 @@ mod tests {
     }
 
     #[test]
-    fn work_counter_carries_over_to_another_job_and_a_move_resets_it() {
-        // the counter (unit +5) is only zeroed by a finished or refused job and by a move
+    fn work_counter_carries_over_to_another_job_and_a_move() {
+        // the counter (unit +5) is only zeroed by a finished or refused job; a move keeps it
+        // (only an aircraft's landing writes it, 0x6a0e / 0x6d00; CIV.EXE's seed-13 run has
+        // a computer's Settlers keep 4 across its goto steps)
         let (mut g, s) = settlers_on(Terrain::Plains);
         g.map.get_mut(30, 19).unwrap().terrain = Terrain::River;
         g.give_order(s, UnitOrder::Mine).unwrap();
@@ -826,9 +828,11 @@ mod tests {
         assert!(g.map.tile(30, 20).has(tile_flags::IRRIGATION));
         assert_eq!((g.unit(s).order, g.unit(s).order_turns), (UnitOrder::None, 0));
         g.give_order(s, UnitOrder::Mine).unwrap();
+        let count = g.unit(s).order_turns;
+        assert!(count > 0);
         // (the human's step keeps the job bits, 0x6810 being the computer's)
         g.place_unit(s, 31, 20, 0);
-        assert_eq!((g.unit(s).order, g.unit(s).order_turns), (UnitOrder::Mine, 0));
+        assert_eq!((g.unit(s).order, g.unit(s).order_turns), (UnitOrder::Mine, count));
     }
 
     #[test]

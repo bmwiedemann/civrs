@@ -758,6 +758,13 @@ pub fn state_text(g: &Game) -> String {
         let _ = writeln!(o, "{k}.lost_per_type {:?}", &p.units_lost_by_type[..]);
         let _ = writeln!(o, "{k}.cities {}", g.all_cities().filter(|c| c.owner == p.slot).count());
         let _ = writeln!(o, "{k}.diplo {:04x?}", &p.diplo[..]);
+        // with CIVRS_DUMP_AI in the environment also the continent policies and census rows
+        // of the civ's last AI turn (SVE 0x0788.., ds:0xe698), for tracing the AI's choices
+        if std::env::var_os("CIVRS_DUMP_AI").is_some() {
+            let _ = writeln!(o, "{k}.policies {:?}", g.ai_memory.policies[p.slot as usize]);
+            let c = &g.ai_memory.census;
+            let _ = writeln!(o, "{k}.census def {:?} att {:?} cities {:?}", &c.defence[p.slot as usize], &c.attack[p.slot as usize], &c.cities[p.slot as usize]);
+        }
         if p.slot > g.human_slot {
             // ds:0xddfe of the civs after the human: their last turn's cities and wonders
             let _ = writeln!(o, "{k}.score_acc {}", g.score_acc[p.slot as usize]);

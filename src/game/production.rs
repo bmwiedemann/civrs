@@ -395,11 +395,16 @@ impl Game {
         for (k, c) in self.player(slot).unit_counter.iter().enumerate() {
             owned[k] = *c as i32;
         }
-        for u in self.all_units().filter(|u| u.owner == slot) {
+        // (CIV.EXE compares the number of every unit's square, 0x1a68:0x1948, with the city's
+        // continent, so units at sea on the ocean body of that number count too, 0xb0c1;
+        // civrs counts the land units of the continent but for `exe_quirks`)
+        let mine: Vec<(i32, i32, u8)> = self.all_units().filter(|u| u.owner == slot).map(|u| (u.x, u.y, u.kind)).collect();
+        for (x, y, kind) in mine {
             units += 1;
-            let t = self.map.tile(u.x, u.y);
-            if t.is_land() && continent_index(t.continent) == k {
-                here[u.kind as usize] += 1;
+            let t = self.map.tile(x, y);
+            let on = if self.exe_quirks { continent_index(self.continent_exe(x, y)) == k } else { t.is_land() && continent_index(t.continent) == k };
+            if on {
+                here[kind as usize] += 1;
             }
         }
         for other in self.all_cities().filter(|o| o.owner == slot) {
