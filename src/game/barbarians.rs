@@ -408,9 +408,10 @@ impl Game {
             if d < 6 || !Map::in_bounds(x, y) {
                 continue;
             }
-            // the civ passed to enemy_adjacent (0x2f00) is an uninitialised local; any unit of
-            // a civilisation next to the square is taken to count (unverified)
-            if Map::neighbours8(x, y).any(|(nx, ny)| self.map.is_land(nx, ny) && self.owner_at(nx, ny).map(|o| o != 0).unwrap_or(false)) {
+            // the civ passed to enemy_adjacent (0x2f00) is game_turn's [bp-0x2], set only by
+            // its later loops over the civs 1..7 (0x312e, 0x329b), which leave it at 8 for the
+            // next turn: any unit next to the square counts, the barbarians' own too
+            if Map::neighbours8(x, y).any(|(nx, ny)| self.map.is_land(nx, ny) && self.owner_at(nx, ny).is_some()) {
                 continue;
             }
             if !self.map.is_land(x, y) || self.owner_at(x, y).is_some() {
