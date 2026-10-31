@@ -188,25 +188,26 @@ impl Game {
     /// told), and the Great Library's owner gets the advance free once two civs 1..7 know it
     /// (0xc7fa, a recursive grant from -2). The research goal is left alone.
     pub fn grant_advance(&mut self, slot: Slot, a: AdvanceId, source: AdvanceSource) -> bool {
-        if a == rules::advance_ids::FUTURE_TECH {
-            self.player_mut(slot).future_techs += 1;
-            if self.turn > 0 {
-                self.player_mut(slot).research_count += 1;
-            }
-            return true;
-        }
-        if a as usize >= rules::ADVANCES.len() || !rules::is_real(a) {
-            return false;
-        }
-        if self.player(slot).knows(a) {
-            return false;
-        }
-        // the source is kept for the Civilopedia (CIV.EXE 0xc35f)
-        if let Some(s) = self.player_mut(slot).advance_source.get_mut(a as usize) {
-            *s = source.code();
-        }
+        // Future Technology (0x47) has no bit or source (0xc31b) and goes on like any other
+        // advance: the research count, the messages, the first discoverer (es:0x4b0, read
+        // by the Chieftain bonus of the next Future Technology, 0x12c93) and the replay
+        let future = a == rules::advance_ids::FUTURE_TECH;
         let new_to_world = self.first_discoverer(a) == 0;
-        self.player_mut(slot).learn(a);
+        if future {
+            self.player_mut(slot).future_techs += 1;
+        } else {
+            if a as usize >= rules::ADVANCES.len() || !rules::is_real(a) {
+                return false;
+            }
+            if self.player(slot).knows(a) {
+                return false;
+            }
+            // the source is kept for the Civilopedia (CIV.EXE 0xc35f)
+            if let Some(s) = self.player_mut(slot).advance_source.get_mut(a as usize) {
+                *s = source.code();
+            }
+            self.player_mut(slot).learn(a);
+        }
         // the goal stays (ds:0x19be): the human's next city sees it learned and asks for
         // another, even with no beakers stored (0x12bf1); `choose_research` drops it itself
         // advances given at the start change nothing else (0xc364)
@@ -410,8 +411,14 @@ mod tests {
             g.grant_advance(slot, a, AdvanceSource::Discovered);
         }
         assert_eq!(g.researchable(slot), vec![rules::advance_ids::FUTURE_TECH]);
+        let count = g.player(slot).research_count;
+        assert_eq!(g.first_discoverer(rules::advance_ids::FUTURE_TECH), 0);
         g.grant_advance(slot, rules::advance_ids::FUTURE_TECH, AdvanceSource::Discovered);
         assert_eq!(g.player(slot).future_techs, 1);
+        // counted and logged as the first discoverer like any advance (0xc743)
+        assert_eq!(g.player(slot).research_count, count + 1);
+        assert_eq!(g.first_discoverer(rules::advance_ids::FUTURE_TECH), slot);
+        assert!(!g.player(slot).knows(rules::advance_ids::FUTURE_TECH));
     }
 
     /// A human city and a computer player that is not the human.
