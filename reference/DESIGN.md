@@ -911,6 +911,35 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   Submarine's sea goto). CIVIL3 continued from CIV.EXE's t413: parts at once (t414) on the
   Sail of Chapultepec that releases fortified units by the size of city [bp-0xc], an
   uninitialised local of ai_unit_command (0x16e9a; civrs takes the ship's city).
+  Round w93 (2026-10-31, scratchpad w93; probe9..12.py log the local search's waypoint and
+  cache (0x1dcb4), the garrison checks 0x430d and 0x131fa (the latter without a frame, so
+  the record names process_city's caller), unit_look's garrison release 0x828e). LATE2's
+  t168 Ironclad and SHIP2's t202 Cruiser/Battleship are the picture-buffer block search: a
+  sea goto onto a land square whose block has no sea links, entered from a probed
+  neighbour, floods from the goto square taken as a block (13 x + y up to ~600), reading
+  link masks past ds:0x7f38 and "visited" bytes past ds:0xd816, i.e. the PIC buffer
+  ds:0xd936 (CIV.EXE's waypoint for the Ironclad was (25, 21), 3 blocks away). SPACE's
+  t182 Submarine was a rule: a new sea or air goal sends only the first unit of its role in
+  reach (0x18901); SPACE's t185 purchase is the exe_quirks [bp-0xe8] (0xec84 reads the
+  improvement id 0xe49e left). The human's first unit: messages about a square move the
+  map (draw_map_view: pollution, meltdown, uprising, foreign disaster, revolt, bribe), and a
+  foreign move scrolls by the seen bits before the step (0x6721); CIVIL4-late (T350,
+  t351-t369) and CIVIL3-late (T405, t406-t413) now agree in every field. Every quiet run of
+  the city routine ends at the garrison check (0x125d6 -> 0x131d2): civ_score's runs (si
+  0x1c * index, o 0x1c1be) stash the garrison an audience's look let out. Staging notes: a
+  `city:..:prod=` edit leaves the per-type production counts (SVE 0x318 + 0x38 civ + 2 type,
+  ds:0xd308) stale, which the AI's choice reads (w93/mkship.py corrects them). Runs: SHIP2
+  (SPACE's t200, English ship complete but one module, Apollo, the Oracle in London, the
+  human Democratic and researching Religion, at war with the English: module placed,
+  forced-or-chosen launch, Oracle obsolete) agrees t201 in fields, draws to t203; SHIP3 (the
+  same with the English a Democracy: the audience's Senate makes them a Monarchy, o 0x6973)
+  t201 too; both part at t202 on English ships' block searches toward a German or Aztec
+  city (any goto square from x = 20 on lies past the 20x13 tables, so this limits late sea
+  wars); ARRIVE
+  (CIVIL3-late with an Aztec ship launched, arriving 1859) agrees t406-t408 and both end the
+  game in the same turn. Left: the harness key for record 0x80 with a goto on the next
+  civ's record 0 (0x4bce: goto_direction for the human's civ moves that unit; not seen in
+  the stored runs), the human's Senate (the harness answers yes to peace).
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
