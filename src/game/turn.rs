@@ -879,7 +879,9 @@ impl Game {
                 self.push_event(if h.disorder { GameEvent::Disorder(c) } else { GameEvent::DisorderEnded(c) });
             }
             if !human {
-                let next = self.ai_production(c);
+                // the city's own unit is taken off the count of cities building it first
+                // (0x12756, 0x128f4), as in city_rechoose_production
+                let next = self.ai_rechoose(c);
                 self.city_mut(c).production = next;
                 asked = true;
                 if self.exe_quirks {
