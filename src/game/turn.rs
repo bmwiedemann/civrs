@@ -776,6 +776,9 @@ impl Game {
         // before the production (ds:0x6546, read at 0xf98e)
         self.abroad_carry = Some((c, totals.abroad));
         self.note_trade(c);
+        // the split's taxes and science (ds:0xe17a, ds:0x70e6), which the city collects after
+        // its moods have changed its celebration flag, so with the tiles' yields of the turn
+        let split = self.city_yield_raw(c);
         let h = self.city_happiness(c);
         let military = self.disband_unsupported(c, totals.shields);
         // the government cases (0x102f5..0x10374): Despotism +5 for each military unit the
@@ -789,10 +792,12 @@ impl Game {
             self.gov_case.1 -= (market - civilized) * totals.abroad;
         }
         self.last_moods = (h.happy, h.unhappy);
-        self.city_moods(c, &h, totals.food_after_settlers);
+        let asked = self.city_moods(c, &h, totals.food_after_settlers);
         // gold & science (0x12955: no taxes in disorder or under Anarchy, none for the
-        // barbarians, 0x125e1; 0x12bde: science whatever the disorder, none under Anarchy)
-        let t = self.city_yield_raw(c);
+        // barbarians, 0x125e1; 0x12bde: science whatever the disorder, none under Anarchy),
+        // as the split counted them; with `exe_quirks` those of the advisor's run a change
+        // of mood started (0x12761, 0x128ff), with the new flags
+        let t = if asked && self.exe_quirks { self.city_yield_raw(c) } else { split };
         if slot != 0 && !h.disorder && self.player(slot).govt != Govt::Anarchy {
             self.player_mut(slot).gold += t.tax;
         }
@@ -836,13 +841,15 @@ impl Game {
     /// 0x128f8). A celebration (no unhappy citizen, size 3 or more, half happy, not Anarchy)
     /// that goes on from the turn before makes a city of the Republic or Democracy grow by one
     /// while it has a food surplus, above size 9 only with an Aqueduct (0x12ab2..0x12b12).
-    /// `food_after_settlers` is the food of the worked squares less what the city's Settlers
+    /// Returns whether the city asked its advisor. `food_after_settlers` is the food of the
+    /// worked squares less what the city's Settlers
     /// eat (ds:0x70da − food * ds:0xe3c6), which must beat twice the size.
-    fn city_moods(&mut self, c: CityId, h: &super::happiness::Happiness, food_after_settlers: i32) {
+    fn city_moods(&mut self, c: CityId, h: &super::happiness::Happiness, food_after_settlers: i32) -> bool {
         let slot = self.city(c).owner;
         if slot == 0 {
-            return;
+            return false;
         }
+        let mut asked = false;
         let human = self.player(slot).human;
         let was_disorder = self.city(c).disorder;
         let was_celebrating = self.city(c).celebrating;
@@ -874,6 +881,7 @@ impl Game {
             if !human {
                 let next = self.ai_production(c);
                 self.city_mut(c).production = next;
+                asked = true;
                 if self.exe_quirks {
                     // (0x12761, 0x128ff) the advisor's run leaves its totals: the taxes, the
                     // science and the celebration test after it read its trade split and moods
@@ -915,6 +923,7 @@ impl Game {
                 self.push_event(GameEvent::CityGrew(c));
             }
         }
+        asked
     }
 
     /// Units the city's shields cannot support go, the farthest from the city first (CIV.EXE
@@ -3544,6 +3553,36 @@ mod tests {
         assert!(g.all_units().any(|u| u.kind == unit_ids::BOMBER && u.home == Some(c)));
         assert_eq!(g.last_moods, (before.happy, before.unhappy));
         assert!(g.city_happiness(c).unhappy > before.unhappy);
+    }
+
+    /// A city collects the taxes its trade split counted (0x12955 reads ds:0xe17a), with the
+    /// celebration of its last turn: a Monarchy's celebration that ends this turn still pays
+    /// its trade bonus.
+    #[test]
+    fn the_taxes_are_the_splits_with_the_last_turns_celebration() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        g.player_mut(slot).govt = Govt::Monarchy;
+        g.player_mut(slot).tax = 100;
+        g.player_mut(slot).lux = 0;
+        g.city_mut(c).size = 3;
+        for i in 0..21u8 {
+            if let Some((x, y)) = g.radius_tile(c, i) {
+                let t = g.map.get_mut(x, y).unwrap();
+                t.terrain = crate::rules::Terrain::Grassland;
+                t.flags = crate::game::map::tile_flags::ROAD;
+            }
+        }
+        g.fix_workers(c);
+        g.city_mut(c).celebrating = true;
+        let tax = g.city_yield_raw(c).tax;
+        g.city_mut(c).celebrating = false;
+        assert!(g.city_yield_raw(c).tax < tax);
+        g.city_mut(c).celebrating = true;
+        let gold = g.player(slot).gold;
+        g.process_city(c);
+        assert!(!g.city(c).celebrating, "no luxuries, no celebration");
+        assert_eq!(g.player(slot).gold - gold, tax);
     }
 
     /// A celebrating city that falls into disorder: civrs ends the celebration; CIV.EXE clears
