@@ -68,7 +68,8 @@ impl Game {
     /// Unit byte +8: the direction (1..8) of the unit's last step, 0xff for none.
     /// (Not copied: a menu choice of the human's while no unit of his is active goes to the
     /// unit code with record 0x80 (0x73cc -> 0x4bbe, past the record check at 0x4bb4), so its
-    /// heading reset at 0x4bf8 lands on record 0 of the next civilization, 0x600 bytes on.)
+    /// heading reset at 0x4bf8 lands on record 0 of the next civilization, 0x600 bytes on;
+    /// the differential dump plays it for the harness's keys, `save::actions::harness_key`.)
     pub fn heading(&self, id: UnitId) -> u8 {
         let mem = if self.unit_opt(id).map(|u| u.owner) == Some(0) { &self.barbarian_memory.heading } else { &self.ai_memory.heading };
         mem.get(&id).copied().unwrap_or(0xff)

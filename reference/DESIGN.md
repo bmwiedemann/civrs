@@ -857,6 +857,50 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   entry and exit with the goto bytes; probe4.py: the trade store 0xf136 with city and mode)
   fit the 60 free bytes of the cave.
 
+  Round w92 (2026-10-31, scratchpad w92). A city's turn reads its totals as counted before
+  its production (`economy::TurnTotals`): the units abroad for its happiness (ds:0x6546,
+  0xd26b) and the shields, divisor and advance count of the pollution (0x12de9), so a
+  Bomber, Factory or Mass Transit of this turn counts from the next; and it collects the
+  taxes and science of its trade split (ds:0xe17a, ds:0x70e6), with the tiles of its last
+  turn's celebration, before its moods change the flag. With `exe_quirks` the advisor's
+  nested run (0xaa1b, after a computer's improvement, unit or alert, or a human AUTO
+  choice) leaves its totals for the rest of the turn: shields for the unit support and the
+  government cases (0xfd23, 0x10303), food for a celebration's growth (0x12ad6), units
+  abroad, the pollution factors, and after a mood change's run (0x12761, 0x128ff) its split
+  and moods for the taxes, science and the celebration test (0x12972); a celebration
+  survives disorder (0x12b19 clears it only in order). The advisor itself values from its
+  own run, not the turn's carried totals (an advance learned in the turn re-chooses inside
+  it). Long runs: LATE2 from CIV.EXE's t141 (w92/r-L141) agrees in draws t142-t171, fields
+  to t167 (t168 an Ironclad's sea goto). The manual late-game saves (tests/data/late,
+  renamed to slot 1 as the harness loads them, since slots 4..9 give the human his moves
+  back): CIVIL4 (t350) agrees t351-t362 in draws, CIVIL3 (t405) t406-t413. They found: a
+  differential dump from an SVE starts without the research catch-up ds:0xd2de (set only at
+  the 50-turn marks, 0x27e0; not saved); a caravan's home continent at (x, x) reads, from
+  x = 50 on, page 2 at (x, x + 50), the improvement nibble of (x, x - 50) (0x1bfc8); a
+  barbarian uprising's square needs no unit at all next to it (enemy_adjacent gets
+  game_turn's [bp-0x2], 8 after its civ loops, 0x2f00); the harness's keys while the human's
+  loop has no unit (the save or options at a turn's start with none waiting, the key that
+  ends the turn) run the unit code for record 0x80, which forgets the heading of the next
+  civ's record 0 (0x76c3, 0x73cc -> 0x4bbe, 0x4bf8; this was NEW's t1 difference); and the
+  end-of-turn garrison stash tests foreign_unit_adjacent(city x, city y, 0x1c * index),
+  the saved si of the city loop (0x131fa; a probe showed 336 for Carthage, index 12, and
+  "adjacent"): rows below 50 are the unit layer, 50..199 picture data that the .MAP keeps
+  (`Game::exe_page_band`), from 200 on memory past the driver's row table (cs:0x17d6),
+  taken as adjacent. Probes (w92/probe5..8.py: direction scores at 0x1870a, the unit
+  command's key at 0x18766, the garrison check, taxes at 0x1296b) and their parser plog.py,
+  cmpscore.py. Left: CIVIL4's t357 human Settlers work a turn apart (the human loop's first
+  unit depends on the map view), whose terrain change parts the human's research at t363;
+  CIVIL3 t408 the same.
+  Seed 13 (w92/r-K122B, from CIV.EXE's t122 with the barbarian Sail stack of (4, 4) removed by
+  sve_edit.py `kill:0:4,4`): draws t123-t128, then the next barbarian raid at Rome. An
+  unseeded run (w92/r-N100U from NEWF t100, CIV.EXE seeded from the clock; seedof.py finds
+  the seed, 3183, from the first draws) agrees t101-t114: the t108 parting is the
+  uninitialised [bp-0x108] at 0xd81d in the nested advisor run after Delhi's Settlers (the
+  food-first pass skipped when it holds -1; the same in seed 13's t127 Samarkand): with the
+  pass skipped civrs's assignment gives exactly CIV.EXE's squares, but the slot holds what the
+  last frame at that depth left, so always skipping it breaks other runs. No draws of civrs's
+  that CIV.EXE lacks were found before such a parting.
+
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
