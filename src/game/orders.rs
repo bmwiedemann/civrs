@@ -788,6 +788,18 @@ mod tests {
     }
 
     #[test]
+    fn exe_quirks_a_goal_set_on_merged_job_bits_keeps_the_high_ones() {
+        // ai_set_goto's `and status,0xf0` (0x1641b): irrigation 0x40 with road 0x02 -> 0x40
+        let (mut g, s) = settlers_on(Terrain::Grassland);
+        g.exe_quirks = true;
+        g.exe_job_bits.insert(s, 0x42);
+        g.unit_mut(s).order = UnitOrder::None;
+        g.ai_set_goto(s, (33, 20));
+        assert_eq!((g.unit(s).order, g.unit(s).goto), (UnitOrder::Irrigate, Some((33, 20))));
+        assert!(!g.exe_job_bits.contains_key(&s));
+    }
+
+    #[test]
     fn exe_quirks_a_finished_job_leaves_the_bits_of_the_one_before() {
         // the keys OR their bits in (0x532f); the road done clears 0x02 alone (0x53c2)
         let (mut g, s) = settlers_on(Terrain::Grassland);
