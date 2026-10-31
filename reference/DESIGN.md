@@ -966,7 +966,8 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   quit flag ds:0xdc48. Results with the fix (w94 runs, CIV.EXE played with the probe13 copy):
   LATE2 t142-t172 every field and draw (was fields to t167), on from CIV.EXE's t172 draws to
   t190, from t191 t192-t216 (one-turn worked-square difference of Hamburg at t207, shrunk to
-  4 in disorder, gone at t208) and from t216 t217-t239; LATE t126-t131 and from t131
+  4 in disorder, gone at t208) and from t216 t217-t241 in draws, fields to t240 (t241: city 4 of civrs has
+  finished a Barracks-slot improvement, bit 2, that CIV.EXE has not; not looked at); LATE t126-t131 and from t131
   t132-t156; seed 13 t120-t125 (was t119), from t125 to t126 (t127 the uninitialised
   [bp-0x108] at 0xd81d, as before) and from t128 to t135; SHIP2 and SHIP3 t201-t205 and from
   t205 t206-t230, all in fields and draws. The LATE2 t182 parting found: steal_advance
