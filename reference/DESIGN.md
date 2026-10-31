@@ -900,6 +900,17 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   pass skipped civrs's assignment gives exactly CIV.EXE's squares, but the slot holds what the
   last frame at that depth left, so always skipping it breaks other runs. No draws of civrs's
   that CIV.EXE lacks were found before such a parting.
+  Later in the round: every quiet run of the city routine places the workers too, so a
+  computer city starts over on its (city + turn) & 3 == 0 turns also in the runs between its
+  turns (0xd454 in mode -1; it was CIVIL4's research parting at t363), and a city whose mood
+  changes re-chooses with its own unit off the building counts (0x12756, 0x128f4). SPACE
+  (w92/mkspace.py: LATE2's t170 with Space Flight, Plastics and Superconductor for the
+  English, Germans and Romans, structurals and components in production, the Manhattan
+  Project, 20 polluted squares and warming 16) agrees in draws t171-t200 (spaceship parts
+  built, a global warming, a Nuclear unit in production), fields to t181 (t182 a German
+  Submarine's sea goto). CIVIL3 continued from CIV.EXE's t413: parts at once (t414) on the
+  Sail of Chapultepec that releases fortified units by the size of city [bp-0xc], an
+  uninitialised local of ai_unit_command (0x16e9a; civrs takes the ship's city).
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
