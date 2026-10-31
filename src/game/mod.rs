@@ -413,6 +413,12 @@ pub struct Game {
     /// save; not saved.
     #[serde(skip)]
     pub exe_unit_bit_lost: Vec<bool>,
+    /// With `exe_quirks`: units whose home byte (+0xb) still names a free city record, as
+    /// destroy_city leaves the units of other civilizations homed there (it disbands only the
+    /// owner's, 0xa89c): a city founded in that record supports them (create_city writes no
+    /// unit). Imported from a save, set when a city goes; not saved.
+    #[serde(skip)]
+    pub exe_stale_home: Vec<(UnitId, CityId)>,
 }
 
 /// `wonders_built` entry of a wonder whose city was destroyed: built, owned by no one, listed
@@ -657,6 +663,7 @@ impl Game {
             exe_city_owner: Vec::new(),
             exe_unit_ghost: Vec::new(),
             exe_unit_bit_lost: Vec::new(),
+            exe_stale_home: Vec::new(),
         };
         game.place_starting_units(&slots, &world, &mut wr);
         // the game's draws go on in CIV.EXE's one stream
@@ -1010,6 +1017,7 @@ impl Game {
             }
             if let Some(u) = self.units[c as usize].take() {
                 self.note_unit_ghost(u.owner, u.record, u.x, u.y);
+                self.exe_stale_home.retain(|(s, _)| *s != c);
                 let p = &mut self.players[u.owner as usize];
                 p.unit_counter[u.kind as usize % 28] -= 1;
                 if self.counting_losses {
@@ -1101,6 +1109,14 @@ impl Game {
 
     pub fn add_city(&mut self, owner: Slot, name: String, x: i32, y: i32) -> CityId {
         let id = self.cities.iter().position(|c| c.is_none()).unwrap_or(self.cities.len()) as CityId;
+        // `exe_stale_home`: the units whose home byte names the record are its own now
+        let (now, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.exe_stale_home).into_iter().partition(|(_, c)| *c == id && self.exe_quirks);
+        self.exe_stale_home = rest;
+        for (u, _) in now {
+            if let Some(u) = self.units.get_mut(u as usize).and_then(|u| u.as_mut()).filter(|u| u.home.is_none()) {
+                u.home = Some(id);
+            }
+        }
         // found_city's first-city test (o 0x1b5df..0x1b616) goes over all 128 records by their
         // owner byte, free ones too: with `exe_quirks` a city the civilization's slot lost
         // before (the tribe destroyed and back as its other tribe) means no Palace
@@ -1326,6 +1342,9 @@ impl Game {
         for u in self.units.iter_mut().flatten() {
             if u.home == Some(id) {
                 u.home = None;
+                if self.exe_quirks {
+                    self.exe_stale_home.push((u.id, id));
+                }
             }
         }
         // every route to it is cleared (destroy_city 0xa812), so a new city in the slot has

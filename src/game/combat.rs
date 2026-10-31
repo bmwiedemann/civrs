@@ -1575,6 +1575,24 @@ mod tests {
     }
 
     #[test]
+    fn exe_quirks_a_city_founded_in_a_freed_record_supports_the_units_homed_there() {
+        // destroy_city disbands only the owner's units homed there (0xa89c); the home byte of
+        // the others names the record a new city takes
+        let mut g = flat_game();
+        g.exe_quirks = true;
+        g.add_city(2, "Home".into(), 40, 30);
+        let c = g.add_city(2, "Gone".into(), 20, 20);
+        let other = (3..8u8).find(|s| *s != g.human_slot).unwrap();
+        let u = g.add_unit(other, unit_ids::PHALANX, 10, 10);
+        g.unit_mut(u).home = Some(c);
+        g.destroy_city(c, 2);
+        assert_eq!(g.unit(u).home, None);
+        let n = g.add_city(other, "New".into(), 25, 25);
+        assert_eq!(n, c);
+        assert_eq!(g.unit(u).home, Some(n));
+    }
+
+    #[test]
     fn trade_routes_survive_a_capture_but_not_a_destruction() {
         // capture_city 0x13d76 leaves the route bytes; destroy_city 0xa812 clears routes to it
         let mut g = flat_game();

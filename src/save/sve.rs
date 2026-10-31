@@ -574,6 +574,9 @@ fn import_slot_with(data: &[u8], map_pic: &[u8], moves_back: bool, resume: bool)
                 u.order_turns = r[5];
             }
             u.home = (r[0xb] < 128).then_some(r[0xb] as u16).filter(|h| g.city_opt(*h).is_some());
+            if r[0xb] < 128 && u.home.is_none() {
+                g.exe_stale_home.push((id, r[0xb] as u16));
+            }
             u.seen_by = r[9];
             u.leader = c == 0 && kind == rules::unit_ids::DIPLOMAT;
             if r[8] != 0xff {
@@ -766,7 +769,13 @@ pub fn state_text(g: &Game) -> String {
         // the losses in combat by type (SVE 0x869e, counted by delete_unit 0x8d71)
         let _ = writeln!(o, "{k}.lost_per_type {:?}", &p.units_lost_by_type[..]);
         let _ = writeln!(o, "{k}.cities {}", g.all_cities().filter(|c| c.owner == p.slot).count());
-        let _ = writeln!(o, "{k}.diplo {:04x?}", &p.diplo[..]);
+        // the word [civ][0] carries the revolution flag (bit 4) that civrs keeps in
+        // `Player::anarchy_turns`
+        let mut diplo = p.diplo.clone();
+        if let Some(d) = diplo.get_mut(0) {
+            *d = (*d & !4) | if p.anarchy_turns != 0 { 4 } else { 0 };
+        }
+        let _ = writeln!(o, "{k}.diplo {:04x?}", &diplo[..]);
         let ship = &p.spaceship;
         if ship.parts() > 0 || ship.launch_year.is_some() {
             let grid: u64 = ship.grid.iter().flatten().fold(0xcbf29ce484222325, |h, v| (h ^ *v as u64).wrapping_mul(0x100000001b3));
