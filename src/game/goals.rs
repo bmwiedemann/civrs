@@ -166,9 +166,9 @@ impl Game {
 
     /// CIV.EXE 0x187e3 `ai_add_goal(civ, x, y, type, priority)`. While `civ` moves its units
     /// (the focus civ ds:0x6b90) and is not the human, a new sea-attack (3) or air (4) goal
-    /// first sends every unit of that role on the goal's continent that still has moves and
-    /// is within half its move points (in thirds) of the square there at once (goto, AI flag
-    /// 0x10, orders cleared). An existing goal with the same square and type and a priority
+    /// first sends the first unit (by record) of that role on the goal's continent that still
+    /// has moves and is within half its move points (in thirds) of the square there at once
+    /// (goto, AI flag 0x10, orders cleared). An existing goal with the same square and type and a priority
     /// up to the new one makes the call a no-op before that.
     pub fn add_goal(&mut self, civ: Slot, x: i32, y: i32, kind: i8, priority: i32) {
         let c = civ as usize;
@@ -193,7 +193,9 @@ impl Game {
                 if (u.moves_left as i32) < 2 * Map::civ_distance(u.pos(), (x, y)) {
                     continue;
                 }
+                // only the first such unit by record (0x18901 leaves the loop)
                 self.ai_set_goto(id, (x, y));
+                break;
             }
         }
         insert_goal(&mut self.ai_memory.goals[c], g);
@@ -405,6 +407,34 @@ mod tests {
         let l = &g.ai_memory.goals[2];
         assert_eq!(l.iter().filter(|o| o.pos() == (11, 10)).count(), 2);
         assert_eq!(l[3], Goal { x: 11, y: 10, kind: goal::ATTACK, priority: 1 });
+    }
+
+    #[test]
+    fn a_new_sea_goal_sends_only_the_first_ship_in_reach() {
+        // 0x188b4..0x18901: the loop over the records ends with the first unit sent
+        use crate::rules::{unit_ids, Terrain};
+        let mut g = game();
+        let ids: Vec<_> = g.all_units().map(|u| u.id).collect();
+        for id in ids {
+            g.remove_unit(id);
+        }
+        for y in 5..16 {
+            for x in 5..16 {
+                let t = g.map.get_mut(x, y).unwrap();
+                t.terrain = Terrain::Ocean;
+                t.city = None;
+            }
+        }
+        g.map.compute_continents();
+        let civ = (1..8).find(|s| *s != g.human_slot).unwrap();
+        let a = g.add_unit(civ, unit_ids::IRONCLAD, 9, 10);
+        let b = g.add_unit(civ, unit_ids::IRONCLAD, 11, 10);
+        assert!(g.unit(a).record < g.unit(b).record);
+        g.reset_goals(civ);
+        g.ai_memory.moving = Some(civ);
+        g.add_goal(civ, 10, 11, goal::SEA, 3);
+        assert_eq!(g.unit(a).goto, Some((10, 11)));
+        assert_eq!(g.unit(b).goto, None);
     }
 
     #[test]
