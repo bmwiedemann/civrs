@@ -379,8 +379,8 @@ pub struct Game {
     /// the last square of the radius out of the site/owner layer (0x13fff), destroy_city's
     /// sweep walking the old owner's record of the conqueror's unit (0xa8bc), the local
     /// search's grid read past its end (0x1e765), the first-city test reading the free
-    /// city records (o 0x1b5df), the block search starting from the goto square taken as
-    /// a block (0x1e19d, while it stays inside the tables), the capture of an empty city
+    /// city records (o 0x1b5df), the block search starting from block (0, 0) after failed
+    /// entry probes (0x1e19d, the scratch unit's goto bytes left by 0x1ebe9), the capture of an empty city
     /// refused by a stale square owner of the mover's civ (0x6a65), the unit routine running
     /// on for a Diplomat it has disbanded (0x16a95) and the production advice counting the
     /// units on squares numbered as the city's continent, ocean bodies too (0xb0c1).

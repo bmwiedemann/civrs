@@ -489,8 +489,9 @@ impl Game {
         self.block_entry_probed(x, y, sea).0
     }
 
-    /// `block_entry`, and whether it ran a local search toward (x,y) (goto_block_cost 0x1ec12
-    /// then leaves (x,y) in ds:0x6590/0x6592, 0x1ec5b).
+    /// `block_entry`, and whether it ran a local search toward (x,y): goto_block_cost 0x1ec12
+    /// then leaves (x,y) in ds:0x6590/0x6592 (0x1ec5b), and a search that fails replaces it
+    /// with the goto bytes of its scratch unit (civ 0, record 127; 0x1ebe9).
     fn block_entry_probed(&mut self, x: i32, y: i32, sea: bool) -> (Option<(i32, i32)>, bool) {
         let (bx, by) = (x / 4, y / 4);
         if self.block_mask(bx, by, sea) != 0 {
@@ -536,14 +537,16 @@ impl Game {
         };
         // a target without a block of its own leaves the start block as the target (0x1e19d
         // reads ds:0x6590/0x6592 whatever the entry returned). After a tried neighbour block
-        // goto_block_cost 0x1ec12 has left the goto square there, and CIV.EXE searches from
-        // that square taken as a block, (gx, gy): with `exe_quirks` civrs does so as long as
-        // the search stays inside the 20x13 tables (13 x + y, no row check); past them it reads
-        // the AI statistics after ds:0x7f38 and the picture file buffer ds:0xd936 after the
-        // distances ds:0xd816 (the last 512 bytes of a .PIC read or written), which civrs does
-        // not have, and it searches from the start block as without the quirk
+        // the last goto_block_cost 0x1ec12 has left something else there: the goto square when
+        // its local search succeeded, else the goto bytes +6/+7 of the scratch unit it searched
+        // for (civ 0, record 127, ds:0x87ce; 0x1ebe9). The entry fails only when every search
+        // failed, so CIV.EXE floods from block (0, 0) (the scratch unit's goto bytes are 0 in
+        // every save and probe dump; nothing writes them). With `exe_quirks` civrs does so too,
+        // as CIV.EXE indexes the tables (13 x + y, rows unchecked) while that stays inside
+        // them, else from the start block as without the quirk.
         let (entry, probed) = self.block_entry_probed(goto.0, goto.1, sea);
-        let quirk = (entry.is_none() && probed && self.exe_quirks).then(|| self.block_flood(goto, start, sea, true)).flatten();        let target = entry.unwrap_or(start);
+        let quirk = (entry.is_none() && probed && self.exe_quirks).then(|| self.block_flood((0, 0), start, sea, true)).flatten();
+        let target = entry.unwrap_or(start);
         let Some((found, dist)) = quirk.or_else(|| self.block_flood(target, start, sea, false)) else { return (false, goto) };
         if !found {
             return (false, goto);
@@ -880,11 +883,11 @@ mod tests {
     }
 
     #[test]
-    fn exe_quirks_search_the_blocks_from_the_goto_square_after_a_tried_entry() {
-        // 0x1e19d: an island square without a block whose neighbour blocks were tried (0x1ec12
-        // leaves the square in ds:0x6590/0x6592): the search starts from "block" (8, 2), which
-        // is in the tables, and leads the unit north-west; without the quirk from its own
-        // block, which gives no waypoint
+    fn exe_quirks_search_the_blocks_from_block_0_0_after_failed_entry_probes() {
+        // 0x1e19d: a goto square without a block of its own whose neighbour blocks were all
+        // tried in vain: the last local search left the scratch unit's goto bytes (0, 0) in
+        // ds:0x6590/0x6592 (0x1ebe9), so CIV.EXE floods the blocks from (0, 0). An island
+        // square: no land links at (0, 0), no path; without the quirk from the unit's own block
         let run = |quirks: bool| {
             let mut g = flat();
             g.exe_quirks = quirks;
@@ -895,7 +898,19 @@ mod tests {
             g.block_search(id)
         };
         assert_eq!(run(false), (true, (8, 2)));
-        assert_eq!(run(true), (true, (25, 21)));
+        assert_eq!(run(true), (false, (8, 2)));
+        // a ship sent inland: the probes from the sea blocks around (1, 1) fail, and the flood
+        // from (0, 0) over the sea (linked across the seam) leads the ship north-east
+        let run = |quirks: bool| {
+            let mut g = flat();
+            g.exe_quirks = quirks;
+            let slot = (1..8).find(|s| *s != g.human_slot).unwrap();
+            let id = g.add_unit(slot, unit_ids::TRIREME, 50, 20);
+            g.set_goto(id, 6, 6);
+            g.block_search(id)
+        };
+        assert_eq!(run(false), (true, (6, 6)));
+        assert_eq!(run(true), (true, (53, 17)));
     }
 
     #[test]
