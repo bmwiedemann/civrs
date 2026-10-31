@@ -89,6 +89,7 @@ impl Game {
         // add_pollution (0x13639) shows it on the map at once
         self.map.update_seen(x, y);
         self.polluted_tiles += 1;
+        self.show_map_at(x - 8, y - 6);
         self.push_event(GameEvent::Pollution { city: c, at: (x, y) });
     }
 
@@ -101,6 +102,8 @@ impl Game {
             return;
         }
         if self.rng.random(0x12f6f, 3) == 0 && !self.player(self.city(c).owner).knows(adv::FUSION_POWER) {
+            let (cx, cy) = self.city(c).pos();
+            self.show_map_at(cx - 8, cy - 6);
             self.meltdown(c);
         }
     }

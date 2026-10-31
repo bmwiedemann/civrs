@@ -58,27 +58,40 @@ impl Game {
 
     /// Try to move the unit one step. Handles combat, city capture, huts and boarding.
     pub fn try_move(&mut self, id: UnitId, d: Dir8) -> Result<MoveOutcome, RuleError> {
+        let watched = self.enemy_move_watched(id, d);
         let r = self.step(id, d, true);
-        self.enemy_move_seen(id, &r);
+        self.enemy_move_seen(id, watched, &r);
         r
     }
 
     /// Complete a move that stopped with `MoveOutcome::CaravanArrived` ("Keep moving").
     pub fn move_on(&mut self, id: UnitId, d: Dir8) -> Result<MoveOutcome, RuleError> {
+        let watched = self.enemy_move_watched(id, d);
         let r = self.step(id, d, false);
-        self.enemy_move_seen(id, &r);
+        self.enemy_move_seen(id, watched, &r);
         r
     }
 
-    /// A computer's or barbarian unit that the human sees after its step scrolls his map
-    /// view to it with Enemy Moves on (`scroll_to` 0x6761: unit +9 has the human's bit, option
-    /// bit 0x20); the human's own units follow in the move loops (`view_follows`).
-    fn enemy_move_seen(&mut self, id: UnitId, r: &Result<MoveOutcome, RuleError>) {
-        if !matches!(r, Ok(MoveOutcome::Moved | MoveOutcome::EnteredHut | MoveOutcome::Boarded(_))) || !self.options.enemy_moves {
+    /// Whether the human watches a computer's or barbarian unit step in direction `d`: unit +9
+    /// with the human's bit as it stands before the step (0x6721; the step clears it, 0x67e4,
+    /// and the look after it sets it again only for those who see the new square).
+    fn enemy_move_watched(&self, id: UnitId, d: Dir8) -> bool {
+        let Some(u) = self.unit_opt(id) else { return false };
+        if u.owner == self.human_slot {
+            return false;
+        }
+        let (dx, dy) = d.delta();
+        self.human_watches_move(id, (Map::wrap_x(u.x + dx), u.y + dy))
+    }
+
+    /// A computer's or barbarian unit that the human watched step scrolls his map view to its
+    /// new square with Enemy Moves on (`scroll_to` 0x6761, option bit 0x20); the human's own
+    /// units follow in the move loops (`view_follows`).
+    fn enemy_move_seen(&mut self, id: UnitId, watched: bool, r: &Result<MoveOutcome, RuleError>) {
+        if !watched || !matches!(r, Ok(MoveOutcome::Moved | MoveOutcome::EnteredHut | MoveOutcome::Boarded(_))) || !self.options.enemy_moves {
             return;
         }
-        let h = self.human_slot;
-        if let Some(u) = self.unit_opt(id).filter(|u| u.owner != h && u.seen_by & (1 << h) != 0) {
+        if let Some(u) = self.unit_opt(id) {
             let (x, y) = u.pos();
             self.scroll_view_to(x, y);
         }
@@ -865,30 +878,33 @@ mod tests {
         }
     }
 
-    /// A computer unit the human sees scrolls his view to its square with Enemy Moves on
-    /// (0x6761); one he does not see leaves the view alone.
+    /// A foreign unit the human has seen (+9) before its step scrolls his view to its new
+    /// square with Enemy Moves on (0x6721 tests the bits before the step clears them, 0x6761);
+    /// one he sees only on the square it steps to leaves the view alone. (Barbarians: another
+    /// civ's unit next to the human's would bring an audience, which moves the view too.)
     #[test]
     fn a_seen_enemy_move_scrolls_the_human_view() {
-        for (seen, scrolls) in [(true, true), (false, false)] {
+        for (seen_before, scrolls) in [(true, true), (false, false)] {
             let (mut g, _) = militia_before_mountains(3, 3);
             let h = g.human_slot;
-            let other = (1..8).find(|s| *s != h && g.player(*s).alive).unwrap();
             let (x, y) = (40, 20);
             for dx in -3..=1 {
                 let t = g.map.get_mut(x + dx, y).unwrap();
                 t.terrain = Terrain::Grassland;
                 t.flags = 0;
             }
-            if seen {
-                // a unit of the human's next to the square the computer's unit goes to
-                g.add_unit(h, unit_ids::MILITIA, x - 2, y);
-                g.refresh_vision(h);
-            }
-            let id = g.add_unit(other, unit_ids::MILITIA, x, y);
+            // a unit of the human's next to the square the barbarian goes to
+            g.add_unit(h, unit_ids::MILITIA, x - 2, y);
+            g.refresh_vision(h);
+            let id = g.add_unit(0, unit_ids::MILITIA, x, y);
+            g.unit_mut(id).seen_by = if seen_before { 1 << h } else { 0 };
             g.view = Some((0, 0));
             g.options.enemy_moves = true;
             assert!(matches!(g.try_move(id, Dir8::W), Ok(MoveOutcome::Moved)));
-            assert_eq!(g.view != Some((0, 0)), scrolls, "seen {seen}");
+            assert_eq!(g.view != Some((0, 0)), scrolls, "seen before {seen_before}");
+            if !scrolls {
+                assert!(g.unit_seen_by(id, h), "seen after the step");
+            }
         }
     }
 

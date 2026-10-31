@@ -1459,7 +1459,6 @@ impl Game {
         }
     }
 
-    /// The view origin that puts (x, y) at column 7, row 6 (0x1a68:0xe).
     /// The next unit after 'w' (0x4dd2): the loop goes on to the next unit in record order,
     /// in the view or not.
     pub fn next_active_unit_after_wait(&mut self) -> Option<UnitId> {
@@ -1467,8 +1466,20 @@ impl Game {
         self.next_active_unit_from(after, 1, false)
     }
 
+    /// The view origin that puts (x, y) at column 7, row 6 (0x1a68:0xe).
     pub fn view_centred_on(x: i32, y: i32) -> (i32, i32) {
         (Map::wrap_x(x - 7), (y - 6).clamp(0, crate::rules::MAP_H as i32 - 12))
+    }
+
+    /// `draw_map_view(human, vx, vy)` (0x1a68e) called by a message about a square: the
+    /// human's map view moves there (x wrapped, y clamped to 0..38), which steers the next
+    /// unit the human's loop takes (`next_active_unit`). Pollution (0x12ee9) and a meltdown
+    /// (0x12fab) at the square - (8, 6), an uprising near a city (0x2fcb) at the city - (8, 6),
+    /// a disaster in a foreign city the human has explored (o 0x1c010) at the city - (10, 6),
+    /// a revolt (o 0x1e22b) at the city - (8, 5), a unit of the human's bribed (o 0x1dd7b)
+    /// at the unit - (8, 6).
+    pub fn show_map_at(&mut self, vx: i32, vy: i32) {
+        self.view = Some((Map::wrap_x(vx), vy.clamp(0, crate::rules::MAP_H as i32 - 12)));
     }
 
     /// The view after `scroll_to` (0x9505), which keeps a moving unit in sight: a square

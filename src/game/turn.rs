@@ -418,6 +418,9 @@ impl Game {
             self.unit_mut(n).seen_by |= 1 << t.owner;
         }
         self.player_mut(by).gold -= cost;
+        if t.owner == self.human_slot {
+            self.show_map_at(t.x - 8, t.y - 6);
+        }
         self.refresh_vision(by);
         self.refresh_vision(t.owner);
         self.push_event(GameEvent::UnitBribed { kind: t.kind, from: t.owner, by, at: (t.x, t.y) });
@@ -1173,7 +1176,18 @@ impl Game {
             7..=9 => return self.city_unrest(c),
             _ => return,
         };
+        self.disaster_view(c);
         self.push_event(GameEvent::Disaster { city: c, kind });
+    }
+
+    /// After a disaster's message (o 0x1bf45): a city of a human player shows its square, a
+    /// foreign one the human has explored moves the map view to the city - (10, 6) (o 0x1c010).
+    fn disaster_view(&mut self, c: CityId) {
+        let city = self.city(c);
+        let (cx, cy) = city.pos();
+        if !self.player(city.owner).human && self.map.tile(cx, cy).explored_by(self.human_slot) {
+            self.show_map_at(cx - 10, cy - 6);
+        }
     }
 
     /// Remove a random improvement (draws of `random(24)` until one the city has, never the
@@ -1213,8 +1227,9 @@ impl Game {
         let cm = self.city_mut(c);
         cm.food = 0;
         cm.shields = 0;
+        // the message stays for the disaster's own (o 0x1bf3b) unless the city defects
         if city.has_improvement(imp::PALACE) || self.cities_of(city.owner).len() <= 3 {
-            return;
+            return self.disaster_view(c);
         }
         let mut best = (4, None);
         for i in 0..128 as CityId {
@@ -1230,10 +1245,10 @@ impl Game {
                 best = (score, Some(i));
             }
         }
-        let Some(admired) = best.1 else { return };
+        let Some(admired) = best.1 else { return self.disaster_view(c) };
         let to = self.city(admired).owner;
         if to == city.owner {
-            return;
+            return self.disaster_view(c);
         }
         self.push_event(GameEvent::CityDefected { city: c, admired, from: city.owner });
         // city_revolt (o 0x1e06a) hands it over with capture_city (0x13d76), whose capture
@@ -2165,7 +2180,13 @@ impl Game {
             let city = self.city(c);
             (city.pos(), city.owner, city.size)
         };
-        // city_revolt's announcement (o 0x1e1d4), before capture_city's own message
+        // city_revolt's announcement (o 0x1e1d4), before capture_city's own message; the
+        // radius is explored for `to` first (o 0x1e1b0)
+        let h = self.human_slot;
+        let told = from == h || to == h || self.player(h).has_embassy(from) || self.player(h).has_embassy(to);
+        if told && (to == h || self.map.tile(pos.0, pos.1).explored_by(h)) {
+            self.show_map_at(pos.0 - 8, pos.1 - 5);
+        }
         self.push_event(GameEvent::CityRebels { city: c, from, to });
         // the leaders remember, as for a city taken by force (capture_city 0x13da6, 0x13e5c)
         if to == self.human_slot && from != 0 {
@@ -2861,6 +2882,31 @@ mod tests {
         g.city_mut(c).shields = 100;
         g.process_city(c);
         assert_eq!(g.city(c).production, Production::Unit(unit_ids::MILITIA));
+    }
+
+    #[test]
+    fn messages_about_a_square_move_the_human_s_map_view() {
+        // draw_map_view(human, ...) before the message: a bribe of the human's unit at the
+        // unit - (8, 6) (o 0x1dd7b), a revolt he hears of at the city - (8, 5) (o 0x1e22b)
+        let (mut g, c) = fixture();
+        let me = g.human_slot;
+        let (x, y) = g.city(c).pos();
+        let o = (1..8).find(|s| *s != me).unwrap();
+        g.players[o as usize].alive = true;
+        // (a barbarian's unit: another civ's would meet the human, and the audience moves the
+        // view too)
+        let theirs = g.add_unit(0, unit_ids::LEGION, x + 3, y);
+        g.view = Some((0, 0));
+        g.bribe_unit(me, theirs);
+        assert_eq!(g.view, Some((0, 0)), "another civ's unit: no move");
+        let mine = g.add_unit(me, unit_ids::LEGION, x + 2, y);
+        g.player_mut(o).gold = 1000;
+        g.bribe_unit(o, mine);
+        assert_eq!(g.view, Some((Map::wrap_x(x - 6), (y - 6).clamp(0, 38))));
+        g.view = Some((0, 0));
+        let other = g.add_city(o, "Other".into(), x + 4, y);
+        g.transfer_city(other, me);
+        assert_eq!(g.view, Some((Map::wrap_x(x - 4), (y - 5).clamp(0, 38))));
     }
 
     #[test]

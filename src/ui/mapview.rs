@@ -392,7 +392,12 @@ impl MapView {
                 let g = ctx.game.as_mut().expect("game");
                 // the human's loop starts in the view as it stands (move_units 0x434f)
                 g.view = Some((self.vx, self.vy));
-                runner.step(g, &mut ctx.ai)
+                let step = runner.step(g, &mut ctx.ai);
+                // a message about a square moves the map there (`Game::show_map_at`)
+                if let Some((vx, vy)) = g.view {
+                    (self.vx, self.vy) = (vx, vy);
+                }
+                step
             };
             match step {
                 TurnStep::Done => {

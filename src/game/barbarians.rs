@@ -426,6 +426,7 @@ impl Game {
         let Some((x, y)) = found else { return };
         let near = self.city(around).clone();
         if near.owner == self.human_slot && self.map.tile(x, y).explored_by(self.human_slot) {
+            self.show_map_at(near.x - 8, near.y - 6);
             self.push_event(GameEvent::BarbarianUprising { at: (x, y), target: self.human_slot });
         }
         let count = self.rng.random(0x3060, near.size as i32 / 2).clamp(2, 99);
