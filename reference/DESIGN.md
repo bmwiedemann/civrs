@@ -1023,6 +1023,15 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   declines four times (probe14: ai_unit_command returns key 0 four times, no step) while civrs
   steps N; CIVIL5-late t408 and seed 13 t142 are 0x16e94 releases; the harness's step budget
   (6 per turn) ends late runs with many human units early (CIVIL0, CIVIL9).
+  Second stretches (w95/runs2.sh, stopped part way): a city the human takes keeps its
+  production (0x142fc), a goal's goto on merged job bits keeps the high ones (0x1641b).
+  LATE t182-t194 and SHIP2 t247-t261 agree in draws (SHIP2 t260 civ 4's rates); LATE2 parts
+  at t269 on the same German Battleship at (35, 18) (its goto replaced in CIV.EXE); seed 13
+  t168-t169, then t170 a new Militia taken aboard at Shanghai in civrs where CIV.EXE takes the
+  older one (task_units / take_cargo, unexplained); CIVIL5-late from t408 parts at t411 on a
+  Cavalry's goto step (a terrain roll civrs makes); CIVIL8-late from t275 at t282 on a barbarian
+  Musketeers attacking Settlers in civrs only; CIVIL0-late from t398 at t401 on the
+  production advice's draws (the "more..." valuation, open before).
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
