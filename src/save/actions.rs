@@ -35,6 +35,11 @@
 //! ```
 //! An action that civrs cannot perform as written (another active unit, a different menu
 //! item) is an error: the script and the two games disagree before any state is compared.
+//!
+//! Every other menu gets its first row, in CIV.EXE the harness's Return on the cursor's
+//! starting row: an audience's *PEACE is "Reject" (o 0x6fdf), so a human Republic or
+//! Democracy is overruled by the Senate ("Treaty signed.", o 0x703b) and any other human
+//! stays at war.
 
 use crate::game::turn::CaravanAction;
 use crate::game::{AutoStop, Dir8, Game, MoveOutcome, Specialist, UnitOrder};
@@ -435,10 +440,11 @@ pub fn play(g: &mut Game, ai: &mut crate::ai::Ai, actions: &[(u32, Action)], tur
         }
     }
     run_autos(g)?;
+    // the harness's first key after the load is a Space: with no unit of the human waiting
+    // for orders it ends the turn at once, before any save at record 0x80 (the options menu
+    // before it returns no command, ds:0xd4ca = -1)
+    let idle_load = g.active_unit.is_none();
     for i in 0..turns {
-        if i == 0 {
-            harness_key(g, false);
-        }
         let turn = g.turn;
         for (_, a) in actions.iter().filter(|(t, _)| *t == turn) {
             apply(g, a).map_err(|e| format!("turn {}: {a:?}: {e}", g.turn))?;
@@ -449,7 +455,9 @@ pub fn play(g: &mut Game, ai: &mut crate::ai::Ai, actions: &[(u32, Action)], tur
             g.skip_unit(id);
             activate_next(g)?;
         }
-        harness_key(g, true);
+        if !(i == 0 && idle_load) {
+            harness_key(g, true);
+        }
         let mut r = g.end_turn();
         loop {
             match r.step(g, ai) {
@@ -465,12 +473,13 @@ pub fn play(g: &mut Game, ai: &mut crate::ai::Ai, actions: &[(u32, Action)], tur
     Ok(())
 }
 
-/// A key or menu choice of the harness while the human's loop has no unit (sve_diff.py play):
-/// at the start of a turn with no unit waiting for orders (the save, or the options in the
-/// first turn), and at its end (`end`, the key that ends it). With no unit to take, the loop
-/// waits for it at record 0x80 (0x76c3 after the looks, 0x43f4), and CIV.EXE runs the key
-/// through the unit code for that record (0x73cc -> 0x4bbe, past the record check at
-/// 0x4bb4), which is record 0 of the next civilization (0x600 bytes on): without a goto its
+/// The harness's save while the human's loop has no unit (sve_diff.py play): at the start of
+/// a turn with no unit waiting for orders, and the one before the Space that ends a turn
+/// (`end`; the turn's last save comes once its units are done). With no unit to take, the
+/// loop waits for it at record 0x80 (0x76c3 after the looks, 0x43f4), and CIV.EXE runs a
+/// menu's command (GAME, Save Game) through the unit code for that record (0x73cc -> 0x4bbe,
+/// past the record check at 0x4bb4 that a key meets), which is record 0 of the next
+/// civilization (0x600 bytes on): without a goto its
 /// heading is forgotten (0x4bf8), so its next step is scored without the turn penalty. With
 /// `exe_quirks` only (a goto there would go to goto_step for the human's civ, which civrs
 /// does not copy).
