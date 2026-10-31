@@ -835,7 +835,9 @@ impl Game {
         if slot != self.human_slot && self.city(c).size >= 3 {
             self.unit_mut(id).home = Some(c);
         }
-        if self.unit(id).home == Some(c) && !self.foreign_unit_adjacent(slot, x, y) {
+        // (with `exe_quirks` the check CIV.EXE makes there, `exe_fortify_garrison_check`)
+        let adjacent = if self.exe_quirks { self.exe_fortify_garrison_check(slot, x, y) } else { self.foreign_unit_adjacent(slot, x, y) };
+        if self.unit(id).home == Some(c) && !adjacent {
             self.stash_garrison(c);
         }
     }

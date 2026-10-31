@@ -400,7 +400,12 @@ impl Game {
     /// "adjacent" (Carthage, index 12, row 336).
     pub fn exe_garrison_check(&self, c: CityId) -> bool {
         let city = self.city(c);
-        let (civ, x0, y0) = (city.x, city.y, 0x1c * c as i32);
+        self.exe_foreign_unit_adjacent(city.x, city.y, 0x1c * c as i32)
+    }
+
+    /// `foreign_unit_adjacent(civ, x, y)` (0x7e6:0x18cc) as CIV.EXE answers it for any
+    /// arguments, on map page 2's owner band (see `exe_garrison_check`).
+    fn exe_foreign_unit_adjacent(&self, civ: i32, x0: i32, y0: i32) -> bool {
         for (dx, dy) in [(0, -1), (1, -1), (1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1)] {
             let (x, y) = (Map::wrap_x(x0 + dx), y0 + dy);
             // (row -1: the word before the table, cs:0x17d4, is 0, so row 0)
@@ -418,6 +423,17 @@ impl Game {
             }
         }
         false
+    }
+
+    /// What `foreign_unit_adjacent` answers when a unit fortified in its home city decides
+    /// whether the garrison goes back into the store (0x430d, `complete_fortify`): it gets the
+    /// unit's x as the civ, its y as x, and as y the word above them, move_units's saved si,
+    /// which game_turn left at 2 * civ for the human (0x2572) and at 0xb1d6 + 2 * civ, the
+    /// civ's gold, for the others (0x2515). So the human's check looks at rows 1..3 around
+    /// column y; for a computer's (rows from 0xb1d5) probes of CIV.EXE answered "not
+    /// adjacent" every time (civs 0, 3, 6 and 7).
+    pub fn exe_fortify_garrison_check(&self, slot: Slot, x: i32, y: i32) -> bool {
+        slot == self.human_slot && self.exe_foreign_unit_adjacent(x, y, 2 * slot as i32)
     }
 }
 
@@ -467,6 +483,20 @@ mod tests {
     /// CIV.EXE's end-of-turn garrison check (0x131fa) reads the owner band around (city y,
     /// 28 * index): index 1 looks at the squares around (y, 28), a high index past the
     /// driver's row table counts as "adjacent" (`exe_quirks`).
+    #[test]
+    fn exe_quirks_the_fortified_unit_s_check_reads_rows_by_its_civ() {
+        // 0x430d: (civ x, y, 2 * human) for the human, rows from 0xb1d5 for the others
+        let (mut g, c, _) = garrisoned();
+        let (x, y) = g.city(c).pos();
+        let me = g.human_slot;
+        let r = rival(&g);
+        assert!(!g.exe_fortify_garrison_check(me, x, y));
+        g.add_unit(r, unit_ids::PHALANX, y + 1, 2 * me as i32 + 1);
+        assert!(g.exe_fortify_garrison_check(me, x, y), "a unit next to ({y}, {})", 2 * me);
+        g.add_unit(me, unit_ids::PHALANX, x + 1, y);
+        assert!(!g.exe_fortify_garrison_check(r, x + 1, y), "a computer's never sees one");
+    }
+
     #[test]
     fn exe_quirks_the_garrison_check_reads_around_y_and_28_times_the_index() {
         let (mut g, c, _) = garrisoned();
