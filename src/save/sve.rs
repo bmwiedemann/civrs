@@ -391,7 +391,9 @@ fn import_slot_with(data: &[u8], map_pic: &[u8], moves_back: bool, resume: bool)
         ship.recount();
         let arrival = s.civ_w(off::ARRIVAL, c);
         ship.arrival_year = (arrival != -1).then_some(arrival as i32);
-        if s.w(off::SHIP_FLAGS) as u16 & (1 << c) != 0 {
+        // (bit 0 is no civ's: 0x2726 tests bits 1..7 for a launch, the 50-turn quiz 0x2783
+        // bit 0 for itself)
+        if c != 0 && s.w(off::SHIP_FLAGS) as u16 & (1 << c) != 0 {
             let launch = s.civ_w(off::LAUNCH, c) as i32;
             ship.launch_year = Some(launch);
             // one year a turn after the launch (0x26ed)
@@ -761,6 +763,11 @@ pub fn state_text(g: &Game) -> String {
         let _ = writeln!(o, "{k}.lost_per_type {:?}", &p.units_lost_by_type[..]);
         let _ = writeln!(o, "{k}.cities {}", g.all_cities().filter(|c| c.owner == p.slot).count());
         let _ = writeln!(o, "{k}.diplo {:04x?}", &p.diplo[..]);
+        let ship = &p.spaceship;
+        if ship.parts() > 0 || ship.launch_year.is_some() {
+            let grid: u64 = ship.grid.iter().flatten().fold(0xcbf29ce484222325, |h, v| (h ^ *v as u64).wrapping_mul(0x100000001b3));
+            let _ = writeln!(o, "{k}.ship s{} c{} m{} grid {grid:016x} launch {:?} arrival {:?}", ship.structurals, ship.components, ship.modules, ship.launch_year, ship.arrival_year);
+        }
         // with CIVRS_DUMP_AI in the environment also the continent policies and census rows
         // of the civ's last AI turn (SVE 0x0788.., ds:0xe698), for tracing the AI's choices
         if std::env::var_os("CIVRS_DUMP_AI").is_some() {
@@ -831,7 +838,7 @@ pub fn state_text(g: &Game) -> String {
         let row: String = (0..MAP_W as i32).map(|x| char::from_digit(g.map.claim_at(x, y) as u32 & 15, 16).unwrap()).collect();
         let _ = writeln!(o, "claims.y{y} {row}");
     }
-    let _ = writeln!(o, "polluted {}\nwarming {}", g.polluted_tiles, g.warming_counter);
+    let _ = writeln!(o, "polluted {}\nwarming {} warmings {}", g.polluted_tiles, g.warming_counter, g.global_warming_count);
     o
 }
 
