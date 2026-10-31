@@ -419,6 +419,13 @@ pub struct Game {
     /// unit). Imported from a save, set when a city goes; not saved.
     #[serde(skip)]
     pub exe_stale_home: Vec<(UnitId, CityId)>,
+    /// With `exe_quirks`: a Settlers' job bits (unit +0 & 0xc2) where they are not those of
+    /// its order: the job keys OR their bits into the status ('r' 0x532f, 'i' 0x54d5, 'm'
+    /// 0x5670, 'f' 0x520b, 'p' 0x50ba) and a finished or refused job clears its own alone, so
+    /// a computer's Settlers whose routine switches jobs keeps the rest (`Game::work_step`).
+    /// Cleared by a computer's step (0x6810). Imported from a save; not saved.
+    #[serde(skip)]
+    pub exe_job_bits: std::collections::HashMap<UnitId, u8>,
 }
 
 /// `wonders_built` entry of a wonder whose city was destroyed: built, owned by no one, listed
@@ -664,6 +671,7 @@ impl Game {
             exe_unit_ghost: Vec::new(),
             exe_unit_bit_lost: Vec::new(),
             exe_stale_home: Vec::new(),
+            exe_job_bits: std::collections::HashMap::new(),
         };
         game.place_starting_units(&slots, &world, &mut wr);
         // the game's draws go on in CIV.EXE's one stream
@@ -1018,6 +1026,7 @@ impl Game {
             if let Some(u) = self.units[c as usize].take() {
                 self.note_unit_ghost(u.owner, u.record, u.x, u.y);
                 self.exe_stale_home.retain(|(s, _)| *s != c);
+                self.exe_job_bits.remove(&c);
                 let p = &mut self.players[u.owner as usize];
                 p.unit_counter[u.kind as usize % 28] -= 1;
                 if self.counting_losses {

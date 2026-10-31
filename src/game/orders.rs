@@ -19,6 +19,42 @@ impl UnitOrder {
     pub fn is_work(self) -> bool {
         matches!(self, UnitOrder::Road | UnitOrder::Irrigate | UnitOrder::Mine | UnitOrder::Fortress | UnitOrder::CleanPollution)
     }
+
+    /// The status bits of a job (unit +0: 0x02 road, 0x40 irrigation, 0x80 mine, 0xc0
+    /// fortress, 0x82 pollution).
+    pub(crate) fn job_bits(self) -> u8 {
+        match self {
+            UnitOrder::Road => 0x02,
+            UnitOrder::Irrigate => 0x40,
+            UnitOrder::Mine => 0x80,
+            UnitOrder::Fortress => 0xc0,
+            UnitOrder::CleanPollution => 0x82,
+            _ => 0,
+        }
+    }
+
+    /// The order left when job `refused` is refused: a refusal clears that job's bits alone
+    /// ('p' 0x508c, 'f' 0x51f3, 'r' 0x52eb, 'i' 0x5454, 'm' 0x574b), so a computer's
+    /// Settlers asked for another job keeps what is left of its own.
+    pub fn after_refusal(self, refused: UnitOrder) -> UnitOrder {
+        if !self.is_work() {
+            return self;
+        }
+        UnitOrder::of_job_bits(self.job_bits() & !refused.job_bits())
+    }
+
+    /// The job that status bits & 0xc2 stand for, as a save is read (0x42, irrigation with a
+    /// road, stands for none).
+    pub(crate) fn of_job_bits(b: u8) -> UnitOrder {
+        match b & 0xc2 {
+            0x02 => UnitOrder::Road,
+            0x40 => UnitOrder::Irrigate,
+            0x80 => UnitOrder::Mine,
+            0xc0 => UnitOrder::Fortress,
+            0x82 | 0xc2 => UnitOrder::CleanPollution,
+            _ => UnitOrder::None,
+        }
+    }
 }
 
 /// The special resource of a square whose terrain changed: specials are a pattern of the
@@ -71,11 +107,7 @@ impl Game {
                 let r = self.work_step(id, o);
                 if r.is_err() && is_settlers {
                     // a refused job drops the order bits and the counter (0x5091)
-                    let um = self.unit_mut(id);
-                    if um.order.is_work() {
-                        um.order = UnitOrder::None;
-                    }
-                    um.order_turns = 0;
+                    self.refuse_job(id, o);
                 }
                 r
             }
@@ -91,7 +123,26 @@ impl Game {
     /// whose unit routine (0x17748, which never reads the status) switches jobs merges them,
     /// e.g. 'm' while irrigating gives 0xc0 = fortress. The human's never can (his loop asks
     /// for keys only with no job bits, 0x44ac, and presses the job's own key); civrs's new job
-    /// replaces the old one, the counter going on as in CIV.EXE.
+    /// replaces the old one, the counter going on as in CIV.EXE, but for `exe_quirks`, which
+    /// keeps the merged bits (`Game::exe_job_bits`): the job done clears its own and leaves
+    /// the rest.
+    /// A refused job `o` clears its bits and the work counter (0x5091).
+    fn refuse_job(&mut self, id: UnitId, o: UnitOrder) {
+        let bits = self.exe_job_bits.remove(&id);
+        let um = self.unit_mut(id);
+        um.order = match bits {
+            Some(b) => UnitOrder::of_job_bits(b & !o.job_bits()),
+            None => um.order.after_refusal(o),
+        };
+        um.order_turns = 0;
+        if let Some(b) = bits {
+            let left = b & !o.job_bits();
+            if left & 0xc2 != um.order.job_bits() {
+                self.exe_job_bits.insert(id, left);
+            }
+        }
+    }
+
     fn work_step(&mut self, id: UnitId, o: UnitOrder) -> Result<(), RuleError> {
         let u = self.unit(id).clone();
         if u.kind != unit_ids::SETTLERS {
@@ -165,16 +216,32 @@ impl Game {
             }
             _ => return Ok(()),
         };
+        // `exe_job_bits`: the key ORs its bits into those of the job before
+        let bits = self.exe_quirks.then(|| self.exe_job_bits.get(&id).copied().unwrap_or(u.order.job_bits()) | o.job_bits());
         let um = self.unit_mut(id);
         um.order = o;
         um.moves_left = 0;
         um.goto = None;
         um.order_turns = um.order_turns.saturating_add(1);
-        if um.order_turns < turns {
+        let done = um.order_turns >= turns;
+        if done {
+            um.order = UnitOrder::None;
+            um.order_turns = 0;
+        }
+        self.exe_job_bits.remove(&id);
+        if let Some(b) = bits {
+            // the finished job clears its own bits (0x512a, 0x5280, 0x53c2, 0x5592, 0x574b)
+            let b = if done { b & !o.job_bits() } else { b };
+            if done {
+                self.unit_mut(id).order = UnitOrder::of_job_bits(b);
+            }
+            if b != self.unit(id).order.job_bits() {
+                self.exe_job_bits.insert(id, b);
+            }
+        }
+        if !done {
             return Ok(());
         }
-        um.order = UnitOrder::None;
-        um.order_turns = 0;
         self.finish_work(x, y, o);
         // add_improvement (0x1bcd9) shows the human his own work at once; cleaning pollution
         // shows anyone's (0x5101); a new terrain's lost irrigation and mine wait for a look
@@ -311,9 +378,7 @@ impl Game {
         for id in ids {
             let o = self.unit(id).order;
             if self.work_step(id, o).is_err() {
-                let um = self.unit_mut(id);
-                um.order = UnitOrder::None;
-                um.order_turns = 0;
+                self.refuse_job(id, o);
             }
         }
     }
@@ -706,6 +771,32 @@ mod tests {
         }
         let s = g.add_unit(slot, unit_ids::SETTLERS, x, y);
         (g, s)
+    }
+
+    #[test]
+    fn a_refused_job_clears_its_own_bits_alone() {
+        // 'r' 0x52eb: and status,0xfd; 'i' 0x5454: and status,0xbf
+        assert_eq!(UnitOrder::Irrigate.after_refusal(UnitOrder::Road), UnitOrder::Irrigate);
+        assert_eq!(UnitOrder::Fortress.after_refusal(UnitOrder::Irrigate), UnitOrder::Mine);
+        assert_eq!(UnitOrder::Irrigate.after_refusal(UnitOrder::Irrigate), UnitOrder::None);
+        let (mut g, s) = settlers_on(Terrain::Grassland);
+        g.map.get_mut(30, 20).unwrap().set(tile_flags::ROAD, true);
+        g.unit_mut(s).order = UnitOrder::Irrigate;
+        g.unit_mut(s).order_turns = 2;
+        assert!(g.give_order(s, UnitOrder::Road).is_err());
+        assert_eq!((g.unit(s).order, g.unit(s).order_turns), (UnitOrder::Irrigate, 0));
+    }
+
+    #[test]
+    fn exe_quirks_a_finished_job_leaves_the_bits_of_the_one_before() {
+        // the keys OR their bits in (0x532f); the road done clears 0x02 alone (0x53c2)
+        let (mut g, s) = settlers_on(Terrain::Grassland);
+        g.exe_quirks = true;
+        g.unit_mut(s).order = UnitOrder::Irrigate;
+        g.unit_mut(s).order_turns = 3;
+        assert!(g.give_order(s, UnitOrder::Road).is_ok());
+        assert!(g.map.tile(30, 20).has(tile_flags::ROAD));
+        assert_eq!((g.unit(s).order, g.unit(s).order_turns), (UnitOrder::Irrigate, 0));
     }
 
     /// Run the start-of-turn work step `n` times, restoring the moves first like the turn loop.

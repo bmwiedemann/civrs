@@ -560,6 +560,10 @@ fn import_slot_with(data: &[u8], map_pic: &[u8], moves_back: bool, resume: bool)
             u.veteran = r[0] & 0x20 != 0;
             u.goto = (r[6] != 0xff).then_some((r[6] as i32, r[7] as i32));
             u.order = unit_order(r[0], u.goto.is_some(), u.is_air());
+            // job bits that stand for no job of their own (`Game::exe_job_bits`)
+            if !u.is_air() && r[0] & 0xc2 == 0x42 {
+                g.exe_job_bits.insert(id, 0x42);
+            }
             // the sentry bit over a job or a fortification (take_cargo 0x69e5): both stay
             if r[0] & 0x01 != 0 && (u.order.is_work() || matches!(u.order, UnitOrder::Fortify | UnitOrder::Fortified)) {
                 u.sentry_job = Some(u.order);
@@ -822,7 +826,8 @@ pub fn state_text(g: &Game) -> String {
             u.x,
             u.y,
             u.moves_left,
-            u.order,
+            // CIV.EXE's job bits read as a save is (`Game::exe_job_bits`)
+            g.exe_job_bits.get(&u.id).map(|b| unit_order(*b, u.goto.is_some(), u.is_air())).unwrap_or(u.order),
             u.order_turns,
             u.fuel,
             u.veteran,

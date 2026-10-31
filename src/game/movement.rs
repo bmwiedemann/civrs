@@ -210,6 +210,8 @@ impl Game {
                 }
                 // no attack from a ship: a land unit on an ocean square (0x5ec3)
                 if u.is_land() && self.map.is_ocean(u.x, u.y) {
+                    // the refusal drops the goto (0x5ef3)
+                    self.clear_goto(id);
                     return Err(RuleError::Amphib);
                 }
                 // below one full move the human is asked to confirm the weakened attack, and
@@ -257,6 +259,9 @@ impl Game {
                     if matches!(u.kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN) {
                         return Ok(MoveOutcome::EnteredForeignCity(c));
                     }
+                    // *OCCUPY drops the goto (0x5eaa -> 0x5ef3), so a computer's ship sent
+                    // to an emptied city asks for another
+                    self.clear_goto(id);
                     return Err(RuleError::Occupy);
                 }
                 if matches!(u.kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN) {
@@ -588,6 +593,9 @@ impl Game {
         // out of the old square's stack ring, into the new one's (0x67ae/0x67ce)
         self.relocate_unit(id, x, y);
         let human = self.is_human(self.unit(id).owner);
+        if !human && !self.unit(id).is_air() {
+            self.exe_job_bits.remove(&id);
+        }
         let u = self.unit_mut(id);
         u.moves_left = u.moves_left.saturating_sub(cost);
         // a computer's unit but an aircraft keeps only its veteran bits (`and status,0x30`,
