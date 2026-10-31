@@ -757,13 +757,17 @@ impl Game {
     }
 
     /// A run of the city routine in mode -1 (`process_city(city, -1)`: the production advisor
-    /// 0xaa1b, the reports, civ_score, unrest): it stores the city's trade (`note_trade`)
-    /// and, not drawing, marks its worked squares with the owner (work_tile 0x132e3).
+    /// 0xaa1b, the reports, civ_score, unrest): it places the workers (`assign_workers`), stores
+    /// the city's trade (`note_trade`) and, not drawing, marks its worked squares with the owner
+    /// (work_tile 0x132e3).
     pub fn city_routine_quiet(&mut self, c: CityId) {
         if self.city_opt(c).is_some() {
             // (a quiet run counts the squares and units again; `trade_carry` and
             // `abroad_carry` are only for the turn's reads after it)
             let carry = (self.trade_carry.take(), self.abroad_carry.take());
+            // every run places the workers (0xd454..0xdc5d): a computer city starts over when
+            // (city + turn) & 3 == 0, also in the runs between its turns
+            self.assign_workers(c, false);
             self.note_trade(c);
             self.claim_worked_squares(c);
             let h = self.city_happiness(c);
@@ -1232,6 +1236,34 @@ mod tests {
 
     /// Anarchy splits the trade by the rates like any government (0xf237); it only collects
     /// no taxes and no science.
+    /// Every run of the city routine places the workers (0xd454): a computer city's quiet
+    /// run on a turn with (city + turn) & 3 == 0 starts over, as its turn would.
+    #[test]
+    fn a_quiet_run_places_the_workers_too() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        g.player_mut(slot).human = false;
+        g.city_mut(c).size = 3;
+        g.auto_assign(c);
+        let fresh = g.city(c).worked;
+        // a worse layout: the city's squares moved one place on
+        let squares: Vec<u8> = (1..21u8).filter(|i| g.city(c).works(*i)).collect();
+        for i in &squares {
+            g.release_tile(c, *i);
+        }
+        for i in (1..21u8).filter(|i| !squares.contains(i)).take(squares.len()) {
+            g.take_tile(c, i);
+        }
+        let worse = g.city(c).worked;
+        assert_ne!(worse, fresh);
+        g.turn = (4 - c as u32 % 4) % 4 + 1;
+        g.city_routine_quiet(c);
+        assert_eq!(g.city(c).worked, worse, "kept on other turns");
+        g.turn = (4 - c as u32 % 4) % 4 + 4;
+        g.city_routine_quiet(c);
+        assert_eq!(g.city(c).worked, fresh);
+    }
+
     #[test]
     fn exe_quirks_carry_the_advisors_trade_with_routes_into_the_turns_split() {
         // the advisor's run (0xaa1b) inside a city's turn leaves ds:0x70de at squares +
