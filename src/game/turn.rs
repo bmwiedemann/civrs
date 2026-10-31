@@ -748,6 +748,7 @@ impl Game {
         // production
         let prod = self.city(c).production;
         let mut blocked = false;
+        let tried_building = self.city(c).shields >= self.production_cost(c, prod) && !matches!(prod, Production::Unit(_));
         if self.city(c).shields >= self.production_cost(c, prod) {
             blocked = !matches!(prod, Production::Unit(_)) && self.production_invalid(c);
             self.complete_production(c, prod);
@@ -761,6 +762,11 @@ impl Game {
         // a computer city's purchases and alert (CIV.EXE 0xec0d..0xef79), before its taxes
         if !self.player(slot).human {
             let net = if was_disorder { 0 } else { y.shield_surplus() };
+            // CIV.EXE's purchase tests the store's gain in [bp-0xe8] (0xec84), which a finished
+            // improvement or wonder has overwritten with its id or -1 (0xe49e, 0xe4e8), never 0:
+            // with `exe_quirks` the gold / 64 for a unit of the civ's policy follows then even
+            // in disorder
+            let net = if self.exe_quirks && tried_building { 1 } else { net };
             crate::ai::city_ai::city_turn_purchase(self, c, net);
         }
         // with `exe_quirks` the rest of the turn reads the totals an advisor's run inside
