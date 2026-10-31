@@ -2269,6 +2269,8 @@ impl Game {
         }
         // the trade routes stay, both ways (capture_city 0x13d76 leaves the route bytes)
         let unrest = self.captured_in_disorder(to);
+        // a human's new city keeps its production (capture_city 0x142fc)
+        let keep_production = self.player(to).human;
         {
             let cm = self.city_mut(c);
             cm.owner = to;
@@ -2279,7 +2281,9 @@ impl Game {
             cm.auto_build = false;
             cm.garrison_out = false;
             cm.specialists.clear();
-            cm.production = Production::Unit(unit_ids::MILITIA);
+            if !keep_production {
+                cm.production = Production::Unit(unit_ids::MILITIA);
+            }
             cm.shields = 0;
             cm.caravan_shields = 0;
             cm.improvements &= kept;

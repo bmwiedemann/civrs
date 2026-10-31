@@ -477,6 +477,9 @@ impl Game {
         // the replay records the city as taken (0x13f97)
         self.replay_city(super::replay::kind::CAPTURE, by, c);
         let unrest = self.captured_in_disorder(by);
+        // capture_city leaves the production byte to a human captor (0x142fc..0x1431a: only a
+        // computer's is set and chosen again, 0x14328)
+        let keep_production = self.player(by).human;
         {
             let cm = self.city_mut(c);
             cm.owner = by;
@@ -492,7 +495,9 @@ impl Game {
             cm.specialists.clear();
             cm.shields = 0;
             cm.caravan_shields = 0;
-            cm.production = super::Production::Unit(unit_ids::MILITIA);
+            if !keep_production {
+                cm.production = super::Production::Unit(unit_ids::MILITIA);
+            }
             cm.improvements &= kept;
         }
         self.city_changed_hands(c, from, by);
@@ -1434,6 +1439,7 @@ mod tests {
         g.player_mut(2).gold = 300;
         g.player_mut(2).learn(crate::rules::advance_ids::ALPHABET);
         g.player_mut(2).learn(crate::rules::advance_ids::POTTERY);
+        g.city_mut(c).production = crate::game::Production::Improvement(imp::GRANARY);
         let before = g.player(1).gold;
         g.take_census_all();
         let a = g.add_unit(1, unit_ids::LEGION, 19, 20);
@@ -1455,6 +1461,8 @@ mod tests {
         assert_eq!(g.player(1).gold - before, 180);
         assert_eq!(g.player(2).gold, 120);
         assert_eq!(g.unit(a).pos(), (20, 20));
+        // a human captor's city keeps its production byte (0x142fc)
+        assert_eq!(g.city(c).production, crate::game::Production::Improvement(imp::GRANARY));
         assert!(g.events.iter().any(|e| matches!(e, GameEvent::CityCaptured { city, by: 1, from: 2, gold: 180, .. } if *city == c)));
     }
 
