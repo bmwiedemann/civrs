@@ -236,9 +236,14 @@ impl Game {
                     self.nuke(id, tx, ty);
                     MoveOutcome::Attacked { won: true, at: (tx, ty), defender: unit_ids::NUCLEAR }
                 } else {
+                    let alone = self.unit(id).next.is_none();
                     let out = self.attack(id, tx, ty);
-                    // the human sees what is left of a city he attacked, won or lost (0x61f8)
-                    if slot == self.human_slot {
+                    // the human sees what is left of a city he attacked, won or lost, or that
+                    // was attacked on his square (0x61f8: the attacker, or ds:0xd20a, the
+                    // owner unit_at found on the square, 0x5a91, unless a lone loser had the
+                    // fight look round its square, the loser's own last, 0x1a15d..0x1a1c8)
+                    let lost_alone = alone && matches!(out, MoveOutcome::Attacked { won: false, .. });
+                    if slot == self.human_slot || (o == self.human_slot && !lost_alone) {
                         if let Some(c) = self.city_at(tx, ty) {
                             self.note_city_size(c);
                         }
