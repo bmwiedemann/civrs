@@ -274,6 +274,12 @@ pub struct Game {
     /// civrs adds it when the menu is answered (`Game::apply_decision`). Not saved.
     #[serde(skip)]
     pub chieftain_science: i32,
+    /// Happy and unhappy citizens as the last run of the city routine left them (ds:0x70e2 /
+    /// ds:0x70e4): a city's turn reads them for its score and its return value (0x12dbe,
+    /// 0x13223) after the runs it may have caused itself (the advisor's on a change of mood,
+    /// every city's after an advance). Not saved.
+    #[serde(skip)]
+    pub last_moods: (i32, i32),
     /// The global warming counter ds:0xb1ea (0..99): one step a turn towards twice the
     /// polluted squares minus four per warming so far (`global_warming_check`); stored after
     /// the game body in version-9 saves.
@@ -585,6 +591,7 @@ impl Game {
             score_acc: [0; 8],
             gov_case: (0, 0),
             chieftain_science: 0,
+            last_moods: (0, 0),
             first_discoverer: vec![0; 72],
             historian_timer: 80 + historian,
             history: replay::History::default(),

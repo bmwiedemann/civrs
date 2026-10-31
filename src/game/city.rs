@@ -259,12 +259,14 @@ impl Game {
             return;
         }
         let (owner, pos) = (city.owner, city.pos());
-        let fortified: Vec<UnitId> = self
+        // (the owner's unit table, in record order, 0x7e6:0xc2)
+        let mut fortified: Vec<(u8, UnitId)> = self
             .all_units()
             .filter(|u| u.owner == owner && u.pos() == pos && u.home == Some(c) && u.order == UnitOrder::Fortified)
-            .map(|u| u.id)
+            .map(|u| (u.record, u.id))
             .collect();
-        for id in fortified.into_iter().skip(1) {
+        fortified.sort_unstable();
+        for (_, id) in fortified.into_iter().skip(1) {
             let Some(slot) = self.city(c).garrison.iter().position(|g| *g == NO_GARRISON) else { break };
             let u = self.unit(id);
             let code = u.kind | if u.veteran { GARRISON_VETERAN } else { 0 };
@@ -418,6 +420,21 @@ mod tests {
 
     fn rival(g: &Game) -> Slot {
         (1..8).find(|s| *s != g.human_slot && g.player(*s).in_game).unwrap()
+    }
+
+    /// The stash takes the fortified units in the unit table's order (records), whatever
+    /// order civrs made them in; the first stays.
+    #[test]
+    fn the_stash_goes_by_record() {
+        let (mut g, c, ids) = garrisoned();
+        for (id, rec) in ids.iter().zip([5u8, 1, 3]) {
+            g.unit_mut(*id).order = UnitOrder::Fortified;
+            g.unit_mut(*id).record = rec;
+        }
+        g.stash_garrison(c);
+        // records 1 (ids[1]) stays, 3 and 5 go
+        assert!(g.unit_opt(ids[1]).is_some());
+        assert!(g.unit_opt(ids[0]).is_none() && g.unit_opt(ids[2]).is_none());
     }
 
     #[test]

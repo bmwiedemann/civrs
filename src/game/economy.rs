@@ -334,16 +334,13 @@ impl Game {
         y.shield_upkeep = self.shield_costs(c).iter().filter(|(_, cost)| *cost).count() as i32 + self.garrison_upkeep(c);
         y.shields = self.boosted_shields(c, y.shields);
         // corruption and the tax/lux/sci split (CIV.EXE 0xf1df): luxuries and taxes rounded to
-        // the nearest unit, science gets the rest
+        // the nearest unit, science gets the rest; by the rates under Anarchy too (0xf237),
+        // which only collects neither taxes nor science (0x12955, 0x12bde)
         y.corruption = self.corruption(c, y.trade, false);
         let net = y.trade - y.corruption;
-        if p.govt == Govt::Anarchy {
-            y.lux = net;
-        } else {
-            y.lux = ((net * (lux.unwrap_or(p.lux) / 10) as i32 + 5) / 10).clamp(0, y.trade);
-            y.tax = ((net * (p.tax / 10) as i32 + 5) / 10).clamp(0, (net - y.lux).max(0));
-            y.sci = net - y.lux - y.tax;
-        }
+        y.lux = ((net * (lux.unwrap_or(p.lux) / 10) as i32 + 5) / 10).clamp(0, y.trade);
+        y.tax = ((net * (p.tax / 10) as i32 + 5) / 10).clamp(0, (net - y.lux).max(0));
+        y.sci = net - y.lux - y.tax;
         // specialists: 2 each
         for s in &city.specialists {
             match s {
@@ -744,6 +741,8 @@ impl Game {
         if self.city_opt(c).is_some() {
             self.note_trade(c);
             self.claim_worked_squares(c);
+            let h = self.city_happiness(c);
+            self.last_moods = (h.happy, h.unhappy);
         }
     }
 
@@ -1193,6 +1192,24 @@ mod tests {
         g.auto_assign(c);
         assert!(g.city(c).works(0));
         assert_eq!(g.city(c).workers(), 1);
+    }
+
+    /// Anarchy splits the trade by the rates like any government (0xf237); it only collects
+    /// no taxes and no science.
+    #[test]
+    fn anarchy_splits_the_trade_by_the_rates() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        g.city_mut(c).size = 6;
+        g.auto_assign(c);
+        g.player_mut(slot).tax = 30;
+        g.player_mut(slot).lux = 20;
+        let before = g.city_yield(c);
+        g.player_mut(slot).govt = Govt::Anarchy;
+        let y = g.city_yield(c);
+        let net = y.trade - y.corruption;
+        assert_eq!(y.lux, (net * 2 + 5) / 10);
+        assert!(y.lux < net || net == 0, "{before:?} {y:?}");
     }
 
     #[test]

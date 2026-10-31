@@ -779,6 +779,7 @@ impl Game {
             self.gov_case.0 += 5 * (military - y.shields).max(0) + military.clamp(0, city.size as i32);
             self.gov_case.1 -= (market - civilized) * abroad;
         }
+        self.last_moods = (h.happy, h.unhappy);
         self.city_moods(c, &h, y.food - (y.food_upkeep - 2 * self.city(c).size as i32));
         // gold & science (0x12955: no taxes in disorder or under Anarchy, none for the
         // barbarians, 0x125e1; 0x12bde: science whatever the disorder, none under Anarchy)
@@ -787,9 +788,13 @@ impl Game {
             self.player_mut(slot).gold += t.tax;
         }
         self.city_science(c, t.sci);
-        // the score accumulator: size (after a celebration's growth) + happy - unhappy (0x12dbe)
+        // the score accumulator: size (after a celebration's growth) + happy - unhappy (0x12dbe),
+        // the moods as the last run of the city routine left them (`Game::last_moods`): the
+        // advisor's (process_city(city, -1) at 0xaa1b) when the city asked for production in a
+        // change of mood, after the units that went, or the last city's after an advance
         let size = self.city(c).size as i32;
-        self.score_acc[slot as usize & 7] += size + h.happy - h.unhappy;
+        let (happy, unhappy) = self.last_moods;
+        self.score_acc[slot as usize & 7] += size + happy - unhappy;
         // hazards and upkeep, the human's cities only (0x12ddd)
         self.pollution_roll(c);
         self.meltdown_roll(c);
@@ -802,10 +807,16 @@ impl Game {
         // screen (update_civ_tax_rates 0xa5e2), whose worker assignment puts a city that
         // shrank for its Settlers in order; a computer city waits for its next turn
         if self.city_attention && self.player(slot).human {
+            // that run lets the garrison out (0xcda0) and stashes it again at its end (0x1320d):
+            // the stash takes all fortified units but the first in table order, the units let
+            // out among them in their new records
+            self.unstash_garrison(c);
             self.fix_workers(c);
             self.note_trade(c);
+            self.restash_garrison(c);
         }
-        Some(h.happy - h.unhappy)
+        // (ds:0x70e2 - ds:0x70e4, 0x13223)
+        Some(happy - unhappy)
     }
 
     /// Disorder and celebration after the city's turn (CIV.EXE 0x125eb..0x12bd1; not for the
@@ -2493,6 +2504,23 @@ mod tests {
         let after = g.gov_case;
         g.city_routine_quiet(c);
         assert!(g.gov_case.1 >= after.1 && g.gov_case.0 <= after.0);
+    }
+
+    /// A city's score (0x12dbe) reads the moods the last run of the city routine left: the
+    /// advisor's quiet run when the city asked for production in a change of mood.
+    #[test]
+    fn the_score_takes_the_last_runs_moods() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        g.last_moods = (5, 0);
+        g.city_routine_quiet(c);
+        let h = g.city_happiness(c);
+        assert_eq!(g.last_moods, (h.happy, h.unhappy));
+        g.score_acc[slot as usize] = 0;
+        g.process_city(c);
+        let size = g.city(c).size as i32;
+        let h = g.city_happiness(c);
+        assert_eq!(g.score_acc[slot as usize], size + h.happy - h.unhappy);
     }
 
     #[test]
