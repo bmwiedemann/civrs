@@ -714,6 +714,8 @@ impl Game {
         let slot = self.city(c).owner;
         // ds:0xb1e8 is cleared before every city (update_civ_tax_rates 0xa5fa)
         self.city_attention = false;
+        self.nested_trade = None;
+        self.trade_carry = None;
         // a store out of 0..=999 (a shortage leaves it negative) starts again from 0 (0xc977)
         {
             let cm = self.city_mut(c);
@@ -765,7 +767,9 @@ impl Game {
         }
         // trade split and happiness with the buildings and units of this turn, counted before
         // the units the city cannot support go (0xfbe6 follows 0xf3f8); the trade split
-        // stores the city's trade less corruption first (0xf13d)
+        // stores the city's trade less corruption first (0xf13d); with `exe_quirks` from the
+        // totals an advisor's run inside this turn left (`Game::nested_trade`)
+        self.trade_carry = self.nested_trade.filter(|(cc, _)| *cc == c);
         self.note_trade(c);
         let h = self.city_happiness(c);
         let military = self.disband_unsupported(c, y.shields);
@@ -788,6 +792,7 @@ impl Game {
             self.player_mut(slot).gold += t.tax;
         }
         self.city_science(c, t.sci);
+        self.trade_carry = None;
         // the score accumulator: size (after a celebration's growth) + happy - unhappy (0x12dbe),
         // the moods as the last run of the city routine left them (`Game::last_moods`): the
         // advisor's (process_city(city, -1) at 0xaa1b) when the city asked for production in a

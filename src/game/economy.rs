@@ -318,6 +318,9 @@ impl Game {
                 y.trade += t;
             }
         }
+        if let Some((_, t)) = self.trade_carry.filter(|(cc, _)| *cc == c) {
+            y.trade = t;
+        }
         // trade routes (CIV.EXE 0xf141): each adds (partner's stored trade, `City::trade`
         // (0xf195) + this city's trade so far + 4) / 8, or / 16 between cities of one
         // civilization
@@ -401,7 +404,7 @@ impl Game {
     /// Trade of the worked tiles less their corruption, as the city is now: what the city
     /// routine stores in `City::trade` (CIV.EXE city +0xa, 0xf13d).
     pub fn visible_trade(&self, c: CityId) -> i32 {
-        let t = self.raw_trade(c);
+        let t = self.trade_carry.filter(|(cc, _)| *cc == c).map_or_else(|| self.raw_trade(c), |(_, t)| t);
         t - self.corruption(c, t, true)
     }
 
@@ -740,10 +743,17 @@ impl Game {
     /// and, not drawing, marks its worked squares with the owner (work_tile 0x132e3).
     pub fn city_routine_quiet(&mut self, c: CityId) {
         if self.city_opt(c).is_some() {
+            // (a quiet run counts the squares again; `trade_carry` is only for the turn's
+            // split after it)
+            let carry = self.trade_carry.take();
             self.note_trade(c);
             self.claim_worked_squares(c);
             let h = self.city_happiness(c);
             self.last_moods = (h.happy, h.unhappy);
+            if self.exe_quirks {
+                self.nested_trade = Some((c, self.city_yield(c).trade));
+            }
+            self.trade_carry = carry;
         }
     }
 
@@ -1190,6 +1200,32 @@ mod tests {
 
     /// Anarchy splits the trade by the rates like any government (0xf237); it only collects
     /// no taxes and no science.
+    #[test]
+    fn exe_quirks_carry_the_advisors_trade_with_routes_into_the_turns_split() {
+        // the advisor's run (0xaa1b) inside a city's turn leaves ds:0x70de at squares +
+        // routes; the turn's split (0xf136) stores that and adds the routes again
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        g.city_mut(c).size = 4;
+        g.auto_assign(c);
+        let (x, y) = g.city(c).pos();
+        let other = g.add_city(slot, "Other".into(), x + 6, y);
+        g.city_mut(other).trade = 40;
+        g.city_mut(c).trade_routes = vec![other];
+        let squares = g.raw_trade(c);
+        let total = g.city_yield(c).trade;
+        assert!(total > squares);
+        g.city_routine_quiet(c);
+        assert_eq!(g.nested_trade, None, "civrs keeps its own totals");
+        g.exe_quirks = true;
+        g.city_routine_quiet(c);
+        assert_eq!(g.nested_trade, Some((c, total)));
+        g.trade_carry = g.nested_trade;
+        g.note_trade(c);
+        assert_eq!(g.city(c).trade, total - g.corruption(c, total, true));
+        assert!(g.city_yield(c).trade > total);
+    }
+
     #[test]
     fn anarchy_splits_the_trade_by_the_rates() {
         let (mut g, c) = fixture();
