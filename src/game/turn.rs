@@ -903,7 +903,9 @@ impl Game {
     /// away from the city, and its disorder bit is cleared (0xfe7d..0xfedf): this turn's
     /// disorder then counts as new, and the city asks for production again (0x1275a). When
     /// the world gangs up on the human, a civilization with fewer advances than the human
-    /// keeps the unit and its case for the Republic becomes -999 (0xfe51..0xfe74).
+    /// keeps the unit and its case for the Republic becomes -999 (0xfe51..0xfe74), also when
+    /// no unit could go (the search result is tested after, at 0xfe7d). 0xfe74 is the only
+    /// -999 store; the copies in Ghidra's 0x1403e and 0x1a9fd are this code inlined.
     ///
     /// Returns the count of the military units below the Diplomat with the stashed garrison
     /// (ds:0xdeb8) as the last count left it.
@@ -927,12 +929,15 @@ impl Game {
                 }
                 let p = self.player(slot);
                 if self.city(c).disorder && (self.unit(id).record as u32 + self.turn) & 7 == 0 && !p.human && p.govt as u8 >= Govt::Republic as u8 {
-                    let Some(victim) = self.farthest_supported_unit(c) else { continue };
                     let behind = self.ai_memory.gang_up && p.research_count < self.player(self.human_slot).research_count;
-                    let (u, city) = (self.unit(victim), self.city(c));
                     if behind {
+                        // with or without a unit to disband (0xfe51 comes before 0xfe7d's test)
                         self.gov_case.1 = -999;
-                    } else if Map::civ_distance(u.pos(), city.pos()) > 0 && u.is_land() && u.kind != unit_ids::SETTLERS {
+                        continue;
+                    }
+                    let Some(victim) = self.farthest_supported_unit(c) else { continue };
+                    let (u, city) = (self.unit(victim), self.city(c));
+                    if Map::civ_distance(u.pos(), city.pos()) > 0 && u.is_land() && u.kind != unit_ids::SETTLERS {
                         self.remove_unit(victim);
                         self.city_mut(c).disorder = false;
                     }
@@ -2480,6 +2485,38 @@ mod tests {
             assert_eq!(g.unit_opt(far).is_none(), gone, "turn {turn} human {human} kind {kind}");
             assert_eq!(g.city(c).disorder, !gone);
             assert_eq!(military, 1);
+        }
+    }
+
+    /// When the world gangs up on the human, a rioting Republic behind the human in advances
+    /// keeps its units and its case for the Republic becomes -999, also with no unit the
+    /// search could pick (0xfe51..0xfe74 before 0xfe7d).
+    #[test]
+    fn a_rioting_republic_behind_the_ganged_up_human_gives_up_the_republic() {
+        for kind in [unit_ids::LEGION, unit_ids::DIPLOMAT] {
+            let (mut g, c) = fixture();
+            let slot = g.city(c).owner;
+            let (x, y) = g.city(c).pos();
+            for id in g.units_of(slot) {
+                g.remove_unit(id);
+            }
+            g.player_mut(slot).human = false;
+            g.human_slot = (slot % 7) + 1;
+            let human = g.human_slot;
+            g.player_mut(human).human = true;
+            g.player_mut(human).research_count = g.player(slot).research_count + 1;
+            g.ai_memory.gang_up = true;
+            g.player_mut(slot).govt = Govt::Republic;
+            g.turn = 8;
+            g.city_mut(c).disorder = true;
+            let u = g.add_unit(slot, kind, x + 4, y);
+            g.unit_mut(u).home = Some(c);
+            g.unit_mut(u).record = 0;
+            g.gov_case = (0, 5);
+            g.disband_unsupported(c, 99);
+            assert!(g.unit_opt(u).is_some());
+            assert!(g.city(c).disorder);
+            assert_eq!(g.gov_case.1, -999, "kind {kind}");
         }
     }
 

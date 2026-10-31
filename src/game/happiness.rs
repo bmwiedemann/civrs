@@ -209,9 +209,12 @@ impl Game {
         (self.martial_law_kinds(c).len() + stashed) as i32
     }
 
-    /// Units supported by the city that count as "abroad" (ds:0x6546).
+    /// Units supported by the city that count as "abroad" (ds:0x6546): the loop at 0xd2ec walks
+    /// the owner's unit records only, so another civilization's units homed at the city's
+    /// number (a city captured or destroyed and refounded) do not count.
     pub fn aggressive_units_abroad(&self, c: CityId) -> i32 {
-        self.all_units().filter(|u| u.home == Some(c) && self.aggressive_abroad(c, u)).count() as i32
+        let owner = self.city(c).owner;
+        self.all_units().filter(|u| u.home == Some(c) && u.owner == owner && self.aggressive_abroad(c, u)).count() as i32
     }
 
     /// The unit, supported by city `c`, counts as abroad for the Republic/Democracy
@@ -501,6 +504,10 @@ mod tests {
         g.unit_mut(away).home = Some(c);
         let fighter = g.add_unit(slot, unit_ids::FIGHTER, x, y);
         g.unit_mut(fighter).home = Some(c);
+        // another civilization's unit homed at the city's number doesn't count (0xd2ec)
+        let other = (1..8u8).find(|s| *s != slot).unwrap();
+        let foreign = g.add_unit(other, unit_ids::LEGION, x + 1, y + 1);
+        g.unit_mut(foreign).home = Some(c);
         // the unit at home doesn't count, the aircraft counts even at home
         assert_eq!(g.aggressive_units_abroad(c), 2);
         assert_eq!(g.unit_unhappiness(c, g.unit(away)), 2);

@@ -327,9 +327,10 @@ impl Game {
                 y.trade += (other.trade + y.trade + 4) / div;
             }
         }
-        // food upkeep: 2 per citizen plus settlers (1; 2 from the Monarchy on, CIV.EXE 0xcc2d)
+        // food upkeep: 2 per citizen plus settlers (1; 2 from the Monarchy on, CIV.EXE 0xcc2d),
+        // the owner's Settlers homed here (the unit loop 0xd2ec walks the owner's records)
         let g = rules::GOVERNMENTS[p.govt as usize];
-        let settlers = self.all_units().filter(|u| u.home == Some(c) && u.kind == unit_ids::SETTLERS).count() as i32;
+        let settlers = self.all_units().filter(|u| u.home == Some(c) && u.owner == slot && u.kind == unit_ids::SETTLERS).count() as i32;
         y.food_upkeep = city.size as i32 * 2 + settlers * g.settler_food as i32;
         y.shield_upkeep = self.shield_costs(c).iter().filter(|(_, cost)| *cost).count() as i32 + self.garrison_upkeep(c);
         y.shields = self.boosted_shields(c, y.shields);
@@ -1044,20 +1045,13 @@ impl Game {
     /// Set tax and luxury rates (science is the remainder), multiples of 10. The human's rate
     /// dialogs (o 0x6fd9 / 0x70bf) list every split and store the choice; the computer's rates
     /// (0xa5e2) get no government maximum either, and the city split (0xf237) clamps nothing
-    /// but the trade. Anarchy forces 0/100/0.
+    /// but the trade. Anarchy changes nothing either: the human's revolution (0x6f50) and
+    /// `set_government(civ, 0)` (0x14f3c) leave the rates as they are, the menus (0x6fd9,
+    /// 0x70bf, no government test on the way from 0x58d6 / 0x73f0) store any split, and
+    /// Anarchy only collects no taxes and no science (0x12bd0).
     pub fn set_rates(&mut self, slot: Slot, tax: u8, lux: u8) -> Result<(), RuleError> {
         if tax % 10 != 0 || lux % 10 != 0 || tax as u32 + lux as u32 > 100 {
             return Err(RuleError::Other("Rates must be multiples of 10% adding up to 100%."));
-        }
-        if self.player(slot).govt == Govt::Anarchy {
-            return if tax == 0 && lux == 100 {
-                let p = self.player_mut(slot);
-                p.tax = 0;
-                p.lux = 100;
-                Ok(())
-            } else {
-                Err(RuleError::Other("Under Anarchy all trade goes to luxuries."))
-            };
         }
         let p = self.player_mut(slot);
         p.tax = tax;
@@ -1308,9 +1302,10 @@ mod tests {
         assert!(g.set_rates(slot, 100, 0).is_ok());
         assert!(g.set_rates(slot, 0, 0).is_ok());
         assert!(g.set_rates(slot, 55, 0).is_err());
+        // Anarchy stores any split too (0x6fd9, 0x70bf)
         g.player_mut(slot).govt = Govt::Anarchy;
-        assert!(g.set_rates(slot, 50, 0).is_err());
-        assert!(g.set_rates(slot, 0, 100).is_ok());
+        assert!(g.set_rates(slot, 50, 20).is_ok());
+        assert_eq!((g.player(slot).tax, g.player(slot).lux), (50, 20));
         g.player_mut(slot).govt = Govt::Despotism;
         g.clamp_rates(slot);
         let p = g.player(slot);
