@@ -758,8 +758,9 @@ impl Game {
 
     /// A run of the city routine in mode -1 (`process_city(city, -1)`: the production advisor
     /// 0xaa1b, the reports, civ_score, unrest): it places the workers (`assign_workers`), stores
-    /// the city's trade (`note_trade`) and, not drawing, marks its worked squares with the owner
-    /// (work_tile 0x132e3).
+    /// the city's trade (`note_trade`), not drawing, marks its worked squares with the owner
+    /// (work_tile 0x132e3), and a human city's garrison let out goes back into the store unless
+    /// a foreign unit is next to it (0x125d6 -> 0x131d2, as at the end of its turn).
     pub fn city_routine_quiet(&mut self, c: CityId) {
         if self.city_opt(c).is_some() {
             // (a quiet run counts the squares and units again; `trade_carry` and
@@ -776,6 +777,8 @@ impl Game {
                 self.nested_totals = Some(self.turn_totals(c));
             }
             (self.trade_carry, self.abroad_carry) = carry;
+            // a run in a mode other than 0 ends at the garrison check (0x125d6 -> 0x131d2)
+            self.restash_garrison_quiet(c);
         }
     }
 

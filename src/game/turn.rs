@@ -689,8 +689,11 @@ impl Game {
             return;
         }
         let level = self.player(me).palace_level as i32;
-        // civ_score runs the city routine for each of the human's cities (o 0x1c1d8)
+        // civ_score runs the city routine for each of the human's cities (o 0x1c1d8), its si
+        // 0x1c * the city's index (o 0x1c1be) as in the turn's loop (probes of CIV.EXE at 0x131fa)
+        self.quiet_si_index = true;
         self.note_trade_of(Some(me));
+        self.quiet_si_index = false;
         if self.score(me).total < palace_threshold(level + 1, self.setup.difficulty as i32) {
             return;
         }

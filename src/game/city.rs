@@ -390,6 +390,19 @@ impl Game {
         }
     }
 
+    /// `restash_garrison` at the end of a quiet run of the city routine (0x131d2): with
+    /// `exe_quirks` and the caller's si known (`Game::quiet_si_index`) the check as CIV.EXE
+    /// makes it (`exe_garrison_check`).
+    pub fn restash_garrison_quiet(&mut self, c: CityId) {
+        if !(self.exe_quirks && self.quiet_si_index) {
+            return self.restash_garrison(c);
+        }
+        let Some(city) = self.city_opt(c) else { return };
+        if city.garrison_out && !self.exe_garrison_check(c) {
+            self.stash_garrison(c);
+        }
+    }
+
     /// What `foreign_unit_adjacent` answers at the end of a city's turn (0x131fa): it gets
     /// the city's x as the civ, its y as x, and as y the word above them on the stack,
     /// process_city's saved si, which the city loop (0xa613) left at 0x1c * the city's
@@ -480,9 +493,6 @@ mod tests {
         (1..8).find(|s| *s != g.human_slot && g.player(*s).in_game).unwrap()
     }
 
-    /// CIV.EXE's end-of-turn garrison check (0x131fa) reads the owner band around (city y,
-    /// 28 * index): index 1 looks at the squares around (y, 28), a high index past the
-    /// driver's row table counts as "adjacent" (`exe_quirks`).
     #[test]
     fn exe_quirks_the_fortified_unit_s_check_reads_rows_by_its_civ() {
         // 0x430d: (civ x, y, 2 * human) for the human, rows from 0xb1d5 for the others
@@ -497,6 +507,28 @@ mod tests {
         assert!(!g.exe_fortify_garrison_check(r, x + 1, y), "a computer's never sees one");
     }
 
+    /// A quiet run of the city routine ends at the garrison check (0x125d6 -> 0x131d2): the
+    /// garrison let out goes back unless a foreign unit is next to the city.
+    #[test]
+    fn a_quiet_run_stashes_the_garrison_again() {
+        for foreign in [false, true] {
+            let (mut g, c, ids) = garrisoned();
+            for id in &ids {
+                g.unit_mut(*id).order = UnitOrder::Fortified;
+            }
+            g.city_mut(c).garrison_out = true;
+            if foreign {
+                let r = rival(&g);
+                g.add_unit(r, unit_ids::PHALANX, 21, 20);
+            }
+            g.city_routine_quiet(c);
+            assert_eq!(g.city(c).garrison_count(), if foreign { 0 } else { 2 }, "foreign {foreign}");
+        }
+    }
+
+    /// CIV.EXE's end-of-turn garrison check (0x131fa) reads the owner band around (city y,
+    /// 28 * index): index 1 looks at the squares around (y, 28), a high index past the
+    /// driver's row table counts as "adjacent" (`exe_quirks`).
     #[test]
     fn exe_quirks_the_garrison_check_reads_around_y_and_28_times_the_index() {
         let (mut g, c, _) = garrisoned();
