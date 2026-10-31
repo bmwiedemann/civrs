@@ -1166,6 +1166,32 @@ mod tests {
     }
 
     #[test]
+    fn plays_on_from_the_late_saves() {
+        // tests/data/late: a manual CIV.EXE game saved from turn 150 to turn 405
+        let dir = crate::save::sve::samples_dir().join("late");
+        for n in 0..10 {
+            let mut g = import(&slot_file(&dir, n).expect("late save")).expect("import");
+            let mut ai = crate::ai::Ai::new(1);
+            let start = g.turn;
+            for _ in 0..5 {
+                let mut r = g.end_turn();
+                let mut guard = 0;
+                loop {
+                    match r.step(&mut g, &mut ai) {
+                        TurnStep::Done => break,
+                        TurnStep::Decision(_) => r.resolve(&mut g, DecisionReply::Choice(0)),
+                        _ => {}
+                    }
+                    guard += 1;
+                    assert!(guard < 100_000);
+                }
+                let _ = g.take_events();
+            }
+            assert_eq!(g.turn, start + 5, "CIVIL{n}");
+        }
+    }
+
+    #[test]
     fn the_map_page_is_the_world_civ_exe_made() {
         // CIVIL0 is a normal world of clock seed 8578: terrain, continents, specials and river
         // sprites are the generator's, one hut is taken, the cities claimed site squares
