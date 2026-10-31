@@ -104,9 +104,14 @@ impl Game {
 
     /// The owner of the units on a square (`unit_owner_at` 0x1a68:0x14e6, the catalogue's
     /// "city_owner_at"): the occupancy bit of map layer x+160.
+    /// With units of two civilizations on the square (a unit that walked into an empty enemy
+    /// city, 0x6a65) it is the civ the layer holds (0x1bb66 reads the pixel, owner & 7 when bit
+    /// 3 is set), not the owner of whichever unit comes first.
     pub fn unit_owner_at(&self, x: i32, y: i32) -> Option<Slot> {
         let x = Map::wrap_x(x);
-        self.all_units().find(|u| u.x == x && u.y == y).map(|u| u.owner)
+        let first = self.all_units().find(|u| u.x == x && u.y == y).map(|u| u.owner)?;
+        let layer = Map::in_bounds(x, y).then(|| self.barbarian_memory.occupant.get(Map::idx(x, y)).copied()).flatten();
+        Some(layer.filter(|o| self.all_units().any(|u| u.x == x && u.y == y && u.owner == *o)).unwrap_or(first))
     }
 
     /// `zoc_blocked` 0x7e6:0x1721: false in a city, else `enemy_adjacent` 0x7e6:0x174c — a
@@ -537,8 +542,7 @@ impl Game {
         // distances ds:0xd816 (the last 512 bytes of a .PIC read or written), which civrs does
         // not have, and it searches from the start block as without the quirk
         let (entry, probed) = self.block_entry_probed(goto.0, goto.1, sea);
-        let quirk = (entry.is_none() && probed && self.exe_quirks).then(|| self.block_flood(goto, start, sea, true)).flatten();
-        let target = entry.unwrap_or(start);
+        let quirk = (entry.is_none() && probed && self.exe_quirks).then(|| self.block_flood(goto, start, sea, true)).flatten();        let target = entry.unwrap_or(start);
         let Some((found, dist)) = quirk.or_else(|| self.block_flood(target, start, sea, false)) else { return (false, goto) };
         if !found {
             return (false, goto);
@@ -764,6 +768,20 @@ mod tests {
         g.barbarian_memory = Default::default();
         g.ai_memory = Default::default();
         g
+    }
+
+    /// Two civilizations' units on one square (a unit that walked into an empty enemy city):
+    /// the square's owner is the civ the layer x+160 holds, the last placed (0x1bb66), so the
+    /// first civ's unit beside it has an enemy next to it and the second's has not.
+    #[test]
+    fn the_owner_of_a_shared_square_is_the_layers() {
+        let mut g = flat();
+        g.add_unit(3, unit_ids::PHALANX, 10, 10);
+        g.add_unit(4, unit_ids::MILITIA, 10, 10);
+        assert_eq!(g.all_units().find(|u| u.pos() == (10, 10)).map(|u| u.owner), Some(3));
+        assert_eq!(g.unit_owner_at(10, 10), Some(4));
+        assert!(g.enemy_adjacent(3, 11, 10));
+        assert!(!g.enemy_adjacent(4, 11, 10));
     }
 
     #[test]
