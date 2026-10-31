@@ -209,6 +209,17 @@ impl Game {
     pub fn ai_set_goto(&mut self, id: UnitId, to: (i32, i32)) {
         use super::UnitOrder as O;
         self.ai_memory.busy.insert(id);
+        // `and status,0xf0` (0x1641b) on merged job bits (`Game::exe_job_bits`)
+        if let Some(b) = self.exe_job_bits.remove(&id) {
+            let b = b & 0xf0;
+            let o = O::of_job_bits(b);
+            self.unit_mut(id).order = if o == O::None { O::Goto } else { o };
+            self.unit_mut(id).goto = Some(to);
+            if b != o.job_bits() {
+                self.exe_job_bits.insert(id, b);
+            }
+            return;
+        }
         let u = self.unit_mut(id);
         u.goto = Some(to);
         u.order = match u.order_under_sentry() {
