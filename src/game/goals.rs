@@ -308,7 +308,9 @@ impl Game {
                 continue;
             }
             let n_ocean = self.map.is_ocean(nx, ny);
-            let first = self.units_at(nx, ny).into_iter().find(|o| self.unit(*o).owner != civ);
+            // the square's units as unit_at (0x1a68:0x145e) gives them, those of the owner the
+            // map layer x+160 records; none when they are the looker's own (0x8332)
+            let first = self.unit_at(nx, ny).filter(|o| self.unit(*o).owner != civ);
             if k <= 8 {
                 if let Some(c) = self.city_at(nx, ny) {
                     let o = self.city(c).owner;
