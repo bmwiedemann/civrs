@@ -331,6 +331,9 @@ fn import_slot_with(data: &[u8], map_pic: &[u8], moves_back: bool, resume: bool)
         .map(|(x, y)| tile_bits(px(x + 80, y + 100) & 15 | (px(x + 80, y + 150) & 15) << 4) & tile_flags::SEEN)
         .collect();
     g.barbarian_memory.occupant = (0..MAP_H as i32).flat_map(|y| (0..MAP_W as i32).map(move |x| (x, y))).map(|(x, y)| px(x + 160, y) & 7).collect();
+    // the picture data below the owner layer (x + 160, rows 50..199), which nothing in play
+    // writes and the garrison check reads (`Game::exe_page_band`)
+    g.exe_page_band = (50..200).flat_map(|y| (0..MAP_W as i32).map(move |x| (x, y))).map(|(x, y)| px(x + 160, y)).collect();
     g.map = map;
 
     // civilizations

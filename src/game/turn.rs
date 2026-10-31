@@ -813,7 +813,7 @@ impl Game {
         if let Some(cm) = self.cities[c as usize].as_mut() {
             cm.bought = false;
         }
-        self.restash_garrison(c);
+        self.restash_garrison_turn(c);
         // a human city that wants attention (ds:0xb1e8) is run again in mode 1 to show its
         // screen (update_civ_tax_rates 0xa5e2), whose worker assignment puts a city that
         // shrank for its Settlers in order; a computer city waits for its next turn
@@ -824,7 +824,7 @@ impl Game {
             self.unstash_garrison(c);
             self.fix_workers(c);
             self.note_trade(c);
-            self.restash_garrison(c);
+            self.restash_garrison_turn(c);
         }
         // (ds:0x70e2 - ds:0x70e4, 0x13223)
         Some(happy - unhappy)

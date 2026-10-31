@@ -298,6 +298,11 @@ pub struct Game {
     /// Not saved.
     #[serde(skip)]
     pub abroad_carry: Option<(CityId, i32)>,
+    /// Map page 2 at (x + 160, 50..199) as a CIV.EXE save's .MAP has it (picture data under
+    /// the unit owner layer), for `exe_quirks` reads that miss the layer
+    /// (`Game::exe_garrison_check`). Empty but for imported saves. Not saved.
+    #[serde(skip)]
+    pub exe_page_band: Vec<u8>,
     /// The global warming counter ds:0xb1ea (0..99): one step a turn towards twice the
     /// polluted squares minus four per warming so far (`global_warming_check`); stored after
     /// the game body in version-9 saves.
@@ -613,6 +618,7 @@ impl Game {
             nested_totals: None,
             trade_carry: None,
             abroad_carry: None,
+            exe_page_band: Vec::new(),
             first_discoverer: vec![0; 72],
             historian_timer: 80 + historian,
             history: replay::History::default(),

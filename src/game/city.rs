@@ -377,6 +377,48 @@ impl Game {
             self.stash_garrison(c);
         }
     }
+
+    /// `restash_garrison` at the end of a city's turn: with `exe_quirks` the check as CIV.EXE
+    /// makes it there (`exe_garrison_check`).
+    pub fn restash_garrison_turn(&mut self, c: CityId) {
+        if !self.exe_quirks {
+            return self.restash_garrison(c);
+        }
+        let Some(city) = self.city_opt(c) else { return };
+        if city.garrison_out && !self.exe_garrison_check(c) {
+            self.stash_garrison(c);
+        }
+    }
+
+    /// What `foreign_unit_adjacent` answers at the end of a city's turn (0x131fa): it gets
+    /// the city's x as the civ, its y as x, and as y the word above them on the stack,
+    /// process_city's saved si, which the city loop (0xa613) left at 0x1c * the city's
+    /// index. So it looks at the squares around (y, 28 * index) of map page 2's owner band
+    /// (x + 160) for a mark (bit 3) of another "civ" than x: rows up to 49 hold the units' owners,
+    /// 50..199 picture data (`exe_page_band`), and rows from 200 on lie past the graphics
+    /// driver's row table (cs:0x17d6), in memory that a probe of CIV.EXE showed answering
+    /// "adjacent" (Carthage, index 12, row 336).
+    pub fn exe_garrison_check(&self, c: CityId) -> bool {
+        let city = self.city(c);
+        let (civ, x0, y0) = (city.x, city.y, 0x1c * c as i32);
+        for (dx, dy) in [(0, -1), (1, -1), (1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1)] {
+            let (x, y) = (Map::wrap_x(x0 + dx), y0 + dy);
+            // (row -1: the word before the table, cs:0x17d4, is 0, so row 0)
+            let y = y.max(0);
+            let owner = if y < 50 {
+                self.unit_owner_at(x, y).map(|o| o as i32)
+            } else if y < 200 {
+                let v = self.exe_page_band.get(((y - 50) * 80 + x) as usize).copied().unwrap_or(0);
+                (v & 8 != 0).then_some((v & 7) as i32)
+            } else {
+                return true;
+            };
+            if owner.is_some_and(|o| o != civ) {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 #[cfg(test)]
@@ -420,6 +462,42 @@ mod tests {
 
     fn rival(g: &Game) -> Slot {
         (1..8).find(|s| *s != g.human_slot && g.player(*s).in_game).unwrap()
+    }
+
+    /// CIV.EXE's end-of-turn garrison check (0x131fa) reads the owner band around (city y,
+    /// 28 * index): index 1 looks at the squares around (y, 28), a high index past the
+    /// driver's row table counts as "adjacent" (`exe_quirks`).
+    #[test]
+    fn exe_quirks_the_garrison_check_reads_around_y_and_28_times_the_index() {
+        let (mut g, c, _) = garrisoned();
+        let (x, y) = g.city(c).pos();
+        let ids: Vec<CityId> = g.all_cities().map(|o| o.id).collect();
+        for o in ids {
+            if o != c {
+                g.cities[o as usize] = None;
+            }
+        }
+        // move the city to slot 1
+        let city = g.cities[c as usize].take();
+        while g.cities.len() < 2 {
+            g.cities.push(None);
+        }
+        g.cities[1] = city;
+        g.city_mut(1).id = 1;
+        for t in g.map.tiles.iter_mut() {
+            if t.city == Some(c) {
+                t.city = Some(1);
+            }
+        }
+        assert!(!g.exe_garrison_check(1));
+        let r = rival(&g);
+        g.add_unit(r, unit_ids::PHALANX, y + 1, 28);
+        assert!(g.exe_garrison_check(1), "a unit next to ({y}, 28)");
+        let _ = x;
+        g.cities.resize(13, None);
+        g.cities[12] = g.cities[1].take();
+        g.city_mut(12).id = 12;
+        assert!(g.exe_garrison_check(12), "row 336");
     }
 
     /// The stash takes the fortified units in the unit table's order (records), whatever
