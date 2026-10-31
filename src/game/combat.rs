@@ -476,7 +476,6 @@ impl Game {
         self.remove_goals_near(by, super::goals::goal::SETTLE, city.x, city.y, 4);
         // the replay records the city as taken (0x13f97)
         self.replay_city(super::replay::kind::CAPTURE, by, c);
-        let adv = self.capture_steal(by, from);
         let unrest = self.captured_in_disorder(by);
         {
             let cm = self.city_mut(c);
@@ -497,9 +496,11 @@ impl Game {
             cm.improvements &= kept;
         }
         self.city_changed_hands(c, from, by);
-        // steal_advance (0x14239) comes after the new owner is set: an advance taken makes the
-        // computer captor re-choose in all its cities, the new one too (0x1462f), before the
-        // loser's units go
+        // steal_advance (0x14239) comes after the new owner and the losses are set (0x13ef5,
+        // 0x13fb7), so Gunpowder or Combustion taken also clears the new city's Barracks: an
+        // advance taken makes the computer captor re-choose in all its cities, the new one
+        // too (0x1462f), before the loser's units go
+        let adv = self.capture_steal(by, from);
         if adv.is_some() && !self.player(by).human {
             self.rechoose_all(by);
         }
@@ -1484,6 +1485,38 @@ mod tests {
         assert_eq!(g.try_move(b, crate::game::Dir8::E).unwrap(), MoveOutcome::CapturedCity(c2));
         assert!(g.player(by).knows(adv));
         assert_ne!(g.city(base).production, odd);
+    }
+
+    #[test]
+    fn gunpowder_taken_with_a_city_clears_its_kept_barracks() {
+        // steal_advance (0x14239) runs after the owner and the losses are set (0x13ef5)
+        let mut checked = false;
+        for seed in 0..16u16 {
+            let mut g = flat_game();
+            g.turn = 10;
+            let by = (3..8u8).find(|s| *s != g.human_slot).unwrap();
+            g.players[by as usize].in_game = true;
+            g.players[by as usize].alive = true;
+            g.set_relation(by, 2, Relation::War);
+            g.players[2].learn(crate::rules::advance_ids::GUNPOWDER);
+            let known: Vec<u8> = (0..72).filter(|a| g.player(2).knows(*a) && *a != crate::rules::advance_ids::GUNPOWDER).collect();
+            for a in known {
+                g.players[by as usize].learn(a);
+            }
+            g.add_city(by, "Base".into(), 8, 8);
+            let c = g.add_city(2, "Loot".into(), 20, 20);
+            g.city_mut(c).size = 3;
+            g.city_mut(c).add_improvement(imp::BARRACKS);
+            g.city_mut(c).add_improvement(imp::CITY_WALLS);
+            let a = g.add_unit(by, unit_ids::LEGION, 19, 20);
+            g.rng.srand(seed);
+            assert_eq!(g.try_move(a, crate::game::Dir8::E).unwrap(), MoveOutcome::CapturedCity(c));
+            assert!(g.player(by).knows(crate::rules::advance_ids::GUNPOWDER));
+            assert!(!g.city(c).has_improvement(imp::BARRACKS));
+            // the parity that keeps the Walls would have kept the Barracks
+            checked |= g.city(c).has_improvement(imp::CITY_WALLS);
+        }
+        assert!(checked);
     }
 
     #[test]
