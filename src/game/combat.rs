@@ -455,8 +455,10 @@ impl Game {
             let name = city.name.clone();
             self.destroy_city(c, by);
             self.push_event(GameEvent::CityDestroyed { name, at: (city.x, city.y), by, from });
-            // steal_advance runs for a destroyed city too (0x14232)
-            self.capture_steal(by, from);
+            // steal_advance runs for a destroyed city too (0x14232), and re-chooses in the
+            // computer captor's cities when it took an advance (0x1462f)
+            let stolen = self.capture_steal(by, from).is_some();
+            self.rechoose_after_capture(by, stolen, None);
             self.place_unit(id, city.x, city.y, cost);
             if self.exe_quirks {
                 self.exe_destroy_sweep(from, attacker.record);
@@ -495,6 +497,12 @@ impl Game {
             cm.improvements &= kept;
         }
         self.city_changed_hands(c, from, by);
+        // steal_advance (0x14239) comes after the new owner is set: an advance taken makes the
+        // computer captor re-choose in all its cities, the new one too (0x1462f), before the
+        // loser's units go
+        if adv.is_some() && !self.player(by).human {
+            self.rechoose_all(by);
+        }
         // units supported by the city are disbanded (Civ1), units of the loser inside are gone
         let homed: Vec<UnitId> = self.all_units().filter(|u| (u.home == Some(c) && u.owner == from) || ((u.x, u.y) == (city.x, city.y) && u.owner == from)).map(|u| u.id).collect();
         for h in homed {
@@ -509,7 +517,7 @@ impl Game {
         if self.player(by).human {
             self.note_trade(c);
         }
-        self.rechoose_after_capture(by);
+        self.rechoose_after_capture(by, false, Some(c));
         self.players[by as usize].stats.cities_captured += 1;
         self.players[from as usize].stats.cities_lost += 1;
         self.push_event(GameEvent::CityCaptured { city: c, by, from, gold, adv });
@@ -1441,6 +1449,38 @@ mod tests {
         assert_eq!(g.player(2).gold, 120);
         assert_eq!(g.unit(a).pos(), (20, 20));
         assert!(g.events.iter().any(|e| matches!(e, GameEvent::CityCaptured { city, by: 1, from: 2, gold: 180, .. } if *city == c)));
+    }
+
+    #[test]
+    fn a_computer_captor_rechooses_everywhere_only_after_taking_an_advance() {
+        // steal_advance 0x14468 returns with nothing to take (0x1453e); after an advance taken
+        // it re-chooses in all the captor's cities (0x18bef at 0x1462f)
+        let mut g = flat_game();
+        let by = (3..8u8).find(|s| *s != g.human_slot).unwrap();
+        g.players[by as usize].in_game = true;
+        g.players[by as usize].alive = true;
+        g.set_relation(by, 2, Relation::War);
+        let victim_knows: Vec<u8> = (0..72).filter(|a| g.player(2).knows(*a)).collect();
+        for a in victim_knows {
+            g.players[by as usize].learn(a);
+        }
+        let base = g.add_city(by, "Base".into(), 8, 8);
+        let odd = crate::game::Production::Unit(unit_ids::NUCLEAR);
+        g.city_mut(base).production = odd;
+        let c = g.add_city(2, "Loot".into(), 20, 20);
+        g.city_mut(c).size = 3;
+        let a = g.add_unit(by, unit_ids::LEGION, 19, 20);
+        assert_eq!(g.try_move(a, crate::game::Dir8::E).unwrap(), MoveOutcome::CapturedCity(c));
+        assert_eq!(g.city(base).production, odd);
+        // the victim knows an advance the captor lacks: everything re-chooses
+        let adv = (0..72u8).find(|a| !g.player(by).knows(*a)).unwrap();
+        g.players[2].learn(adv);
+        let c2 = g.add_city(2, "Loot2".into(), 25, 25);
+        g.city_mut(c2).size = 3;
+        let b = g.add_unit(by, unit_ids::LEGION, 24, 25);
+        assert_eq!(g.try_move(b, crate::game::Dir8::E).unwrap(), MoveOutcome::CapturedCity(c2));
+        assert!(g.player(by).knows(adv));
+        assert_ne!(g.city(base).production, odd);
     }
 
     #[test]

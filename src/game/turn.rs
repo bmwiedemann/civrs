@@ -2295,7 +2295,7 @@ impl Game {
         if self.player(to).human {
             self.note_trade(c);
         }
-        self.rechoose_after_capture(to);
+        self.rechoose_after_capture(to, adv.is_some(), Some(c));
         (gold, adv)
     }
 }

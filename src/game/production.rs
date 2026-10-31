@@ -314,13 +314,26 @@ impl Game {
         }
     }
 
-    /// After a capture a computer captor re-chooses in all its cities (capture_city 0x13d76 for
-    /// the new city, steal_advance 0x14468 -> 0x18bef(civ, -1) for the rest).
-    pub fn rechoose_after_capture(&mut self, captor: Slot) {
+    /// After a capture by a computer: steal_advance re-chooses in all the captor's cities, the
+    /// new one too, when it took an advance (0x14468 -> 0x18bef(civ, -1) at 0x1462f; with
+    /// nothing to take it returns at 0x1453e), then capture_city re-chooses for the new city
+    /// when it stands (0x14331).
+    pub fn rechoose_after_capture(&mut self, captor: Slot, stolen: bool, city: Option<CityId>) {
         if self.player(captor).human {
             return;
         }
-        for c in self.cities_of(captor) {
+        if stolen {
+            self.rechoose_all(captor);
+        }
+        if let Some(c) = city.filter(|&c| self.city_opt(c).is_some()) {
+            let p = self.ai_rechoose(c);
+            self.city_mut(c).production = p;
+        }
+    }
+
+    /// `ai_rechoose_production(civ, -1)` 0x18bef: every city of `civ` in record order.
+    pub fn rechoose_all(&mut self, civ: Slot) {
+        for c in self.cities_of(civ) {
             let p = self.ai_rechoose(c);
             self.city_mut(c).production = p;
         }
