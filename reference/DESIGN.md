@@ -839,6 +839,23 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   continent, ocean bodies too (0xb0c1, `exe_quirks`); a move keeps the work counter (+5).
   Left at t126: a Battleship's long sea goto takes another way (block search). A human's step that crosses a treaty partner's border is asked about
   after the move roll now (0x634a before 0x64bb), see "Questions inside a computer's unit loop".
+  The t126 Battleship (goto (67,37)) is the PIC-buffer case of the block search: its goto
+  square has no block of its own and the search from it as a block leaves the tables.
+  LATE2 (2026-10-31, scratchpad w91/L129.txt from CIV.EXE's t129: Rome changes to Women's
+  Suffrage, its units sentry, so the harness keeps pace): 30 turns, draws agree t130-t140,
+  fields but the Battleship to t140; t141 the Battleship (civrs's way) attacks Babylon. It
+  found: the advisor's run that a completed production starts inside a city's turn (0xaa1b)
+  leaves the city routine's globals, so the turn's trade split starts from its total with
+  the routes (ds:0x70de, 0xf136) and adds them again, and the caravan revenue compares the
+  target's continent with the home city's (x, x) (0x14738), both `exe_quirks`.
+  Seed 13 from t106 now agrees in draws t106-t122 and fields to t119: the t116 parting was
+  civ3's Settlers beside civ4's city Tenochtitlan with a civ3 Phalanx walked in; the
+  square's owner for the zone of control and enemy tests is the layer x+160's (civ4,
+  0x1bb66), not the first unit's (`Game::unit_owner_at`). (The searches toward (29,18) seen
+  in the hook run were the turn before.) t120 is the barbarian Sail's goto Rome, the
+  PIC-buffer block search again. Hook probes (scratchpad w91/probe3.py: ai_unit_command
+  entry and exit with the goto bytes; probe4.py: the trade store 0xf136 with city and mode)
+  fit the 60 free bytes of the cave.
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
