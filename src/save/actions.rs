@@ -456,13 +456,55 @@ pub fn play(g: &mut Game, ai: &mut crate::ai::Ai, actions: &[(u32, Action)], tur
         }
         // the turn's loop has taken its first unit (`Phase::HumanStart`)
         run_autos(g)?;
+        harness_save(g);
     }
     Ok(())
+}
+
+/// The harness saves at the start of each human turn it plays, through the Game menu
+/// (sve_diff.py play), while the loop waits for a key before it takes a unit (0x76c3 sets
+/// record 0x80 after the looks, 0x43f4). CIV.EXE runs the menu choice through the unit code
+/// for that record (0x73cc -> 0x4bbe, past the record check at 0x4bb4), which is record 0 of
+/// the next civilization (0x600 bytes on): without a goto its heading is forgotten (0x4bf8),
+/// so its first step of the turn is scored without the turn penalty. With `exe_quirks` only
+/// (a goto there would go to goto_step for the human's civ, which civrs does not copy).
+fn harness_save(g: &mut Game) {
+    if !g.exe_quirks {
+        return;
+    }
+    let next = g.human_slot + 1;
+    if next > 7 {
+        return;
+    }
+    let first = g.all_units().find(|u| u.owner == next && u.record == 0).map(|u| (u.id, u.goto));
+    if let Some((id, None)) = first {
+        g.set_heading(id, 0xff);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exe_quirks_the_harness_save_forgets_the_next_civs_first_heading() {
+        // 0x73cc -> 0x4bbe with record 0x80 of the human's civ: record 0 of the next one
+        use crate::game::GameSetup;
+        use crate::rules::unit_ids;
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        let next = g.human_slot + 1;
+        for id in g.units_of(next) {
+            g.remove_unit(id);
+        }
+        let u = g.add_unit(next, unit_ids::MILITIA, 30, 30);
+        g.unit_mut(u).record = 0;
+        g.set_heading(u, 3);
+        harness_save(&mut g);
+        assert_eq!(g.heading(u), 3, "civrs keeps it");
+        g.exe_quirks = true;
+        harness_save(&mut g);
+        assert_eq!(g.heading(u), 0xff);
+    }
 
     #[test]
     fn change_values_the_menu_for_the_human_too() {
