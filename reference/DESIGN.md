@@ -988,6 +988,42 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   (entry, release and exit of ai_unit_command) showed residues 0xb1d6 + 2 civ, 0x6cb4, 0x80,
   0x15bb, ... left by whatever ran at that depth before, not the previous call's value.
 
+  Round w95 (2026-10-31, scratchpad w95; pl.sh/d.sh/all95.sh, h2.sh compares a field over a
+  run, tr.sh is civrs with CIVRS_AI_TRACE). LATE2 t207: disasters and fallout only lower the
+  size (o 0x1b8b5, 0x1a5d9), the workers stay till the city's turn. LATE2 t241: capture_city's
+  steal_advance (0x14239) comes after the owner and losses are set, so Gunpowder taken clears
+  the new city's Barracks. Dead unit records: delete_unit 0x8d6c writes type 0xff (0x8e67),
+  moves 0 and, through remove_city_marker/stack_unlink, link 0xff; status, position, fuel,
+  goto, heading, seen mask and home stay (civ_init o 0x4a28 clears type and status only).
+  Record loops test the type; stack walks (for_each_in_stack 0x92a7, 15 callers) follow links
+  that never lead to a free record, so one is reached only as a walk's start: destroy_city's
+  sweep (0xa8bc) takes unit_at's record of the layer's civ with the city owner's civ. Deleting
+  that free record again counts type -1 (the previous civ's Caravans, 0x8e63; losses 0x8d9d)
+  and remove_city_marker writes the owner on the layer of its last square without bit 8, so
+  unit_at/unit_owner_at see no unit there and a unit stepping in starts its own ring
+  (`exe_unit_ghost`, `exe_unit_bit_lost`, imported from the save's 1024 records and the layer;
+  `stacks_linked` keeps several closed rings on a square). With it: a capture leaves the
+  mover's orders, a unit taking its own city keeps the units in it (0x14265), a computer's unit
+  alone in a city by its link stays at the disband check (0x16150), units homed in a destroyed
+  city keep the record number and a city founded there supports them (`exe_stale_home`).
+  Seed 13 now agrees t129-t141 (t142 is 0x16e94) and from CIV.EXE's t142 t143-t167. The
+  Senate: the harness's Return answers *PEACE with row 0, "Reject" (o 0x6fdf), so a human
+  Republic or Democracy is overruled ("Treaty signed.", o 0x703b, make_peace 0x7e0e): seen in
+  w92/r-T405/stuck02_2.png and stuck02_3.png; civrs answers row 0 too and CIVIL3-late (T405)
+  agrees t406-t413 with it. Late saves: start the diff from a copy named CIVIL1.SVE (the runs
+  load slot 1, which keeps the saved moves; slots 4..9 give them back). Found there: Future
+  Technology goes through grant_advance's tail (first discoverer, replay; the Chieftain bonus
+  of the next one, 0x12c93); only a menu command at record 0x80 forgets the next civ's first
+  heading (0x73cc; keys stop at 0x4bb4), so a load with no unit waiting ends its first turn
+  without; a refused Settlers job clears its own bits alone (0x52eb, 0x5454, ...) and under
+  `exe_quirks` the bits the job keys OR together stay (`exe_job_bits`); *OCCUPY and *AMPHIB
+  drop the goto (0x5ef3); city +8 after an attack on the human's square unless a lone attacker
+  lost (0x61f8, ds:0xd20a, 0x1a15d); the dump's [civ][0] carries the revolution flag.
+  Open: SHIP2/3 t232, a German Battleship at (35, 18) whose goto CIV.EXE's goto_direction
+  declines four times (probe14: ai_unit_command returns key 0 four times, no step) while civrs
+  steps N; CIVIL5-late t408 and seed 13 t142 are 0x16e94 releases; the harness's step budget
+  (6 per turn) ends late runs with many human units early (CIVIL0, CIVIL9).
+
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
