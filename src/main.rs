@@ -104,6 +104,10 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&P
                 // turns go on from it as a load does
                 let mut game = if turns == 0 { civrs::save::sve::import_as_saved(sve)? } else { civrs::save::sve::import(sve)? };
                 game.use_exe_land_links(&civrs::save::sve::exe_land_links(sve)?);
+                // CIV.EXE keeps the research catch-up ds:0xd2de out of its saves and sets it
+                // only at the 50-turn marks (game_turn 0x27e0): a game loaded into a freshly
+                // started CIV.EXE has none until the next mark (civrs's import computes it)
+                game.catch_up = 0;
                 if let Some(s) = seed {
                     game.rng.srand((s & 0x7fff) as u16);
                 }
