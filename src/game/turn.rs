@@ -1788,11 +1788,22 @@ impl Game {
     /// the longer axis plus half the shorter, `Map::civ_distance`), halved on the same continent and
     /// halved again between cities of one civilization; a third less each when the target's
     /// owner knows the Railroad, then Flight. CIV.EXE looks up the home city's continent at
-    /// (x, x) (0x14738 pushes x twice); civrs uses the home city's real tile.
+    /// (x, x) (0x14738 pushes x twice); civrs uses the home city's real tile, and only with
+    /// `exe_quirks` the square (x, x) where that is on the map (land continent or ocean body).
     pub fn trade_route_revenue(&self, slot: Slot, home: CityId, target: CityId) -> i32 {
         let (a, b) = (self.city(home), self.city(target));
         let mut v = (Map::civ_distance(a.pos(), b.pos()) + 10) * (a.trade + b.trade) / 24;
-        if self.map.tile(a.x, a.y).continent == self.map.tile(b.x, b.y).continent {
+        let home_cont = if self.exe_quirks && Map::in_bounds(a.x, a.x) {
+            let t = self.map.tile(a.x, a.x);
+            if t.is_land() {
+                t.continent
+            } else {
+                self.map.ocean_numbers().0[Map::idx(a.x, a.x)]
+            }
+        } else {
+            self.map.tile(a.x, a.y).continent
+        };
+        if home_cont == self.map.tile(b.x, b.y).continent {
             v /= 2;
         }
         if b.owner == slot {
@@ -3211,6 +3222,38 @@ mod tests {
         g.apply_decision(&Decision::ChooseGovernment { slot, options: opts }, DecisionReply::Choice(i));
         assert_eq!(g.player(slot).govt, Govt::Monarchy);
         assert!(g.player(slot).tax <= 70);
+    }
+
+    #[test]
+    fn the_revenue_reads_the_home_continent_at_x_x_for_exe_quirks() {
+        // 0x14738 pushes the home city's x twice: with `exe_quirks` the same-continent halving
+        // compares the target's continent with the square (x, x)
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        for t in g.map.tiles.iter_mut() {
+            t.terrain = crate::rules::Terrain::Ocean;
+            t.flags = 0;
+        }
+        for y in 2..12 {
+            for x in 2..40 {
+                g.map.get_mut(x, y).unwrap().terrain = crate::rules::Terrain::Grassland;
+                g.map.get_mut(x, y + 20).unwrap().terrain = crate::rules::Terrain::Grassland;
+            }
+        }
+        g.map.compute_continents();
+        let ids: Vec<_> = g.all_cities().map(|c| c.id).collect();
+        for c in ids {
+            g.cities[c as usize] = None;
+        }
+        // home (25, 5) on the northern land, (25, 25) on the southern one with the target
+        let slot = g.human_slot;
+        let home = g.add_city(slot, "Home".into(), 25, 5);
+        let target = g.add_city((slot % 7) + 1, "Far".into(), 10, 28);
+        g.city_mut(home).trade = 20;
+        g.city_mut(target).trade = 28;
+        let v = (Map::civ_distance((25, 5), (10, 28)) + 10) * 48 / 24;
+        assert_eq!(g.trade_route_revenue(slot, home, target), v);
+        g.exe_quirks = true;
+        assert_eq!(g.trade_route_revenue(slot, home, target), v / 2);
     }
 
     #[test]
