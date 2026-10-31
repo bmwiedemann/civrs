@@ -213,6 +213,9 @@ impl Game {
     /// the owner's unit records only, so another civilization's units homed at the city's
     /// number (a city captured or destroyed and refounded) do not count.
     pub fn aggressive_units_abroad(&self, c: CityId) -> i32 {
+        if let Some((_, n)) = self.abroad_carry.filter(|(cc, _)| *cc == c) {
+            return n;
+        }
         let owner = self.city(c).owner;
         self.all_units().filter(|u| u.home == Some(c) && u.owner == owner && self.aggressive_abroad(c, u)).count() as i32
     }

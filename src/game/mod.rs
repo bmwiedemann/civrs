@@ -280,17 +280,24 @@ pub struct Game {
     /// every city's after an advance). Not saved.
     #[serde(skip)]
     pub last_moods: (i32, i32),
-    /// With `exe_quirks`: ds:0x70de, the trade of the worked squares plus the routes, as the
-    /// last quiet run of the city routine left it (`city_routine_quiet`), and the city whose
-    /// turn reads it in place of its own squares' trade (`trade_carry`). CIV.EXE keeps a
-    /// city's totals in globals: the advisor's run (0xaa1b) that a completed production
-    /// starts inside the city's turn overwrites them, so the turn's trade split (0xf0d9,
-    /// 0xf136) starts from the advisor's total, routes included, and adds the routes again.
-    /// civrs keeps the city's own trade. Not saved.
+    /// With `exe_quirks`: the totals (`economy::TurnTotals`, ds:0x70da..0x70de, ds:0x6546,
+    /// ds:0x6c98, ds:0xb882) as the last quiet run of the city routine left them
+    /// (`city_routine_quiet`), and the city whose turn reads its trade in place of its own
+    /// squares' trade (`trade_carry`). CIV.EXE keeps a city's totals in globals: the
+    /// advisor's run (0xaa1b) that a completed production starts inside the city's turn
+    /// overwrites them, so the turn's trade split (0xf0d9, 0xf136) starts from the advisor's
+    /// total, routes included, and adds the routes again, and the rest of the turn reads
+    /// the advisor's shields, food, units abroad and pollution factors. civrs keeps the
+    /// city's own totals. Not saved.
     #[serde(skip)]
-    pub nested_trade: Option<(CityId, i32)>,
+    pub nested_totals: Option<economy::TurnTotals>,
     #[serde(skip)]
     pub trade_carry: Option<(CityId, i32)>,
+    /// The units abroad (ds:0x6546) a city's turn counted before its production
+    /// (`process_city`), which its happiness reads in place of a count of the units now.
+    /// Not saved.
+    #[serde(skip)]
+    pub abroad_carry: Option<(CityId, i32)>,
     /// The global warming counter ds:0xb1ea (0..99): one step a turn towards twice the
     /// polluted squares minus four per warming so far (`global_warming_check`); stored after
     /// the game body in version-9 saves.
@@ -603,8 +610,9 @@ impl Game {
             gov_case: (0, 0),
             chieftain_science: 0,
             last_moods: (0, 0),
-            nested_trade: None,
+            nested_totals: None,
             trade_carry: None,
+            abroad_carry: None,
             first_discoverer: vec![0; 72],
             historian_timer: 80 + historian,
             history: replay::History::default(),

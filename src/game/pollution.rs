@@ -29,17 +29,29 @@ impl Game {
         }
     }
 
-    /// Pollution points of the city this turn (0 or less: no pollution).
-    pub fn pollution_points(&self, c: CityId) -> i32 {
+    /// The advances that add to a city's pollution (ds:0xb882, 0xcc43): Industrialization,
+    /// Automobile, Mass Production and Plastics, none with Mass Transit.
+    pub fn pollution_techs(&self, c: CityId) -> i32 {
         let city = self.city(c);
         let p = self.player(city.owner);
-        let techs = if city.has_improvement(imp::MASS_TRANSIT) {
+        if city.has_improvement(imp::MASS_TRANSIT) {
             0
         } else {
             [adv::INDUSTRIALIZATION, adv::AUTOMOBILE, adv::MASS_PRODUCTION, adv::PLASTICS].iter().filter(|a| p.knows(**a)).count() as i32
-        };
-        // the city's shields ds:0x70dc, which civil disorder does not touch
-        self.city_yield_raw(c).shields / self.pollution_divisor(c) - 20 + city.size as i32 * techs / 4
+        }
+    }
+
+    /// Pollution points of the city as it is now (0 or less: no pollution).
+    pub fn pollution_points(&self, c: CityId) -> i32 {
+        let t = self.turn_totals(c);
+        self.pollution_points_of(c, &t)
+    }
+
+    /// Pollution points from the totals `t` (0x12de9): the shields ds:0x70dc, which civil
+    /// disorder does not touch, over the divisor ds:0x6c98, - 20, + the size (as it is now)
+    /// times the advances ds:0xb882 / 4.
+    pub fn pollution_points_of(&self, c: CityId, t: &super::economy::TurnTotals) -> i32 {
+        t.shields / t.pollution_divisor - 20 + self.city(c).size as i32 * t.pollution_techs / 4
     }
 
     /// Roll for pollution in a city (CIV.EXE 0x12de9): polluted when twice the points beat
@@ -49,10 +61,18 @@ impl Game {
     /// is already polluted, Ocean or a city. Computer players' cities never pollute: CIV.EXE
     /// 0x12ddd skips this for every civ but the human's.
     pub fn pollution_roll(&mut self, c: CityId) {
+        let t = self.turn_totals(c);
+        self.pollution_roll_of(c, &t);
+    }
+
+    /// `pollution_roll` with the totals the city's turn counted (`TurnTotals`): those from
+    /// before its production, so a Factory, power plant or Mass Transit finished this turn
+    /// counts from the next.
+    pub fn pollution_roll_of(&mut self, c: CityId, t: &super::economy::TurnTotals) {
         if !self.player(self.city(c).owner).human {
             return;
         }
-        let points = self.pollution_points(c);
+        let points = self.pollution_points_of(c, t);
         let owner = self.city(c).owner;
         let range = 256 - self.player(owner).research_count as i32 * self.setup.difficulty as i32 / 2;
         if 2 * points <= self.rng.random(0x12e36, range) {

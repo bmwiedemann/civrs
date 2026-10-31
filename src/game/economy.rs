@@ -35,6 +35,24 @@ pub struct CityYield {
     pub gold_upkeep: i32,
 }
 
+/// The totals a run of the city routine leaves in its globals that a city's turn reads
+/// after its production (CIV.EXE `process_city` 0xc94b): ds:0x70dc shields (unit support
+/// 0xfd23, the government cases 0x10303, pollution 0x12de9), ds:0x70da food less the
+/// Settlers' (ds:0xe3c6, a celebration's growth 0x12ad6), ds:0x70de trade with the routes
+/// (the trade split 0xf0d9), ds:0x6546 units abroad (happiness 0xf98e, 0x10370) and the
+/// pollution divisor ds:0x6c98 and advance count ds:0xb882. The turn's own are counted
+/// before its production (0xcbfd, 0xd26b, 0xdc5d..0xddd5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TurnTotals {
+    pub city: CityId,
+    pub shields: i32,
+    pub food_after_settlers: i32,
+    pub trade: i32,
+    pub abroad: i32,
+    pub pollution_divisor: i32,
+    pub pollution_techs: i32,
+}
+
 impl CityYield {
     pub fn food_surplus(&self) -> i32 {
         self.food - self.food_upkeep
@@ -743,17 +761,31 @@ impl Game {
     /// and, not drawing, marks its worked squares with the owner (work_tile 0x132e3).
     pub fn city_routine_quiet(&mut self, c: CityId) {
         if self.city_opt(c).is_some() {
-            // (a quiet run counts the squares again; `trade_carry` is only for the turn's
-            // split after it)
-            let carry = self.trade_carry.take();
+            // (a quiet run counts the squares and units again; `trade_carry` and
+            // `abroad_carry` are only for the turn's reads after it)
+            let carry = (self.trade_carry.take(), self.abroad_carry.take());
             self.note_trade(c);
             self.claim_worked_squares(c);
             let h = self.city_happiness(c);
             self.last_moods = (h.happy, h.unhappy);
             if self.exe_quirks {
-                self.nested_trade = Some((c, self.city_yield(c).trade));
+                self.nested_totals = Some(self.turn_totals(c));
             }
-            self.trade_carry = carry;
+            (self.trade_carry, self.abroad_carry) = carry;
+        }
+    }
+
+    /// The city's totals as a run of the city routine counts them now (`TurnTotals`).
+    pub fn turn_totals(&self, c: CityId) -> TurnTotals {
+        let y = self.city_yield_raw(c);
+        TurnTotals {
+            city: c,
+            shields: y.shields,
+            food_after_settlers: y.food - (y.food_upkeep - 2 * self.city(c).size as i32),
+            trade: y.trade,
+            abroad: self.aggressive_units_abroad(c),
+            pollution_divisor: self.pollution_divisor(c),
+            pollution_techs: self.pollution_techs(c),
         }
     }
 
@@ -1216,11 +1248,11 @@ mod tests {
         let total = g.city_yield(c).trade;
         assert!(total > squares);
         g.city_routine_quiet(c);
-        assert_eq!(g.nested_trade, None, "civrs keeps its own totals");
+        assert_eq!(g.nested_totals, None, "civrs keeps its own totals");
         g.exe_quirks = true;
         g.city_routine_quiet(c);
-        assert_eq!(g.nested_trade, Some((c, total)));
-        g.trade_carry = g.nested_trade;
+        assert_eq!(g.nested_totals.map(|n| (n.city, n.trade)), Some((c, total)));
+        g.trade_carry = g.nested_totals.map(|n| (n.city, n.trade));
         g.note_trade(c);
         assert_eq!(g.city(c).trade, total - g.corruption(c, total, true));
         assert!(g.city_yield(c).trade > total);

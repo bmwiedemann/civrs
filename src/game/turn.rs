@@ -714,8 +714,9 @@ impl Game {
         let slot = self.city(c).owner;
         // ds:0xb1e8 is cleared before every city (update_civ_tax_rates 0xa5fa)
         self.city_attention = false;
-        self.nested_trade = None;
+        self.nested_totals = None;
         self.trade_carry = None;
+        self.abroad_carry = None;
         // a store out of 0..=999 (a shortage leaves it negative) starts again from 0 (0xc977)
         {
             let cm = self.city_mut(c);
@@ -728,15 +729,12 @@ impl Game {
         }
         // the military units homed here with an attack outside the city square, aircraft
         // anywhere (ds:0x6546, counted at 0xd26b before the workers)
-        let abroad = {
-            let city = self.city(c);
-            self.supported_units(c).iter().filter(|u| {
-                let u = self.unit(**u);
-                u.kind < unit_ids::DIPLOMAT && u.info().att > 0 && (u.is_air() || u.pos() != city.pos())
-            }).count() as i32
-        };
+        let abroad = self.aggressive_units_abroad(c);
         self.assign_workers(c, true);
         let y = self.city_yield_raw(c);
+        // the totals the rest of the turn reads (`TurnTotals`), counted before the production:
+        // a unit, building or growth of this turn counts from the next
+        let mut totals = super::economy::TurnTotals { abroad, ..self.turn_totals(c) };
         let was_disorder = self.city(c).disorder;
         {
             // the store takes shields less support, even when that is negative; nothing while
@@ -765,14 +763,21 @@ impl Game {
             let net = if was_disorder { 0 } else { y.shield_surplus() };
             crate::ai::city_ai::city_turn_purchase(self, c, net);
         }
+        // with `exe_quirks` the rest of the turn reads the totals an advisor's run inside
+        // this turn left (`Game::nested_totals`: after a computer's improvement or unit,
+        // 0xe720 / 0xe3b1, its alert 0xec34, or a human AUTO city's choice 0xeb68)
+        if let Some(n) = self.nested_totals.filter(|n| n.city == c) {
+            totals = n;
+            self.trade_carry = Some((c, n.trade));
+        }
         // trade split and happiness with the buildings and units of this turn, counted before
         // the units the city cannot support go (0xfbe6 follows 0xf3f8); the trade split
-        // stores the city's trade less corruption first (0xf13d); with `exe_quirks` from the
-        // totals an advisor's run inside this turn left (`Game::nested_trade`)
-        self.trade_carry = self.nested_trade.filter(|(cc, _)| *cc == c);
+        // stores the city's trade less corruption first (0xf13d); the units abroad as counted
+        // before the production (ds:0x6546, read at 0xf98e)
+        self.abroad_carry = Some((c, totals.abroad));
         self.note_trade(c);
         let h = self.city_happiness(c);
-        let military = self.disband_unsupported(c, y.shields);
+        let military = self.disband_unsupported(c, totals.shields);
         // the government cases (0x102f5..0x10374): Despotism +5 for each military unit the
         // shields do not cover and + those units up to the city size; the Republic - (7, or 5
         // with a Marketplace, less the leader's "civilized" trait) for each unit abroad
@@ -780,11 +785,11 @@ impl Game {
             let city = self.city(c);
             let market = if city.has_improvement(imp::MARKETPLACE) { 5 } else { 7 };
             let civilized = self.traits(slot).civilized as i32;
-            self.gov_case.0 += 5 * (military - y.shields).max(0) + military.clamp(0, city.size as i32);
-            self.gov_case.1 -= (market - civilized) * abroad;
+            self.gov_case.0 += 5 * (military - totals.shields).max(0) + military.clamp(0, city.size as i32);
+            self.gov_case.1 -= (market - civilized) * totals.abroad;
         }
         self.last_moods = (h.happy, h.unhappy);
-        self.city_moods(c, &h, y.food - (y.food_upkeep - 2 * self.city(c).size as i32));
+        self.city_moods(c, &h, totals.food_after_settlers);
         // gold & science (0x12955: no taxes in disorder or under Anarchy, none for the
         // barbarians, 0x125e1; 0x12bde: science whatever the disorder, none under Anarchy)
         let t = self.city_yield_raw(c);
@@ -793,6 +798,7 @@ impl Game {
         }
         self.city_science(c, t.sci);
         self.trade_carry = None;
+        self.abroad_carry = None;
         // the score accumulator: size (after a celebration's growth) + happy - unhappy (0x12dbe),
         // the moods as the last run of the city routine left them (`Game::last_moods`): the
         // advisor's (process_city(city, -1) at 0xaa1b) when the city asked for production in a
@@ -801,7 +807,7 @@ impl Game {
         let (happy, unhappy) = self.last_moods;
         self.score_acc[slot as usize & 7] += size + happy - unhappy;
         // hazards and upkeep, the human's cities only (0x12ddd)
-        self.pollution_roll(c);
+        self.pollution_roll_of(c, &totals);
         self.meltdown_roll(c);
         self.pay_upkeep(c);
         if let Some(cm) = self.cities[c as usize].as_mut() {
@@ -840,10 +846,10 @@ impl Game {
         let human = self.player(slot).human;
         let was_disorder = self.city(c).disorder;
         let was_celebrating = self.city(c).celebrating;
+        let mut moods = (h.happy, h.unhappy);
         {
             let cm = self.city_mut(c);
             cm.disorder = h.disorder;
-            cm.celebrating = h.celebration;
             if h.disorder {
                 cm.disorder_turns = cm.disorder_turns.saturating_add(1);
             } else {
@@ -868,6 +874,12 @@ impl Game {
             if !human {
                 let next = self.ai_production(c);
                 self.city_mut(c).production = next;
+                if self.exe_quirks {
+                    // (0x12761, 0x128ff) the advisor's run leaves its totals: the taxes, the
+                    // science and the celebration test after it read its trade split and moods
+                    self.trade_carry = None;
+                    moods = self.last_moods;
+                }
             }
         }
         // a Democracy falls in the city loop (0x127ba), so the cities after this one work
@@ -877,12 +889,23 @@ impl Game {
             self.player_mut(slot).senate_blocks = self.player(slot).senate_blocks.saturating_add(1);
             self.government_collapse(slot, c);
         }
-        if h.celebration && !was_celebrating {
+        // the celebration test (0x12972) reads the moods the last run of the city routine left
+        // (ds:0x70e2 / ds:0x70e4), this turn's but after an advisor's run (`exe_quirks`)
+        let celebration = {
+            let size = self.city(c).size as i32;
+            moods.1 == 0 && size > 2 && moods.0 >= (size + 1) / 2 && self.player(slot).govt != Govt::Anarchy
+        };
+        // CIV.EXE clears a celebration only in order (0x12b19 tests happy - unhappy >= 0), so
+        // a celebrating city that falls into disorder keeps the flag; civrs clears it but
+        // with `exe_quirks`
+        let keeps = self.exe_quirks && h.disorder && !celebration && was_celebrating;
+        self.city_mut(c).celebrating = celebration || keeps;
+        if celebration && !was_celebrating {
             self.push_event(GameEvent::Celebration(c));
-        } else if !h.celebration && was_celebrating {
+        } else if !celebration && was_celebrating && !keeps {
             self.push_event(GameEvent::CelebrationEnded(c));
         }
-        if h.celebration && was_celebrating && self.player(slot).govt as u8 >= Govt::Republic as u8 {
+        if celebration && was_celebrating && self.player(slot).govt as u8 >= Govt::Republic as u8 {
             let city = self.city(c);
             let size = city.size as i32;
             if 2 * size < food_after_settlers && (size < 10 || city.has_improvement(imp::AQUEDUCT)) {
@@ -3465,6 +3488,43 @@ mod tests {
         assert_eq!(g.city(home).trade_routes, vec![rich], "own and human cities are left out, the first of equals wins");
         assert_eq!(g.player(me).gold - gold, bonus);
         assert_eq!(g.player(me).beakers - beakers, bonus);
+    }
+
+    /// A city's turn counts its units abroad before the production (ds:0x6546, 0xd26b): a
+    /// Bomber it builds makes no one unhappy under the Republic before the next turn.
+    #[test]
+    fn a_unit_built_this_turn_counts_abroad_from_the_next() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        g.player_mut(slot).govt = Govt::Republic;
+        g.city_mut(c).size = 6;
+        g.fix_workers(c);
+        let prod = Production::Unit(unit_ids::BOMBER);
+        g.city_mut(c).production = prod;
+        g.city_mut(c).shields = g.production_cost(c, prod);
+        let before = g.city_happiness(c);
+        g.process_city(c);
+        assert!(g.all_units().any(|u| u.kind == unit_ids::BOMBER && u.home == Some(c)));
+        assert_eq!(g.last_moods, (before.happy, before.unhappy));
+        assert!(g.city_happiness(c).unhappy > before.unhappy);
+    }
+
+    /// A celebrating city that falls into disorder: civrs ends the celebration; CIV.EXE clears
+    /// the flag only in order (0x12b19), so with `exe_quirks` it stays.
+    #[test]
+    fn exe_quirks_a_celebration_survives_disorder() {
+        for quirks in [false, true] {
+            let (mut g, c) = fixture();
+            let slot = g.city(c).owner;
+            g.exe_quirks = quirks;
+            g.city_mut(c).size = 8;
+            g.fix_workers(c);
+            g.player_mut(slot).lux = 0;
+            g.city_mut(c).celebrating = true;
+            g.process_city(c);
+            assert!(g.city(c).disorder);
+            assert_eq!(g.city(c).celebrating, quirks);
+        }
     }
 }
 
