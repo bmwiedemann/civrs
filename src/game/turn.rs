@@ -1262,14 +1262,15 @@ impl Game {
         self.city_lost_check(city.owner, to);
     }
 
-    /// Reduce a city's size by `n` (never below 1).
+    /// Reduce a city's size by `n` (never below 1). Only the size drops, as for disasters
+    /// (o 0x1b8b5: `size -= size / k`) and fallout (0x1a5d9): the extra workers go at the
+    /// city's next turn.
     pub fn shrink_city(&mut self, c: CityId, n: i32) {
         for _ in 0..n {
             if self.city(c).size <= 1 {
                 break;
             }
             self.city_mut(c).size -= 1;
-            self.fix_workers(c);
         }
         self.push_event(GameEvent::CityShrank(c));
     }
@@ -2374,6 +2375,18 @@ mod tests {
         assert!(!g.process_food(c));
         assert!(g.city_opt(c).is_none());
         assert!(g.unit_opt(militia).is_none());
+    }
+
+    #[test]
+    fn a_disaster_shrinks_the_size_and_keeps_the_worked_squares() {
+        let (mut g, c) = fixture();
+        g.city_mut(c).size = 5;
+        g.fix_workers(c);
+        let worked = g.city(c).workers();
+        assert!(worked >= 4);
+        // famine's size - size / 3 (o 0x1b8b5): the workers stay until the city's turn
+        g.shrink_city(c, 1);
+        assert_eq!((g.city(c).size, g.city(c).workers()), (4, worked));
     }
 
     #[test]
