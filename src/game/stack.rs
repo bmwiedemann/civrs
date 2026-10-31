@@ -15,6 +15,9 @@ impl Game {
     /// the lowest record there, `None` on an empty square.
     pub fn unit_at(&self, x: i32, y: i32) -> Option<UnitId> {
         let x = Map::wrap_x(x);
+        if self.exe_unit_bit_lost_at(x, y) {
+            return None;
+        }
         let here = || self.all_units().filter(move |u| u.x == x && u.y == y);
         let occupant = Map::in_bounds(x, y).then(|| self.barbarian_memory.occupant.get(Map::idx(x, y)).copied()).flatten();
         let owner = occupant.filter(|o| here().any(|u| u.owner == *o)).or_else(|| here().next().map(|u| u.owner))?;
@@ -33,7 +36,7 @@ impl Game {
     /// `stack_link` 0x1972:0xb5c): right after the square's first unit by record; a lone unit
     /// there and `id` point at each other. `id` must be out of any ring.
     pub(crate) fn stack_link(&mut self, id: UnitId, x: i32, y: i32) {
-        let Some(head) = self.stack_head_for(id, x, y) else {
+        let Some(head) = self.stack_head_for(id, x, y).filter(|_| !self.exe_unit_bit_lost_at(x, y)) else {
             self.unit_mut(id).next = None;
             return;
         };

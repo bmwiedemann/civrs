@@ -2239,6 +2239,7 @@ impl Game {
                 }
                 room -= 1;
                 // deleted and re-created for the new owner (o 0x1de40 / 0x1de6e)
+                let (rec, ux, uy) = (u.record, u.x, u.y);
                 self.players[from as usize].unit_counter[u.kind as usize % 28] -= 1;
                 self.players[to as usize].unit_counter[u.kind as usize % 28] += 1;
                 // re-created for the new owner by create_unit (0x8b51: no veteran status,
@@ -2251,6 +2252,7 @@ impl Game {
                 gone_heading.push(id);
                 let (x, y) = (u.x, u.y);
                 self.stack_link(id, x, y);
+                self.note_unit_ghost(from, rec, ux, uy);
             } else if u.home == Some(c) {
                 gone.push(u.id);
             }

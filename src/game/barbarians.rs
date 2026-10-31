@@ -139,6 +139,10 @@ impl Game {
             *m = vec![0; MAP_W * MAP_H];
         }
         m[Map::idx(Map::wrap_x(x), y)] = slot;
+        // set_tile_owner writes owner | 8
+        if let Some(b) = self.exe_unit_bit_lost.get_mut(Map::idx(Map::wrap_x(x), y)) {
+            *b = false;
+        }
     }
 
     /// The site-value layer (page 2, x+80) at a square as hut_outcome reads it (0x9867):

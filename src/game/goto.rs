@@ -110,6 +110,9 @@ impl Game {
     /// 3 is set), not the owner of whichever unit comes first.
     pub fn unit_owner_at(&self, x: i32, y: i32) -> Option<Slot> {
         let x = Map::wrap_x(x);
+        if self.exe_unit_bit_lost_at(x, y) {
+            return None;
+        }
         let first = self.all_units().find(|u| u.x == x && u.y == y).map(|u| u.owner)?;
         let layer = Map::in_bounds(x, y).then(|| self.barbarian_memory.occupant.get(Map::idx(x, y)).copied()).flatten();
         Some(layer.filter(|o| self.all_units().any(|u| u.x == x && u.y == y && u.owner == *o)).unwrap_or(first))

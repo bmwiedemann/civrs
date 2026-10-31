@@ -504,16 +504,19 @@ impl Game {
         if adv.is_some() && !self.player(by).human {
             self.rechoose_all(by);
         }
-        // units supported by the city are disbanded (Civ1), units of the loser inside are gone
-        // (the mover's stack stands in the city already in CIV.EXE, 0x6a65 after the step, and
-        // the loop keeps units in the city, 0x14286: that matters when a unit takes its own
-        // city under `exe_quirks`)
-        let homed: Vec<UnitId> = self.all_units().filter(|u| (u.home == Some(c) && u.owner == from) || ((u.x, u.y) == (city.x, city.y) && u.owner == from)).filter(|u| !(from == by && u.pos() == attacker.pos())).map(|u| u.id).collect();
+        // units supported by the city are disbanded unless they stand in it (0x14265..0x142a4),
+        // units of the loser inside are gone; when a unit takes its own city under
+        // `exe_quirks` the units in the city stay, the mover (and a ship's cargo) among them:
+        // it stands in the city already (0x6a65 after the step)
+        let ship = !attacker.is_land();
+        let moving = |u: &Unit| u.id == id || (ship && u.is_land() && u.pos() == attacker.pos());
+        let at_city = |u: &Unit| (u.x, u.y) == (city.x, city.y);
+        let homed: Vec<UnitId> = self.all_units().filter(|u| u.owner == from && !(from == by && moving(u)) && ((u.home == Some(c) && !at_city(u)) || (from != by && at_city(u)))).map(|u| u.id).collect();
         for h in homed {
             self.remove_unit(h);
         }
+        // the mover keeps its orders and goto (capture_city 0x13d76 leaves its record alone)
         self.place_unit(id, city.x, city.y, cost);
-        self.unit_mut(id).order = UnitOrder::None;
         // the worked squares stay (capture_city 0x13d76 leaves city +0x10 alone); the city
         // routine that follows (0x1430d) fits them to the smaller size
         self.fix_workers(c);
@@ -1517,6 +1520,58 @@ mod tests {
             checked |= g.city(c).has_improvement(imp::CITY_WALLS);
         }
         assert!(checked);
+    }
+
+    #[test]
+    fn exe_quirks_a_free_record_swept_marks_the_square_it_last_held() {
+        // delete_unit leaves a freed record's square (0x8e67); destroy_city's sweep deleting
+        // it again writes its owner on that square's layer without the unit bit (0x1ba98)
+        let mut g = flat_game();
+        g.exe_quirks = true;
+        let gone = g.add_unit(2, unit_ids::MILITIA, 12, 12);
+        let record = g.unit(gone).record;
+        g.remove_unit(gone);
+        let here = g.add_unit(3, unit_ids::PHALANX, 12, 12);
+        g.note_occupant(3, 12, 12);
+        assert_eq!(g.unit_at(12, 12), Some(here));
+        let counter = g.player(1).unit_counter[27];
+        g.exe_destroy_sweep(2, record);
+        assert_eq!(g.player(1).unit_counter[27], counter - 1);
+        assert_eq!(g.barbarian_memory.occupant[Map::idx(12, 12)], 2);
+        // no unit there for unit_at: a unit stepping in starts its own ring
+        assert_eq!(g.unit_at(12, 12), None);
+        let b = g.add_unit(3, unit_ids::MILITIA, 13, 12);
+        g.place_unit(b, 12, 12, 1);
+        assert_eq!((g.unit(b).next, g.unit(here).next), (None, None));
+        // the step wrote owner | 8 again
+        assert_eq!(g.unit_at(12, 12), Some(here));
+    }
+
+    #[test]
+    fn exe_quirks_a_unit_taking_its_own_city_keeps_its_goto_and_the_units_inside() {
+        // 0x14265: only units homed in the city that stand elsewhere are disbanded
+        let mut g = flat_game();
+        g.exe_quirks = true;
+        let by = (3..8u8).find(|s| *s != g.human_slot).unwrap();
+        g.players[by as usize].in_game = true;
+        g.players[by as usize].alive = true;
+        g.add_city(by, "Base".into(), 8, 8);
+        let c = g.add_city(by, "Own".into(), 20, 20);
+        g.city_mut(c).size = 3;
+        g.note_occupant(2, 20, 20);
+        let inside = g.add_unit(by, unit_ids::PHALANX, 20, 20);
+        g.unit_mut(inside).home = Some(c);
+        g.note_occupant(2, 20, 20);
+        let away = g.add_unit(by, unit_ids::MILITIA, 25, 25);
+        g.unit_mut(away).home = Some(c);
+        let a = g.add_unit(by, unit_ids::LEGION, 19, 20);
+        g.unit_mut(a).goto = Some((22, 20));
+        g.unit_mut(a).order = UnitOrder::Goto;
+        assert_eq!(g.try_move(a, crate::game::Dir8::E).unwrap(), MoveOutcome::CapturedCity(c));
+        assert_eq!(g.city(c).size, 2);
+        assert!(g.unit_opt(inside).is_some());
+        assert!(g.unit_opt(away).is_none());
+        assert_eq!((g.unit(a).order, g.unit(a).goto), (UnitOrder::Goto, Some((22, 20))));
     }
 
     #[test]

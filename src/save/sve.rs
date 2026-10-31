@@ -331,6 +331,8 @@ fn import_slot_with(data: &[u8], map_pic: &[u8], moves_back: bool, resume: bool)
         .map(|(x, y)| tile_bits(px(x + 80, y + 100) & 15 | (px(x + 80, y + 150) & 15) << 4) & tile_flags::SEEN)
         .collect();
     g.barbarian_memory.occupant = (0..MAP_H as i32).flat_map(|y| (0..MAP_W as i32).map(move |x| (x, y))).map(|(x, y)| px(x + 160, y) & 7).collect();
+    // the unit bit 8 of the same layer, for squares with units (`Game::exe_unit_bit_lost`)
+    g.exe_unit_bit_lost = (0..MAP_H as i32).flat_map(|y| (0..MAP_W as i32).map(move |x| (x, y))).map(|(x, y)| px(x + 160, y) & 8 == 0).collect();
     // the picture data below the owner layer (x + 160, rows 50..199), which nothing in play
     // writes and the garrison check reads (`Game::exe_page_band`)
     g.exe_page_band = (50..200).flat_map(|y| (0..MAP_W as i32).map(move |x| (x, y))).map(|(x, y)| px(x + 160, y)).collect();
@@ -416,6 +418,8 @@ fn import_slot_with(data: &[u8], map_pic: &[u8], moves_back: bool, resume: bool)
     // cities: the record index is the city id
     let mut cities: Vec<Option<City>> = Vec::with_capacity(128);
     g.exe_city_owner = (0..128usize).map(|i| data[off::CITIES + 0x1c * i + 0xb]).collect();
+    // the squares the unit records hold, free ones too (`Game::exe_unit_ghost`)
+    g.exe_unit_ghost = (0..8 * 128usize).map(|i| (data[off::UNITS + 12 * i + 1], data[off::UNITS + 12 * i + 2])).collect();
     for i in 0..128usize {
         let r = &data[off::CITIES + 0x1c * i..off::CITIES + 0x1c * (i + 1)];
         if r[6] == 0xff {

@@ -397,6 +397,22 @@ pub struct Game {
     /// from a save, set when a city goes; not saved.
     #[serde(skip)]
     pub exe_city_owner: Vec<u8>,
+    /// The square (x, y) each free unit record of CIV.EXE still holds, at `civ * 128 +
+    /// record`: delete_unit (0x8d6c) frees a record by its type (+3 = 0xff, 0x8e67), clears
+    /// its moves (+4) and its stack link (+0xa, stack_unlink 0x1a2df) and leaves the status,
+    /// position, fuel, goto, heading, seen mask and home. With `exe_quirks` destroy_city's
+    /// sweep reads them (`exe_destroy_sweep`). Imported from a save, set when a unit goes;
+    /// (0, 0) for records never used (as a new game's); not saved.
+    #[serde(skip)]
+    pub exe_unit_ghost: Vec<(u8, u8)>,
+    /// With `exe_quirks`: the squares (`Map::idx`) whose layer x+160 lost its unit bit 8 while
+    /// units stand there, as when a free record's delete writes its owner over a square it
+    /// once held (`exe_destroy_sweep`): `unit_at` and `unit_owner_at` (0x1bade, 0x1bb66) then
+    /// find no unit there, so a unit stepping in starts a ring of its own (0x67ce), until a
+    /// step onto the square writes owner | 8 again (`set_tile_owner` 0x1392). Imported from a
+    /// save; not saved.
+    #[serde(skip)]
+    pub exe_unit_bit_lost: Vec<bool>,
 }
 
 /// `wonders_built` entry of a wonder whose city was destroyed: built, owned by no one, listed
@@ -639,6 +655,8 @@ impl Game {
             exe_quirks: false,
             quiet_si_index: false,
             exe_city_owner: Vec::new(),
+            exe_unit_ghost: Vec::new(),
+            exe_unit_bit_lost: Vec::new(),
         };
         game.place_starting_units(&slots, &world, &mut wr);
         // the game's draws go on in CIV.EXE's one stream
@@ -991,6 +1009,7 @@ impl Game {
                 self.stack_unlink(c);
             }
             if let Some(u) = self.units[c as usize].take() {
+                self.note_unit_ghost(u.owner, u.record, u.x, u.y);
                 let p = &mut self.players[u.owner as usize];
                 p.unit_counter[u.kind as usize % 28] -= 1;
                 if self.counting_losses {
@@ -1218,6 +1237,10 @@ impl Game {
     /// reads a domain from before the unit table, not land, so delete_unit counts the type -1:
     /// the Caravan counter of the civilization before the owner goes down (0x8e63). Not copied
     /// in play (a sane sweep finds the conqueror's own land unit and deletes nothing).
+    /// A free record (`exe_unit_ghost`) is deleted again: its link is 0xff, so
+    /// remove_city_marker (0x1ba98) writes the owner on the layer x+160 of the square the record
+    /// last held (0x1be55, the unit bit 8 cleared), and the losses of the type -1 count as the
+    /// previous civilization's Caravans when the losses are being counted (0x8d9d).
     pub fn exe_destroy_sweep(&mut self, owner: Slot, record: u8) {
         let first = self.all_units().find(|u| u.owner == owner && u.record == record).map(|u| u.id);
         match first {
@@ -1228,8 +1251,41 @@ impl Game {
                     }
                 }
             }
-            None if owner > 0 => self.players[owner as usize - 1].unit_counter[27] -= 1,
-            None => {}
+            None => {
+                if owner > 0 {
+                    let p = &mut self.players[owner as usize - 1];
+                    p.unit_counter[27] -= 1;
+                    if self.counting_losses {
+                        p.units_lost_by_type[27] += 1;
+                    }
+                }
+                let (x, y) = self.exe_unit_ghost.get(owner as usize * 128 + record as usize).copied().unwrap_or((0, 0));
+                let (x, y) = (x as i32, y as i32);
+                self.note_occupant(owner, x, y);
+                if Map::in_bounds(x, y) {
+                    if self.exe_unit_bit_lost.len() != rules::MAP_W * rules::MAP_H {
+                        self.exe_unit_bit_lost = vec![false; rules::MAP_W * rules::MAP_H];
+                    }
+                    self.exe_unit_bit_lost[Map::idx(x, y)] = true;
+                }
+            }
+        }
+    }
+
+    /// Whether the layer x+160 of (x, y) lacks the unit bit though units stand there
+    /// (`exe_unit_bit_lost`).
+    pub fn exe_unit_bit_lost_at(&self, x: i32, y: i32) -> bool {
+        self.exe_quirks && Map::in_bounds(x, y) && self.exe_unit_bit_lost.get(Map::idx(Map::wrap_x(x), y)).copied().unwrap_or(false)
+    }
+
+    /// Keep the square a unit record held when its unit goes (`exe_unit_ghost`).
+    pub(crate) fn note_unit_ghost(&mut self, owner: Slot, record: u8, x: i32, y: i32) {
+        let i = owner as usize * 128 + record as usize;
+        if self.exe_unit_ghost.len() < 8 * 128 {
+            self.exe_unit_ghost.resize(8 * 128, (0, 0));
+        }
+        if let Some(g) = self.exe_unit_ghost.get_mut(i) {
+            *g = (x as u8, y as u8);
         }
     }
 
