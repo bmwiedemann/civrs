@@ -785,7 +785,8 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   agree to t81 (was t9). Left: a barbarian Sail's goto to Rome, inland, at t72. Its block
   search finds no sea block for the target (goto_block_entry 0x1e522 fails), and every
   goto_block_cost 0x1ec12 it tried for the target's neighbour blocks has overwritten
-  ds:0x6590/0x6592 with the goto square, so 0x1e0dc runs its breadth-first search from
+  ds:0x6590/0x6592 with the goto square (wrong, see round w94: the failed local search then
+  replaces it with (0, 0), so the search runs from block (0, 0) and stays in the tables), so 0x1e0dc runs its breadth-first search from
   "block" (42, 14), outside the 20x13 grids, reading the masks and marking the distances
   past their tables (0x7f38 + 13x + y, ds:0xd816 + 13x + y), and finds a waypoint (73, 25)
   that civrs, starting from the unit's own block as when nothing was tried, does not (it
@@ -940,6 +941,51 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   game in the same turn. Left: the harness key for record 0x80 with a goto on the next
   civ's record 0 (0x4bce: goto_direction for the human's civ moves that unit; not seen in
   the stored runs), the human's Senate (the harness answers yes to peace).
+
+  Round w94 (2026-10-31, scratchpad w94): the "picture-buffer block search" was a misreading.
+  A probe (w94/probe13.py: at goto_block_search's memset 0x1e1ae and after its flood 0x1e30b it
+  appends the frame, ds:0x7f30..0xb1d4 and ds:0xd810..0xde00 to a file; ml.py parses) showed
+  every flood in the LATE, LATE2, seed 13 and SHIP runs starting inside the 20x13 tables and
+  writing nothing past ds:0xd91a. goto_block_cost 0x1ec12 does put the goto square in
+  ds:0x6590/0x6592 (0x1ec5b), but when its local search fails, 0x1e713 replaces it with the
+  goto bytes +6/+7 of the unit it searched for (0x1ebe9), the scratch unit, civ 0's record
+  127 (ds:0x87ce/0x87cf, 0 in every save and dump; nothing writes them). goto_block_entry fails
+  only when every probe failed, so a goto square without a block of its own whose neighbour
+  blocks were tried is searched from block (0, 0), never from the square; with no probe within
+  7 squares from the start block as before. `exe_quirks` floods from (0, 0) (`block_search`).
+  No link in any dump leads north of row 0 or south of row 12, so the flood never leaves the
+  tables (civrs keeps its fallback). For the record, what lies past the tables, 13 x + y up to
+  1076: the masks after ds:0x7f38 + 260 are ds:0x803c (power ranks) .. 0x8179 (AI statistics,
+  saved), the city view's sprite handles ds:0x817a..0x81d1 (0 until a city view is shown),
+  the turn ds:0x81d2 and from ds:0x81d4 the unit records; the distances after ds:0xd816 + 260
+  are the reader's far pointer ds:0xd91a (nonzero), the palace levels ds:0xd91e (saved), the
+  PIC buffer ds:0xd936..0xdb35 (a near buffer in DGROUP: 512 bytes of the last picture read,
+  or of the last .MAP written, the file's last block at the start and the block before after
+  it; w94/mapenc.py re-encodes a .MAP byte for byte as 0x1fab0/0x1fb8c/0x148f/0x15cd do),
+  the warming count ds:0xdb36, the mouse state ds:0xdb3a.., the land links ds:0xdb44 and the
+  quit flag ds:0xdc48. Results with the fix (w94 runs, CIV.EXE played with the probe13 copy):
+  LATE2 t142-t172 every field and draw (was fields to t167), on from CIV.EXE's t172 draws to
+  t190, from t191 t192-t216 (one-turn worked-square difference of Hamburg at t207, shrunk to
+  4 in disorder, gone at t208) and from t216 t217-t239; LATE t126-t131 and from t131
+  t132-t156; seed 13 t120-t125 (was t119), from t125 to t126 (t127 the uninitialised
+  [bp-0x108] at 0xd81d, as before) and from t128 to t135; SHIP2 and SHIP3 t201-t205 and from
+  t205 t206-t230, all in fields and draws. The LATE2 t182 parting found: steal_advance
+  0x14468 re-chooses in the captor's cities (0x18bef(civ, -1) at 0x1462f) only when it took an
+  advance; it returns early with nothing to take (0x1453e) and for a human captor, and
+  capture_city then re-chooses for the new city (0x14331). Seed 13's t136 parting: 0x6a65
+  tests the layer x+160 alone, so a unit stepping into its own city whose layer holds another
+  civ "captures" it from itself (a citizen and half the improvements lost; `exe_quirks` in
+  civrs); here the layer of Athens became civ 6 when civ 7 took and destroyed London (size 1)
+  earlier in the turn: destroy_city's walk over the stack at the city square (0xa8d2: the
+  non-land units of the stack unit_at finds, callback 0x949f) reached civ 6's dead record 5,
+  type 0xff (whose domain, read at ds:0x1116, is nonzero), still holding the square (48, 40)
+  of Athens, whose remove_city_marker 0x1ba98 wrote 6 there (probe16/17.py: set_tile_owner,
+  remove_city_marker and delete_unit with their callers). civrs keeps no dead records, so
+  that write is not reproduced.
+  LATE2's t188 parting is ai_unit_command's uninitialised [bp-0xc] (0x16e94: a ship in a city
+  releases fortified units while their count is below size / 5 of city [bp-0xc]): probe14.py
+  (entry, release and exit of ai_unit_command) showed residues 0xb1d6 + 2 civ, 0x6cb4, 0x80,
+  0x15bb, ... left by whatever ran at that depth before, not the previous call's value.
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in

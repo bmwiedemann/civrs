@@ -504,7 +504,10 @@ impl Game {
             self.rechoose_all(by);
         }
         // units supported by the city are disbanded (Civ1), units of the loser inside are gone
-        let homed: Vec<UnitId> = self.all_units().filter(|u| (u.home == Some(c) && u.owner == from) || ((u.x, u.y) == (city.x, city.y) && u.owner == from)).map(|u| u.id).collect();
+        // (the mover's stack stands in the city already in CIV.EXE, 0x6a65 after the step, and
+        // the loop keeps units in the city, 0x14286: that matters when a unit takes its own
+        // city under `exe_quirks`)
+        let homed: Vec<UnitId> = self.all_units().filter(|u| (u.home == Some(c) && u.owner == from) || ((u.x, u.y) == (city.x, city.y) && u.owner == from)).filter(|u| !(from == by && u.pos() == attacker.pos())).map(|u| u.id).collect();
         for h in homed {
             self.remove_unit(h);
         }
