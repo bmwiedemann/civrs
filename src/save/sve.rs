@@ -596,9 +596,9 @@ fn import_slot_with(data: &[u8], map_pic: &[u8], moves_back: bool, resume: bool)
     }
     // the cargo of the ships is their stacks' (CIV.EXE keeps no other link)
     g.units = units;
-    // a ring that does not hold all of a civ's units on its square (none in the sample
-    // saves) is linked up again from the records
-    if !g.stacks_consistent() {
+    // links that do not close into rings (none in the sample saves) are linked up again from
+    // the records; a square may keep several rings (`Game::stacks_linked`)
+    if !g.stacks_linked() {
         g.rebuild_stacks();
     }
 

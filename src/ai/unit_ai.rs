@@ -306,7 +306,8 @@ fn task_units(g: &mut Game, slot: Slot, reserve: i32) {
             let p = g.player(slot);
             let obsolete = u.info().obsolete_by.map(|a| p.knows(a)).unwrap_or(false);
             let militia = (p.govt as u8 > Govt::Despotism as u8 || pol == POLICY_OFFENSIVE) && u.kind == unit_ids::MILITIA;
-            let alone_in_city = g.city_at(u.x, u.y).is_some() && g.units_at(u.x, u.y).len() == 1;
+            // alone by its stack link (+0xa = 0xff, 0x16150), not by the units on the square
+            let alone_in_city = g.city_at(u.x, u.y).is_some() && u.next.is_none();
             if (obsolete || militia) && !g.enemy_adjacent(slot, u.x, u.y) && !alone_in_city && !g.map.is_ocean(u.x, u.y) && pol != POLICY_THREATENED {
                 if trace() { eprintln!("TRACE t{} s{} #{} {} DISBAND obsolete={} militia={}", g.turn, slot, id, u.info().name, obsolete, militia); }
                 g.remove_unit(id);

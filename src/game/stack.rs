@@ -160,6 +160,16 @@ impl Game {
             ring.len() == here && (here > 1 || u.next.is_none())
         })
     }
+
+    /// Whether every unit's link leads round a ring of its owner's units on its square back to
+    /// it (or is 0xff). A square may hold several rings: a unit that steps onto a square whose
+    /// layer lost its unit bit starts one of its own (`Game::exe_unit_bit_lost`).
+    pub fn stacks_linked(&self) -> bool {
+        self.all_units().all(|u| {
+            let ring = self.stack_ring(u.id, 128);
+            u.next.is_none() || (ring.len() > 1 && ring.last().and_then(|l| self.unit(*l).next) == Some(u.id))
+        })
+    }
 }
 
 #[cfg(test)]
@@ -180,6 +190,19 @@ mod tests {
             g.remove_unit(id);
         }
         g
+    }
+
+    #[test]
+    fn a_square_may_hold_two_closed_rings() {
+        let mut g = flat_game();
+        let s = g.human_slot;
+        let a = g.add_unit(s, unit_ids::MILITIA, 10, 10);
+        let b = g.add_unit(s, unit_ids::MILITIA, 10, 10);
+        g.stack_unlink(b);
+        assert!(g.stacks_linked());
+        assert!(!g.stacks_consistent());
+        g.unit_mut(a).next = Some(b);
+        assert!(!g.stacks_linked(), "a link that leads nowhere back");
     }
 
     #[test]
