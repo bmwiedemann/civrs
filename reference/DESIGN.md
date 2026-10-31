@@ -809,7 +809,35 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   computer's Phalanx stepping into an empty enemy city whose square the map layer x+160 still
   gave its own civ (a respawned tribe's city) walked in and stayed beside the city (0x6a65 tests
   tile_owner, read at 0x65f0; `exe_quirks`). That city then works two squares at size 1 with
-  the enemy unit inside (t107, not followed further). A human's step that crosses a treaty partner's border is asked about
+  the enemy unit inside (t107): worker placement 0xd454 checks all 21 squares (ds:0x6540),
+  the centre among them, against the owner the map layer x+160 records (0x1a68:0x14e6), so
+  the walked-in unit idles the centre and both citizens work outside it, which a kept layout
+  carries on until the next fresh placement (`City::worked` bit 0 = `CENTRE_IDLE`, imported
+  from the SVE's bit 20). From t106 the stretch now agrees to t115 in draws and fields; the
+  next parting is a goto local search that reuses a grid flooded for a one-move unit
+  (ds:0x6796 cache): CIV.EXE has searched another waypoint in between (civ3's Settlers and
+  civ4's Militia keep their gotos to (29,18) and search, civrs's Settlers drop theirs in
+  their look; not resolved). (The K13 run's t6.. "Militia fortify" difference was the
+  script: r-K13 was played with K13F.txt, with the turn-5 'f'; with it the run agrees to
+  t69 in fields and t81 in draws.)
+
+  LATE (2026-10-31): a late-era start made from CIV.EXE's t100 save of the seed-4763 NEWF run
+  by sve_edit.py (scratchpad w90/mklate.py: 39..52 advances per civ up to Space Flight,
+  Communism, Democracy and Republic governments, Factories, Power Plants, Apollo Program,
+  polluted squares and warming 14, Settlers, Caravans, Diplomats, Mech. Inf., Artillery, a
+  war of the Germans with the English and the Babylonians). Played seeded from t100 to t129
+  (the harness slows down as the human's Rome fills with Militia it never moves): all 29
+  saves agree draw for draw, fields to t125. It found: a Diplomat disbanded in its own city
+  runs the rest of the unit routine as the freed record (0x16a95; `exe_quirks`); a rioting
+  computer Republic/Democracy sends its farthest land unit home every eighth record turn and
+  its disorder counts as new (0xfd3e..0xfedf); the government choice reads ds:0xe3c2/0xdb42
+  as all city runs since the civ's cities came up left them (`Game::gov_case`); Chieftain
+  science doubles for the research menu's answer (0x12c93); Anarchy splits trade by the
+  rates (0xf237); a city's score and return value read the last city run's moods (0x12dbe,
+  0x13223); a human city run for attention lets the garrison out and stashes it again by
+  record (0xcda0, 0x1320d); the production advice counts units on squares numbered as the
+  continent, ocean bodies too (0xb0c1, `exe_quirks`); a move keeps the work counter (+5).
+  Left at t126: a Battleship's long sea goto takes another way (block search). A human's step that crosses a treaty partner's border is asked about
   after the move roll now (0x634a before 0x64bb), see "Questions inside a computer's unit loop".
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
