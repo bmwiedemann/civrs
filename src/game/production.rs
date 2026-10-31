@@ -367,6 +367,16 @@ impl Game {
 
     /// `build_advice`; with `rechoose` the city's own unit does not count as in production.
     fn build_advice_with(&mut self, c: CityId, rechoose: bool) -> Result<BuildAdvice, Production> {
+        // the valuation reads the totals of its own run of the city routine, not those a city's
+        // turn carries (`Game::trade_carry`, `Game::abroad_carry`): an advance learned in the
+        // turn re-chooses with the new run's ds:0x70de
+        let carry = (self.trade_carry.take(), self.abroad_carry.take());
+        let advice = self.build_advice_inner(c, rechoose);
+        (self.trade_carry, self.abroad_carry) = carry;
+        advice
+    }
+
+    fn build_advice_inner(&mut self, c: CityId, rechoose: bool) -> Result<BuildAdvice, Production> {
         // choose_production starts with the city routine in mode -1 (0xaa1b), whose worker
         // assignment puts a city that shrank in order (an attack's population loss, 0x618a,
         // before the re-choice of 0x625e) and whose totals the valuation reads
@@ -663,6 +673,21 @@ mod tests {
         let settler = g.units_of(slot).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
         let c = g.found_city(settler).unwrap();
         (g, c)
+    }
+
+    /// The advisor values from its own run of the city routine: the totals a city's turn
+    /// carries (an advance learned in the turn re-chooses inside it) stay out of it.
+    #[test]
+    fn the_advisor_reads_its_own_run_not_the_turns_carry() {
+        let (mut g, c) = ai_city();
+        let slot = g.city(c).owner;
+        g.player_mut(slot).learn(adv::WRITING);
+        g.add_unit(slot, unit_ids::MILITIA, g.city(c).x, g.city(c).y);
+        let plain = g.build_advice(c);
+        g.trade_carry = Some((c, 500));
+        g.abroad_carry = Some((c, 9));
+        assert_eq!(g.build_advice(c), plain);
+        assert_eq!((g.trade_carry, g.abroad_carry), (Some((c, 500)), Some((c, 9))));
     }
 
     #[test]
