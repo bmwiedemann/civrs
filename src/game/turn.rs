@@ -1817,7 +1817,10 @@ impl Game {
     /// halved again between cities of one civilization; a third less each when the target's
     /// owner knows the Railroad, then Flight. CIV.EXE looks up the home city's continent at
     /// (x, x) (0x14738 pushes x twice); civrs uses the home city's real tile, and only with
-    /// `exe_quirks` the square (x, x) where that is on the map (land continent or ocean body).
+    /// `exe_quirks` the square (x, x) where that is on the map (land continent or ocean body),
+    /// else what 0x1bfc8 reads there: map page 2 at (x, x + 50), from x = 50 on the
+    /// improvement nibble of the square (x, x - 50) (city 1, irrigation 2, mine 4, road 8),
+    /// which no continent number matches but 1..8 by chance.
     pub fn trade_route_revenue(&self, slot: Slot, home: CityId, target: CityId) -> i32 {
         let (a, b) = (self.city(home), self.city(target));
         let mut v = (Map::civ_distance(a.pos(), b.pos()) + 10) * (a.trade + b.trade) / 24;
@@ -1828,6 +1831,13 @@ impl Game {
             } else {
                 self.map.ocean_numbers().0[Map::idx(a.x, a.x)]
             }
+        } else if self.exe_quirks {
+            let t = self.map.tile(a.x, a.x - 50);
+            [(t.city.is_some(), 1), (t.has(super::map::tile_flags::IRRIGATION), 2), (t.has(super::map::tile_flags::MINE), 4), (t.has(super::map::tile_flags::ROAD), 8)]
+                .iter()
+                .filter(|(on, _)| *on)
+                .map(|(_, b)| b)
+                .sum()
         } else {
             self.map.tile(a.x, a.y).continent
         };
@@ -3282,6 +3292,33 @@ mod tests {
         assert_eq!(g.trade_route_revenue(slot, home, target), v);
         g.exe_quirks = true;
         assert_eq!(g.trade_route_revenue(slot, home, target), v / 2);
+        // from x = 50 on (x, x) is off the map: 0x1bfc8 reads page 2 at (x, x + 50), the
+        // improvement nibble of (x, x - 50): 0 for a bare square, which no continent has
+        let far = g.add_city(slot, "East".into(), 55, 8);
+        g.city_mut(far).trade = 20;
+        let target2 = g.add_city((slot % 7) + 1, "Near".into(), 35, 8);
+        g.city_mut(target2).trade = 28;
+        let w = (Map::civ_distance((55, 8), (35, 8)) + 10) * 48 / 24;
+        g.exe_quirks = false;
+        assert_eq!(g.trade_route_revenue(slot, far, target2), w);
+        g.exe_quirks = true;
+        assert_eq!(g.trade_route_revenue(slot, far, target2), w);
+        // a nibble equal to the target's continent halves it: irrigation (2) and a road (8)
+        let k = g.map.tile(35, 8).continent;
+        let t = g.map.get_mut(55, 5).unwrap();
+        t.flags = 0;
+        if k & 2 != 0 {
+            t.set(crate::game::map::tile_flags::IRRIGATION, true);
+        }
+        if k & 4 != 0 {
+            t.set(crate::game::map::tile_flags::MINE, true);
+        }
+        if k & 8 != 0 {
+            t.set(crate::game::map::tile_flags::ROAD, true);
+        }
+        if k & 1 == 0 {
+            assert_eq!(g.trade_route_revenue(slot, far, target2), w / 2, "continent {k}");
+        }
     }
 
     #[test]
