@@ -594,7 +594,8 @@ impl Game {
     }
 
     /// CIV.EXE 0x1508d `civs_meet(a, b, x, y)`: units of `a` and `b` touch. With the human an
-    /// audience opens when the two have no contact or the last talk is 16 turns old; then both
+    /// audience opens when `a`'s word has no contact with `b` (whichever of the two is the
+    /// human: 0x150bb, 0x150f7) or the computer's last talk is 16 turns old; then both
     /// words get `CONTACT | MET`. Between computer players, on first contact and every fourth
     /// turn (by (a + b + turn) & 3), unless one has a vendetta against the other: war when
     /// either wants it (`ai_wants_war`), the other lacks the Great Wall and the one wanting war
@@ -607,7 +608,7 @@ impl Game {
         let h = self.human_slot;
         let turn = self.turn as i32;
         for (me, ai) in [(a, b), (b, a)] {
-            if me == h && ai != h && (!self.player(me).has_contact(ai) || turn - self.player(ai).last_contact >= 16) {
+            if me == h && ai != h && (!self.player(a).has_contact(b) || turn - self.player(ai).last_contact >= 16) {
                 if let Some(st) = crate::ai::diplo_ai::meeting(self, ai, (x, y), 0) {
                     self.audience_pending |= 1 << ai;
                     self.push_event(GameEvent::NeedsDecision(super::Decision::Diplomacy(st)));
@@ -910,6 +911,23 @@ mod tests {
         assert!(g.at_war(2, 3) && g.hostile(2, 3));
         // no contact: not at war in CIV.EXE's sense, but nothing stops a fight either
         assert!(!g.at_war(2, 4) && g.hostile(2, 4));
+    }
+
+    /// 0x150bb / 0x150f7: the audience goes by the first civ's word, the human's or the
+    /// computer's, whichever moved.
+    #[test]
+    fn the_mover_s_word_decides_the_audience() {
+        for (a, b, opens) in [(2u8, 1u8, false), (1, 2, true)] {
+            let mut g = game();
+            g.add_city(1, "H".into(), 10, 10);
+            g.add_city(2, "C".into(), 30, 10);
+            g.turn = 20;
+            g.player_mut(2).last_contact = 15;
+            // the computer's word has the contact, the human's (an old save's) has not
+            g.raise_flag(2, 1, CONTACT);
+            g.civs_meet(a, b, 20, 10);
+            assert_eq!(g.audience_pending & 1 << 2 != 0, opens, "civs_meet({a}, {b})");
+        }
     }
 
     #[test]
