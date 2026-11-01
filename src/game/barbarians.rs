@@ -627,9 +627,11 @@ impl Game {
         if self.city_at(u.x, u.y).is_some() && self.stack_next(id).is_none() && best.0 < 99 {
             return BarbarianCommand::Skip;
         }
+        // no square scored: heading 0 and the routine returns 0, the goto key (0x19622..0x19631),
+        // so the unit without a goto is asked again, up to the loop's fifth call
         if best.1 == 0 {
             self.barbarian_memory.heading.insert(id, 0);
-            return BarbarianCommand::Skip;
+            return BarbarianCommand::Goto;
         }
         self.barbarian_memory.heading.insert(id, best.1 as u8);
         BarbarianCommand::Step(Dir8::ALL[best.1 - 1])
@@ -1030,6 +1032,31 @@ mod tests {
             assert!(g.map.is_land(u.x, u.y), "{:?}", u.pos());
             assert!(!g.aboard(*t));
         }
+    }
+
+    #[test]
+    fn a_barbarian_with_no_square_to_take_is_asked_five_times() {
+        let mut g = plain_world(31);
+        for y in 8..13 {
+            for x in 8..13 {
+                g.map.get_mut(x, y).unwrap().terrain = Terrain::Ocean;
+            }
+        }
+        g.map.get_mut(10, 10).unwrap().terrain = Terrain::Plains;
+        g.map.get_mut(11, 10).unwrap().terrain = Terrain::Plains;
+        g.map.compute_continents();
+        let b = g.add_barbarian(unit_ids::LEGION, 10, 10).unwrap();
+        g.add_barbarian(unit_ids::LEGION, 11, 10).unwrap();
+        // not a turn on which the unit far from any city gives up
+        g.turn = (5 - g.unit(b).record as u32) & 3;
+        // its only land neighbour holds a barbarian: no square scores, the answer is the goto key
+        assert_eq!(g.barbarian_command(b), BarbarianCommand::Goto);
+        g.unit_mut(b).moves_left = 3;
+        crate::game::rng::trace_start();
+        crate::ai::unit_ai::act(&mut g, b, &mut |_| {});
+        let draws = crate::game::rng::trace_take();
+        assert_eq!(draws.iter().filter(|d| d.at == 0x1949f).count(), 5);
+        assert_eq!(g.unit(b).pos(), (10, 10));
     }
 
     #[test]
