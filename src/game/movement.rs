@@ -173,12 +173,12 @@ impl Game {
                 // the human may attack a treaty partner, or take its empty city, after
                 // "Break treaty." (senate_check_attack 0x1a3b4 from combat 0x199fd and from the
                 // territory rule 0x6575); the computer keeps the peace
-                let acts = !units_here.is_empty() || (city_here.is_some() && u.is_land() && u.info().att > 0);
+                let acts = !units_here.is_empty() || (city_here.is_some() && u.is_land());
                 // a computer's land unit walks into an empty city of another computer it has a
                 // treaty with and takes it, the treaty standing: only an attack waits on the
                 // treaty, and the territory rule (0x6523..0x6530) guards the human's land alone
                 // (the capture at 0x6a65 -> 0x13d76)
-                let grab = !self.is_human(slot) && o != self.human_slot && units_here.is_empty() && city_here.is_some() && u.is_land() && u.info().att > 0;
+                let grab = !self.is_human(slot) && o != self.human_slot && units_here.is_empty() && city_here.is_some() && u.is_land();
                 if !(acts && self.is_human(slot) && self.treaty(slot, o)) && !grab {
                     return Ok(MoveOutcome::Blocked);
                 }
@@ -260,12 +260,10 @@ impl Game {
                     self.counting_losses = false;
                     return Ok(MoveOutcome::Attacked { won: true, at: (tx, ty), defender: unit_ids::NUCLEAR });
                 }
-                if !u.is_land() || u.info().att == 0 && !matches!(u.kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN) {
-                    if matches!(u.kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN) {
-                        return Ok(MoveOutcome::EnteredForeignCity(c));
-                    }
-                    // *OCCUPY drops the goto (0x5eaa -> 0x5ef3), so a computer's ship sent
-                    // to an emptied city asks for another
+                // a ship or an aircraft cannot take it: *OCCUPY drops the goto (0x5eaa ->
+                // 0x5ef3), so a computer's ship sent to an emptied city asks for another. Any
+                // land unit can, Settlers too (domain 0 goes on to 0x62a1, 0x5e77)
+                if !u.is_land() {
                     self.clear_goto(id);
                     return Err(RuleError::Occupy);
                 }
@@ -2092,6 +2090,23 @@ mod zoc_tests {
         g.unit_mut(leg).moves_left = 3;
         assert_eq!(g.try_move(leg, Dir8::N), Ok(MoveOutcome::Blocked));
         assert_eq!(g.city(mine).owner, h);
+    }
+
+    #[test]
+    fn settlers_take_an_empty_enemy_city() {
+        // an empty square goes on to the move for any land unit (domain 0, 0x5e77 -> 0x62a1)
+        // and to the capture (0x6a65)
+        let (mut g, _) = open_field();
+        let h = g.human_slot;
+        let (a, b) = if h == 2 { (3, 4) } else if h == 3 { (2, 4) } else { (2, 3) };
+        g.set_relation(a, b, crate::game::Relation::War);
+        let c = g.add_city(b, "Pond".into(), 41, 25);
+        g.city_mut(c).size = 3;
+        g.add_city(b, "Far".into(), 30, 20);
+        let s = g.add_unit(a, unit_ids::SETTLERS, 40, 25);
+        g.unit_mut(s).moves_left = 3;
+        assert!(matches!(g.try_move(s, Dir8::E), Ok(MoveOutcome::CapturedCity(_))));
+        assert_eq!(g.city(c).owner, a);
     }
 
     #[test]
