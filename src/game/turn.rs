@@ -747,6 +747,9 @@ impl Game {
         // the totals the rest of the turn reads (`TurnTotals`), counted before the production:
         // a unit, building or growth of this turn counts from the next
         let mut totals = super::economy::TurnTotals { abroad, ..self.turn_totals(c) };
+        // the squares' trade of this pass (ds:0x70de), which the split reads (0xf0d9): a wonder
+        // completed in this turn (the Colossus) adds to the squares from the next
+        let squares_trade = self.raw_trade(c);
         let was_disorder = self.city(c).disorder;
         {
             // the store takes shields less support, even when that is negative; nothing while
@@ -793,6 +796,9 @@ impl Game {
         // stores the city's trade less corruption first (0xf13d); the units abroad as counted
         // before the production (ds:0x6546, read at 0xf98e)
         self.abroad_carry = Some((c, totals.abroad));
+        if self.trade_carry.is_none() {
+            self.trade_carry = Some((c, squares_trade));
+        }
         self.note_trade(c);
         // the split's taxes and science (ds:0xe17a, ds:0x70e6), which the city collects after
         // its moods have changed its celebration flag, so with the tiles' yields of the turn
@@ -3694,6 +3700,35 @@ mod tests {
         let gold = g.player(slot).gold;
         g.process_city(c);
         assert!(!g.city(c).celebrating, "no luxuries, no celebration");
+        assert_eq!(g.player(slot).gold - gold, tax);
+    }
+
+    /// The split reads the squares' trade of the turn's own pass (ds:0x70de, 0xf0d9): the
+    /// Colossus finished in this turn pays from the next.
+    #[test]
+    fn a_wonder_of_this_turn_adds_no_trade_to_this_turn_s_taxes() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        g.player_mut(slot).tax = 100;
+        g.player_mut(slot).lux = 0;
+        g.city_mut(c).size = 3;
+        let (cx, cy) = g.city(c).pos();
+        for i in 1..21u8 {
+            if let Some((x, y)) = g.radius_tile(c, i) {
+                if (x, y) != (cx, cy) {
+                    g.map.get_mut(x, y).unwrap().terrain = crate::rules::Terrain::Ocean;
+                }
+            }
+        }
+        g.fix_workers(c);
+        let tax = g.city_yield_raw(c).tax;
+        let p = Production::Wonder(crate::rules::wonder_ids::COLOSSUS);
+        g.city_mut(c).production = p;
+        g.city_mut(c).shields = g.production_cost(c, p);
+        let gold = g.player(slot).gold;
+        g.process_city(c);
+        assert!(g.city(c).has_wonder(crate::rules::wonder_ids::COLOSSUS));
+        assert!(g.city_yield_raw(c).tax > tax, "the Colossus adds trade");
         assert_eq!(g.player(slot).gold - gold, tax);
     }
 
