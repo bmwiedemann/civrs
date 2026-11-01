@@ -546,6 +546,30 @@ mod tests {
         }
     }
 
+    /// The city screen's CHANGE (0x117ef) runs the city routine with process_city's si, 2 * the
+    /// unit type in production (0x117d7): with `exe_quirks` its garrison check looks around
+    /// (city y, 2 * type) and a unit there keeps the garrison out.
+    #[test]
+    fn exe_quirks_change_s_garrison_check_reads_twice_the_unit_type() {
+        for far in [false, true] {
+            let (mut g, c, ids) = garrisoned();
+            g.exe_quirks = true;
+            for id in &ids {
+                g.unit_mut(*id).order = UnitOrder::Fortified;
+            }
+            g.city_mut(c).production = Production::Unit(unit_ids::PHALANX);
+            g.city_mut(c).garrison_out = true;
+            let y = g.city(c).y;
+            if far {
+                let r = rival(&g);
+                g.add_unit(r, unit_ids::PHALANX, y + 1, 2 * unit_ids::PHALANX as i32 + 1);
+            }
+            let _ = g.change_advice(c);
+            assert_eq!(g.city(c).garrison_count(), if far { 0 } else { 2 }, "far {far}");
+            assert_eq!(g.quiet_si, None);
+        }
+    }
+
     /// CIV.EXE's end-of-turn garrison check (0x131fa) reads the owner band around (city y,
     /// 28 * index): index 1 looks at the squares around (y, 28), a high index past the
     /// driver's row table counts as "adjacent" (`exe_quirks`).

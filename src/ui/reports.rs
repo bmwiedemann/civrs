@@ -340,13 +340,19 @@ pub fn advisor(ctx: &mut UiContext, n: u8) -> Box<dyn Screen> {
     // the reports that run the city routine store the trade of the cities they count
     // (`City::trade`): CITY STATUS (o 0x14727), ATTITUDE SURVEY (o 0x143db), TRADE REPORT
     // (o 0x13792) and civ_score (o 0x1c1d8) the viewer's, Top 5 (o 0x319e) and Demographics
-    // (o 0x10fe0) everyone's
+    // (o 0x10fe0) everyone's. Each loop holds 0x1c * the city's index in si, the word the
+    // run's garrison check reads (`Game::quiet_si`), but for Top 5's first run (o 0x319e),
+    // whose si is a stack address after a city made the list (bp + 2 * its place, o 0x316c),
+    // which civrs cannot know: that run checks as meant
     let me = ctx.game().human_slot;
+    let g = ctx.game_mut();
+    g.quiet_si = (n != 8).then_some(crate::game::QuietSi::Index);
     match n {
-        1 | 4 | 5 | 9 => ctx.game_mut().note_trade_of(Some(me)),
-        8 | 11 => ctx.game_mut().note_trade_of(None),
+        1 | 4 | 5 | 9 => g.note_trade_of(Some(me)),
+        8 | 11 => g.note_trade_of(None),
         _ => {}
     }
+    g.quiet_si = None;
     let ctx = &*ctx;
     match n {
         1 => Box::new(a::CityStatus::new(ctx)),
