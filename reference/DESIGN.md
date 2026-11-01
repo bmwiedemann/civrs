@@ -1032,6 +1032,33 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   Cavalry's goto step (a terrain roll civrs makes); CIVIL8-late from t275 at t282 on a barbarian
   Musketeers attacking Settlers in civrs only; CIVIL0-late from t398 at t401 on the
   production advice's draws (the "more..." valuation, open before).
+  Round w96 (probes w96/probe20..32.py; a probe's records go to RANDOM.LOG beside the draws,
+  w96/pr.py splits them): a land unit or an aircraft coming onto a sea square resets the
+  ships of its stack (0x6b22 -> reset_air_unit_cb 0x93bc -> reset_unit 0x93ef): the German
+  Bombers flying over their Battleship at (35, 18) dropped its goal, so ai_unit_command sent
+  it to the nearest enemy city and its step back against the heading ended it (SHIP2/3 t232,
+  LATE2 t269). Barbarians pillage irrigated or mined land outside a city near the human's
+  cities instead of moving (0x5946..0x5a23, CIVIL8 t282). The goto's cached grid test past
+  the grid reads ds:0xb882..0xb885 (the pollution advance count of the last city routine run,
+  its high byte and the conquest flag), the rest set as a memory dump shows (CIVIL5 t411). The
+  faces-human bit ds:0x2a6e is cleared before the policies and set per continent after its
+  re-choice (0x15c9d, 0x15f3f), so the re-choice's advisor skips the Diplomat (CIVIL0 t401,
+  the "more..." valuation was not the cause). A leader follows the first record among the
+  nearest barbarians (0x1d43:0x16d, CIVIL9 t322). Under `exe_quirks` a computer city wiped out
+  in its own turn counts as in disorder for the rates (0xa654 reads the freed record, SHIP2
+  t260). An attack shows the human a city's size only when the attacker lives (0x60cd; the
+  "lone loser" rule of w94 was wrong, CIVIL9 t322). The harness's play loop has a step budget
+  per turn ($CIVSTEPS, default 80): CIVIL0-late now runs t390 on with ~17 human units a turn.
+  Runs (w96/runs.sh, all.sh) agreeing in every save: CIVIL0-late t390-t407, CIVIL9-late
+  t301-t328, CIVIL8-late t276-t298, SHIP2 t231-t286, SHIP3 t231-t255, LATE t157-t219, LATE2
+  t242-t306; seed 13 to t169; CIVIL5-late t409-t412.
+  Left: the 0x16e94 releases (a transport releases the fortified units of the city beyond
+  size / 5 of city [bp-0xc], a stack leftover: seed 13 t170 Shanghai read city 21, empty, so
+  the old Militia boarded; seed 13 t184, CIVIL5 t408/t413/t415). The slot is the one every far
+  call from move_units with n arguments has at [bp - (16 - 2n)]: written by draw_tile 0x1aa40
+  (the step's redraw, 0x6782), draw_unit_at_map 0x1b4af, goto_direction 0x1ddc9, unit_look's
+  outer ring (0x858a), for_each_in_stack (0x92ce), hut_outcome, destroy_city and more
+  (w96/alias.py lists them); a probe saw it fall by one with each step of a Sail going north.
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
