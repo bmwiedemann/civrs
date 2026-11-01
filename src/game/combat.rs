@@ -945,17 +945,10 @@ impl Game {
     /// The start-square search of `civ_init` after turn 0 (o5 0x4bd3..0x4d8b); `None` when the
     /// 2000th try is reached, even if that square would do (o5 0x4e41).
     fn respawn_square(&mut self) -> Option<(i32, i32)> {
-        use crate::rules::Terrain;
-        let mut sites = [0i32; 16];
+        // the continent's site count is the world generator's table (ds:0xb1ee, o5 0x4d41),
+        // not the land as it is now
+        let sites = self.ai_memory.world_counts.map_or_else(|| self.live_census().sites, |w| w.1);
         let mut cities = [0i32; 16];
-        for y in 2..48 {
-            for x in 2..78 {
-                let t = self.map.tile(x, y);
-                if t.is_land() && matches!(t.terrain, Terrain::Plains | Terrain::Grassland | Terrain::River) {
-                    sites[t.continent as usize & 15] += 1;
-                }
-            }
-        }
         for c in self.all_cities().filter(|c| c.owner != 0) {
             cities[self.map.tile(c.x, c.y).continent as usize & 15] += 1;
         }
@@ -1066,6 +1059,19 @@ mod tests {
         let t = (1..8u8).find(|o| *o != h && *o != s && g.player(*o).alive).unwrap();
         g.destroy_civ(t, h);
         assert_eq!(speaker(&mut g), Some(3), "the Defense Minister");
+    }
+
+    /// The respawn search weighs a continent by the world generator's site count (ds:0xb1ee,
+    /// o5 0x4d41), whatever the land has become since.
+    #[test]
+    fn the_respawn_search_reads_the_generator_s_site_counts() {
+        let mut g = Game::new(GameSetup { seed: 3, ..Default::default() }, None);
+        g.turn = 10;
+        let (land, _) = g.ai_memory.world_counts.unwrap();
+        g.ai_memory.world_counts = Some((land, [0; 16]));
+        assert_eq!(g.respawn_square(), None);
+        g.ai_memory.world_counts = Some((land, [999; 16]));
+        assert!(g.respawn_square().is_some());
     }
 
     #[test]
