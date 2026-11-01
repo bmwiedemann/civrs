@@ -360,13 +360,16 @@ impl Game {
     }
 
     /// Gold taken with a city (CIV.EXE 0x143fd): `owner's gold * size / (all the owner's
-    /// citizens + 1)`.
+    /// citizens + 1)`, or, when gold * size could pass 32000 (32000 / size <= gold, 0x14421),
+    /// `gold / (citizens + 1) * size`, rounded down before the product.
     pub fn plunder_value(&self, c: CityId) -> i32 {
         let city = self.city(c);
         // the citizens of the loser's last AI turn (ds:0xd2f8, 0x14437)
         let total = self.ai_memory.census.citizens[city.owner as usize & 7];
         let gold = self.player(city.owner).gold.max(0);
-        (gold * city.size as i32 / (total + 1)).clamp(0, gold)
+        let size = (city.size as i32).max(1);
+        let p = if 32000 / size > gold { gold * size / (total + 1) } else { gold / (total + 1) * size };
+        p.clamp(0, gold)
     }
 
     /// The improvements a captured city keeps (CIV.EXE 0x13ef5, as a mask of `City::improvements`):
@@ -1647,6 +1650,13 @@ mod tests {
         // grown since: 0x14437 still divides by ds:0xd2f8 + 1 = 4 + 1
         g.city_mut(home).size = 6;
         assert_eq!(g.plunder_value(c), 300 * 3 / 5);
+        // past 32000 / size the gold is divided first (0x14421): 2166 / 45 * 15 = 720, not 722
+        g.city_mut(c).size = 15;
+        g.ai_memory.census.citizens[2] = 44;
+        g.player_mut(2).gold = 2166;
+        assert_eq!(g.plunder_value(c), 720);
+        g.player_mut(2).gold = 2132;
+        assert_eq!(g.plunder_value(c), 2132 * 15 / 45);
         // a destroyed civilization leaves no census behind
         g.clear_census(2);
         assert_eq!((g.census().citizens[2], g.military_strength(2)), (0, 0));
