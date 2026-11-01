@@ -692,9 +692,9 @@ impl Game {
                 add!(idx);
                 remaining -= 1;
             }
-            // (CIV.EXE does this in any mode, but only its turn pass ever has citizens to place
-            // in a rioting computer city; civrs also places grown citizens outside it)
-            if turn && !human && disorder {
+            // in any mode (0xd98e): a quiet run that places a grown citizen of a rioting
+            // computer city makes it an entertainer, and its turn adds one more
+            if !human && disorder {
                 specialists += 1;
             }
             let support = self.shield_costs(c).iter().filter(|(_, cost)| *cost).count() as i32 + self.garrison_upkeep(c);
@@ -1550,6 +1550,24 @@ mod tests {
         let n = g.city(c).specialists.len();
         assert!((1..=2).contains(&n));
         assert_eq!(g.city(c).workers() as usize + n, 4);
+    }
+
+    #[test]
+    fn a_quiet_run_makes_a_grown_citizen_of_a_rioting_computer_city_an_entertainer() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        g.player_mut(slot).human = false;
+        g.city_mut(c).size = 4;
+        g.auto_assign(c);
+        assert!(g.city(c).specialists.is_empty());
+        // the city grows (only the size goes up) and riots
+        g.city_mut(c).size = 5;
+        g.city_mut(c).disorder = true;
+        g.turn = (1..4).find(|t| (c as u32 + t) & 3 != 0).unwrap();
+        // a run outside the turn keeps the squares; the new citizen entertains (0xd98e)
+        g.city_routine_quiet(c);
+        assert_eq!(g.city(c).workers(), 4);
+        assert_eq!(g.city(c).specialists, vec![Specialist::Entertainer]);
     }
 
     #[test]
