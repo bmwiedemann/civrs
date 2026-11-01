@@ -547,10 +547,11 @@ mod tests {
     }
 
     /// The city screen's CHANGE (0x117ef) runs the city routine with process_city's si, 2 * the
-    /// unit type in production (0x117d7): with `exe_quirks` its garrison check looks around
-    /// (city y, 2 * type) and a unit there keeps the garrison out.
+    /// unit type in production (0x117d7), 0x1c * the city's index for an improvement (0x111d4):
+    /// with `exe_quirks` its garrison check looks around (city y, si) and a unit there keeps
+    /// the garrison out.
     #[test]
-    fn exe_quirks_change_s_garrison_check_reads_twice_the_unit_type() {
+    fn exe_quirks_change_s_garrison_check_reads_the_screen_s_si() {
         for far in [false, true] {
             let (mut g, c, ids) = garrisoned();
             g.exe_quirks = true;
@@ -567,6 +568,25 @@ mod tests {
             let _ = g.change_advice(c);
             assert_eq!(g.city(c).garrison_count(), if far { 0 } else { 2 }, "far {far}");
             assert_eq!(g.quiet_si, None);
+        }
+        // an improvement: the screen's last drawing left 0x1c * the city's index (0x111d4)
+        for far in [false, true] {
+            let (mut g, c, ids) = garrisoned();
+            g.exe_quirks = true;
+            for id in &ids {
+                g.unit_mut(*id).order = UnitOrder::Fortified;
+            }
+            g.city_mut(c).production = Production::Improvement(crate::rules::improvement_ids::BARRACKS);
+            g.city_mut(c).garrison_out = true;
+            let y = g.city(c).y;
+            let row = 0x1c * c as i32;
+            assert!(row + 1 < 50, "index {c}");
+            if far {
+                let r = rival(&g);
+                g.add_unit(r, unit_ids::PHALANX, y - 1, row + 1);
+            }
+            let _ = g.change_advice(c);
+            assert_eq!(g.city(c).garrison_count(), if far { 0 } else { 2 }, "improvement, far {far}");
         }
     }
 

@@ -359,14 +359,16 @@ impl Game {
     /// taken off the count of cities building it (ds:0xd308, 0x117e4) before choose_production
     /// values the menu, for the human too, the advisors shown or not (its Diplomat line draws
     /// random(5), 0xb3e0).
-    /// The run of the city routine it starts with (0xaa1b) inherits process_city's si, which
-    /// for a unit in production is 2 * its type (0x117d7): the word the run's garrison check
-    /// reads (`Game::quiet_si`). For an improvement si keeps an earlier value of the city
-    /// screen's, unknown to civrs: that run checks as meant.
+    /// The run of the city routine it starts with (0xaa1b) inherits process_city's si, the word
+    /// the run's garrison check reads (`Game::quiet_si`): for a unit in production 2 * its
+    /// type (0x117d7), for an improvement up to 21 0x1c * the city's index (the screen's
+    /// last drawing, 0x111d4). For a wonder or a spaceship part si keeps an earlier value of
+    /// the drawing, unknown to civrs: that run checks as meant.
     pub fn change_advice(&mut self, c: CityId) -> Result<BuildAdvice, Production> {
         let outer = self.quiet_si;
         self.quiet_si = match self.city(c).production {
             Production::Unit(u) => Some(super::QuietSi::Fixed(2 * u as i32)),
+            Production::Improvement(i) if i <= 21 => Some(super::QuietSi::Index),
             _ => None,
         };
         let advice = self.build_advice_with(c, true);
