@@ -539,9 +539,10 @@ impl Game {
                     return self.drop_barbarian(id);
                 }
             } else {
-                // follow another barbarian within 3, else give up far from cities
-                let other = self.all_units().filter(|o| o.owner == 0 && o.id != id).map(|o| (Map::civ_distance(o.pos(), u.pos()), o.id)).min();
-                if let Some((od, o)) = other {
+                // follow another barbarian within 3, else give up far from cities; the
+                // nearest is the first by record among the nearest (0x1d43:0x16d)
+                let other = self.all_units().filter(|o| o.owner == 0 && o.id != id).map(|o| (Map::civ_distance(o.pos(), u.pos()), o.record, o.id)).min();
+                if let Some((od, _, o)) = other {
                     if od <= 3 && self.unit(o).kind != unit_ids::DIPLOMAT {
                         let to = self.unit(o).pos();
                         self.set_barbarian_goto(id, to);
@@ -732,6 +733,25 @@ mod tests {
                 _ => None,
             })
             .expect("hut message")
+    }
+
+    /// A lone leader follows the nearest barbarian within 3, the first by record among
+    /// equally near ones (0x1d43:0x16d), whatever the order the units were made in.
+    #[test]
+    fn a_leader_follows_the_first_record_of_the_nearest_barbarians() {
+        let mut g = plain_world(5);
+        g.players[0].in_game = true;
+        g.add_city(g.human_slot, "Near".into(), 15, 10);
+        let leader = g.add_unit(0, unit_ids::DIPLOMAT, 10, 10);
+        let t = g.add_unit(0, unit_ids::KNIGHTS, 20, 20);
+        let b = g.add_unit(0, unit_ids::KNIGHTS, 12, 10);
+        g.remove_unit(t);
+        // another civ's unit takes the freed id, the barbarian the freed record
+        g.add_unit(2, unit_ids::MILITIA, 25, 25);
+        let c = g.add_unit(0, unit_ids::KNIGHTS, 8, 10);
+        assert!(g.unit(c).record < g.unit(b).record && c > b);
+        assert_eq!(g.barbarian_command(leader), BarbarianCommand::Goto);
+        assert_eq!(g.unit(leader).goto, Some((8, 10)));
     }
 
     #[test]
