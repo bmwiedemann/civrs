@@ -771,6 +771,7 @@ impl Game {
             self.assign_workers(c, false);
             self.note_trade(c);
             self.claim_worked_squares(c);
+            self.exe_pollution_techs = self.pollution_techs(c);
             let h = self.city_happiness(c);
             self.last_moods = (h.happy, h.unhappy);
             if self.exe_quirks {

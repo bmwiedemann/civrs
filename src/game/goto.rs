@@ -378,8 +378,11 @@ impl Game {
         let mut found = 0;
         // the grid is kept for the same waypoint when the probe's square in it is set (0x1e765);
         // CIV.EXE indexes it (x - wx + 8) * 16 + (y - wy + 8) with the raw x and no bounds, so
-        // with `exe_quirks` a square beyond it reads past the grid (ds:0xb880.., the terrain
-        // sprite handles, taken as set) and one before it (the score words) as clear
+        // with `exe_quirks` a square beyond it reads past the grid and one before it (the
+        // score words) as clear. Past it lie ds:0xb880 (the Grassland shield's sprite handle,
+        // set), ds:0xb882 (the pollution advance count of the last city routine run, below
+        // 256), ds:0xb884 (the conquest flag, 0 in play) and the terrain sprite handles from
+        // ds:0xb886 (all bytes set, as a memory dump of a running game shows)
         let cached = |g: &Game| -> bool {
             let grid = &g.ai_memory.goto_cache.grid;
             if !g.exe_quirks {
@@ -388,6 +391,8 @@ impl Game {
             let idx = (p.x - ox) * 16 + (p.y - oy);
             match idx {
                 0..=255 => grid[idx as usize] != 0,
+                258 => g.exe_pollution_techs & 0xff != 0,
+                259..=261 => false,
                 256.. => true,
                 _ => false,
             }
@@ -807,6 +812,21 @@ mod tests {
         let (kept, fresh) = (run(true), run(false));
         // the near search stopped at its probe; the far one, flooding again, fills the window
         assert!(kept.iter().filter(|v| **v != 0).count() < fresh.iter().filter(|v| **v != 0).count());
+        // 8 east and 3..5 north of the waypoint (index 259..261) it reads the high byte of
+        // ds:0xb882 and the conquest flag ds:0xb884, both 0: a new flood; 6 north (258) the
+        // pollution advance count of the last city routine run
+        let reused = |dy: i32, techs: i32| -> bool {
+            let mut g = flat();
+            g.exe_quirks = true;
+            g.exe_pollution_techs = techs;
+            g.local_search(Probe { x: 12, y: 12, sea: false, one_move: true }, (10, 12), 999);
+            let before = g.ai_memory.goto_cache.grid.clone();
+            g.local_search(Probe { x: 18, y: 12 + dy, sea: false, one_move: false }, (10, 12), 999);
+            g.ai_memory.goto_cache.grid == before
+        };
+        assert!(!reused(-5, 0) && !reused(-4, 2) && !reused(-3, 0));
+        assert!(reused(-6, 2) && !reused(-6, 0));
+        assert!(reused(-7, 0) && reused(-2, 0));
     }
 
     #[test]

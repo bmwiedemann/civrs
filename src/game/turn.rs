@@ -720,6 +720,8 @@ impl Game {
         let slot = self.city(c).owner;
         // ds:0xb1e8 is cleared before every city (update_civ_tax_rates 0xa5fa)
         self.city_attention = false;
+        // (0xcbfd: the pollution advance count of this run, ds:0xb882)
+        self.exe_pollution_techs = self.pollution_techs(c);
         self.nested_totals = None;
         self.trade_carry = None;
         self.abroad_carry = None;

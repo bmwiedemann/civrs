@@ -298,6 +298,11 @@ pub struct Game {
     /// Not saved.
     #[serde(skip)]
     pub abroad_carry: Option<(CityId, i32)>,
+    /// ds:0xb882 as the last run of the city routine left it (its pollution advance count,
+    /// 0xcbfd): with `exe_quirks` the goto's cached grid test reads its low byte when the
+    /// unit is 8 squares east and 6 north of the waypoint (`Game::local_search`). Not saved.
+    #[serde(skip)]
+    pub exe_pollution_techs: i32,
     /// Map page 2 at (x + 160, 50..199) as a CIV.EXE save's .MAP has it (picture data under
     /// the unit owner layer), for `exe_quirks` reads that miss the layer
     /// (`Game::exe_garrison_check`). Empty but for imported saves. Not saved.
@@ -653,6 +658,7 @@ impl Game {
             nested_totals: None,
             trade_carry: None,
             abroad_carry: None,
+            exe_pollution_techs: 0,
             exe_page_band: Vec::new(),
             first_discoverer: vec![0; 72],
             historian_timer: 80 + historian,
