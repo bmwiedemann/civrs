@@ -391,14 +391,16 @@ impl Game {
     }
 
     /// `restash_garrison` at the end of a quiet run of the city routine (0x131d2): with
-    /// `exe_quirks` and the caller's si known (`Game::quiet_si_index`) the check as CIV.EXE
-    /// makes it (`exe_garrison_check`).
+    /// `exe_quirks` and the caller's si known (`Game::quiet_si`) the check as CIV.EXE makes
+    /// it (`exe_garrison_check`).
     pub fn restash_garrison_quiet(&mut self, c: CityId) {
-        if !(self.exe_quirks && self.quiet_si_index) {
-            return self.restash_garrison(c);
-        }
+        let si = match self.quiet_si {
+            Some(super::QuietSi::Index) if self.exe_quirks => 0x1c * c as i32,
+            Some(super::QuietSi::Fixed(v)) if self.exe_quirks => v,
+            _ => return self.restash_garrison(c),
+        };
         let Some(city) = self.city_opt(c) else { return };
-        if city.garrison_out && !self.exe_garrison_check(c) {
+        if city.garrison_out && !self.exe_foreign_unit_adjacent(city.x, city.y, si) {
             self.stash_garrison(c);
         }
     }
@@ -523,6 +525,24 @@ mod tests {
             }
             g.city_routine_quiet(c);
             assert_eq!(g.city(c).garrison_count(), if foreign { 0 } else { 2 }, "foreign {foreign}");
+        }
+    }
+
+    /// With `exe_quirks` a quiet run's garrison check takes the caller's si for y
+    /// (`Game::quiet_si`): the unrest's first run has 16 (o 0x1bc64), a far one ("adjacent")
+    /// keeps the garrison out; an unknown caller checks as meant.
+    #[test]
+    fn exe_quirks_a_quiet_run_s_garrison_check_reads_the_caller_s_si() {
+        for (si, kept) in [(None, false), (Some(crate::game::QuietSi::Fixed(16)), false), (Some(crate::game::QuietSi::Fixed(0x1c * 20)), true)] {
+            let (mut g, c, ids) = garrisoned();
+            g.exe_quirks = true;
+            for id in &ids {
+                g.unit_mut(*id).order = UnitOrder::Fortified;
+            }
+            g.city_mut(c).garrison_out = true;
+            g.quiet_si = si;
+            g.city_routine_quiet(c);
+            assert_eq!(g.city(c).garrison_count(), if kept { 0 } else { 2 }, "si {si:?}");
         }
     }
 

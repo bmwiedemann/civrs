@@ -234,8 +234,11 @@ impl Game {
         let historian = self.rng.random(crate::game::rng::ovl(0x10b98), 4) as u8;
         let alive = self.alive_slots();
         let mut values = [0i32; 8];
-        // every city goes through the city routine, whatever the category (o 0x10c63)
+        // every city goes through the city routine, whatever the category (o 0x10c63), si
+        // 0x1c * the city's index (o 0x10c4c)
+        self.quiet_si = Some(super::QuietSi::Index);
         self.note_trade_of(None);
+        self.quiet_si = None;
         for c in self.all_cities() {
             let o = c.owner as usize & 7;
             let h = self.city_happiness(c.id);

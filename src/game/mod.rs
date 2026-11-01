@@ -391,12 +391,11 @@ pub struct Game {
     /// units on squares numbered as the city's continent, ocean bodies too (0xb0c1).
     #[serde(skip)]
     pub exe_quirks: bool,
-    /// With `exe_quirks`: the quiet runs of the city routine in progress come from a loop over
-    /// the cities that keeps 0x1c * the city's index in si, which their garrison check takes
-    /// for y (`restash_garrison_quiet`, `exe_garrison_check`); false where the caller's si is
-    /// not known (the check is then made as meant).
+    /// With `exe_quirks`: the si the caller of the quiet runs of the city routine in progress
+    /// keeps, which their garrison check takes for y (`restash_garrison_quiet`,
+    /// `exe_garrison_check`); None where it is not known (the check is then made as meant).
     #[serde(skip)]
-    pub quiet_si_index: bool,
+    pub quiet_si: Option<QuietSi>,
     /// The owner byte (+0xb) CIV.EXE's free city records keep: destroy_city frees a record by
     /// its +6 byte alone (0xa7cc). With `exe_quirks` founding reads it (o 0x1b5df). Imported
     /// from a save, set when a city goes; not saved.
@@ -460,6 +459,15 @@ impl Game {
 
 fn no_audience() -> i8 {
     -1
+}
+
+/// The si a caller of the city routine's quiet runs holds (`Game::quiet_si`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuietSi {
+    /// A loop over the cities with 0x1c * the city's index in si.
+    Index,
+    /// A value of its own.
+    Fixed(i32),
 }
 
 /// The state of move_units' unit loop between two picks (`Game::unit_loop`).
@@ -672,7 +680,7 @@ impl Game {
             riot_shown: false,
             leader_traits: rules::initial_traits(),
             exe_quirks: false,
-            quiet_si_index: false,
+            quiet_si: None,
             exe_city_owner: Vec::new(),
             exe_unit_ghost: Vec::new(),
             exe_unit_bit_lost: Vec::new(),

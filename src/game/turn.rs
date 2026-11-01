@@ -695,9 +695,9 @@ impl Game {
         let level = self.player(me).palace_level as i32;
         // civ_score runs the city routine for each of the human's cities (o 0x1c1d8), its si
         // 0x1c * the city's index (o 0x1c1be) as in the turn's loop (probes of CIV.EXE at 0x131fa)
-        self.quiet_si_index = true;
+        self.quiet_si = Some(super::QuietSi::Index);
         self.note_trade_of(Some(me));
-        self.quiet_si_index = false;
+        self.quiet_si = None;
         if self.score(me).total < palace_threshold(level + 1, self.setup.difficulty as i32) {
             return;
         }
@@ -1220,8 +1220,12 @@ impl Game {
     /// defects to the owner of the city with the best `32 * (happy - unhappy) / distance`
     /// above 4 among the city slots before it.
     pub(crate) fn city_unrest(&mut self, c: CityId) {
-        // city_process(city, -1) (o 0x1bc64), and again for each city compared (o 0x1be0f)
+        // city_process(city, -1) (o 0x1bc64), and again for each city compared (o 0x1be0f);
+        // si is 16 from the neighbour loop (o 0x1b8c7) at the first, 0x1c * the rioting
+        // city's index (o 0x1bddd) at the others
+        self.quiet_si = Some(super::QuietSi::Fixed(16));
         self.city_routine_quiet(c);
+        self.quiet_si = None;
         let h = self.city_happiness(c);
         if h.happy >= h.unhappy {
             return;
@@ -1247,7 +1251,9 @@ impl Game {
             }
             let Some(other) = self.city_opt(i) else { break };
             let d = Map::civ_distance(other.pos(), city.pos()).max(1);
+            self.quiet_si = Some(super::QuietSi::Fixed(0x1c * c as i32));
             self.city_routine_quiet(i);
+            self.quiet_si = None;
             let oh = self.city_happiness(i);
             let score = 32 * (oh.happy - oh.unhappy) / d;
             if score > best.0 {
