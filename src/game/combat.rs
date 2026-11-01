@@ -836,7 +836,11 @@ impl Game {
         for id in ids {
             self.remove_unit(id);
         }
-        self.clear_census(slot);
+        // CIV.EXE keeps the rows of its last AI turn (`clear_census`); with `exe_quirks` they
+        // stay, for the respawn search's cities on each continent (o5 0x4988) too
+        if !self.exe_quirks {
+            self.clear_census(slot);
+        }
         let adjective = self.player(slot).adjective().to_string();
         // speakers 3 Defense Minister, 5 Foreign Minister, 2 Travelers (o5 0x5073..0x5095)
         let human = self.human_slot;
@@ -948,10 +952,10 @@ impl Game {
         // the continent's site count is the world generator's table (ds:0xb1ee, o5 0x4d41),
         // not the land as it is now
         let sites = self.ai_memory.world_counts.map_or_else(|| self.live_census().sites, |w| w.1);
-        let mut cities = [0i32; 16];
-        for c in self.all_cities().filter(|c| c.owner != 0) {
-            cities[self.map.tile(c.x, c.y).continent as usize & 15] += 1;
-        }
+        // and its cities by the census table of civs 1..7 (ds:0x6b96, o5 0x4988), not the
+        // cities standing now
+        let census = &self.ai_memory.census.cities;
+        let cities: [i32; 16] = std::array::from_fn(|k| (1..8).map(|s| census[s][k]).sum());
         let turn = self.turn as i32;
         let mut k = 0;
         loop {
@@ -1072,6 +1076,21 @@ mod tests {
         assert_eq!(g.respawn_square(), None);
         g.ai_memory.world_counts = Some((land, [999; 16]));
         assert!(g.respawn_square().is_some());
+    }
+
+    /// After 1 AD the search skips continents with cities by the census table (ds:0x6b96,
+    /// o5 0x4988), stale rows of a destroyed civ included.
+    #[test]
+    fn the_respawn_search_reads_the_census_cities() {
+        let mut g = Game::new(GameSetup { seed: 3, ..Default::default() }, None);
+        g.turn = 250;
+        g.year = 1000;
+        let (land, _) = g.ai_memory.world_counts.unwrap();
+        g.ai_memory.world_counts = Some((land, [999; 16]));
+        g.ai_memory.census.cities = [[0; 16]; 8];
+        assert!(g.respawn_square().is_some());
+        g.ai_memory.census.cities[2] = [1; 16];
+        assert_eq!(g.respawn_square(), None);
     }
 
     #[test]
