@@ -1459,6 +1459,9 @@ fn score_direction(g: &mut Game, c: &Ctx, k: usize, peaceful: bool) -> Option<(i
 fn do_step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) -> bool {
     let k = d as i32 + 1;
     let u = g.unit(id).clone();
+    if barbarian_pillage(g, id) {
+        return false;
+    }
     let (dx, dy) = d.delta();
     let (nx, ny) = (Map::wrap_x(u.x + dx), u.y + dy);
     let heading = g.heading(id);
@@ -1507,6 +1510,33 @@ fn do_step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) ->
         Ok(MoveOutcome::Moved) if u.kind == unit_ids::CARAVAN => caravan_arrived(g, id, slot),
         _ => {}
     }
+    true
+}
+
+/// A barbarian's move key on an irrigated or mined square outside a city whose nearest city
+/// is the human's (0x5946..0x5a23, before the target is looked at): the unit pillages
+/// instead, irrigation and mine both go (0x1a68:0x16f4 with 6), the human's map shows it
+/// where he knows the square (0x1a68:0x1607), and the unit's moves end. Not for Diplomats
+/// (the leaders), Legions and Knights.
+fn barbarian_pillage(g: &mut Game, id: UnitId) -> bool {
+    let u = g.unit(id).clone();
+    if u.owner != 0 || matches!(u.kind, unit_ids::DIPLOMAT | unit_ids::LEGION | unit_ids::KNIGHTS) {
+        return false;
+    }
+    let t = g.map.tile(u.x, u.y);
+    if t.city.is_some() || !(t.has(tile_flags::IRRIGATION) || t.has(tile_flags::MINE)) {
+        return false;
+    }
+    let h = g.human_slot;
+    if g.nearest_city_exe(u.x, u.y).0.map(|c| g.city(c).owner) != Some(h) {
+        return false;
+    }
+    let tm = g.map.get_mut(u.x, u.y).unwrap();
+    tm.set(tile_flags::IRRIGATION | tile_flags::MINE, false);
+    if g.map.tile(u.x, u.y).explored_by(h) {
+        g.map.update_seen(u.x, u.y);
+    }
+    g.unit_mut(id).moves_left = 0;
     true
 }
 
@@ -1964,6 +1994,37 @@ mod tests {
         run_unit(&mut g, 2, c, 1, &mut sink, &|_| false);
         assert_eq!(g.unit(c).pos(), (16, 10));
         assert_eq!(g.unit(c).moves_left, 0);
+    }
+
+    /// A barbarian's step from an irrigated or mined square near a human city pillages
+    /// instead (0x5946..0x5a23); Legions, Knights and leaders move on.
+    #[test]
+    fn barbarians_pillage_improved_land_near_the_humans_cities() {
+        for (kind, pillages) in [(unit_ids::MUSKETEERS, true), (unit_ids::LEGION, false), (unit_ids::KNIGHTS, false), (unit_ids::DIPLOMAT, false)] {
+            let mut g = arena();
+            g.players[0].in_game = true;
+            let h = g.human_slot;
+            g.add_city(h, "Home".into(), 10, 10);
+            g.map.get_mut(12, 10).unwrap().set(crate::game::tile_flags::IRRIGATION, true);
+            let b = g.add_unit(0, kind, 12, 10);
+            g.unit_mut(b).moves_left = 3;
+            do_step(&mut g, b, Dir8::E, &mut |_| {});
+            let t = g.map.tile(12, 10);
+            assert_eq!(!t.has(crate::game::tile_flags::IRRIGATION), pillages, "{kind}");
+            assert_eq!(g.unit(b).pos() == (12, 10), pillages, "{kind}");
+            if pillages {
+                assert_eq!(g.unit(b).moves_left, 0);
+            }
+        }
+        // not when the nearest city is a computer's
+        let mut g = arena();
+        g.add_city(ai(&g), "Other".into(), 10, 10);
+        g.map.get_mut(12, 10).unwrap().set(crate::game::tile_flags::MINE, true);
+        let b = g.add_unit(0, unit_ids::MUSKETEERS, 12, 10);
+        g.unit_mut(b).moves_left = 3;
+        do_step(&mut g, b, Dir8::E, &mut |_| {});
+        assert!(g.map.tile(12, 10).has(crate::game::tile_flags::MINE));
+        assert_eq!(g.unit(b).pos(), (13, 10));
     }
 
     /// A failed move roll (0x636f) comes before the heading store (0x6433) too.
