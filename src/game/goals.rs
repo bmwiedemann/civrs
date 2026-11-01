@@ -306,7 +306,7 @@ impl Game {
     /// ships over water only) makes foreign ships there sea goals (3, 2) of its civ; a foreign
     /// unit there that sees two squares far (a ship only with the looker at sea) wakes, drops
     /// its goto and, on water, gives its civ a sea goal (3, 2) on the looker (0x8546..0x8642),
-    /// not for a looking Submarine.
+    /// not for a looking Submarine (which still makes its sea goals, 0x8721..0x884d).
     pub fn unit_look_goals(&mut self, id: UnitId) {
         use super::diplomacy::flags::PEACE;
         use crate::rules::{unit_ids, AiRole, Domain};
@@ -372,12 +372,13 @@ impl Game {
                 let Some(f) = first else { continue };
                 let fu = self.unit(f).clone();
                 let o2 = fu.owner;
-                if u.kind == unit_ids::SUBMARINE {
-                    continue;
-                }
                 let far = u.info().sight & 2 != 0 && (u.info().domain != Domain::Sea || n_ocean);
                 if far && fu.kind != unit_ids::SUBMARINE && n_ocean && o2 != 0 && !peace(self, civ, o2) {
                     self.add_goal(civ, nx, ny, goal::SEA, 2);
+                }
+                // a looking Submarine is not seen back (0x856a), but sees (0x8721..0x884d)
+                if u.kind == unit_ids::SUBMARINE {
+                    continue;
                 }
                 if fu.info().sight & 2 != 0 && (fu.info().domain != Domain::Sea || here_ocean) {
                     self.unit_mut(f).wake_sentry();
@@ -572,5 +573,28 @@ mod tests {
         let dip = g.add_unit(6, unit_ids::DIPLOMAT, 12, 12);
         g.unit_look_goals(dip);
         assert!(g.ai_memory.goals[5].iter().all(|o| o.is_free()));
+    }
+
+    #[test]
+    fn a_looking_submarine_makes_sea_goals_of_ships_two_squares_off() {
+        // 0x8721..0x884d run for every looker that sees two squares; only the part seen back
+        // skips a looking Submarine (0x856a)
+        use crate::rules::{unit_ids, Terrain};
+        let mut g = game();
+        let ids: Vec<_> = g.all_units().map(|u| u.id).collect();
+        for id in ids {
+            g.remove_unit(id);
+        }
+        for y in 15..26 {
+            for x in 15..26 {
+                g.map.get_mut(x, y).unwrap().terrain = Terrain::Ocean;
+                g.map.get_mut(x, y).unwrap().city = None;
+            }
+        }
+        g.reset_goals(3);
+        let sub = g.add_unit(3, unit_ids::SUBMARINE, 20, 20);
+        g.add_unit(4, unit_ids::SAIL, 22, 18);
+        g.unit_look_goals(sub);
+        assert!(g.ai_memory.goals[3].iter().any(|o| o.pos() == (22, 18) && o.kind == goal::SEA && o.priority == 2));
     }
 }
