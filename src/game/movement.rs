@@ -489,6 +489,16 @@ impl Game {
         let audiences = self.audience_pending;
         self.mark_sightings(id);
         self.unit_look_goals(id);
+        // a land unit or an aircraft on a sea square resets the ships of its stack (the first
+        // ten of the ring from it, 0x6b22..0x6b55 -> reset_air_unit_cb 0x93bc): their orders
+        // and gotos go, a sentried one gets its moves back (`reset_unit` 0x93ef)
+        if self.map.is_ocean(tx, ty) && !u.is_sea() {
+            for s in self.stack_from(id) {
+                if self.unit(s).is_sea() {
+                    self.reset_unit(s);
+                }
+            }
+        }
         if had_hut {
             self.map.get_mut(tx, ty).unwrap().set(tile_flags::HUT, false);
             // an audience the look opened in a computer's unit loop comes first (unit_look
@@ -1231,6 +1241,33 @@ mod tests {
         g.unit_mut(c).order = UnitOrder::None;
         assert_eq!(g.try_move(ship, Dir8::E), Ok(MoveOutcome::Moved));
         assert_eq!((g.unit(c).pos(), g.unit(c).order), ((x + 2, y), UnitOrder::Sentry));
+    }
+
+    /// A land unit or an aircraft coming onto a sea square resets the ships there
+    /// (0x6b22 -> reset_air_unit_cb 0x93bc -> reset_unit 0x93ef): their gotos and orders go,
+    /// a sentried one gets its moves back. A ship joining them changes nothing.
+    #[test]
+    fn a_unit_coming_onto_a_ship_at_sea_resets_the_ships_there() {
+        use crate::game::UnitOrder;
+        for mover in [unit_ids::BOMBER, unit_ids::CAVALRY, unit_ids::SAIL] {
+            let mut g = Game::new(GameSetup { seed: 1, ..Default::default() }, None);
+            let slot = (1..8).find(|s| *s != g.human_slot).unwrap();
+            let (x, y) = (40, 25);
+            g.map.get_mut(x, y).unwrap().terrain = if mover == unit_ids::CAVALRY { Terrain::Grassland } else { Terrain::Ocean };
+            g.map.get_mut(x + 1, y).unwrap().terrain = Terrain::Ocean;
+            let ship = g.add_unit(slot, unit_ids::TRANSPORT, x + 1, y);
+            let other = g.add_unit(slot, unit_ids::FRIGATE, x + 1, y);
+            g.unit_mut(ship).goto = Some((x + 9, y));
+            g.unit_mut(ship).order = UnitOrder::Goto;
+            g.unit_mut(other).order = UnitOrder::Sentry;
+            g.unit_mut(other).moves_left = 0;
+            let m = g.add_unit(slot, mover, x, y);
+            assert!(g.try_move(m, Dir8::E).is_ok());
+            let reset = mover != unit_ids::SAIL;
+            assert_eq!(g.unit(ship).goto.is_none(), reset, "{mover}");
+            assert_eq!(g.unit(other).order == UnitOrder::None, reset, "{mover}");
+            assert_eq!(g.unit(other).moves_left > 0, reset, "{mover}");
+        }
     }
 
     #[test]
