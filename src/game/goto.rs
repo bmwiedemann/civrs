@@ -292,9 +292,17 @@ impl Game {
     /// straight to an adjacent target (and drop the goto), the rest as described in the module
     /// documentation; the chosen direction becomes the unit's heading.
     pub fn goto_direction(&mut self, id: UnitId) -> i32 {
+        let civ = self.unit(id).owner;
+        self.goto_direction_as(id, civ)
+    }
+
+    /// `goto_direction(civ, unit)` with `civ` other than the unit's owner: the harness's menu
+    /// key at the human's record 0x80 runs it for the human's civ on record 0 of the next
+    /// civilization (0x4bce, `save::actions::harness_key`); every owner test, and the human's
+    /// rules, take `civ`.
+    pub fn goto_direction_as(&mut self, id: UnitId, civ: Slot) -> i32 {
         let u = self.unit(id).clone();
         let Some((gx, gy)) = u.goto else { return 0 };
-        let civ = u.owner;
         if civ == self.human_slot {
             let (dx, dy) = (gx - u.x, gy - u.y);
             if dx.abs() <= 1 && dy.abs() <= 1 {
@@ -324,7 +332,7 @@ impl Game {
                 waypoint = (gx, gy);
             }
         }
-        self.greedy_step(id, waypoint)
+        self.greedy_step(id, waypoint, civ)
     }
 
     fn probe_of(&self, id: UnitId) -> Probe {
@@ -665,9 +673,8 @@ impl Game {
     /// units with more than one move, 3) + the turn away from the heading squared; the human's
     /// units never step farther away. A step back against the heading ends the unit's turn
     /// instead; no step drops the goto.
-    fn greedy_step(&mut self, id: UnitId, w: (i32, i32)) -> i32 {
+    fn greedy_step(&mut self, id: UnitId, w: (i32, i32), civ: Slot) -> i32 {
         let u = self.unit(id).clone();
-        let civ = u.owner;
         let (dx, dy) = (w.0 - u.x, w.1 - u.y);
         let metric = |dx: i32, dy: i32| dx.abs().max(dy.abs()) + dx.abs() + dy.abs();
         let dist = metric(dx, dy);
@@ -957,7 +964,7 @@ mod tests {
         g.set_goto(id, 8, 10);
         g.set_heading(id, 3);
         // west is the reverse of east (3 ^ 4 = 7)
-        assert_eq!(g.greedy_step(id, (8, 10)), -1);
+        assert_eq!(g.greedy_step(id, (8, 10), slot), -1);
         assert_eq!(g.unit(id).moves_left, 0);
         assert_eq!(g.unit(id).goto, None);
     }

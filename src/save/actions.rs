@@ -480,9 +480,11 @@ pub fn play(g: &mut Game, ai: &mut crate::ai::Ai, actions: &[(u32, Action)], tur
 /// menu's command (GAME, Save Game) through the unit code for that record (0x73cc -> 0x4bbe,
 /// past the record check at 0x4bb4 that a key meets), which is record 0 of the next
 /// civilization (0x600 bytes on): without a goto its
-/// heading is forgotten (0x4bf8), so its next step is scored without the turn penalty. With
-/// `exe_quirks` only (a goto there would go to goto_step for the human's civ, which civrs
-/// does not copy).
+/// heading is forgotten (0x4bf8), so its next step is scored without the turn penalty; with
+/// one, goto_direction runs on it for the human's civ (0x4bce..0x4bdb), the human's rules
+/// and owner tests included (a far goto whose every step leads away is dropped), and only
+/// its side effects stay: the key it returns replaces the menu's and matches no command
+/// (0x4c1d..0x4c57). With `exe_quirks` only.
 fn harness_key(g: &mut Game, end: bool) {
     if !end && g.active_unit.is_some() {
         return;
@@ -500,8 +502,13 @@ fn harness_save(g: &mut Game) {
         return;
     }
     let first = g.all_units().find(|u| u.owner == next && u.record == 0).map(|u| (u.id, u.goto));
-    if let Some((id, None)) = first {
-        g.set_heading(id, 0xff);
+    match first {
+        Some((id, None)) => g.set_heading(id, 0xff),
+        Some((id, Some(_))) => {
+            let h = g.human_slot;
+            g.goto_direction_as(id, h);
+        }
+        None => {}
     }
 }
 
@@ -527,6 +534,13 @@ mod tests {
         g.exe_quirks = true;
         harness_save(&mut g);
         assert_eq!(g.heading(u), 0xff);
+        // with a goto it is goto_direction for the human's civ (0x4bce): an adjacent target is
+        // the human's, taken by the step key and dropped, so the unit keeps no goto
+        let (x, y) = g.unit(u).pos();
+        g.unit_mut(u).goto = Some((x + 1, y));
+        harness_save(&mut g);
+        assert_eq!(g.unit(u).goto, None);
+        assert_eq!(g.unit(u).pos(), (x, y));
     }
 
     #[test]
