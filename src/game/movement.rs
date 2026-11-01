@@ -236,14 +236,14 @@ impl Game {
                     self.nuke(id, tx, ty);
                     MoveOutcome::Attacked { won: true, at: (tx, ty), defender: unit_ids::NUCLEAR }
                 } else {
-                    let alone = self.unit(id).next.is_none();
                     let out = self.attack(id, tx, ty);
-                    // the human sees what is left of a city he attacked, won or lost, or that
-                    // was attacked on his square (0x61f8: the attacker, or ds:0xd20a, the
-                    // owner unit_at found on the square, 0x5a91, unless a lone loser had the
-                    // fight look round its square, the loser's own last, 0x1a15d..0x1a1c8)
-                    let lost_alone = alone && matches!(out, MoveOutcome::Attacked { won: false, .. });
-                    if slot == self.human_slot || (o == self.human_slot && !lost_alone) {
+                    // the human sees what is left of a city he attacked or that was attacked
+                    // on his square (0x61f8: the attacker, or ds:0xd20a, the defender's owner
+                    // as unit_at found it, 0x5a91 and the sweep 0x1a15d that ends on the
+                    // defender's own square), when the attacker lives: a dead one ends the
+                    // move at 0x60cd before the city part
+                    let won = matches!(out, MoveOutcome::Attacked { won: true, .. });
+                    if won && (slot == self.human_slot || o == self.human_slot) {
                         if let Some(c) = self.city_at(tx, ty) {
                             self.note_city_size(c);
                         }
@@ -1268,6 +1268,42 @@ mod tests {
             assert_eq!(g.unit(other).order == UnitOrder::None, reset, "{mover}");
             assert_eq!(g.unit(other).moves_left > 0, reset, "{mover}");
         }
+    }
+
+    /// A computer's attack on a human city shows the human its size (city +8, 0x6219) only
+    /// when the attacker lives: a dead attacker ends the move first (0x60cd).
+    #[test]
+    fn an_attack_on_a_human_city_shows_its_size_when_the_attacker_lives() {
+        let (mut won, mut lost) = (0, 0);
+        for seed in 0..40u64 {
+            let mut g = Game::new(GameSetup { seed: 1, ..Default::default() }, None);
+            g.rng = crate::game::Rng::new(seed * 7919 + 1);
+            let h = g.human_slot;
+            let ai = (1..8).find(|s| *s != h).unwrap();
+            let (x, y) = (40, 25);
+            for dx in 0..2 {
+                g.map.get_mut(x + dx, y).unwrap().terrain = Terrain::Grassland;
+            }
+            let c = g.add_city(h, "Home".into(), x + 1, y);
+            g.city_mut(c).size = 4;
+            g.city_mut(c).known_size = 0;
+            g.add_unit(h, unit_ids::PHALANX, x + 1, y);
+            let a = g.add_unit(ai, unit_ids::KNIGHTS, x, y);
+            g.add_unit(ai, unit_ids::KNIGHTS, x, y);
+            let r = g.try_move(a, Dir8::E);
+            match r {
+                Ok(MoveOutcome::Attacked { won: true, .. }) => {
+                    won += 1;
+                    assert_ne!(g.city_opt(c).map(|c| c.known_size), Some(0));
+                }
+                Ok(MoveOutcome::Attacked { won: false, .. }) => {
+                    lost += 1;
+                    assert_eq!(g.city(c).known_size, 0);
+                }
+                _ => {}
+            }
+        }
+        assert!(won > 0 && lost > 0, "won {won} lost {lost}");
     }
 
     #[test]
