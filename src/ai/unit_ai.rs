@@ -264,14 +264,25 @@ fn city_goals(g: &mut Game, slot: Slot) {
 /// The policies of 0x15cd1..0x15f5f: each continent's goes into ds:0xe698 as it is worked
 /// out, and a change re-chooses the production of the computer's cities there at once
 /// (0x15f26 -> 0x18bef), so the advisor reads the new policy (0xaf56).
+///
+/// The civ's bit of ds:0x2a6e (forces where the human has two or more cities) is cleared
+/// first (0x15c9d) and set again continent by continent after that continent's re-choice
+/// (0x15f3f), so the advisor of a re-choice reads it as far as the loop has come.
 fn update_policies(g: &mut Game, census: &Census, slot: Slot) {
     let old = g.ai_memory.policies[slot as usize];
     let mut now = old.unwrap_or([POLICY_NONE; 16]);
+    let s = slot as usize;
+    let h = g.human_slot as usize;
+    g.ai_memory.census.faces_human &= !(1 << s);
     for k in 0..16 {
         now[k] = g.continent_policy(census, slot, k);
         g.ai_memory.policies[slot as usize] = Some(now);
         if old.is_some_and(|o| o[k] != now[k]) && !g.is_human(slot) && slot != 0 {
             super::city_ai::rechoose(g, slot, Some(k));
+        }
+        let m = &mut g.ai_memory.census;
+        if (1..15).contains(&k) && s < 8 && h < 8 && m.defence[s][k] != 0 && m.cities[h][k] > 1 {
+            m.faces_human |= 1 << s;
         }
     }
 }
@@ -1977,6 +1988,26 @@ mod tests {
             let scored = draws.iter().filter(|r| matches!(r.at, 0x18068 | 0x18085)).count();
             assert_eq!(scored, if quirks { 8 } else { 0 }, "exe_quirks {quirks}");
         }
+    }
+
+    /// ds:0x2a6e: the civ's bit goes at the start of the policies (0x15c9d) and comes back
+    /// for a continent with its forces where the human has two or more cities (0x15f3f).
+    #[test]
+    fn the_faces_human_bit_is_set_again_continent_by_continent() {
+        let mut g = arena();
+        let s = ai(&g);
+        let h = g.human_slot as usize;
+        let su = s as usize;
+        g.ai_memory.census.faces_human = 1 << s;
+        g.ai_memory.census.defence[su] = [0; 16];
+        let census = g.census();
+        update_policies(&mut g, &census, s);
+        assert_eq!(g.ai_memory.census.faces_human & (1 << s), 0);
+        g.ai_memory.census.defence[su][3] = 5;
+        g.ai_memory.census.cities[h][3] = 2;
+        let census = g.census();
+        update_policies(&mut g, &census, s);
+        assert_ne!(g.ai_memory.census.faces_human & (1 << s), 0);
     }
 
     /// The five calls of a unit are counted from its last step (0x6c6c): a Chariot on a
