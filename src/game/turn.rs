@@ -461,6 +461,10 @@ impl Game {
                     if city.disorder {
                         flags |= 2;
                     }
+                } else if self.exe_quirks {
+                    // a city wiped out in its own turn: 0xa654 tests the disorder bit of the
+                    // freed record, whose status byte is 0xff
+                    flags |= 2;
                 }
             }
         }
@@ -2994,6 +2998,30 @@ mod tests {
         g.player_mut(me).gold = 31000;
         g.process_player_cities(me);
         assert_eq!(g.player(me).gold, 30000);
+    }
+
+    /// With `exe_quirks` a computer city wiped out in its own turn counts as one in disorder
+    /// for the rates: 0xa654 tests the status byte of the freed record (0xff).
+    #[test]
+    fn exe_quirks_count_a_city_wiped_out_in_its_turn_as_in_disorder() {
+        for quirks in [false, true] {
+            let (mut g, _c) = fixture();
+            g.exe_quirks = quirks;
+            let ai = g.alive_slots().into_iter().find(|s| *s != g.human_slot && *s != 0).unwrap();
+            let (x, y) = g.units_of(ai).into_iter().map(|u| g.unit(u).pos()).next().unwrap();
+            let far = (0..80 * 50).map(|i| (i % 80, i / 80)).find(|&(fx, fy)| g.map.is_land(fx, fy) && Map::civ_distance((x, y), (fx, fy)) > 4 && g.city_at(fx, fy).is_none()).unwrap();
+            g.add_city(ai, "Stays".into(), x, y);
+            let gone = g.add_city(ai, "Starves".into(), far.0, far.1);
+            g.city_mut(gone).food = -100;
+            g.set_turn(5);
+            g.player_mut(ai).gold = 0;
+            g.player_mut(ai).forget(adv::ROBOTICS);
+            g.player_mut(ai).tax = 40;
+            g.player_mut(ai).lux = 20;
+            g.process_player_cities(ai);
+            assert!(g.city_opt(gone).is_none());
+            assert_eq!(g.player(ai).lux, if quirks { 30 } else { 20 }, "exe_quirks {quirks}");
+        }
     }
 
     #[test]
