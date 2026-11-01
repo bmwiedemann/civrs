@@ -1085,6 +1085,30 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   t434 the historian's quiet run stashed Carthage's garrison in civrs (its garrison check's si
   is unknown for that caller).
 
+  Round w98 (scratchpad w98: sched2.sh/restart.sh/cur.sh as in w97, watch.sh reports partings;
+  probe35.py logs diplomacy_meeting's locals at its exchange loop through an overlay far call
+  (o 0x69e2), probe36.py [bp-0xc] at the transport release 0x16e94; later plays ran with
+  probe36's CIV.EXE). A rioting computer city's citizen placed by a quiet run entertains (0xd98e
+  runs in every mode; CIVIL0 t419). civs_meet tests the word of its first civ, the mover's, so a
+  computer that moves next to the human asks nothing when its own word has the contact although
+  the human's has none (0x150bb/0x150f7; CIVIL5 t432: no meeting was called, probe35 saw no
+  exchange loop). Quiet-run garrison checks: the historian's si is 0x1c * index (o 0x10c4c), the
+  unrest's first run 16 (neighbour loop o 0x1b8c7) and its comparisons 0x1c * the rioting city
+  (o 0x1bddd); the reports, top five cities and demographics (human menus) and city_revolt's
+  loop (o 0x1e0ee, 0x1c * the city) stay unmodelled. The respawn search reads the generator's
+  site counts (ds:0xb1ee) and the census cities of civs 1..7 (ds:0x6b96), and CIV.EXE keeps a
+  destroyed civ's census rows (exe_quirks; SHIP3 t300/t308). The trade split reads the squares'
+  trade of the turn's own pass, so a Colossus finished this turn pays from the next (0xf0d9;
+  CIVIL1 t191). probe36 values of the uninitialised [bp-0xc] at 0x16e94: 35, 0, 3, 27828
+  (Leipzig's Transport every turn) - stack leftovers, not modelled; they part CIVIL0 at Uruk and
+  Ayotzinco (t426, t428, t429, t430: every turn), CIVIL5 t438 (Nineveh), t469 (Babylon), LATE2
+  t319/t321 (Leipzig), LATE t273 (fields only). Runs agreeing in every save (draws; fields but
+  those releases): CIVIL0-late t419-t425, t427, CIVIL5-late t429-t437, t439-t468, t470,
+  CIVIL9-late t351-t374, CIVIL8-late t336-t390, CIVIL1 (t152) t190-t224, CIVIL2 t225-t244,
+  CIVIL6 t176-t195, CIVIL7 t231-t270, SHIP2 t312-t351, SHIP3 t281-t320, LATE t245-t284.
+  Left: CIVIL5 t471 a barbarian Musketeers at (19, 33) next to Byzantium steps west in CIV.EXE,
+  south in civrs, with the same draws (0x1949f scoring; the x+160 owner layer matched).
+
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
