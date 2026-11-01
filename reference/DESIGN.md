@@ -1060,6 +1060,31 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   outer ring (0x858a), for_each_in_stack (0x92ce), hut_outcome, destroy_city and more
   (w96/alias.py lists them); a probe saw it fall by one with each step of a Sail going north.
 
+  Round w97 (scratchpad w97: sched.sh keeps four plays going from jobs.txt, restart.sh stops a
+  run and queues one from CIV.EXE's save at the parting, cur.sh diffs them, probe33.py /
+  probe34.py log goto_direction's searches and block_entry's candidates, d.sh strips probe
+  records from RANDOM.LOG). A barbarian whose squares all score out (best -999) answers 0, the
+  goto key, and is asked again up to the fifth call (0x19622; CIVIL9 t329: 2 + 8 draws). The
+  plunder of a city divides the loser's gold by its citizens + 1 before multiplying by the size
+  once gold * size could pass 32000 (0x14421; CIVIL8 t300). The harness's menu key at record
+  0x80 runs goto_direction for the human's civ on the next civ's record 0 when that unit has a
+  goto (0x4bce): the human's greedy rule (no step farther away) dropped a Babylonian Settlers'
+  goto (CIVIL8 t309; probe33/34 found it as goto_direction(1, 128)). A looking Submarine still
+  makes sea goals of foreign ships two squares off (0x8721..0x884d); only the part where the
+  ship sees it back skips it (0x856a), so the goal gave the Submarine its goto at once (CIVIL5
+  t429). Runs agreeing in every save: CIVIL9-late t330-t350, CIVIL8-late t300-t335, SHIP2
+  t287-t311, SHIP3 t256-t280, LATE t220-t244, LATE2 t308-t318, CIVIL0-late t409-t417,
+  CIVIL5-late t416-t421, t423-t431, t435-t437, CIVIL6 (t150) t151-t175, CIVIL1 (t152) t153-t163 and
+  t165-t189, CIVIL2 (t194) t195-t224, CIVIL7 (t200) t201-t230.
+  Left: the 0x16e94 releases parted CIVIL0 t408/t418/t421, CIVIL5 t422/t434, LATE2 t307/t319;
+  [bp-0x108] at 0xd81d skipping the food-first placement (CIVIL1 t164: Sumer after its
+  Settlers took squares 2 and 10 by the weighted rule); CIVIL0 t419 a rioting Aztec city
+  placed one entertainer more in CIV.EXE (not traced); CIVIL5 t432 the Germans held no
+  audience after their Submarine's sneak attack on the Roman Carrier although the Armor then
+  met the Romans without contact (civrs asks "Will you receive him?"; not traced); CIVIL5
+  t434 the historian's quiet run stashed Carthage's garrison in civrs (its garrison check's si
+  is unknown for that caller).
+
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
