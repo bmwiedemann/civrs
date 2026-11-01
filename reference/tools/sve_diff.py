@@ -291,7 +291,13 @@ def play(game, slot, turns, out, script=None, seed=None):
         return 'saved'
 
     run_actions(last)
-    for i in range(6 * int(turns) + 8):
+    # one Space and one save a step; a turn may take as many steps as the human has units
+    # waiting for orders, so the budget is per turn ($CIVSTEPS, default 80) and a turn that
+    # takes more ends the run
+    budget, since, i = int(os.environ.get('CIVSTEPS', '80')), 0, -1
+    while since < budget:
+        i += 1
+        since += 1
         # Space ends the turn once no unit waits for orders
         k(['space', 'sleep3'])
         dosciv.shot(os.path.join(out, 'shot%02d.png' % i))
@@ -318,7 +324,7 @@ def play(game, slot, turns, out, script=None, seed=None):
             shutil.copy(save, os.path.join(out, 's%03d_t%d.SVE' % (i, t)))
             shutil.copy(save[:-3] + 'MAP', os.path.join(out, 's%03d_t%d.MAP' % (i, t)))
         if t != last:
-            last = t
+            last, since = t, 0
             shutil.copy(save, os.path.join(out, 't%d.SVE' % t))
             shutil.copy(save[:-3] + 'MAP', os.path.join(out, 't%d.MAP' % t))
             if last >= end:
