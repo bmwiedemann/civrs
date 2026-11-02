@@ -1165,6 +1165,25 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   t102), D t1-t100, E t1-t88. The plays end when a human unit waits for orders and the
   harness's keys quit CIV.EXE to DOS (D t100, A t139, E t88).
 
+  Round w101 (scratchpad w101: pl.sh plays a save or `new`, rescue.sh/fort.py stage the
+  rescue, dall.sh diffs, skip-X.txt and size-X.txt list the uninitialised-local runs for the
+  local diagnostic build, mkdiag.sh with w100/diagpatch.py and w101/diagpatch2.py). The w100
+  plays did not stop on harness keys: each time the computers took the Romans' only city, so
+  CIV.EXE showed the archaeologists (o 0x209f) and exited to DOS (civrs loses Rome the same
+  turn). `sve_diff play` now stops on the DOS prompt ("game over") and has the CIVLEVEL /
+  CIVWORLD new-game setup. To keep the human alive the runs went on from CIV.EXE saves given
+  City Walls and four fortified unhomed Riflemen in Rome (the Militia fortified too).
+  unit_look lets out a human city's garrison store whenever a foreign unit is next to it, an
+  empty store too: city_unstash_garrison sets the let-out bit regardless (0x7f17), so the
+  city's turn stashes its fortified home units (0x131da -> 0x1320d). Settlers joining a city
+  only add a citizen (0x57cc..0x57fb): no square, no specialist until the next placement run.
+  The Trireme release count at 0x16e94 reads the size of city [bp-0xc], an uninitialised local
+  (E t95, Trireme leaving with a Phalanx): not modellable, the diag build's SIZE16E94 overrides
+  it. With those and the 0xd81d runs skipped every save and draw agrees: D t100-t133 (seed 4242,
+  Prince 1,0,1,2), E t88-t111 (6161, Emperor 0,0,2,2), A t139-t168 (2024, Emperor 2,0,0,0),
+  and fresh games from CIV.EXE's rescued t1: F seed 8086 Emperor 1,1,1,1 t1-t18, G 1999 King
+  2,1,0,2 t1-t26, H 2718 Prince 0,2,1,0 t1-t23 (plays stopped, not diverged).
+
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
