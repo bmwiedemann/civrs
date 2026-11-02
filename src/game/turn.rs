@@ -408,11 +408,21 @@ impl Game {
     /// `by` pays for unit `target`, which is replaced by a new unit of the same type of its own
     /// (CIV.EXE o 0x1de0d). Returns the new unit, none when all of `by`'s unit slots are in
     /// use: the bribed unit is gone and paid for all the same (o 0x1de64).
+    ///
+    /// With `exe_quirks` the unit counts (ds:0xb3be, which the production advisor reads) move
+    /// twice: CIV.EXE takes one off the old owner's after delete_unit has (o 0x1de40) and adds
+    /// one to the briber's after create_unit has (o 0x1de6e).
     pub fn bribe_unit(&mut self, by: Slot, target: UnitId) -> Option<UnitId> {
         let cost = self.bribe_cost(target);
         let t = self.unit(target).clone();
         self.remove_unit(target);
+        if self.exe_quirks {
+            self.players[t.owner as usize].unit_counter[t.kind as usize % 28] -= 1;
+        }
         let new = self.create_unit(by, t.kind, t.x, t.y);
+        if self.exe_quirks && new.is_some() {
+            self.players[by as usize].unit_counter[t.kind as usize % 28] += 1;
+        }
         // the new unit is also seen by the unit's former owner (o 0x1de89)
         if let Some(n) = new {
             self.unit_mut(n).seen_by |= 1 << t.owner;
@@ -2269,7 +2279,7 @@ impl Game {
                     continue;
                 }
                 room -= 1;
-                // deleted and re-created for the new owner (o 0x1de40 / 0x1de6e)
+                // deleted and re-created for the new owner (o 0x1e343 / 0x1e388)
                 let (rec, ux, uy) = (u.record, u.x, u.y);
                 self.players[from as usize].unit_counter[u.kind as usize % 28] -= 1;
                 self.players[to as usize].unit_counter[u.kind as usize % 28] += 1;

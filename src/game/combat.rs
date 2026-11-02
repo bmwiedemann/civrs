@@ -2316,6 +2316,22 @@ mod tests {
     }
 
     #[test]
+    fn exe_quirks_a_bribe_moves_the_unit_counts_twice() {
+        // o 0x1de40 / 0x1de6e after delete_unit (0x8e63) and create_unit (0x8c5d)
+        for quirks in [false, true] {
+            let (mut g, h, o) = sightings_game();
+            g.exe_quirks = quirks;
+            let t = g.add_unit(o, unit_ids::LEGION, 15, 15);
+            let (ch, co) = (g.player(h).unit_counter[unit_ids::LEGION as usize], g.player(o).unit_counter[unit_ids::LEGION as usize]);
+            g.player_mut(h).gold = 1000;
+            g.bribe_unit(h, t).unwrap();
+            let k = if quirks { 2 } else { 1 };
+            assert_eq!(g.player(h).unit_counter[unit_ids::LEGION as usize], ch + k);
+            assert_eq!(g.player(o).unit_counter[unit_ids::LEGION as usize], co - k);
+        }
+    }
+
+    #[test]
     fn a_computer_city_left_empty_by_an_attack_rechooses_at_once() {
         // 0x622b..0x625e: CIVIL4's Berlin (Granary) loses its only Militia to a Roman
         // Catapult and re-chooses before its turn (0x18bef), as CIV.EXE did in a differential
