@@ -42,6 +42,21 @@ pub enum Specialist {
     Scientist,
 }
 
+/// The specialists whose kinds the city record keeps: eight 2-bit codes at +0x14.
+pub const SPECIALIST_CODES: usize = 8;
+
+impl Specialist {
+    /// A new specialist, the city's `k`-th: an entertainer, but past the eighth code CIV.EXE
+    /// reads a taxman whatever was set (0xc91:0x6d97 returns 1 for k >= 8).
+    pub fn new_at(k: usize) -> Specialist {
+        if k >= SPECIALIST_CODES {
+            Specialist::Taxman
+        } else {
+            Specialist::Entertainer
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct City {
     pub id: CityId,

@@ -3,7 +3,7 @@
 //!
 //! Formulas marked [approx] are reconstructions kept in small functions so they can be tuned.
 
-use super::city::Production;
+use super::city::{Production, SPECIALIST_CODES};
 use super::map::{tile_flags, CityId, Map, Slot};
 use super::{Game, RuleError, Specialist};
 use crate::rules::{self, improvement_ids as imp, unit_ids, wonder_ids as won, Domain, Govt, ImprovementId, Terrain, WonderId};
@@ -363,8 +363,11 @@ impl Game {
         y.lux = ((net * (lux.unwrap_or(p.lux) / 10) as i32 + 5) / 10).clamp(0, y.trade);
         y.tax = ((net * (p.tax / 10) as i32 + 5) / 10).clamp(0, (net - y.lux).max(0));
         y.sci = net - y.lux - y.tax;
-        // specialists: 2 each
-        for s in &city.specialists {
+        // specialists: 2 each. CIV.EXE counts the kinds over the eight 2-bit codes alone
+        // (0xf2c0 -> 0xc91:0x6dc2, k < 8), so with `exe_quirks` the taxmen past the eighth
+        // bring nothing
+        let counted = if self.exe_quirks { SPECIALIST_CODES } else { usize::MAX };
+        for s in city.specialists.iter().take(counted) {
             match s {
                 Specialist::Entertainer => y.lux += 2,
                 Specialist::Taxman => y.tax += 2,
@@ -725,7 +728,7 @@ impl Game {
         let n = remaining.max(0) as usize;
         cm.specialists.truncate(n);
         while cm.specialists.len() < n {
-            cm.specialists.push(Specialist::Entertainer);
+            cm.specialists.push(Specialist::new_at(cm.specialists.len()));
         }
         // the city's turn (mode 0) marks its squares; the other quiet runs do it in
         // `city_routine_quiet`
@@ -819,7 +822,8 @@ impl Game {
         }
         if self.city(c).works(idx) {
             self.release_tile(c, idx);
-            self.city_mut(c).specialists.push(Specialist::Entertainer);
+            let k = self.city(c).specialists.len();
+            self.city_mut(c).specialists.push(Specialist::new_at(k));
         } else {
             if !self.tile_workable(c, idx) {
                 return;
@@ -831,7 +835,12 @@ impl Game {
         }
     }
 
+    /// The kind of specialist `i`; past the eighth there is no code to change (0xc91:0x6d64
+    /// returns for k >= 8), they stay taxmen.
     pub fn set_specialist(&mut self, c: CityId, i: usize, s: Specialist) {
+        if i >= SPECIALIST_CODES {
+            return;
+        }
         if let Some(sp) = self.city_mut(c).specialists.get_mut(i) {
             *sp = s;
         }
@@ -1509,6 +1518,32 @@ mod tests {
         g.auto_assign(c);
         assert_eq!(g.city(c).workers(), 0);
         assert_eq!(g.city(c).specialists, vec![Specialist::Entertainer; 3]);
+    }
+
+    /// The city record has codes for eight specialists (+0x14): the ninth and on are taxmen
+    /// (0xc91:0x6d97) that cannot be changed (0xc91:0x6d64), and CIV.EXE's split counts the
+    /// kinds over the eight codes only (0xc91:0x6dc2, `exe_quirks`).
+    #[test]
+    fn specialists_past_the_eighth_are_taxmen() {
+        let (mut g, c) = fixture();
+        for idx in 1..21u8 {
+            let (x, y) = g.radius_tile(c, idx).unwrap();
+            let t = g.map.get_mut(x, y).unwrap();
+            t.terrain = Terrain::Arctic;
+            t.flags = 0;
+            t.special = false;
+        }
+        g.city_mut(c).size = 10;
+        g.auto_assign(c);
+        let mut want = vec![Specialist::Entertainer; 8];
+        want.extend([Specialist::Taxman; 2]);
+        assert_eq!(g.city(c).specialists, want);
+        g.set_specialist(c, 9, Specialist::Scientist);
+        assert_eq!(g.city(c).specialists[9], Specialist::Taxman);
+        g.exe_quirks = false;
+        let tax = g.city_yield(c).tax;
+        g.exe_quirks = true;
+        assert!(g.city_yield(c).tax < tax);
     }
 
     #[test]
