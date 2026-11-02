@@ -1131,6 +1131,40 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   (one deletion, marker path). t167 then CIV.EXE's Athens buys its Catapult (its square's unit
   bit, not traced further).
 
+  Round w100 (scratchpad w100: pln.sh/pl.sh plays, dabc.sh diffs the runs, skip-X.txt lists the
+  known 0xd81d runs for a local diagnostic build, mkdiag.sh/diagpatch.py; probe40.py logs the
+  store's support at 0xde0f/0xfd20). Free unit records keep their stack link (+0xa): 0xff once
+  delete_unit freed them (0x1ba98 -> 0x1a2df), 0 for records never used since the table was
+  zeroed (civ_init o 0x4a28 frees by type and status only), imported from saves
+  (`Game::exe_dead_link`, not saved: the dumps never pass through a civrs save). With
+  `exe_quirks` destroy_city's sweep walks them as for_each_in_stack does (0x92a7: up to ten
+  records, link read before the callback): a never-used record leads to record 0, a free record
+  deleted again counts a type -1 (the previous civ's Caravan) and with link 0xff writes its owner
+  without the unit bit on the square it last held, with a link it is unlinked; a linked free
+  record on Ocean would drown the land units its links lead to (type -1 carries 127, ds:0x1124).
+  A unit alone in its ring leaving a square writes its owner without the unit bit (0x1ba98), so
+  the units of another ring there are hidden; the step after a capture writes the mover's
+  owner | 8 again (0x6ac8) and goes on to unit_look (0x6ae2: contacts by a unit that took a
+  city). build_advice (0xb13f), city_goals (0x15b41) and the goto search's crowd tie (0x1eb1b,
+  count of the first ten of the ring, walked for the searching civ) ask unit_at. Every run of
+  the city routine starts a store out of 0..=999 from 0 (0xca2a), the human's screen run after
+  an attention too. A barbarian leader stepping into a foreign city goes through the Diplomat's
+  overlay like any Diplomat (0x5baa -> o 0x1d575: it steals nothing as civ 0 and sabotages).
+  Seed 7777 t150-t173 now agree in every save and draw; the old WAR t57
+  Caravan -1 already matched (the w95 one-record model). Fresh seeded games, the human founding
+  the capital at once: A seed 2024 Emperor CIVWORLD=2,0,0,0, B seed 31337 Chieftain 2,2,2,2,
+  C seed 555 King 0,1,2,1, D seed 4242 Prince 1,0,1,2, E seed 6161 Emperor 0,0,2,2. The
+  uninitialised [bp-0x108] at 0xd81d is the food-first loop's "found" word (set by each pass,
+  -1 ends the loop), read once before any pass: its stack slot holds what the last call at that
+  depth left, so a civ's first city in the loop (C's Zimbabwe t19 run 2 and t103 run 2, E's
+  Samarkand t15 run 0) can skip the pass; not modellable, the diffs skip those runs. A probe
+  (w100/probe41.py) shows the slot often holds 804 at a mode-0 run and -1 at nested mode -1 runs
+  (C t103 Zimbabwe, t116 Ulundi's run 0, a mode -1 run during Delhi's turn): no simple carry
+  from the previous city. With those runs skipped every save and draw agrees: A t1-t139
+  (t111-t139 from CIV.EXE's t110), B t1-t140 (t111-t140 from t110), C t1-t127 (t103-t127 from
+  t102), D t1-t100, E t1-t88. The plays end when a human unit waits for orders and the
+  harness's keys quit CIV.EXE to DOS (D t100, A t139, E t88).
+
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
