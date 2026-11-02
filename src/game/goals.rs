@@ -307,7 +307,28 @@ impl Game {
     /// unit there that sees two squares far (a ship only with the looker at sea) wakes, drops
     /// its goto and, on water, gives its civ a sea goal (3, 2) on the looker (0x8546..0x8642),
     /// not for a looking Submarine (which still makes its sea goals, 0x8721..0x884d).
+    ///
+    /// The meeting holds the audience it opens with the human (overlay 6 from civs_meet
+    /// 0x1508d) before the treaty test of its square, so a computer's look that opens one in
+    /// its unit loop stops there (`Game::deferred_look`) and `finish_look` goes on with the
+    /// answer known: a treaty the human accepted keeps that square's attack goal out (0x84a7).
     pub fn unit_look_goals(&mut self, id: UnitId) {
+        self.look_squares(id, 1, false);
+    }
+
+    /// The rest of a look that stopped for an audience (`Game::deferred_look`), once it is
+    /// answered. A looker the treaty disbanded (`sign_treaty_with_human`, o 0x7e0e) is not
+    /// looked for further; CIV.EXE goes on with the freed record (type 0xff), which wakes
+    /// and stops the units next to its square (0x836f, 0x839f), not copied.
+    pub fn finish_look(&mut self) {
+        if let Some((id, k)) = self.deferred_look.take() {
+            self.look_squares(id, k, true);
+        }
+    }
+
+    /// `unit_look_goals` from neighbour `from` on; with `resume` that square's meeting has
+    /// been held already.
+    fn look_squares(&mut self, id: UnitId, from: usize, resume: bool) {
         use super::diplomacy::flags::PEACE;
         use crate::rules::{unit_ids, AiRole, Domain};
         let Some(u) = self.unit_opt(id).cloned() else { return };
@@ -315,7 +336,8 @@ impl Game {
         let here_ocean = self.map.is_ocean(u.x, u.y);
         let land = u.info().domain == Domain::Land;
         let peace = |g: &Game, a: Slot, b: Slot| g.diplo(a, b) & PEACE != 0;
-        for k in 1..=24usize {
+        for k in from..=24usize {
+            let resumed = resume && k == from;
             let (nx, ny) = (Map::wrap_x(u.x + super::goto::DX[k]), u.y + super::goto::DY[k]);
             if !Map::in_bounds(nx, ny) {
                 continue;
@@ -325,7 +347,7 @@ impl Game {
             // map layer x+160 records; none when they are the looker's own (0x8332)
             let first = self.unit_at(nx, ny).filter(|o| self.unit(*o).owner != civ);
             if k <= 8 {
-                if let Some(c) = self.city_at(nx, ny) {
+                if let Some(c) = self.city_at(nx, ny).filter(|_| !resumed) {
                     let o = self.city(c).owner;
                     if o != civ && land && !peace(self, civ, o) {
                         self.add_goal(o, nx, ny, goal::ATTACK, 4);
@@ -335,25 +357,34 @@ impl Game {
                 let Some(f) = first else { continue };
                 let fu = self.unit(f).clone();
                 let o2 = fu.owner;
-                // the first ten of its stack ring (for_each_in_stack, 0x836f)
-                for w in self.stack_from(f) {
-                    let wu = self.unit_mut(w);
-                    if !(n_ocean && wu.is_land()) {
-                        wu.wake_sentry();
+                if !resumed {
+                    // the first ten of its stack ring (for_each_in_stack, 0x836f)
+                    for w in self.stack_from(f) {
+                        let wu = self.unit_mut(w);
+                        if !(n_ocean && wu.is_land()) {
+                            wu.wake_sentry();
+                        }
                     }
-                }
-                // (0x8375..0x839f: kept only by a unit on land seen from the sea)
-                if n_ocean || !here_ocean {
-                    self.clear_goto(f);
-                }
-                if !(n_ocean && !here_ocean && !u.is_air()) {
-                    self.clear_goto(id);
+                    // (0x8375..0x839f: kept only by a unit on land seen from the sea)
+                    if n_ocean || !here_ocean {
+                        self.clear_goto(f);
+                    }
+                    if !(n_ocean && !here_ocean && !u.is_air()) {
+                        self.clear_goto(id);
+                    }
                 }
                 if land && !here_ocean && !n_ocean && !fu.is_air() {
                     // the two civilizations meet here, square by square, before the treaty
                     // test of this square's goals (0x8491 before 0x84a7; the city goals of
                     // the square came before the meeting, 0x82e3)
-                    self.civs_meet(civ, o2, u.x, u.y);
+                    if !resumed {
+                        let before = self.audience_pending;
+                        self.civs_meet(civ, o2, u.x, u.y);
+                        if self.ai_memory.moving == Some(civ) && !self.is_human(civ) && self.audience_pending & !before != 0 {
+                            self.deferred_look = Some((id, k));
+                            return;
+                        }
+                    }
                     if !peace(self, civ, o2) {
                         let defender = fu.order == super::UnitOrder::Fortified && fu.info().role == AiRole::Defend;
                         let p = if o2 != 0 && fu.kind != unit_ids::DIPLOMAT && !defender { 3 } else { 1 };

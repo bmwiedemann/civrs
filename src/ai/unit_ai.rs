@@ -1770,6 +1770,7 @@ fn unit_pass(g: &mut Game, s: &mut UnitLoop, sink: &mut dyn FnMut(TurnStep), sto
                     s.at = Some((id, record, 0));
                     return true;
                 }
+                deferred_hut(g, sink);
                 (id, record, 0)
             }
         };
@@ -1907,9 +1908,14 @@ fn run_unit(g: &mut Game, slot: Slot, id: UnitId, first: u8, sink: &mut dyn FnMu
     Visit::Done
 }
 
-/// The hut of a step whose look opened an audience (`Game::deferred_hut`), once the audience
-/// is over or, where nobody answers in the loop, at once.
+/// The rest of the look (`Game::deferred_look`) and the hut (`Game::deferred_hut`) of a step
+/// whose look opened an audience, once the audience is over or, where nobody answers in
+/// the loop, at once.
 fn deferred_hut(g: &mut Game, sink: &mut dyn FnMut(TurnStep)) {
+    if g.deferred_look.is_some() {
+        g.finish_look();
+        flush_events(g, sink);
+    }
     if let Some(id) = g.deferred_hut.take() {
         if g.unit_opt(id).is_some() {
             g.enter_hut(id);

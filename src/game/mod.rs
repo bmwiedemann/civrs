@@ -233,6 +233,11 @@ pub struct Game {
     /// (0x6b05), so the hut waits for the answer (`unit_ai::resume_units`). Not saved.
     #[serde(skip)]
     pub deferred_hut: Option<UnitId>,
+    /// A computer's unit look (unit_look 0x8038) that stopped at the audience its meeting
+    /// opened with the human (civs_meet 0x8491), and the neighbour it stopped at: the rest
+    /// waits for the answer (`Game::finish_look`, before `deferred_hut`). Not saved.
+    #[serde(skip)]
+    pub deferred_look: Option<(UnitId, usize)>,
     /// ds:0x3934 between audiences: -1 (none, the initial value), else 0 after a
     /// `diplomacy_close` outside an audience (see `diplo_ai::open`). Not saved.
     #[serde(skip, default = "no_audience")]
@@ -662,6 +667,7 @@ impl Game {
             ai_memory: Default::default(),
             audience_pending: 0,
             deferred_hut: None,
+            deferred_look: None,
             diplo_latch: -1,
             treaty_break_ok: None,
             treaty_step: None,

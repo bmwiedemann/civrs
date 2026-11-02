@@ -1181,4 +1181,37 @@ mod tests {
         assert!(decisions(&mut g).is_empty());
         assert_eq!(g.deferred_hut, None);
     }
+
+    #[test]
+    fn the_look_that_opens_an_audience_tests_the_treaty_after_the_answer() {
+        use crate::game::goals::goal;
+        use crate::game::Dir8;
+        let attack_goal = |g: &Game, ai: Slot| g.ai_memory.goals[ai as usize].iter().any(|o| o.kind == goal::ATTACK && o.pos() == (15, 15));
+        for accept in [true, false] {
+            let (mut g, human, ai) = meeting_game();
+            g.player_mut(human).govt = Govt::Democracy;
+            for _ in 0..12 {
+                g.add_unit(human, unit_ids::KNIGHTS, 10, 10);
+            }
+            let u = g.units_of(ai)[0];
+            g.unit_mut(u).x = 17;
+            g.reset_goals(ai);
+            // the meeting holds the audience before the treaty test of its square (0x8491,
+            // 0x84a7): the look stops there in the computer's loop
+            g.ai_memory.moving = Some(ai);
+            g.try_move(u, Dir8::W).unwrap();
+            let ds = decisions(&mut g);
+            assert_eq!(ds.len(), 1);
+            assert_eq!(g.deferred_look.map(|d| d.0), Some(u));
+            assert!(!attack_goal(&g, ai));
+            if accept {
+                // the Senate signs whatever the human answers
+                play(&mut g, ds[0].clone(), &|_| 0);
+                assert!(g.treaty(human, ai));
+            }
+            g.finish_look();
+            assert_eq!(g.deferred_look, None);
+            assert_eq!(attack_goal(&g, ai), !accept, "the attack goal (priority 3) only without a treaty");
+        }
+    }
 }
