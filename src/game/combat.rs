@@ -609,8 +609,28 @@ impl Game {
         let total = self.ai_memory.census.citizens[from as usize & 7];
         let first_civs = new_slot as i32 <= self.setup.num_civs.clamp(3, 7) as i32;
 
-        // civ_init without the start square, then the tribe
+        // civ_init without the start square (o5 0x4b41 returns 1 for a slot outside the
+        // active mask), then the tribe. Before that test civ_init has cleared the slot and
+        // given it each advance the human knows that a computer civilization found first
+        // when random(2) == 0 (o5 0x4ad0..0x4b36, grant_advance 0xc2f4 with the slot as the
+        // source): the advances are overwritten by those of `from` below (o 0x14e34), but the
+        // draws are made and the Great Library's owner may get an advance by them
         let old = self.player(new_slot).clone();
+        let mut reset = Player::new(new_slot, old.civ, false);
+        reset.in_game = true;
+        reset.alive = true;
+        reset.start_civ = old.start_civ;
+        self.players[new_slot as usize] = reset;
+        for s in 0..8usize {
+            self.players[s].diplo[new_slot as usize] = 0;
+        }
+        let human = self.human_slot;
+        for a in 0..rules::advances::ADVANCE_COUNT as u8 {
+            let f = self.first_discoverer(a);
+            if self.player(human).knows(a) && f != 0 && f != human && self.rng.random(super::rng::ovl(0x4b12), 2) == 0 {
+                self.grant_advance(new_slot, a, super::science::AdvanceSource::From(new_slot));
+            }
+        }
         let mut start_civ = old.start_civ;
         let civ = if first_civs && (new_slot == 7 || old.civ & 1 == 0) && old.civ <= 15 {
             old.civ ^ 8
@@ -626,12 +646,13 @@ impl Game {
         p.start_civ = start_civ;
         p.tax = 40;
         p.lux = 20;
-        for s in 0..8usize {
-            self.players[s].diplo[new_slot as usize] = 0;
-        }
         self.ai_memory.persistent[new_slot as usize] = [super::goals::Goal::FREE; super::goals::PERSISTENT_GOALS];
-        self.ai_memory.policies[new_slot as usize] = None;
+        // civ_init zeroes the continent policies (o5 0x49bb), so the rebels' first AI turn
+        // re-chooses on every continent whose policy is not 0 (0x15f12 -> 0x18bef)
+        self.ai_memory.policies[new_slot as usize] = Some([super::production::POLICY_NONE; 16]);
         self.clear_census(new_slot);
+        // the rebels get half the military strength of the census (ds:0x6e82, o 0x14e0f)
+        self.ai_memory.census.strength[new_slot as usize] = self.ai_memory.census.strength[from as usize & 7] / 2;
         let src = self.player(from).clone();
         let half = src.gold / 2;
         p.gold = half;
@@ -927,7 +948,7 @@ impl Game {
         self.score_acc[slot as usize] = 0;
         // ai_clear_persistent_goals (0x189b9) and the continent strategy table (o5 0x49bb)
         self.ai_memory.persistent[slot as usize] = [super::goals::Goal::FREE; super::goals::PERSISTENT_GOALS];
-        self.ai_memory.policies[slot as usize] = None;
+        self.ai_memory.policies[slot as usize] = Some([super::production::POLICY_NONE; 16]);
         for a in granted {
             self.grant_advance(slot, a, super::science::AdvanceSource::Discovered);
         }
@@ -1878,6 +1899,45 @@ mod tests {
         rebels.sort();
         assert_eq!(rebels, vec![ids[4], ids[5], ids[6]]);
         assert_eq!(g.player(n).relation(2), Relation::War);
+    }
+
+    /// civil_war's civ_init (o5 0x4ad0..0x4b36) draws random(2) for each advance the human
+    /// knows that a computer civilization found first, before the tribe (o 0x14ce8); the
+    /// rebels' policies are civ_init's zeros and they get half the census strength.
+    #[test]
+    fn civil_war_draws_civ_inits_advance_grants() {
+        let mut g = flat_game_with(3);
+        let mut ids = Vec::new();
+        for i in 0..7 {
+            let c = g.add_city(2, format!("C{i}"), 6 + i * 3, 10);
+            g.city_mut(c).size = 3;
+            ids.push(c);
+        }
+        let h = g.human_slot;
+        // found by computer 3, by the human, by nobody (all known to the human), and by 2
+        // but unknown to the human
+        for (a, by, human_knows) in [(0u8, 3u8, true), (1, h, true), (2, 0, true), (3, 2, false), (5, 2, true)] {
+            g.first_discoverer[a as usize] = by;
+            g.players[h as usize].advances &= !(1u128 << a);
+            if human_knows {
+                g.player_mut(h).learn(a);
+            }
+        }
+        let n = (1..8u8).find(|s| g.cities_of(*s).is_empty() && g.units_of(*s).is_empty()).unwrap();
+        g.take_census_all();
+        g.ai_memory.census.strength[2] = 41;
+        crate::game::rng::trace_start();
+        assert!(g.civil_war(2, ids[0]));
+        let draws = crate::game::rng::trace_take();
+        let grants: Vec<_> = draws.iter().take_while(|d| d.at == crate::game::rng::ovl(0x4b12)).collect();
+        let known = (0..rules::advances::ADVANCE_COUNT as u8).filter(|a| g.player(h).knows(*a) && ![0, h].contains(&g.first_discoverer(*a))).count();
+        assert!(known >= 2);
+        assert_eq!(grants.len(), known);
+        assert!(draws[known..].iter().all(|d| d.at != crate::game::rng::ovl(0x4b12)));
+        assert_eq!(g.ai_memory.policies[n as usize], Some([crate::game::production::POLICY_NONE; 16]));
+        assert_eq!(g.ai_memory.census.strength[n as usize], 20);
+        // the advances are those of the loser
+        assert_eq!(g.player(n).advances, g.player(2).advances);
     }
 
     #[test]
