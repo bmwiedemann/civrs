@@ -1218,6 +1218,31 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   SPACE t171-t199, SHIP2 t201-t212, ARRIVE t406-t408 and CIVIL5-late t401-t407 (Future
   Technology four times; t408 is the 0x16e94 release) still agree.
 
+  Round w103 (scratchpad w103: jobs.txt + runs1.sh plays, cur.sh / dn.sh diffs, resc.sh rescues,
+  autosize.sh + ring.py for the 0x16e94 releases, ui.sh / civui.sh / cmpui.sh for screens).
+  The meeting a computer's look makes (civs_meet 0x8491) holds its audience with the human
+  before that square's treaty test (0x84a7): civrs's look stops there in the loop
+  (`Game::deferred_look`, finished with `deferred_hut`), so an accepted treaty keeps the attack
+  goal out (CW2 t407: no Babylonian Chariot tasked, 0x16057, to the human's Tenochtitlan).
+  CIV.EXE's audience begins by redrawing the meeting square (o 0x6391 -> draw_tile_with_units
+  0x1b85a -> unit_at 0x1bb3c), so the rest of that square reads the looker's own civ from
+  ds:0xd7f0 (the treaty test, the priority from that civ's record of the same number, the
+  defend goal); with a treaty, make_peace's redraws (o 0x7e0e -> delete_unit 0x8d6c -> 0x8ed9)
+  leave another owner, kept as the met civ (`exe_quirks`; D2 t225, CW2b t423). A bribe moves
+  the unit counts twice (o 0x1de40 / 0x1de6e after delete_unit / create_unit; ds:0xb3be, which
+  the production advisor reads; `exe_quirks`). An extra defender in a city stays only when the
+  square's best defender with its fortified bit set is itself (0x16d91 -> best_defender_at
+  0x8ee5: the first of the highest values in the ring wins a tie). UI: the human's capture
+  ends with the city's screen (capture_city 0x13d76, 0x1430d), which comes before the step's
+  look explores the squares around (0x6aa9 before 0x6ae2), so they stay off its map
+  (`city_screen_captured`); matches CIV.EXE but for 12 pixels of one square's icons. Seen and
+  not copied: the minimap tests whether civ `1 << human` knows Navigation (0x1a83c after
+  0x1a6db); the science report's box after a load uses ds:0xd2de = 0 (not saved), civrs's
+  import computes it; F1's quiet runs restash a garrison by CIV.EXE's wrong-square check
+  (0x131fa), civrs checks the city's neighbours, so F2 lists one Musketeers fewer. Advisors F1,
+  F4, F5, F7, F9, F10 of CW2's save match pixel for pixel; the capture's city view matches the
+  original CIV.EXE (the harness's --quiet-ui CIV.EXE draws city views with its own generator).
+
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
