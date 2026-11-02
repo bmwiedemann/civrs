@@ -1250,6 +1250,37 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   square still holding the old owner's units links by the layer's unit, 0x1ba51 -> unit_at, not
   modelled), A4 t193-t206 (t207 production choices of civ 7, untraced), C8 t435 (untraced).
 
+  Round w104 (scratchpad w104: setup.sh, rs.sh one civrs dump with a run's overrides, side.py,
+  d308.py, diplo.py, ring.py now also finds a new ship that has sailed by its home city,
+  diagpatch3.py replaces w101/diagpatch2.py: a SIZE16E94 entry may name the ship's record as a
+  sixth field, for two ships releasing on one square). The E2 t172 diagnosis of w103 was wrong:
+  create_unit writes the new owner on the layer (0x1ba12) before its unit_at (0x1ba51), so a
+  unit only ever links within its own civ. In a rebel city civil_war deletes the old unit and
+  sets the square's unit bit (`set_city_bit` 0x1bb97, o 0x15066 / 0x1510c / 0x151d0 / 0x15341)
+  before create_unit: the last old unit, alone in its ring when deleted (0x1ba98 writes the
+  owner without the bit, `exe_unit_bit_lost`), no longer keeps its re-created unit out of the
+  ring of those re-created before it. civ_init does not clear the census rows of the slot, so a
+  dead slot's citizens (ds:0xd2f8) stay, transfer_city adds the rebel cities to them (o 0x15428)
+  and the loyal side loses the sum (o 0x1501b): a smaller citizen count, a larger plunder of the
+  captured capital (0x14437; `exe_quirks`, civrs clears the rows in normal play). A computer
+  captor's production byte is set (to 0, then the advisor) only after steal_advance's
+  re-choice in all its cities (0x14239 -> 0x1462f, 0x14328): that re-choice still counts the
+  loser's unit in the new city among the units built on the continent (0xb028; A4 t207).
+  A computer city whose disorder starts or ends asks its advisor (0x12761 / 0x128ff), and the
+  taxes (ds:0xe17a, 0x12955) and science (ds:0x70e6, 0x12bde) are those of that run, which
+  counts the squares with the last turn's celebration flag: the celebration test (0x12972)
+  sets it only afterwards, so a Monarchy city that starts celebrating has no trade bonus yet
+  (`exe_quirks`; D2 t244 Bangalore). The D4 divergence (t282) is the harness's: at the End of
+  Turn wait ("Press Enter") of an all-fortified human its Return keys ended t281-t286 with no
+  save, so CIV.EXE never ran the save command's 0x80 goto quirk (`harness_save`) that civrs's
+  play applies every turn (civ 2's record 0 Catapult with a goto); D4b, the same t280 with an
+  idle Militia added (w104/st2/D280M.SVE), stops every turn and agrees. Open: one-turn field
+  diffs that do not reach the draws: the 16-turn MET bits (C7 t336, CW2b t432: every save of
+  the turn keeps the human's MET bits that civ_turn_politics 0x14b38 clears at the human's
+  turn, while at CW2b t416 the first save has them cleared; the human's looks before the first
+  save do not explain C7's), defend-goal targets (F3 t149: civ 6's defend goal at (49,30) of
+  civrs's list fits CIV.EXE's assignments only if absent; D3 t276 the same kind).
+
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
