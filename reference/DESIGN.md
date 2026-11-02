@@ -1184,6 +1184,40 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   and fresh games from CIV.EXE's rescued t1: F seed 8086 Emperor 1,1,1,1 t1-t18, G 1999 King
   2,1,0,2 t1-t26, H 2718 Prince 0,2,1,0 t1-t23 (plays stopped, not diverged).
 
+  Round w102 (scratchpad w102: pl.sh plays, dmine.sh / dall.sh diff, mkcw.py, mkcw2.py, mkcw3.py,
+  mksen.py, mkwob.py stage the late-game rules from tests/data/late and w101's runs). Civil war:
+  civil_war calls civ_init with the slot out of the active mask (o 0x14c9e), and before its mask
+  test (o5 0x4b41) civ_init has drawn random(2) for each advance the human knows that a
+  computer found first, granting it to the slot (o5 0x4b12; the advances are then overwritten
+  with the loser's, o 0x14e34), and zeroed the slot's continent policies (o5 0x49bb), so the
+  rebels' first AI turn re-chooses on each continent whose policy is not 0 (0x15f12). The rebels
+  get half the census strength (ds:0x6e82, o 0x14e0f). A city's record keeps eight specialist
+  codes (+0x14): past them the getter reads a taxman (0xc91:0x6d97), the setter does nothing
+  (0xc91:0x6d64), and the tax/lux/sci split counts the eight codes only (0xc91:0x6dc2, under
+  `exe_quirks`; seen in a rebel city of nine specialists). A computer's finished Diplomat:
+  0xded6 skips create_unit, so the store is emptied (0xe3c4), nothing is built and nothing is
+  drawn (the site search 0xe124 is unreachable; `exe_quirks`, civrs places it in normal play).
+  When the human's unit is lost in a fight his loop goes on after its record (move_units keeps
+  [bp-0x32], 0x4174), not from record 0, so the next Armor of the stack in the view comes before
+  a unit off the screen (`UnitLoop::started`).
+  Senate: the territory and attack questions under a Republic end in "Overruled by the Senate"
+  (0x1a42d), a refused *PEACE is signed (o 0x703b). Staging pitfalls: a save made with every
+  human unit moved leaves CIV.EXE in the End of Turn wait, so a script's `select` lands in the
+  next turn (wake a unit instead: clear its sentry bit, or add units without orders); an
+  audience that opens at load takes the harness's option keys (its Down/Return refuse the
+  emissary, then move the active unit). Runs (all draws and fields agree): CW (CIVIL5 t400,
+  Babylonian Armor take the Aztec capital, rebels in slot 5) t401-t412, CW2 (the human takes
+  it) t401-t406 (t407: a Babylonian Chariot tasked, 0x16057, to the human's Tenochtitlan in
+  civrs only, open), CW3 (A3's t169, Aztec contact t169 against a load audience; no free slot:
+  the most central city starts a Palace) t170-t175 (one 0x16e94 release overridden at t170),
+  ARRH (CIVIL3-late, the human's ship arriving 1859) t406-t408, both end the game in t408,
+  SEN (Armor into Hamburg under the treaty, overruled; Babylon's peace signed by the Senate
+  t402) t401-t408,
+  WOB1 (CIVIL7 t200, Invention obsoletes the human's Hanging Gardens) t201-t210, WOB2 (Pyramids,
+  Great Library, Oracle, Great Wall, Lighthouse with their advances known) t201-t210; stored
+  SPACE t171-t199, SHIP2 t201-t212, ARRIVE t406-t408 and CIVIL5-late t401-t407 (Future
+  Technology four times; t408 is the 0x16e94 release) still agree.
+
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
