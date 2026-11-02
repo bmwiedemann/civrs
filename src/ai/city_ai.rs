@@ -90,7 +90,8 @@ pub fn city_turn_purchase(g: &mut Game, c: CityId, net_shields: i32) {
     if city.disorder && !unit && city.shields != 0 {
         amount = missing.max(0).min(gold / 8);
     }
-    if (g.units_at(city.x, city.y).is_empty() || city.auto_build) && unit && city.shields != 0 {
+    // (unit_owner_at 0x1a68:0x14e6 at 0xedc1: the map page's unit bit, `exe_unit_bit_lost`)
+    if (g.unit_owner_at(city.x, city.y).is_none() || city.auto_build) && unit && city.shields != 0 {
         amount = missing.max(0).min(gold / 3);
     }
     if city.production == Production::Improvement(imp::PALACE) && city.shields != 0 {
@@ -191,6 +192,22 @@ mod tests {
         if matches!(advice, Production::Unit(_)) {
             assert_eq!(g.city(c).shields, g.production_cost(c, advice));
         }
+    }
+
+    #[test]
+    fn exe_quirks_a_city_square_without_the_unit_bit_counts_as_empty() {
+        // 0xedc1 asks unit_owner_at (0x1a68:0x14e6), the map page's unit bit: a square whose
+        // bit a dead record's deletion cleared looks empty though a unit stands there
+        let (mut g, c) = empty_ai_city();
+        let slot = g.city(c).owner;
+        let (x, y) = g.city(c).pos();
+        g.add_unit(slot, unit_ids::PHALANX, x, y);
+        g.player_mut(slot).gold = 300;
+        g.exe_quirks = true;
+        g.exe_unit_bit_lost = vec![false; crate::rules::MAP_W * crate::rules::MAP_H];
+        g.exe_unit_bit_lost[crate::game::Map::idx(x, y)] = true;
+        city_turn_purchase(&mut g, c, 0);
+        assert_eq!((g.city(c).shields, g.player(slot).gold), (10, 288));
     }
 
     #[test]
