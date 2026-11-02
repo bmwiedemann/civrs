@@ -1109,6 +1109,28 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   Left: CIVIL5 t471 a barbarian Musketeers at (19, 33) next to Byzantium steps west in CIV.EXE,
   south in civrs, with the same draws (0x1949f scoring; the x+160 owner layer matched).
 
+  Round w99 (scratchpad w99: pl.sh/pln.sh plays, dn.sh diffs, watch.sh over watch.txt; probe37.py
+  adds the barbarian square scores at 0x195c6 to probe36, probe38.py logs delete_unit 0x8d71 with
+  the record's type). CIVIL5 t471 was not a scoring difference: the draws had parted before, at
+  the 0x16e94 release (civ 4's Sail in Chapultepec: CIV.EXE's [bp-0xc] was 0, city 0 of size 24,
+  so the fortified Musketeers stayed; civrs reads the port's size 9 and releases it), every turn
+  after (t472, t474). Settlers (any land unit, domain 0, 0x5e77 -> 0x62a1) take an empty enemy
+  city; only ships and aircraft get *OCCUPY (seed 7777 t49). A computer city's purchase tests the
+  square with unit_owner_at (0xedc1). Quiet-run garrison si (exe_quirks): CITY STATUS, ATTITUDE
+  SURVEY, TRADE REPORT, Demographics and Top 5's second run 0x1c * index; CHANGE (0x117ef) 2 *
+  the unit type (0x117d7) or, for an improvement up to 21, 0x1c * index (0x111d4); Top 5's first
+  run (bp + 2 * place, o 0x316c) and CHANGE for a wonder or part stay as meant; city_revolt's
+  loop (o 0x1e0ee) is dead (both callers pass the new civ); the advisor runs of capture (0x14331),
+  the captor's re-choice (0x18c92) and found_city (o 0x1b81c) only meet cities without a
+  garrison out. Fresh seeded games (sve_diff new, CIVWORLD=1,1,1,1): seed 9001 Prince t0-t80
+  and, from CIV.EXE's t80, t81-t104 (the Romans destroyed) agree in every save and draw; seed
+  7777 Warlord t0-t78 (t79: the 0xd81d food-first skip), t80-t150 from CIV.EXE's t80, t151-t166.
+  Left: seed 7777 t166 a destroyed city's sweep (0xa8bc) walks civ 6's dead record 6 to record
+  0 and counts two type -1 deletions: civ_init (o 0x4a28) frees records without resetting their
+  links (+0xa) and saves keep them, so dead records can still be linked; civrs assumes link 0xff
+  (one deletion, marker path). t167 then CIV.EXE's Athens buys its Catapult (its square's unit
+  bit, not traced further).
+
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
