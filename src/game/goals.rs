@@ -391,11 +391,15 @@ impl Game {
                     // 0x1b85a -> unit_at 0x1bade, 0x1bb3c), so the treaty test, the priority
                     // (from the record of the first unit's number in the looker's civ, a free
                     // one counting as no defender) and the defend goal (0x84a7..0x8525) take
-                    // the looker's civilization. (When the emissary question redraws the whole
-                    // map view, o 0x7a7a, the last unit drawn leaves its owner there instead:
-                    // not modelled.)
+                    // the looker's civilization. Only an audience without a treaty: one that
+                    // ends in peace goes on through make_peace (o 0x7e0e), whose redraws
+                    // (delete_unit 0x8d6c -> 0x8ed9) leave another owner there; the runs (D2
+                    // t225, CW2b t423) match with the met civ kept then. (When the emissary
+                    // question redraws the whole map view, o 0x7a7a, the last unit drawn leaves
+                    // its owner there instead: not modelled.)
                     let fortified_defender = |w: &super::Unit| w.order == super::UnitOrder::Fortified && w.info().role == AiRole::Defend;
-                    let (o2, diplomat, defender) = match self.unit_at(u.x, u.y).map(|l| self.unit(l).owner).filter(|_| resumed && self.exe_quirks) {
+                    let clobbered = resumed && self.exe_quirks && !peace(self, civ, o2);
+                    let (o2, diplomat, defender) = match self.unit_at(u.x, u.y).map(|l| self.unit(l).owner).filter(|_| clobbered) {
                         Some(o) => {
                             let w = self.all_units().find(|w| w.owner == o && w.record == fu.record);
                             (o, w.is_some_and(|w| w.kind == unit_ids::DIPLOMAT), w.is_some_and(fortified_defender))
