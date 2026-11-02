@@ -1483,9 +1483,7 @@ fn do_step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) ->
     let foreign_units = Map::in_bounds(nx, ny) && g.units_at(nx, ny).iter().any(|o| g.unit(*o).owner != u.owner);
     let foreign_city = g.city_at(nx, ny).is_some_and(|c| g.city(c).owner != u.owner) && matches!(u.kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN);
     if foreign_units || foreign_city {
-        let slot = u.owner;
         match step(g, id, d, sink) {
-            _ if slot == 0 => {}
             Ok(MoveOutcome::EnteredForeignCity(c)) => {
                 if u.kind == unit_ids::DIPLOMAT {
                     g.ai_diplomat_action(id, c);
@@ -1508,9 +1506,8 @@ fn do_step(g: &mut Game, id: UnitId, d: Dir8, sink: &mut dyn FnMut(TurnStep)) ->
         return false;
     }
     match r {
-        // (CIV.EXE takes a barbarian leader into a foreign city through the Diplomat's
-        // overlay too, 0x5baa; civrs leaves the barbarians out)
-        _ if slot == 0 => {}
+        // a barbarian leader goes in as any Diplomat (0x5baa -> overlay 22 diplomat_city_action;
+        // it steals nothing, civ 0, o 0x1d760, so it sabotages)
         Ok(MoveOutcome::EnteredForeignCity(c)) => {
             if u.kind == unit_ids::DIPLOMAT {
                 g.ai_diplomat_action(id, c);
@@ -2057,6 +2054,24 @@ mod tests {
         do_step(&mut g, b, Dir8::E, &mut |_| {});
         assert!(g.map.tile(12, 10).has(crate::game::tile_flags::MINE));
         assert_eq!(g.unit(b).pos(), (13, 10));
+    }
+
+    /// A barbarian leader stepping into a foreign city goes through the Diplomat's overlay
+    /// (0x5baa): it steals nothing (civ 0) and sabotages, and is used up (seed 6161 t47).
+    #[test]
+    fn a_barbarian_leader_sabotages_a_city_it_walks_into() {
+        let mut g = arena();
+        g.players[0].in_game = true;
+        let o = ai(&g);
+        let c = g.add_city(o, "Target".into(), 13, 10);
+        g.city_mut(c).add_improvement(crate::rules::improvement_ids::BARRACKS);
+        g.city_mut(c).shields = 0;
+        g.add_unit(o, unit_ids::MILITIA, 13, 10);
+        let b = g.add_unit(0, unit_ids::DIPLOMAT, 12, 10);
+        g.unit_mut(b).moves_left = 6;
+        do_step(&mut g, b, Dir8::E, &mut |_| {});
+        assert!(g.unit_opt(b).is_none());
+        assert!(!g.city(c).has_improvement(crate::rules::improvement_ids::BARRACKS));
     }
 
     /// A failed move roll (0x636f) comes before the heading store (0x6433) too.
