@@ -763,6 +763,12 @@ impl Game {
     /// a foreign unit is next to it (0x125d6 -> 0x131d2, as at the end of its turn).
     pub fn city_routine_quiet(&mut self, c: CityId) {
         if self.city_opt(c).is_some() {
+            // every run starts a store out of 0..=999 again from 0 (0xca2a..0xca4f, in any
+            // mode): a shortage's negative store is gone after the next run
+            let cm = self.city_mut(c);
+            if !(0..=999).contains(&cm.shields) {
+                cm.shields = 0;
+            }
             // (a quiet run counts the squares and units again; `trade_carry` and
             // `abroad_carry` are only for the turn's reads after it)
             let carry = (self.trade_carry.take(), self.abroad_carry.take());
@@ -1236,6 +1242,19 @@ mod tests {
         g.auto_assign(c);
         assert!(g.city(c).works(0));
         assert_eq!(g.city(c).workers(), 1);
+    }
+
+    /// Every run of the city routine starts a store out of 0..=999 from 0 (0xca2a): the
+    /// negative store a shortage left (seed 2024 t94, Rome's famine) goes in a quiet run.
+    #[test]
+    fn a_quiet_run_clears_a_negative_store() {
+        let (mut g, c) = fixture();
+        g.city_mut(c).shields = -1;
+        g.city_routine_quiet(c);
+        assert_eq!(g.city(c).shields, 0);
+        g.city_mut(c).shields = 12;
+        g.city_routine_quiet(c);
+        assert_eq!(g.city(c).shields, 12);
     }
 
     /// Anarchy splits the trade by the rates like any government (0xf237); it only collects

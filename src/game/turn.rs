@@ -729,7 +729,7 @@ impl Game {
         self.nested_totals = None;
         self.trade_carry = None;
         self.abroad_carry = None;
-        // a store out of 0..=999 (a shortage leaves it negative) starts again from 0 (0xc977)
+        // a store out of 0..=999 (a shortage leaves it negative) starts again from 0 (0xca2a)
         {
             let cm = self.city_mut(c);
             if !(0..=999).contains(&cm.shields) {
@@ -847,6 +847,13 @@ impl Game {
         // screen (update_civ_tax_rates 0xa5e2), whose worker assignment puts a city that
         // shrank for its Settlers in order; a computer city waits for its next turn
         if self.city_attention && self.player(slot).human {
+            // that run, as every run, starts a store out of 0..=999 again from 0 (0xca2a): a
+            // shortage's negative store is gone
+            if let Some(cm) = self.cities[c as usize].as_mut() {
+                if !(0..=999).contains(&cm.shields) {
+                    cm.shields = 0;
+                }
+            }
             // that run lets the garrison out (0xcda0) and stashes it again at its end (0x1320d):
             // the stash takes all fortified units but the first in table order, the units let
             // out among them in their new records
