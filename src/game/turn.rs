@@ -826,12 +826,12 @@ impl Game {
             self.gov_case.1 -= (market - civilized) * totals.abroad;
         }
         self.last_moods = (h.happy, h.unhappy);
-        let asked = self.city_moods(c, &h, totals.food_after_settlers);
+        let nested = self.city_moods(c, &h, totals.food_after_settlers);
         // gold & science (0x12955: no taxes in disorder or under Anarchy, none for the
         // barbarians, 0x125e1; 0x12bde: science whatever the disorder, none under Anarchy),
         // as the split counted them; with `exe_quirks` those of the advisor's run a change
-        // of mood started (0x12761, 0x128ff), with the new flags
-        let t = if asked && self.exe_quirks { self.city_yield_raw(c) } else { split };
+        // of mood started (0x12761, 0x128ff), with the new disorder flag
+        let t = nested.unwrap_or(split);
         if slot != 0 && !h.disorder && self.player(slot).govt != Govt::Anarchy {
             self.player_mut(slot).gold += t.tax;
         }
@@ -882,15 +882,16 @@ impl Game {
     /// 0x128f8). A celebration (no unhappy citizen, size 3 or more, half happy, not Anarchy)
     /// that goes on from the turn before makes a city of the Republic or Democracy grow by one
     /// while it has a food surplus, above size 9 only with an Aqueduct (0x12ab2..0x12b12).
-    /// Returns whether the city asked its advisor. `food_after_settlers` is the food of the
+    /// With `exe_quirks`, returns the resources of the run of the city routine the city's
+    /// advisor made, when it asked one. `food_after_settlers` is the food of the
     /// worked squares less what the city's Settlers
     /// eat (ds:0x70da − food * ds:0xe3c6), which must beat twice the size.
-    fn city_moods(&mut self, c: CityId, h: &super::happiness::Happiness, food_after_settlers: i32) -> bool {
+    fn city_moods(&mut self, c: CityId, h: &super::happiness::Happiness, food_after_settlers: i32) -> Option<super::economy::CityYield> {
         let slot = self.city(c).owner;
         if slot == 0 {
-            return false;
+            return None;
         }
-        let mut asked = false;
+        let mut nested = None;
         let human = self.player(slot).human;
         let was_disorder = self.city(c).disorder;
         let was_celebrating = self.city(c).celebrating;
@@ -924,11 +925,14 @@ impl Game {
                 // (0x12756, 0x128f4), as in city_rechoose_production
                 let next = self.ai_rechoose(c);
                 self.city_mut(c).production = next;
-                asked = true;
                 if self.exe_quirks {
-                    // (0x12761, 0x128ff) the advisor's run leaves its totals: the taxes, the
-                    // science and the celebration test after it read its trade split and moods
+                    // (0x12761, 0x128ff) the advisor's run leaves its totals: the taxes
+                    // (ds:0xe17a, 0x12955), the science (ds:0x70e6, 0x12bde) and the
+                    // celebration test after it read its trade split and moods, counted
+                    // with the last turn's celebration flag, which the test (0x12972)
+                    // changes only after them
                     self.trade_carry = None;
+                    nested = Some(self.city_yield_raw(c));
                     moods = self.last_moods;
                 }
             }
@@ -966,7 +970,7 @@ impl Game {
                 self.push_event(GameEvent::CityGrew(c));
             }
         }
-        asked
+        nested
     }
 
     /// Units the city's shields cannot support go, the farthest from the city first (CIV.EXE
@@ -2708,6 +2712,41 @@ mod tests {
         let size = g.city(c).size as i32;
         let h = g.city_happiness(c);
         assert_eq!(g.score_acc[slot as usize], size + h.happy - h.unhappy);
+    }
+
+    /// With `exe_quirks` a computer city whose disorder ends pays the taxes and science of
+    /// its advisor's run (0x128ff), which counts the squares with the last turn's celebration
+    /// flag: the celebration test that follows (0x12972) gives a celebrating Monarchy its
+    /// trade bonus only from the next run (D2 t244 Bangalore).
+    #[test]
+    fn the_advisors_run_counts_trade_without_the_new_celebration() {
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        g.exe_quirks = true;
+        let slot = g.civ_slots().into_iter().find(|s| *s != g.human_slot && *s != 0).unwrap();
+        let settler = g.units_of(slot).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        g.player_mut(slot).govt = Govt::Monarchy;
+        (g.player_mut(slot).tax, g.player_mut(slot).lux) = (0, 100);
+        // squares of trade 2 around it
+        for idx in 1..21u8 {
+            if let Some((x, y)) = g.radius_tile(c, idx) {
+                g.map.get_mut(x, y).unwrap().terrain = Terrain::Ocean;
+            }
+        }
+        g.city_mut(c).size = 3;
+        g.fix_workers(c);
+        g.city_mut(c).disorder = true;
+        g.city_mut(c).celebrating = false;
+        let h = g.city_happiness(c);
+        assert!(!h.disorder);
+        let mut before = g.clone();
+        before.city_mut(c).disorder = false;
+        before.ai_rechoose(c);
+        let expected = before.city_yield_raw(c);
+        let nested = g.city_moods(c, &h, 99);
+        assert!(g.city(c).celebrating);
+        assert_eq!(nested, Some(expected));
+        assert!(g.city_yield_raw(c).trade > expected.trade);
     }
 
     #[test]
