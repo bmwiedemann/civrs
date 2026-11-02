@@ -307,11 +307,13 @@ impl Game {
     }
 
     /// Unit_look's city check (CIV.EXE 0x8241..0x8292): a unit of `slot` at (x, y) lets the
-    /// garrison out of every city of another civilization next to it.
+    /// garrison out of every city of another civilization next to it, an empty store too:
+    /// `city_unstash_garrison` sets the let-out bit whatever it found (0x7f17), so the human
+    /// city's fortified home units go into the store at the end of its turn (0x131da).
     pub fn reveal_garrisons_near(&mut self, slot: Slot, x: i32, y: i32) {
         for (nx, ny) in Map::neighbours8(x, y) {
             if let Some(c) = self.city_at(nx, ny) {
-                if self.city(c).owner != slot && self.city(c).garrison_count() > 0 {
+                if self.city(c).owner != slot {
                     self.unstash_garrison(c);
                 }
             }
@@ -682,6 +684,27 @@ mod tests {
         assert_eq!(g.martial_law_units(c), 3);
         // the city's turn puts them back only once nobody foreign is next to it
         g.process_city(c);
+        assert!(g.city(c).garrison_out);
+        assert_eq!(g.units_at(20, 20).len(), 3);
+        g.remove_unit(scout);
+        g.process_city(c);
+        assert!(!g.city(c).garrison_out);
+        assert_eq!(g.units_at(20, 20).len(), 1);
+        assert_eq!(g.city(c).garrison_count(), 2);
+    }
+
+    /// A foreign unit next to a human city with an empty store still sets the let-out bit
+    /// (0x7f17), so the city's turn stashes fortified home units that never fortified there
+    /// (0x131da -> 0x1320d).
+    #[test]
+    fn a_foreign_unit_next_to_a_city_with_an_empty_store_sets_the_let_out_bit() {
+        let (mut g, c, ids) = garrisoned();
+        for id in &ids {
+            g.unit_mut(*id).order = UnitOrder::Fortified;
+        }
+        assert!(!g.city(c).garrison_out);
+        let scout = g.add_unit(rival(&g), unit_ids::MILITIA, 22, 20);
+        assert_eq!(g.try_move(scout, crate::game::Dir8::W).unwrap(), MoveOutcome::Moved);
         assert!(g.city(c).garrison_out);
         assert_eq!(g.units_at(20, 20).len(), 3);
         g.remove_unit(scout);
