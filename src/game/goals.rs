@@ -385,9 +385,25 @@ impl Game {
                             return;
                         }
                     }
+                    // with `exe_quirks` the rest of a square whose meeting held an audience reads
+                    // ds:0xd7f0 as the audience left it: the audience begins by redrawing the
+                    // meeting square, the looker's own (o 0x6391 -> draw_tile_with_units
+                    // 0x1b85a -> unit_at 0x1bade, 0x1bb3c), so the treaty test, the priority
+                    // (from the record of the first unit's number in the looker's civ, a free
+                    // one counting as no defender) and the defend goal (0x84a7..0x8525) take
+                    // the looker's civilization. (When the emissary question redraws the whole
+                    // map view, o 0x7a7a, the last unit drawn leaves its owner there instead:
+                    // not modelled.)
+                    let fortified_defender = |w: &super::Unit| w.order == super::UnitOrder::Fortified && w.info().role == AiRole::Defend;
+                    let (o2, diplomat, defender) = match self.unit_at(u.x, u.y).map(|l| self.unit(l).owner).filter(|_| resumed && self.exe_quirks) {
+                        Some(o) => {
+                            let w = self.all_units().find(|w| w.owner == o && w.record == fu.record);
+                            (o, w.is_some_and(|w| w.kind == unit_ids::DIPLOMAT), w.is_some_and(fortified_defender))
+                        }
+                        None => (o2, fu.kind == unit_ids::DIPLOMAT, fortified_defender(&fu)),
+                    };
                     if !peace(self, civ, o2) {
-                        let defender = fu.order == super::UnitOrder::Fortified && fu.info().role == AiRole::Defend;
-                        let p = if o2 != 0 && fu.kind != unit_ids::DIPLOMAT && !defender { 3 } else { 1 };
+                        let p = if o2 != 0 && !diplomat && !defender { 3 } else { 1 };
                         self.add_goal(civ, nx, ny, goal::ATTACK, p);
                     }
                     // the defend goal comes after the treaty test, whatever its outcome

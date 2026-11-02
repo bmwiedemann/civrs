@@ -1214,4 +1214,33 @@ mod tests {
             assert_eq!(attack_goal(&g, ai), !accept, "the attack goal (priority 3) only without a treaty");
         }
     }
+
+    #[test]
+    fn exe_quirks_the_rest_of_a_looks_square_after_its_audience_reads_the_lookers_civ() {
+        // the audience redraws the looker's square (o 0x6391 -> 0x1b85a -> unit_at 0x1bb3c),
+        // which leaves the looker's civ in ds:0xd7f0 for 0x84a7..0x8525
+        use crate::game::goals::goal;
+        use crate::game::Dir8;
+        let prio = |g: &Game, ai: Slot| g.ai_memory.goals[ai as usize].iter().find(|o| o.kind == goal::ATTACK && o.pos() == (15, 15)).map(|o| o.priority);
+        for quirks in [false, true] {
+            let (mut g, human, ai) = meeting_game();
+            g.exe_quirks = quirks;
+            let h = g.units_of(human)[0];
+            g.unit_mut(h).order = crate::game::UnitOrder::Fortified;
+            let u = g.units_of(ai)[0];
+            assert_eq!(g.unit(h).record, g.unit(u).record);
+            g.unit_mut(u).x = 17;
+            g.reset_goals(ai);
+            g.ai_memory.moving = Some(ai);
+            g.try_move(u, Dir8::W).unwrap();
+            let ds = decisions(&mut g);
+            assert_eq!(ds.len(), 1);
+            g.finish_look();
+            // the fortified Phalanx gives priority 1; with the quirk the record of the same
+            // number in the looker's own civ (the looker, not fortified) gives 3
+            assert_eq!(prio(&g, ai), Some(if quirks { 3 } else { 1 }));
+            let own_defend = g.ai_memory.goals[ai as usize].iter().any(|o| o.kind == goal::DEFEND && o.pos() == (16, 15));
+            assert_eq!(own_defend, quirks);
+        }
+    }
 }
