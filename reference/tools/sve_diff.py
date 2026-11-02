@@ -12,7 +12,11 @@
         skips a unit, so the human's units keep their orders; check OUT_DIR/shot*.png and
         act*.png for dialogs the Space/Return keys answered (production menus, advances).
         The palace screen gets its first section and style, the copy-protection quiz
-        (every 50th turn in BC) its right answer (quiz.py).
+        (every 50th turn in BC) its right answer (quiz.py). The run ends early when CIV.EXE
+        exits to DOS (the human destroyed: "game over" in the log).
+        A new game: $CIVLEVEL (0 Chieftain .. 4 Emperor) and $CIVWORLD (four menu rows 0..2,
+        land, temperature, climate, age: Customize World) pick the setup; diff passes them
+        on to civrs (--level, --world).
     python3 -I sve_diff.py diff CIVRS START.SVE RESULT.SVE [RESULT.SVE ...] [--actions SCRIPT] [--seed N]
         For each CIV.EXE result: civrs imports START.SVE (`new`: starts the new game of the
         seed with the same setup, `civrs --dump state:N:SEED`), plays (result turn - start turn)
@@ -167,11 +171,24 @@ def play(game, slot, turns, out, script=None, seed=None):
         # graphics VGA, no sound, mouse and keyboard; "Start a New Game", the story,
         # Chieftain, 7 civilizations, the Romans, "Caesar", the leader's introduction, the
         # first turn's help overlay and its note (Instant Advice is on at Chieftain)
-        k(['1', 'sleep2', '1', 'sleep8', '1', 'sleep10', 'Return', 'sleep5'])
-        k(['Return', 'sleep3', 'Return', 'sleep3', 'Return', 'sleep3', 'Return', 'sleep3', 'Return', 'sleep6', 'Return', 'sleep4', 'space', 'sleep12'])
-        k(['Return', 'sleep3', 'Return', 'sleep3'])
+        world = os.environ.get('CIVWORLD')
+        level = int(os.environ.get('CIVLEVEL', '0'))
+        if world:
+            # Customize World (title row 3); each of its menus starts on row 1
+            k(['1', 'sleep2', '1', 'sleep8', '1', 'sleep10', 'Return', 'sleep5', 'Down', 'Down', 'Down', 'Return', 'sleep5'])
+            for v in world.split(','):
+                v = int(v)
+                k((['Up'] if v == 0 else ['Down'] if v == 2 else []) + ['Return', 'sleep3'])
+            k(['sleep5'])
+        else:
+            k(['1', 'sleep2', '1', 'sleep8', '1', 'sleep10', 'Return', 'sleep5'])
+        k(['Return', 'sleep6' if level else 'sleep3'] + ['Down'] * level + ['sleep1'] * (level > 0) + ['Return', 'sleep3', 'Return', 'sleep3', 'Return', 'sleep3', 'Return', 'sleep6', 'Return', 'sleep4'])
+        if level == 0:
+            k(['space', 'sleep12', 'Return', 'sleep3', 'Return', 'sleep3'])
+        else:
+            k(['sleep6'])
         # a new game's options: Instant Advice and AutoSave on, End of Turn off
-        opts, last = 3, 0
+        opts, last = (3 if level == 0 else 2), 0
     else:
         # graphics VGA, no sound, mouse and keyboard; the title menu's "Load a Saved Game"; drive C:
         k(['1', 'sleep2', '1', 'sleep8', '1', 'sleep10', 'Return', 'sleep5', 'Down', 'Return', 'sleep3', 'Return', 'sleep2'])
@@ -290,6 +307,14 @@ def play(game, slot, turns, out, script=None, seed=None):
         k((['Up'] * (rows_[0] - 2) if rows_[0] > 2 else ['Down'] * (2 - rows_[0])) + ['Return', 'sleep3', 'Return', 'sleep2'])
         return 'saved'
 
+    def back_in_dos(px):
+        # CIV.EXE has ended: once the human civ is destroyed (no cities, no Settlers) it shows
+        # only the archaeologists ("CAESAR WILL RETURN!", o 0x209f) and exits (ds:0xdc48 = -1,
+        # 0x258f); no key the harness sends quits it. Then dosbox shows the C:\>
+        # prompt in grey on black. No game screen is black at all these points (the map view
+        # has its grey panel at x < 160)
+        return all(px(x, y) == b'\0\0\0' for x, y in ((60, 150), (60, 250), (140, 200), (100, 300), (300, 200), (600, 100))) and any(px(x, y) != b'\0\0\0' for x in range(24) for y in range(400))
+
     run_actions(last)
     # one Space and one save a step; a turn may take as many steps as the human has units
     # waiting for orders, so the budget is per turn ($CIVSTEPS, default 80) and a turn that
@@ -307,6 +332,9 @@ def play(game, slot, turns, out, script=None, seed=None):
         # an advance and the research menu, ...), and the alt+g and Return of one attempt
         # answer at most two of them. So answered dialogs do not count against the six
         # failed attempts (a Space here would skip the turn's first unit unsaved)
+        if back_in_dos(screen()):
+            print('game over: CIV.EXE has exited to DOS (turn %d)' % last, flush=True)
+            break
         failed = 0
         for j in range(40):
             r = save_game()
@@ -314,6 +342,8 @@ def play(game, slot, turns, out, script=None, seed=None):
                 break
             dosciv.shot(os.path.join(out, 'stuck%02d_%d.png' % (i, j)))
             if r != 'dialog':
+                if back_in_dos(screen()):
+                    break
                 failed += 1
                 if failed == 6:
                     break
@@ -342,6 +372,10 @@ def state(civrs, sve, turns, script=None, seed=None, links=None):
     spec = 'state:%d' % turns + (':%d' % int(seed) if seed is not None else '')
     extra = ['--rng-log', path + '.rng'] if seed is not None else []
     load = (['--exe-links', links] if links else []) if sve == 'new' else ['--load-sve', sve]
+    if sve == 'new' and os.environ.get('CIVWORLD'):
+        load += ['--world', os.environ['CIVWORLD']]
+    if sve == 'new' and os.environ.get('CIVLEVEL'):
+        load += ['--level', os.environ['CIVLEVEL']]
     subprocess.run([civrs] + load + ['--dump', spec, '--out', path] + (['--actions', script] if script else []) + extra, check=True)
     with open(path) as f:
         lines = f.read().splitlines()
