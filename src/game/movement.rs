@@ -434,6 +434,12 @@ impl Game {
             if let Some(cu) = self.units.get_mut(id as usize).and_then(|u| u.as_mut()) {
                 cu.seen_by |= 1 << o;
             }
+            // and the step goes on to the unit's look (unit_look 0x6ae2), so the civilizations
+            // of units next to the taken or destroyed city meet
+            if self.unit_opt(id).is_some() {
+                self.mark_sightings(id);
+                self.unit_look_goals(id);
+            }
             return Ok(out);
         }
         let had_hut = target.has(tile_flags::HUT);
@@ -2218,6 +2224,28 @@ mod zoc_tests {
         let before = g.player(o - 1).unit_counter[unit_ids::CARAVAN as usize];
         assert_eq!(g.try_move(leg, Dir8::E), Ok(MoveOutcome::DestroyedCity));
         assert_eq!(g.player(o - 1).unit_counter[unit_ids::CARAVAN as usize], before - 1);
+    }
+
+    #[test]
+    fn a_unit_taking_a_city_looks_and_meets_its_neighbours() {
+        // seed 555 t78: the step goes on after capture_city to unit_look (0x6aa9 -> 0x6ae2)
+        let (mut g, _) = open_field();
+        let h = g.human_slot;
+        let mut civs = (2..8u8).filter(|s| *s != h);
+        let (a, o, p) = (civs.next().unwrap(), civs.next().unwrap(), civs.next().unwrap());
+        for s in [a, o, p] {
+            g.players[s as usize].in_game = true;
+            g.players[s as usize].alive = true;
+        }
+        g.add_city(o, "Base".into(), 30, 30);
+        let c = g.add_city(o, "Pond".into(), 41, 25);
+        g.city_mut(c).size = 1;
+        g.add_unit(p, unit_ids::MILITIA, 42, 26);
+        let s = g.add_unit(a, unit_ids::SETTLERS, 40, 25);
+        g.unit_mut(s).moves_left = 3;
+        assert!(!g.player(a).has_contact(p));
+        assert_eq!(g.try_move(s, Dir8::E), Ok(MoveOutcome::DestroyedCity));
+        assert!(g.player(a).has_contact(p));
     }
 
     #[test]
