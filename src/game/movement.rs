@@ -417,6 +417,9 @@ impl Game {
         }
         if let Some((c, o)) = capture {
             let out = self.capture_city(id, c, cost);
+            // then the step writes the mover's owner | 8 on the layer x+160 (set_tile_owner
+            // 0x6ac8 after 0x6aa9): a mark destroy_city's sweep left there goes again
+            self.note_occupant(slot, tx, ty);
             // the step has reached a goto there before the capture (0x6848..0x6878 come
             // before 0x6aa9): the goto goes, and a computer's unit stops
             if u.goto == Some((tx, ty)) && self.unit_opt(id).is_some() {
@@ -2215,6 +2218,25 @@ mod zoc_tests {
         let before = g.player(o - 1).unit_counter[unit_ids::CARAVAN as usize];
         assert_eq!(g.try_move(leg, Dir8::E), Ok(MoveOutcome::DestroyedCity));
         assert_eq!(g.player(o - 1).unit_counter[unit_ids::CARAVAN as usize], before - 1);
+    }
+
+    #[test]
+    fn exe_quirks_the_step_after_a_capture_writes_the_movers_unit_bit_again() {
+        // seed 31337 t46: the swept free record of the conqueror's number last stood in the
+        // city itself; its mark goes when the step writes owner | 8 (0x6ac8)
+        let (mut g, _) = open_field();
+        let h = g.human_slot;
+        let o = if h == 3 { 4 } else { 3 };
+        let c = g.add_city(o, "Pond".into(), 41, 25);
+        g.city_mut(c).size = 1;
+        let leg = g.add_unit(h, unit_ids::LEGION, 40, 25);
+        g.unit_mut(leg).moves_left = 3;
+        let gone = g.add_unit(o, unit_ids::MILITIA, 41, 25);
+        g.unit_mut(gone).record = g.unit(leg).record;
+        g.remove_unit(gone);
+        g.exe_quirks = true;
+        assert_eq!(g.try_move(leg, Dir8::E), Ok(MoveOutcome::DestroyedCity));
+        assert_eq!(g.unit_at(41, 25), Some(leg));
     }
 
     #[test]
