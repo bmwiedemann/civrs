@@ -1355,6 +1355,12 @@ impl Game {
                 // Diplomat, so 0xe05d sends it to 0xe3bc, which empties the store and builds
                 // nothing; civrs does what the code meant.)
                 if k == unit_ids::DIPLOMAT && !human {
+                    // with `exe_quirks` as CIV.EXE runs: the store is emptied (0xe3c4), no unit,
+                    // no site search and no re-choice, so the city goes on with the Diplomat
+                    if self.exe_quirks {
+                        self.city_mut(c).shields = 0;
+                        return;
+                    }
                     // without a free unit slot nothing is built and nothing is paid (0xe30b)
                     if let Some((target, id)) = self.ai_diplomat_site(owner).and_then(|(at, t)| self.create_unit(owner, k, at.0, at.1).map(|id| (t, id))) {
                         self.unit_mut(id).home = Some(c);
@@ -3887,6 +3893,15 @@ mod diplomat_tests {
         assert_eq!(g.city(home).shields, 0);
         let advice = g.ai_rechoose(home);
         assert_eq!(g.city(home).production, advice);
+        // CIV.EXE (`exe_quirks`): no Diplomat, the store emptied, no draws, the item kept
+        g.exe_quirks = true;
+        g.city_mut(home).production = Production::Unit(unit_ids::DIPLOMAT);
+        g.city_mut(home).shields = cost + 3;
+        crate::game::rng::trace_start();
+        g.complete_production(home, Production::Unit(unit_ids::DIPLOMAT));
+        assert!(crate::game::rng::trace_take().is_empty());
+        assert_eq!(g.all_units().filter(|u| u.kind == unit_ids::DIPLOMAT).count(), 1);
+        assert_eq!((g.city(home).shields, g.city(home).production), (0, Production::Unit(unit_ids::DIPLOMAT)));
     }
 
     #[test]
