@@ -383,7 +383,8 @@ impl Game {
         }
     }
 
-    /// 'b' (0x5753): found a city with a Settlers unit, or add it to the city on the square.
+    /// 'b' (0x5753): found a city with a Settlers unit, or add it to the city on the square
+    /// (one more citizen, placed only by the city's next run of the city routine).
     /// A city of size 10 or more takes no Settlers, Aqueduct or not (*ADDCITY). A new city
     /// needs land in rows 2..47 and a free one of the 128 city records (*PMAX, o 0x1b375);
     /// nothing keeps it off the squares next to another city.
@@ -401,9 +402,10 @@ impl Game {
             if city.size >= 10 {
                 return Err(RuleError::AddCity);
             }
+            // the new citizen gets no square or specialist here (0x57cc..0x57fb: size + 1,
+            // the unit deleted): the city's next placement run takes it in
             self.city_mut(c).size += 1;
             self.remove_unit(id);
-            self.auto_assign(c);
             return Ok(c);
         }
         if t.is_ocean() {
@@ -771,6 +773,22 @@ mod tests {
         }
         let s = g.add_unit(slot, unit_ids::SETTLERS, x, y);
         (g, s)
+    }
+
+    /// Settlers joining a city add a citizen and nothing else (0x57cc): no square, no
+    /// specialist until the city's next placement run.
+    #[test]
+    fn settlers_joining_a_city_leave_its_squares_alone() {
+        let (mut g, s) = settlers_on(Terrain::Grassland);
+        let slot = g.human_slot;
+        let c = g.add_city(slot, "Join".into(), 30, 20);
+        g.city_mut(c).size = 3;
+        g.auto_assign(c);
+        let (worked, specialists) = (g.city(c).worked, g.city(c).specialists.clone());
+        assert_eq!(g.found_city(s), Ok(c));
+        assert_eq!(g.city(c).size, 4);
+        assert_eq!((g.city(c).worked, &g.city(c).specialists), (worked, &specialists));
+        assert!(g.unit_opt(s).is_none());
     }
 
     #[test]
