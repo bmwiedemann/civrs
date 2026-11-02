@@ -2209,8 +2209,49 @@ mod zoc_tests {
         let leg = g.add_unit(h, unit_ids::LEGION, 40, 25);
         g.unit_mut(leg).moves_left = 3;
         g.exe_quirks = true;
+        // a record freed by delete_unit links nowhere (0xff)
+        let r = g.unit(leg).record as usize;
+        g.exe_dead_link[o as usize * 128 + r] = 0xff;
         let before = g.player(o - 1).unit_counter[unit_ids::CARAVAN as usize];
         assert_eq!(g.try_move(leg, Dir8::E), Ok(MoveOutcome::DestroyedCity));
         assert_eq!(g.player(o - 1).unit_counter[unit_ids::CARAVAN as usize], before - 1);
+    }
+
+    #[test]
+    fn exe_quirks_the_sweep_follows_a_never_used_record_to_record_0() {
+        // seed 7777 t166: civ 6's record 6, never used, keeps the zeroed link 0 (civ_init
+        // o 0x4a28 frees by type only), so for_each_in_stack (0x92a7) goes on to record 0,
+        // freed by delete_unit (link 0xff): two type -1 deletions, the second writes its owner
+        // on the square record 0 last held (0x1ba98)
+        let (mut g, _) = open_field();
+        g.exe_quirks = true;
+        let o = 6;
+        let first = g.add_unit(o, unit_ids::MILITIA, 38, 22);
+        assert_eq!(g.unit(first).record, 0);
+        g.remove_unit(first);
+        let other = g.add_unit(5, unit_ids::LEGION, 38, 22);
+        g.note_occupant(5, 38, 22);
+        let before = g.player(o - 1).unit_counter[unit_ids::CARAVAN as usize];
+        g.exe_destroy_sweep(o, 6);
+        assert_eq!(g.player(o - 1).unit_counter[unit_ids::CARAVAN as usize], before - 2);
+        assert_eq!(g.exe_dead_link[o as usize * 128 + 6], 0xff);
+        assert_eq!(g.unit_at(38, 22), None);
+        let _ = other;
+    }
+
+    #[test]
+    fn exe_quirks_a_unit_alone_in_its_ring_leaving_hides_the_others() {
+        // 0x1ba98: a unit with link 0xff writes its owner without the unit bit; the units of
+        // another ring on the square are no longer found by unit_at
+        let (mut g, _) = open_field();
+        g.exe_quirks = true;
+        let a = g.add_unit(5, unit_ids::LEGION, 38, 22);
+        g.exe_unit_bit_lost = vec![false; crate::rules::MAP_W * crate::rules::MAP_H];
+        g.exe_unit_bit_lost[crate::game::Map::idx(38, 22)] = true;
+        let b = g.add_unit(5, unit_ids::CATAPULT, 38, 22);
+        assert_eq!((g.unit(a).next, g.unit(b).next), (None, None));
+        assert_eq!(g.unit_at(38, 22), Some(a));
+        g.relocate_unit(b, 37, 22);
+        assert_eq!(g.unit_at(38, 22), None);
     }
 }

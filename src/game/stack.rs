@@ -47,8 +47,21 @@ impl Game {
 
     /// Take `id` out of its stack ring (`stack_unlink` 0x1972:0xbbf, via 0x1a68:0x1418): its
     /// predecessor points past it, the last other unit of a ring of two is alone again.
+    /// A unit alone in its ring (0xff) instead writes its owner without the unit bit on the
+    /// layer x+160 (0x1ba98 -> 0x1be55): with `exe_quirks`, when other units still stand there
+    /// (in a ring of their own, `exe_unit_bit_lost`), `unit_at` no longer finds them.
     pub(crate) fn stack_unlink(&mut self, id: UnitId) {
-        let Some(next) = self.unit(id).next else { return };
+        let Some(next) = self.unit(id).next else {
+            let (owner, x, y) = (self.unit(id).owner, self.unit(id).x, self.unit(id).y);
+            if self.exe_quirks && Map::in_bounds(x, y) && self.all_units().any(|u| u.id != id && u.x == x && u.y == y) {
+                self.note_occupant(owner, x, y);
+                if self.exe_unit_bit_lost.len() != crate::rules::MAP_W * crate::rules::MAP_H {
+                    self.exe_unit_bit_lost = vec![false; crate::rules::MAP_W * crate::rules::MAP_H];
+                }
+                self.exe_unit_bit_lost[Map::idx(x, y)] = true;
+            }
+            return;
+        };
         if self.unit_opt(next).and_then(|n| n.next) == Some(id) {
             self.unit_mut(next).next = None;
         } else {

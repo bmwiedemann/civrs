@@ -41,6 +41,8 @@ struct Probe {
     sea: bool,
     /// The unit type moves one square a turn (every step costs 3 off roads, 0x1e806).
     one_move: bool,
+    /// The civilization the search runs for (the scratch unit's is 0).
+    civ: Slot,
 }
 
 /// `dist_metric` 0x1d43:0x1fe: max(|dx|, |dy|) + min(|dx|, |dy|) / 2, no wrap.
@@ -227,7 +229,7 @@ impl Game {
                     if self.continent_exe(t.0, t.1) != cont {
                         continue;
                     }
-                    let probe = Probe { x: r.0, y: r.1, sea: false, one_move: true };
+                    let probe = Probe { x: r.0, y: r.1, sea: false, one_move: true, civ: 0 };
                     let Some(cost) = self.probe_cost(probe, t, 20) else { continue };
                     if cost >= 20 {
                         continue;
@@ -337,7 +339,7 @@ impl Game {
 
     fn probe_of(&self, id: UnitId) -> Probe {
         let u = self.unit(id);
-        Probe { x: u.x, y: u.y, sea: u.info().domain == Domain::Sea, one_move: u.info().moves == 1 }
+        Probe { x: u.x, y: u.y, sea: u.info().domain == Domain::Sea, one_move: u.info().moves == 1, civ: u.owner }
     }
 
     /// `goto_block_cost` 0x1ec12: the cost of a local search from `from` to `to` for a
@@ -357,7 +359,8 @@ impl Game {
     /// from the queue), stopping where the cost passes the cheapest found for the probe's own
     /// square. Then the step to the neighbour of least cost below 99 plus the price of the step
     /// itself (a deviation: CIV.EXE leaves the step out, so a settler beside a road would cross
-    /// a mountain instead), ties going to fewer units there (4 each) plus distance to `w`.
+    /// a mountain instead), ties going to fewer units there (4 each, the first ten of the
+    /// ring) plus distance to `w`.
     /// Returns (direction or -1, cost found).
     fn local_search(&mut self, p: Probe, w: (i32, i32), limit: i32) -> (i32, i32) {
         let (ox, oy) = (w.0 - 8, w.1 - 8);
@@ -482,7 +485,9 @@ impl Game {
             // step never counted; add the step as the flood would price it (not with
             // `exe_quirks`, 0x1eae2)
             let gv = if self.exe_quirks { gv } else { gv + edge(road_here, self.exe_road(wx, ny), here) };
-            let crowd = |g: &Game| 4 * g.units_at(wx, ny).len() as i32 + Map::civ_distance(w, (wx, ny));
+            // the units there: the ring of unit_at's unit walked for the searching civ
+            // (0x1eb1b -> 0x7e6:0x124d mode 2, `exe_stack_count`)
+            let crowd = |g: &Game| 4 * g.exe_stack_count(p.civ, wx, ny) + Map::civ_distance(w, (wx, ny));
             if gv < best {
                 best = gv;
                 dir = k as i32;
@@ -528,7 +533,7 @@ impl Game {
             let (sx, sy) = (4 * nx + 1, 4 * ny + 1);
             let tile = [(sx, sy), (sx + 1, sy), (sx + 1, sy + 1), (sx, sy + 1)].into_iter().find(|&(tx, ty)| (!exe_in_map(tx, ty) || self.map.is_ocean(tx, ty)) == sea);
             let Some(t) = tile else { continue };
-            let probe = Probe { x: t.0, y: t.1, sea, one_move: !sea };
+            let probe = Probe { x: t.0, y: t.1, sea, one_move: !sea, civ: 0 };
             probed |= (probe.x - x).abs() <= 7 || (probe.y - y).abs() <= 7;
             if self.probe_cost(probe, (x, y), 18).is_some() {
                 best = d;
@@ -811,8 +816,8 @@ mod tests {
         let run = |quirks: bool| -> Vec<u8> {
             let mut g = flat();
             g.exe_quirks = quirks;
-            g.local_search(Probe { x: 12, y: 12, sea: false, one_move: true }, (10, 12), 999);
-            let (d, _) = g.local_search(Probe { x: 30, y: 12, sea: false, one_move: false }, (10, 12), 999);
+            g.local_search(Probe { x: 12, y: 12, sea: false, one_move: true, civ: 0 }, (10, 12), 999);
+            let (d, _) = g.local_search(Probe { x: 30, y: 12, sea: false, one_move: false, civ: 0 }, (10, 12), 999);
             assert_eq!(d, -1);
             g.ai_memory.goto_cache.grid.clone()
         };
@@ -826,9 +831,9 @@ mod tests {
             let mut g = flat();
             g.exe_quirks = true;
             g.exe_pollution_techs = techs;
-            g.local_search(Probe { x: 12, y: 12, sea: false, one_move: true }, (10, 12), 999);
+            g.local_search(Probe { x: 12, y: 12, sea: false, one_move: true, civ: 0 }, (10, 12), 999);
             let before = g.ai_memory.goto_cache.grid.clone();
-            g.local_search(Probe { x: 18, y: 12 + dy, sea: false, one_move: false }, (10, 12), 999);
+            g.local_search(Probe { x: 18, y: 12 + dy, sea: false, one_move: false, civ: 0 }, (10, 12), 999);
             g.ai_memory.goto_cache.grid == before
         };
         assert!(!reused(-5, 0) && !reused(-4, 2) && !reused(-3, 0));

@@ -467,17 +467,18 @@ impl Game {
             return Err(Production::Unit(if explosives { unit_ids::KNIGHTS } else { unit_ids::LEGION }));
         }
         // [bp-0x8]: the city needs defenders: 2 with nobody inside, 1 with fewer Defend-role
-        // units than size/4 (+1 on a war footing)
-        let inside = self.units_at(city.x, city.y);
-        let need = if inside.is_empty() {
-            2
-        } else {
-            let defenders = inside.iter().filter(|u| self.unit(**u).info().role == AiRole::Defend).count() as i32;
+        // units than size/4 (+1 on a war footing). It asks unit_at (0xb13f; with `exe_quirks`
+        // a square that lost its unit bit is empty) and counts the role in the first ten of
+        // that unit's ring (0x7e6:0x137c -> for_each_in_stack 0x92a7)
+        let need = if let Some(head) = self.unit_at(city.x, city.y) {
+            let defenders = self.stack_from(head).iter().filter(|u| self.unit(**u).info().role == AiRole::Defend).count() as i32;
             if city.size as i32 / 4 + war as i32 > defenders {
                 1
             } else {
                 0
             }
+        } else {
+            2
         };
         let military_supported = self.supported_units(c).iter().filter(|u| self.unit(**u).kind < unit_ids::DIPLOMAT).count() as i32;
         let civilized = self.traits(slot).civilized as i32;
@@ -756,6 +757,24 @@ mod tests {
         g.add_unit(slot, unit_ids::SETTLERS, 0, 0);
         let a = g.build_advice(c).unwrap();
         let (best, _) = a.best.unwrap();
+        assert!(matches!(best, Production::Unit(u) if rules::UNITS[u as usize].role == AiRole::Defend), "{best:?}");
+    }
+
+    #[test]
+    fn exe_quirks_a_city_square_without_its_unit_bit_counts_as_empty() {
+        // 0xb13f asks unit_at: a square whose layer lost the unit bit has nobody (need 2)
+        let (mut g, c) = ai_city();
+        let slot = g.city(c).owner;
+        let (x, y) = g.city(c).pos();
+        for id in g.units_at(x, y) {
+            g.remove_unit(id);
+        }
+        g.add_unit(slot, unit_ids::SETTLERS, 0, 0);
+        g.add_unit(slot, unit_ids::CATAPULT, x, y);
+        g.exe_quirks = true;
+        g.exe_unit_bit_lost = vec![false; rules::MAP_W * rules::MAP_H];
+        g.exe_unit_bit_lost[crate::game::Map::idx(x, y)] = true;
+        let (best, _) = g.build_advice(c).unwrap().best.unwrap();
         assert!(matches!(best, Production::Unit(u) if rules::UNITS[u as usize].role == AiRole::Defend), "{best:?}");
     }
 

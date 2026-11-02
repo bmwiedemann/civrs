@@ -254,7 +254,8 @@ fn city_goals(g: &mut Game, slot: Slot) {
                 g.add_goal(slot, city.x, city.y, goal::ATTACK, prio);
             }
         }
-        if g.units_at(city.x, city.y).is_empty() && city.garrison[0] == crate::game::city::NO_GARRISON {
+        // nobody there by unit_at (0x15b41; with `exe_quirks` a square that lost its unit bit)
+        if g.unit_at(city.x, city.y).is_none() && city.garrison[0] == crate::game::city::NO_GARRISON {
             let prio = if city.owner == slot { 4 } else { 2 };
             g.add_goal(slot, city.x, city.y, goal::DEFEND, prio);
         }

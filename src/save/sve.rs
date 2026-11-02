@@ -420,6 +420,8 @@ fn import_slot_with(data: &[u8], map_pic: &[u8], moves_back: bool, resume: bool)
     g.exe_city_owner = (0..128usize).map(|i| data[off::CITIES + 0x1c * i + 0xb]).collect();
     // the squares the unit records hold, free ones too (`Game::exe_unit_ghost`)
     g.exe_unit_ghost = (0..8 * 128usize).map(|i| (data[off::UNITS + 12 * i + 1], data[off::UNITS + 12 * i + 2])).collect();
+    // and their stack links (`Game::exe_dead_link`)
+    g.exe_dead_link = (0..8 * 128usize).map(|i| data[off::UNITS + 12 * i + 0xa]).collect();
     for i in 0..128usize {
         let r = &data[off::CITIES + 0x1c * i..off::CITIES + 0x1c * (i + 1)];
         if r[6] == 0xff {

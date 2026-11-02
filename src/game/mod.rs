@@ -409,6 +409,14 @@ pub struct Game {
     /// (0, 0) for records never used (as a new game's); not saved.
     #[serde(skip)]
     pub exe_unit_ghost: Vec<(u8, u8)>,
+    /// The stack link (+0xa) each free unit record of CIV.EXE holds, at `civ * 128 + record`:
+    /// 0xff once delete_unit freed it (0x1ba98 -> stack_unlink 0x1a2df), 0 for a record never
+    /// used since the unit table was zeroed (a new game's: civ_init o 0x4a28 frees the
+    /// records by type and status only and leaves the links). With `exe_quirks` destroy_city's
+    /// sweep follows them (`exe_for_each_in_stack`). Imported from a save; not saved (empty:
+    /// 0xff).
+    #[serde(skip)]
+    pub exe_dead_link: Vec<u8>,
     /// With `exe_quirks`: the squares (`Map::idx`) whose layer x+160 lost its unit bit 8 while
     /// units stand there, as when a free record's delete writes its owner over a square it
     /// once held (`exe_destroy_sweep`): `unit_at` and `unit_owner_at` (0x1bade, 0x1bb66) then
@@ -683,6 +691,7 @@ impl Game {
             quiet_si: None,
             exe_city_owner: Vec::new(),
             exe_unit_ghost: Vec::new(),
+            exe_dead_link: vec![0; 8 * 128],
             exe_unit_bit_lost: Vec::new(),
             exe_stale_home: Vec::new(),
             exe_job_bits: std::collections::HashMap::new(),
@@ -1276,37 +1285,137 @@ impl Game {
     /// reads a domain from before the unit table, not land, so delete_unit counts the type -1:
     /// the Caravan counter of the civilization before the owner goes down (0x8e63). Not copied
     /// in play (a sane sweep finds the conqueror's own land unit and deletes nothing).
-    /// A free record (`exe_unit_ghost`) is deleted again: its link is 0xff, so
-    /// remove_city_marker (0x1ba98) writes the owner on the layer x+160 of the square the record
-    /// last held (0x1be55, the unit bit 8 cleared), and the losses of the type -1 count as the
-    /// previous civilization's Caravans when the losses are being counted (0x8d9d).
+    /// A free record (`exe_unit_ghost`) is deleted again: with link 0xff remove_city_marker
+    /// (0x1ba98) writes the owner on the layer x+160 of the square the record last held
+    /// (0x1be55, the unit bit 8 cleared), and the losses of the type -1 count as the previous
+    /// civilization's Caravans when the losses are being counted (0x8d9d). A record never
+    /// used links to record 0 (`exe_dead_link`): the walk goes on there, so a dead record 0
+    /// is deleted too, or record 0's ring is swept, up to ten records (0x92a7).
     pub fn exe_destroy_sweep(&mut self, owner: Slot, record: u8) {
-        let first = self.all_units().find(|u| u.owner == owner && u.record == record).map(|u| u.id);
-        match first {
-            Some(f) => {
-                for o in self.stack_from(f) {
-                    if self.unit_opt(o).is_some_and(|u| !u.is_land()) {
-                        self.remove_unit(o);
+        self.exe_for_each_in_stack(owner, record, false);
+    }
+
+    /// The unit of `owner`'s record `record`, if the record is in use.
+    fn exe_record_unit(&self, owner: Slot, record: u8) -> Option<UnitId> {
+        self.all_units().find(|u| u.owner == owner && u.record == record).map(|u| u.id)
+    }
+
+    /// The stack link (+0xa) of `owner`'s record `record`: a unit's ring, else the free
+    /// record's link (`exe_dead_link`).
+    fn exe_link(&self, owner: Slot, record: u8) -> u8 {
+        match self.exe_record_unit(owner, record) {
+            Some(id) => self.unit(id).next.map_or(0xff, |n| self.unit(n).record),
+            None => self.exe_dead_link.get(owner as usize * 128 + record as usize).copied().unwrap_or(0xff),
+        }
+    }
+
+    fn exe_set_dead_link(&mut self, owner: Slot, record: u8, link: u8) {
+        if self.exe_dead_link.len() < 8 * 128 {
+            self.exe_dead_link.resize(8 * 128, 0xff);
+        }
+        self.exe_dead_link[owner as usize * 128 + record as usize] = link;
+    }
+
+    /// `for_each_in_stack(civ, unit, cb)` (CIV.EXE 0x92a7) from a record that may be free:
+    /// up to ten records, each link read before the callback, up to a 0xff link or back at
+    /// the first. The callback kills the units not of the land (`kill_nonland_cb` 0x949f) or,
+    /// with `land`, those of the land (0x946c); a free record's type 0xff reads domain 27
+    /// from before the unit table (ds:0x1116), never land.
+    fn exe_for_each_in_stack(&mut self, owner: Slot, first: u8, land: bool) {
+        let mut cur = first;
+        for _ in 0..10 {
+            let next = self.exe_link(owner, cur);
+            match self.exe_record_unit(owner, cur) {
+                Some(id) => {
+                    if self.unit(id).is_land() == land {
+                        self.remove_unit(id);
                     }
+                }
+                None if !land => self.exe_delete_free_record(owner, cur),
+                None => {}
+            }
+            if next == 0xff || next == first {
+                break;
+            }
+            cur = next;
+        }
+    }
+
+    /// The records `for_each_in_stack(civ, record)` (0x92a7) visits, without a callback.
+    fn exe_walk(&self, owner: Slot, first: u8) -> Vec<u8> {
+        let mut v = vec![first];
+        let mut cur = first;
+        while v.len() < 10 {
+            let next = self.exe_link(owner, cur);
+            if next == 0xff || next == first {
+                break;
+            }
+            v.push(next);
+            cur = next;
+        }
+        v
+    }
+
+    /// The units a stack count (0x7e6:0x124d mode 2) finds on (x, y) for `civ`: none without
+    /// a unit by `unit_at`, else the first ten of that unit's ring. With `exe_quirks` the walk
+    /// takes `civ`'s record of that unit's number (CIV.EXE passes the searching civ), free
+    /// records and other squares included.
+    pub(crate) fn exe_stack_count(&self, civ: Slot, x: i32, y: i32) -> i32 {
+        let Some(head) = self.unit_at(x, y) else { return 0 };
+        if self.exe_quirks {
+            self.exe_walk(civ, self.unit(head).record).len() as i32
+        } else {
+            self.stack_from(head).len() as i32
+        }
+    }
+
+    /// `delete_unit` (CIV.EXE 0x8d6c) on a free record (type 0xff, `exe_destroy_sweep`).
+    fn exe_delete_free_record(&mut self, owner: Slot, record: u8) {
+        let i = owner as usize * 128 + record as usize;
+        let (x, y) = self.exe_unit_ghost.get(i).copied().unwrap_or((0, 0));
+        let (x, y) = (x as i32, y as i32);
+        let p = (owner > 0).then(|| owner as usize - 1);
+        if let (Some(p), true) = (p, self.counting_losses) {
+            self.players[p].units_lost_by_type[27] += 1;
+        }
+        // type -1 carries 127 (ds:0x1124): a linked record on Ocean drowns the land units its
+        // links lead to (0x8dba..0x8df0)
+        if self.exe_link(owner, record) != 0xff && Map::in_bounds(x, y) && self.map.tile(x, y).is_ocean() {
+            self.exe_for_each_in_stack(owner, record, true);
+        }
+        if let Some(p) = p {
+            self.players[p].unit_counter[27] -= 1;
+        }
+        let link = self.exe_link(owner, record);
+        if link != 0xff {
+            // stack_unlink (0x1a2df): the predecessor points past it (free records only: no
+            // ring of units leads to a free record)
+            if self.exe_link(owner, link) == record {
+                if self.exe_record_unit(owner, link).is_none() {
+                    self.exe_set_dead_link(owner, link, 0xff);
+                }
+            } else {
+                let mut cur = link;
+                let mut n = 0;
+                loop {
+                    cur = self.exe_link(owner, cur);
+                    n += 1;
+                    if n >= 32 || cur == 0xff || self.exe_link(owner, cur) == record {
+                        break;
+                    }
+                }
+                if n < 32 && cur != 0xff && self.exe_record_unit(owner, cur).is_none() {
+                    self.exe_set_dead_link(owner, cur, link);
                 }
             }
-            None => {
-                if owner > 0 {
-                    let p = &mut self.players[owner as usize - 1];
-                    p.unit_counter[27] -= 1;
-                    if self.counting_losses {
-                        p.units_lost_by_type[27] += 1;
-                    }
+            self.exe_set_dead_link(owner, record, 0xff);
+        } else {
+            self.note_occupant(owner, x, y);
+            if Map::in_bounds(x, y) {
+                if self.exe_unit_bit_lost.len() != rules::MAP_W * rules::MAP_H {
+                    self.exe_unit_bit_lost = vec![false; rules::MAP_W * rules::MAP_H];
                 }
-                let (x, y) = self.exe_unit_ghost.get(owner as usize * 128 + record as usize).copied().unwrap_or((0, 0));
-                let (x, y) = (x as i32, y as i32);
-                self.note_occupant(owner, x, y);
-                if Map::in_bounds(x, y) {
-                    if self.exe_unit_bit_lost.len() != rules::MAP_W * rules::MAP_H {
-                        self.exe_unit_bit_lost = vec![false; rules::MAP_W * rules::MAP_H];
-                    }
-                    self.exe_unit_bit_lost[Map::idx(x, y)] = true;
-                }
+                self.exe_unit_bit_lost[Map::idx(x, y)] = true;
             }
         }
     }
@@ -1326,6 +1435,8 @@ impl Game {
         if let Some(g) = self.exe_unit_ghost.get_mut(i) {
             *g = (x as u8, y as u8);
         }
+        // delete_unit unlinks it (0x1ba98 -> stack_unlink 0x1a2df writes 0xff)
+        self.exe_set_dead_link(owner, record, 0xff);
     }
 
     pub fn destroy_city(&mut self, id: CityId, by: Slot) {
