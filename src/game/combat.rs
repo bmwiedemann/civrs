@@ -480,9 +480,6 @@ impl Game {
         // the replay records the city as taken (0x13f97)
         self.replay_city(super::replay::kind::CAPTURE, by, c);
         let unrest = self.captured_in_disorder(by);
-        // capture_city leaves the production byte to a human captor (0x142fc..0x1431a: only a
-        // computer's is set and chosen again, 0x14328)
-        let keep_production = self.player(by).human;
         {
             let cm = self.city_mut(c);
             cm.owner = by;
@@ -498,9 +495,6 @@ impl Game {
             cm.specialists.clear();
             cm.shields = 0;
             cm.caravan_shields = 0;
-            if !keep_production {
-                cm.production = super::Production::Unit(unit_ids::MILITIA);
-            }
             cm.improvements &= kept;
         }
         self.city_changed_hands(c, from, by);
@@ -511,6 +505,13 @@ impl Game {
         let adv = self.capture_steal(by, from);
         if adv.is_some() && !self.player(by).human {
             self.rechoose_all(by);
+        }
+        // capture_city leaves the production byte to a human captor (0x142fc..0x1431a); a
+        // computer's is set to 0 and chosen again (0x14328, `rechoose_after_capture`) only
+        // now: the re-choice in all its cities above still sees the loser's item in the new
+        // city (0xb028 counts it among the units built on the continent)
+        if !self.player(by).human {
+            self.city_mut(c).production = super::Production::Unit(unit_ids::SETTLERS);
         }
         // units supported by the city are disbanded unless they stand in it (0x14265..0x142a4),
         // units of the loser inside are gone; when a unit takes its own city under
@@ -650,7 +651,13 @@ impl Game {
         // civ_init zeroes the continent policies (o5 0x49bb), so the rebels' first AI turn
         // re-chooses on every continent whose policy is not 0 (0x15f12 -> 0x18bef)
         self.ai_memory.policies[new_slot as usize] = Some([super::production::POLICY_NONE; 16]);
-        self.clear_census(new_slot);
+        // civ_init and civil_war leave the slot's census rows (ds:0x6cac, 0x807a, 0x6b96,
+        // 0xd2f8, 0x2a6e) as its last AI turn wrote them: with `exe_quirks` a dead slot's
+        // citizens stay and add to the rebels' (transfer_city o 0x15428), so the loyal side
+        // loses them too (o 0x1501b) and the captured capital's plunder (0x14437) grows
+        if !self.exe_quirks {
+            self.clear_census(new_slot);
+        }
         // the rebels get half the military strength of the census (ds:0x6e82, o 0x14e0f)
         self.ai_memory.census.strength[new_slot as usize] = self.ai_memory.census.strength[from as usize & 7] / 2;
         let src = self.player(from).clone();
@@ -711,12 +718,12 @@ impl Game {
             let (x, y) = self.city(*c).pos();
             self.city_mut(*c).owner = new_slot;
             self.note_occupant(new_slot, x, y);
-            // transfer_city (o 0x153f4) adds the size to the rebels' citizens, which the
-            // loyal ones lose (o 0x1501b)
+            // transfer_city (o 0x153f4) adds the size to the rebels' citizens
             let size = self.city(*c).size as i32;
             self.ai_memory.census.citizens[new_slot as usize] += size;
-            self.ai_memory.census.citizens[from as usize & 7] -= size;
         }
+        // which the loyal ones lose, all of them (o 0x1501b)
+        self.ai_memory.census.citizens[from as usize & 7] -= self.ai_memory.census.citizens[new_slot as usize];
 
         // the units
         let home_owner = |g: &Game, u: &Unit| u.home.and_then(|h| g.city_opt(h)).map(|c| c.owner);
@@ -779,9 +786,15 @@ impl Game {
     /// 0x8d6c, which drowns a ship's cargo, then `create_unit` 0x8b51 with its home rule).
     /// Cargo re-created before its ship rides on with the new one's stack; the old owner's
     /// drowns. With all of `owner`'s unit slots in use the unit is only deleted (civil_war
-    /// does not check and writes to slot -1, o 0x15088).
+    /// does not check and writes to slot -1, o 0x15088). Between the two civil_war sets the
+    /// square's unit bit (`set_city_bit` 0x1bb97, o 0x15066 / 0x1510c / 0x151d0 / 0x15341),
+    /// so a lone unit's delete (0x1ba98 writes the owner without it) does not keep the new
+    /// unit out of the ring of those re-created there before it.
     fn recreate_unit(&mut self, u: &Unit, owner: Slot) -> Option<UnitId> {
         self.remove_unit(u.id);
+        if let Some(b) = self.exe_unit_bit_lost.get_mut(Map::idx(Map::wrap_x(u.x), u.y)) {
+            *b = false;
+        }
         let n = self.create_unit(owner, u.kind, u.x, u.y)?;
         self.players[owner as usize].stats.units_built -= 1;
         Some(n)
@@ -1547,6 +1560,53 @@ mod tests {
         assert_ne!(g.city(base).production, odd);
     }
 
+    /// capture_city sets a computer captor's production byte (0x14328) only after
+    /// steal_advance's re-choice in all its cities (0x14239 -> 0x1462f): that re-choice
+    /// counts the loser's unit in the new city among those built on the continent (0xb028).
+    #[test]
+    fn the_captors_rechoice_counts_the_losers_unit_in_the_new_city() {
+        let mut g = flat_game();
+        let by = (3..8u8).find(|s| *s != g.human_slot).unwrap();
+        g.players[by as usize].in_game = true;
+        g.players[by as usize].alive = true;
+        g.set_relation(by, 2, Relation::War);
+        let victim_knows: Vec<u8> = (0..72).filter(|a| g.player(2).knows(*a)).collect();
+        for a in victim_knows {
+            g.players[by as usize].learn(a);
+        }
+        g.players[by as usize].learn(rules::advance_ids::BRONZE_WORKING);
+        let adv = (0..72u8).find(|a| !g.player(by).knows(*a)).unwrap();
+        g.players[2].learn(adv);
+        let base = g.add_city(by, "Base".into(), 8, 8);
+        g.city_mut(base).size = 3;
+        // nothing left to build but units
+        g.city_mut(base).improvements = !0;
+        for _ in 0..3 {
+            g.add_unit(by, unit_ids::PHALANX, 8, 8);
+        }
+        for _ in 0..4 {
+            g.add_unit(by, unit_ids::MILITIA, 9, 9);
+        }
+        g.add_unit(by, unit_ids::SETTLERS, 9, 9);
+        let c = g.add_city(2, "Loot".into(), 20, 20);
+        g.city_mut(c).size = 3;
+        g.city_mut(c).production = crate::game::Production::Unit(unit_ids::PHALANX);
+        let a = g.add_unit(by, unit_ids::LEGION, 19, 20);
+        // what the re-choice of Base makes of each item in the new city
+        let pick = |item: u8| {
+            let mut h = g.clone();
+            h.city_mut(c).owner = by;
+            h.players[by as usize].learn(adv);
+            h.city_mut(c).production = crate::game::Production::Unit(item);
+            h.ai_rechoose(base)
+        };
+        let (losers, placeholder) = (pick(unit_ids::PHALANX), pick(unit_ids::MILITIA));
+        assert_ne!(losers, placeholder);
+        assert_eq!(g.try_move(a, crate::game::Dir8::E).unwrap(), MoveOutcome::CapturedCity(c));
+        assert!(g.player(by).knows(adv));
+        assert_eq!(g.city(base).production, losers);
+    }
+
     #[test]
     fn gunpowder_taken_with_a_city_clears_its_kept_barracks() {
         // steal_advance (0x14239) runs after the owner and the losses are set (0x13ef5)
@@ -1899,6 +1959,52 @@ mod tests {
         rebels.sort();
         assert_eq!(rebels, vec![ids[4], ids[5], ids[6]]);
         assert_eq!(g.player(n).relation(2), Relation::War);
+    }
+
+    /// With `exe_quirks` the slot keeps the citizens of its last AI turn (civ_init does not
+    /// clear ds:0xd2f8), transfer_city adds to them (o 0x15428) and the loyal side loses the
+    /// sum (o 0x1501b). In a rebel city the last unit re-created was alone in its ring when
+    /// deleted (0x1ba98 clears the unit bit), but civil_war sets the bit again (o 0x15341)
+    /// before create_unit, so it joins the ring of those re-created before it (E2 t172).
+    #[test]
+    fn civil_war_keeps_stale_citizens_and_relinks_city_units() {
+        let mut g = flat_game_with(3);
+        g.exe_quirks = true;
+        let mut ids = Vec::new();
+        for i in 0..7 {
+            let c = g.add_city(2, format!("C{i}"), 6 + i * 3, 10);
+            g.city_mut(c).size = 3;
+            ids.push(c);
+        }
+        // three units of the rebel city C6, ring r0 -> r2 -> r1: deleted in record order
+        // the last is alone
+        let units: Vec<UnitId> = (0..3).map(|_| g.add_unit(2, unit_ids::PHALANX, 24, 10)).collect();
+        for u in &units {
+            g.unit_mut(*u).home = Some(ids[6]);
+        }
+        let n = (1..8u8).find(|s| g.cities_of(*s).is_empty() && g.units_of(*s).is_empty()).unwrap();
+        g.take_census_all();
+        g.ai_memory.census.citizens[n as usize] = 1;
+        let loyal = g.ai_memory.census.citizens[2];
+        assert!(g.civil_war(2, ids[0]));
+        assert_eq!(g.ai_memory.census.citizens[n as usize], 1 + 9);
+        assert_eq!(g.ai_memory.census.citizens[2], loyal - 10);
+        let mut rebel = g.units_at(24, 10);
+        rebel.sort_by_key(|u| g.unit(*u).record);
+        assert_eq!(rebel.len(), 3);
+        assert!(rebel.iter().all(|u| g.unit(*u).owner == n));
+        assert_eq!(g.stack_ring(rebel[0], 10).len(), 3);
+        // without the quirks the slot starts from no citizens
+        let mut h = flat_game_with(3);
+        for i in 0..7 {
+            let c = h.add_city(2, format!("C{i}"), 6 + i * 3, 10);
+            h.city_mut(c).size = 3;
+        }
+        h.take_census_all();
+        h.ai_memory.census.citizens[n as usize] = 1;
+        let first = h.cities_of(2)[0];
+        assert!(h.civil_war(2, first));
+        assert_eq!((h.ai_memory.census.citizens[n as usize], h.ai_memory.census.citizens[2]), (9, 12));
     }
 
     /// civil_war's civ_init (o5 0x4ad0..0x4b36) draws random(2) for each advance the human
