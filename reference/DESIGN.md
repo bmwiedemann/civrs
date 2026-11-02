@@ -1242,6 +1242,13 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   (0x131fa), civrs checks the city's neighbours, so F2 lists one Musketeers fewer. Advisors F1,
   F4, F5, F7, F9, F10 of CW2's save match pixel for pixel; the capture's city view matches the
   original CIV.EXE (the harness's --quiet-ui CIV.EXE draws city views with its own generator).
+  Runs (all draws agree; local 0x16e94 / 0xd81d overrides in w103/size-*.txt, skip-*.txt):
+  D2 4242 t134-t253, D3 t254-t278, A3 2024 t170-t192, F3 8086 (rescued t58) t59-t194, G2 1999
+  t27-t138, H2 2718 t24-t105, CW2 t401-t408, CW2b t409-t437, CIVIL1-late t225-t260, CIVIL2
+  t265-t339, CIVIL6 t196-t219, CIVIL7 t271-t350, CIVIL8 t391-t434, CIVIL9 t375-t386; E2 6161
+  t112-t172 (t172: the rebels' first move, a re-created ship's cargo; civil war re-creation on a
+  square still holding the old owner's units links by the layer's unit, 0x1ba51 -> unit_at, not
+  modelled), A4 t193-t206 (t207 production choices of civ 7, untraced), C8 t435 (untraced).
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
