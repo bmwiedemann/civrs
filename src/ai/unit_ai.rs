@@ -740,9 +740,20 @@ fn in_city(g: &mut Game, c: &Ctx) -> Option<Command> {
     if need >= defenders {
         return Some(Command::Fortify);
     }
+    // the best defender of the square with this unit's fortified bit set (0x16d91 ->
+    // best_defender_at 0x8ee5): the first of the highest values in the ring from the square's
+    // first unit, so an equal one before it keeps it from staying
     let mine = defence_value(g, c.id, true).unwrap_or(0);
-    let beaten = others.iter().any(|o| defence_value(g, *o, g.unit(*o).order == UnitOrder::Fortified).unwrap_or(0) > mine);
-    if !beaten && need > defenders_before(g, c.id) {
+    let mut top: Option<(UnitId, i32)> = None;
+    for o in stack(g, head) {
+        let v = if o == c.id { Some(mine) } else { defence_value(g, o, g.unit(o).order == UnitOrder::Fortified) };
+        if let Some(v) = v {
+            if v > top.map(|t| t.1).unwrap_or(0) {
+                top = Some((o, v));
+            }
+        }
+    }
+    if top.map(|t| t.0) == Some(c.id) && need > defenders_before(g, c.id) {
         return Some(Command::Fortify);
     }
     if (g.unit(c.id).record as i32 + g.turn as i32) & 7 == 0 {
@@ -2307,6 +2318,31 @@ mod tests {
         // a better defender than the best other one fortifies at once
         let m = g.add_unit(s, unit_ids::MUSKETEERS, 20, 20);
         assert_eq!(unit_command(&mut g, s, m), Command::Fortify);
+    }
+
+    #[test]
+    fn an_extra_defender_stays_only_as_the_first_best_defender_of_the_ring() {
+        // 0x16d91 -> best_defender_at 0x8ee5: an equal defender before it in the ring wins
+        let mut g = arena();
+        let s = ai(&g);
+        let c = g.add_city(s, "Fort".into(), 20, 20);
+        g.city_mut(c).size = 8;
+        let a = g.add_unit(s, unit_ids::PHALANX, 20, 20);
+        let x = g.add_unit(s, unit_ids::PHALANX, 20, 20);
+        for _ in 0..3 {
+            let b = g.add_unit(s, unit_ids::PHALANX, 20, 20);
+            g.unit_mut(b).order = UnitOrder::Fortified;
+        }
+        g.unit_mut(a).order = UnitOrder::Fortified;
+        g.unit_mut(a).veteran = true;
+        g.remove_unit(x);
+        // the new veteran takes the freed record 1: one defender before it, three wanted
+        let d = g.add_unit(s, unit_ids::PHALANX, 20, 20);
+        g.unit_mut(d).veteran = true;
+        assert_eq!(g.unit(d).record, 1);
+        assert_ne!(unit_command(&mut g, s, d), Command::Fortify, "the veteran of record 0 is the best defender");
+        g.unit_mut(a).veteran = false;
+        assert_eq!(unit_command(&mut g, s, d), Command::Fortify);
     }
 
     #[test]
