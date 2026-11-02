@@ -723,7 +723,13 @@ fn main() {
     };
     let first: Box<dyn civrs::ui::Screen> = if let Some(p) = &cli.load_sve {
         match civrs::save::sve::import(p) {
-            Ok(g) => ctx.game = Some(g),
+            // --seed draws as a CIV.EXE seeded from CIVSEED does after the load (`state:N:SEED`)
+            Ok(mut g) => {
+                if let Some(s) = cli.seed {
+                    g.rng.srand((s & 0x7fff) as u16);
+                }
+                ctx.game = Some(g)
+            }
             Err(e) => {
                 eprintln!("{}: {e}", p.display());
                 std::process::exit(1);

@@ -237,6 +237,9 @@ pub struct MapView {
     pub first_turn_hint: bool,
     /// The Chieftain screen-layout tutorial has been shown (once, before FIRSTMOVE).
     tutorial_shown: bool,
+    /// A city the human's unit has just taken: its city screen opens once the capture's
+    /// messages are over (capture_city 0x13d76 ends with the city screen, 0xc91:0x3b).
+    captured: Option<(crate::game::CityId, Vec<(i32, i32)>)>,
     auto_end: u32,
     /// Events taken from the game but not yet shown (one dialog at a time).
     queued: std::collections::VecDeque<crate::game::GameEvent>,
@@ -282,6 +285,7 @@ impl MapView {
             status_line: String::new(),
             first_turn_hint: false,
             tutorial_shown: false,
+            captured: None,
             auto_end: 0,
             queued: Default::default(),
             advice_turn: None,
@@ -517,6 +521,13 @@ impl MapView {
         let Some(id) = ctx.game().active_unit else { return Transition::None };
         let before = ctx.game().unit(id).pos();
         let attacker_kind = ctx.game().unit(id).kind;
+        // the squares around the target the human does not know yet: a capture's city
+        // screen comes before the step's look explores them (0x6aa9, 0x6ae2)
+        let (tx, ty) = (Map::wrap_x(before.0 + d.delta().0), before.1 + d.delta().1);
+        let unknown: Vec<(i32, i32)> = {
+            let g = ctx.game();
+            (-1..=1).flat_map(|dy| (-1..=1).map(move |dx| (Map::wrap_x(tx + dx), ty + dy))).filter(|&(x, y)| Map::in_bounds(x, y) && !g.explored(g.human_slot, x, y)).collect()
+        };
         let r = if keep_moving { ctx.game_mut().move_on(id, d) } else { ctx.game_mut().try_move(id, d) };
         match r {
             Ok(outcome) => {
@@ -540,12 +551,22 @@ impl MapView {
                     MoveOutcome::EnteredForeignCity(c) => self.foreign_city_menu(ctx, id, c),
                     MoveOutcome::CaravanArrived(c) => self.caravan_menu(ctx, id, c, d),
                     MoveOutcome::BribeOffer(t) => self.bribe_offer(ctx, id, t, d),
+                    MoveOutcome::CapturedCity(c) => {
+                        let g = ctx.game();
+                        if g.city_opt(c).is_some_and(|city| city.owner == g.human_slot) {
+                            self.captured = Some((c, unknown.into_iter().filter(|&(x, y)| g.explored(g.human_slot, x, y)).collect()));
+                        }
+                        Transition::None
+                    }
                     _ => Transition::None,
                 };
                 // show any events (huts, captures)
                 if let Some(s) = self.next_event_screen(ctx) {
                     self.pending = Pending::Event;
                     return Transition::Push(s);
+                }
+                if let Some(t) = self.open_captured(ctx) {
+                    return t;
                 }
                 if matches!(t, Transition::None) {
                     let g = ctx.game();
@@ -646,6 +667,19 @@ impl MapView {
 
     fn open_city(&mut self, _ctx: &mut UiContext, c: crate::game::CityId) -> Transition {
         Transition::Push(crate::ui::cityscreen::city_screen(c))
+    }
+
+    /// The city screen of a city the human has just taken, after the capture's messages
+    /// (capture_city 0x13d76: the plunder, the theft's choice, then 0xc91:0x3b), while the
+    /// city is still his.
+    fn open_captured(&mut self, ctx: &mut UiContext) -> Option<Transition> {
+        let (c, unseen) = self.captured.take()?;
+        let g = ctx.game();
+        if g.city_opt(c).is_none_or(|city| city.owner != g.human_slot) {
+            return None;
+        }
+        self.pending = Pending::Event;
+        Some(Transition::Push(crate::ui::cityscreen::city_screen_captured(c, unseen)))
     }
 
     /// The five pull-down menus as CIV.EXE's segment 0x1c02 builds them: `menu(text, x, 8)` at
@@ -1197,6 +1231,9 @@ impl MapView {
     }
 
     /// Map square at the minimap's top left: column `vx - 32`, row `vy - 19` (0 with Navigation).
+    /// (CIV.EXE 0x1a83c asks whether civ `1 << human` knows Navigation, the argument having
+    /// been turned into the civ's bit at 0x1a6db: for the Romans it is the Babylonians'
+    /// knowledge. Not copied: civrs asks the human's.)
     fn minimap_origin(&self, ctx: &UiContext) -> (i32, i32) {
         let navigation = ctx.game().human().knows(rules::advance_ids::NAVIGATION);
         (self.vx - 32, if navigation { 0 } else { self.vy - 19 })
@@ -1535,6 +1572,9 @@ impl Screen for MapView {
                 if let Some(s) = self.next_event_screen(ctx) {
                     self.pending = Pending::Event;
                     return Transition::Push(s);
+                }
+                if let Some(t) = self.open_captured(ctx) {
+                    return t;
                 }
                 // the loop goes on once the active unit is done (a unit that moves by itself
                 // goes on in `update`)
@@ -2193,6 +2233,48 @@ mod tests {
         mv.vx = 20;
         mv.vy = 20;
         Some((ctx, mv, id))
+    }
+
+    #[test]
+    fn a_city_the_human_takes_opens_its_screen_after_the_messages() {
+        // capture_city 0x13d76 ends with the city screen (0xc91:0x3b), which comes before the
+        // step's look (0x6aa9 -> 0x6ae2) explores the squares around the city
+        let Some((mut ctx, mut mv, id)) = view() else { return };
+        let g = ctx.game_mut();
+        let h = g.human_slot;
+        let (x, y) = g.unit(id).pos();
+        for yy in y - 3..=y + 3 {
+            for xx in x - 3..=x + 4 {
+                let t = g.map.get_mut(Map::wrap_x(xx), yy).unwrap();
+                t.terrain = rules::Terrain::Grassland;
+                t.flags = 0;
+                t.explored = if xx <= x + 1 { 0xff } else { 0 };
+            }
+        }
+        g.map.compute_continents();
+        let o = if h == 2 { 3 } else { 2 };
+        g.players[o as usize].in_game = true;
+        g.players[o as usize].alive = true;
+        g.set_relation(h, o, crate::game::Relation::War);
+        let c = g.add_city(o, "Pond".into(), Map::wrap_x(x + 1), y);
+        g.city_mut(c).size = 3;
+        g.add_city(o, "Far".into(), Map::wrap_x(x + 30), y);
+        let _ = g.take_events();
+        g.options.animations = false;
+        g.unit_mut(id).moves_left = 3;
+        let mut t = mv.try_move(&mut ctx, Dir8::E);
+        assert_eq!(ctx.game().city(c).owner, h);
+        assert_eq!(mv.captured.as_ref().map(|k| k.0), Some(c), "the screen waits for the messages");
+        let fresh = mv.captured.as_ref().unwrap().1.clone();
+        assert!(fresh.contains(&(Map::wrap_x(x + 2), y)) && !fresh.contains(&(x, y)), "{fresh:?}");
+        for _ in 0..8 {
+            if mv.captured.is_none() {
+                break;
+            }
+            assert!(matches!(t, Transition::Push(_)));
+            t = mv.resume(DialogResult::Done, &mut ctx);
+        }
+        assert!(mv.captured.is_none() && matches!(t, Transition::Push(_)), "the city screen comes last");
     }
 
     #[test]

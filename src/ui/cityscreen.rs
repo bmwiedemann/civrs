@@ -11,7 +11,7 @@ use crate::ui::city_draw::*;
 use crate::ui::context::UiContext;
 use crate::ui::pedia_data::Entry;
 use crate::ui::screen::{DialogResult, Screen, Transition};
-use crate::ui::tilerender::{draw_fog_edges, draw_terrain};
+use crate::ui::tilerender::{draw_fog_edges_hiding, draw_terrain};
 use crate::ui::widgets::{CityNamePrompt, MenuDialog, MessageBox, YesNo};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -63,20 +63,30 @@ pub struct CityScreen {
     /// 'p' (0x11cce..0x11f42): the white square on the city map, (dx, dy) from the centre,
     /// moved with the cursor keys; Enter or Space acts as a click on it, Esc ends it.
     tile_cursor: Option<(i32, i32)>,
+    /// Squares the human knows only from the step that took the city: CIV.EXE opens the city
+    /// screen inside capture_city (0x6aa9 -> 0x13d76) before that step's look (unit_look
+    /// 0x6ae2) shows them to him, so the screen leaves them to the panel.
+    unseen: Vec<(i32, i32)>,
 }
 
 pub fn city_screen(c: CityId) -> Box<dyn Screen> {
-    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0, view_only: false, unit_cursor: None, sell_cursor: None, tile_cursor: None })
+    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0, view_only: false, unit_cursor: None, sell_cursor: None, tile_cursor: None, unseen: Vec::new() })
 }
 
 /// City screen that opens on a tab or dialog: "happy", "map", "view", "change", "buy", "rename", "sell".
 pub fn city_screen_at(c: CityId, start: &str) -> Box<dyn Screen> {
-    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: Some(start.to_string()), imp_start: 0, view_only: false, unit_cursor: None, sell_cursor: None, tile_cursor: None })
+    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: Some(start.to_string()), imp_start: 0, view_only: false, unit_cursor: None, sell_cursor: None, tile_cursor: None, unseen: Vec::new() })
+}
+
+/// City screen of a city the human's unit has just taken (capture_city 0x13d76 ends with it),
+/// with the squares the taking step's look has only now explored left out (`unseen`).
+pub fn city_screen_captured(c: CityId, unseen: Vec<(i32, i32)>) -> Box<dyn Screen> {
+    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0, view_only: false, unit_cursor: None, sell_cursor: None, tile_cursor: None, unseen })
 }
 
 /// City screen of a foreign city investigated by a Diplomat (CIV.EXE o 0x1d6a2).
 pub fn city_screen_view(c: CityId) -> Box<dyn Screen> {
-    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0, view_only: true, unit_cursor: None, sell_cursor: None, tile_cursor: None })
+    Box::new(CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0, view_only: true, unit_cursor: None, sell_cursor: None, tile_cursor: None, unseen: Vec::new() })
 }
 
 // ---- layout (coordinates include the 1-px borders) ---------------------------------------
@@ -230,7 +240,8 @@ impl CityScreen {
             let (nx, ny) = (dx + mx, dy + my);
             let g = ctx.game();
             let c = g.city(self.city);
-            if nx.abs() <= 2 && ny.abs() <= 2 && nx.abs() + ny.abs() < 4 && g.explored(g.human_slot, crate::game::Map::wrap_x(c.x as i32 + nx), c.y as i32 + ny) {
+            let (sx, sy) = (crate::game::Map::wrap_x(c.x as i32 + nx), c.y as i32 + ny);
+            if nx.abs() <= 2 && ny.abs() <= 2 && nx.abs() + ny.abs() < 4 && g.explored(g.human_slot, sx, sy) && !self.unseen.contains(&(sx, sy)) {
                 self.tile_cursor = Some((nx, ny));
             }
             match key {
@@ -748,7 +759,7 @@ impl CityScreen {
     fn draw_square(&self, fb: &mut Surface, ctx: &UiContext, tx: i32, ty: i32, px: i32, py: i32) {
         let g = ctx.game();
         draw_terrain(fb, ctx, g, tx, ty, px, py);
-        draw_fog_edges(fb, ctx, g, g.human_slot, tx, ty, px, py);
+        draw_fog_edges_hiding(fb, ctx, g, g.human_slot, tx, ty, px, py, &self.unseen);
         if let Some(city) = g.city_at(tx, ty) {
             crate::ui::tilerender::draw_city_in_font(fb, ctx, g, city, px, py, SMALL);
         }
@@ -795,7 +806,7 @@ impl CityScreen {
         let taken = self.taken_squares(ctx);
         for (dx, dy) in EXE_RADIUS {
             let (tx, ty, px, py) = at(dx, dy);
-            if !Map::in_bounds(tx, ty) || (owner == g.human_slot && !g.explored(owner, tx, ty)) {
+            if !Map::in_bounds(tx, ty) || (owner == g.human_slot && (!g.explored(owner, tx, ty) || self.unseen.contains(&(tx, ty)))) {
                 continue;
             }
             self.draw_square(fb, ctx, tx, ty, px, py);
@@ -1445,7 +1456,7 @@ mod tests {
         let c = g.found_city(settlers).ok()?;
         let _ = g.take_events();
         ctx.game = Some(g);
-        Some((ctx, CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0, view_only: false, unit_cursor: None, sell_cursor: None, tile_cursor: None }))
+        Some((ctx, CityScreen { city: c, tab: Tab::Info, pending: Pending::None, advisors: None, start: None, imp_start: 0, view_only: false, unit_cursor: None, sell_cursor: None, tile_cursor: None, unseen: Vec::new() }))
     }
 
     #[test]

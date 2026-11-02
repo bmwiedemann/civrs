@@ -433,9 +433,15 @@ pub fn draw_tile_without_units(fb: &mut Surface, ctx: &UiContext, game: &Game, s
 /// Fringe the sides of explored tile (x,y) that border unexplored tiles (off-map counts as
 /// explored).
 pub fn draw_fog_edges(fb: &mut Surface, ctx: &UiContext, game: &Game, slot: Slot, x: i32, y: i32, px: i32, py: i32) {
+    draw_fog_edges_hiding(fb, ctx, game, slot, x, y, px, py, &[]);
+}
+
+/// `draw_fog_edges` with the squares of `hidden` taken as unexplored too.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_fog_edges_hiding(fb: &mut Surface, ctx: &UiContext, game: &Game, slot: Slot, x: i32, y: i32, px: i32, py: i32, hidden: &[(i32, i32)]) {
     for (side, (dx, dy)) in [(0, -1), (1, 0), (0, 1), (-1, 0)].into_iter().enumerate() {
         let (nx, ny) = (x + dx, y + dy);
-        if Map::in_bounds(nx, ny) && !game.explored(slot, nx, ny) {
+        if Map::in_bounds(nx, ny) && (!game.explored(slot, nx, ny) || hidden.contains(&(Map::wrap_x(nx), ny))) {
             blit_sprite(fb, &ctx.sp.surf, sp::fog_edge(side), px, py);
         }
     }
