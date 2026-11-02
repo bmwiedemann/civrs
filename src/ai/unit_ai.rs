@@ -1882,7 +1882,7 @@ fn run_unit(g: &mut Game, slot: Slot, id: UnitId, first: u8, sink: &mut dyn FnMu
         let mut cmd = next_command(g, slot, id);
         if trace() {
             if let Some(u) = g.unit_opt(id) {
-                eprintln!("TRACE t{} s{} #{} {} at {:?} cmd {:?} goto {:?} order {:?} moves {} site {} d{}", g.turn, slot, id, u.info().name, u.pos(), cmd, u.goto, u.order, u.moves_left, g.site_layer(u.x, u.y), crate::game::rng::trace_len());
+                eprintln!("TRACE t{} s{} #{} r{} n{:?} {} at {:?} cmd {:?} goto {:?} order {:?} moves {} site {} d{}", g.turn, slot, id, u.record, u.next.and_then(|n| g.unit_opt(n)).map(|n| n.record), u.info().name, u.pos(), cmd, u.goto, u.order, u.moves_left, g.site_layer(u.x, u.y), crate::game::rng::trace_len());
             }
         }
         if g.unit_opt(id).is_none() {
