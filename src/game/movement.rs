@@ -1035,6 +1035,34 @@ mod tests {
     }
 
     #[test]
+    fn after_a_lost_unit_the_loop_goes_on_from_its_record() {
+        // move_units keeps its record ([bp-0x32]) when the unit it took is gone: the loop goes
+        // on after it (0x4174), so a unit in the view comes before one of a lower record off
+        // the screen (as CIV.EXE did when an Armor of a stack was lost attacking)
+        let mut g = Game::new(GameSetup { seed: 5, ..Default::default() }, None);
+        let slot = g.human_slot;
+        for u in g.units_of(slot) {
+            g.remove_unit(u);
+        }
+        let far = g.add_unit(slot, unit_ids::MILITIA, 20, 40);
+        let lost = g.add_unit(slot, unit_ids::ARMOR, 40, 20);
+        let next = g.add_unit(slot, unit_ids::ARMOR, 40, 20);
+        g.reset_unit_loop();
+        // the Armor is taken off the screen: the view centres on it, the mark is record 0
+        g.view = Some(Game::view_centred_on(60, 10));
+        g.unit_mut(far).moves_left = 0;
+        g.active_unit = None;
+        assert_eq!(g.next_active_unit(), Some(lost));
+        assert_eq!(g.unit_loop.mark, 0);
+        g.unit_mut(far).moves_left = 3;
+        g.active_unit = Some(lost);
+        g.remove_unit(lost);
+        assert_eq!(g.active_unit, None);
+        assert_eq!(g.next_active_unit(), Some(next), "not the Militia of record 0 off the screen");
+        assert!(g.unit_opt(far).is_some());
+    }
+
+    #[test]
     fn a_moving_unit_keeps_two_squares_from_the_view_edge() {
         // scroll_to 0x9505: columns vx+2..vx+13 and rows vy+2..vy+9 keep the view, any other
         // square gets the origin (x - 8, y - 6)

@@ -496,11 +496,15 @@ pub struct UnitLoop {
     /// writes ds:0xb278, so the pause always comes). The map view pauses before it shows the
     /// new view (`MapView::adopt_view`).
     pub centred: bool,
+    /// A unit has been taken since the loop began: its record ([bp-0x32]) stays where it
+    /// was when the unit it took is gone (lost in a fight), so the loop goes on after it
+    /// (0x4174) rather than from record 0.
+    pub started: bool,
 }
 
 impl Default for UnitLoop {
     fn default() -> Self {
-        UnitLoop { last: 0, mark: 0x7f, round: false, looks_done: false, centred: false }
+        UnitLoop { last: 0, mark: 0x7f, round: false, looks_done: false, centred: false, started: false }
     }
 }
 
@@ -1578,7 +1582,7 @@ impl Game {
         }
         // a unit deleted since (disbanded, a caravan's help) leaves the loop at its record
         let at = from.and_then(|a| self.unit_opt(a)).filter(|u| u.owner == slot).map(|u| u.record).unwrap_or(self.unit_loop.last);
-        let mut i = if from.is_some() { (at as usize + skip) & 127 } else { 0 };
+        let mut i = if from.is_some() || self.unit_loop.started { (at as usize + skip) & 127 } else { 0 };
         self.unit_loop.centred = false;
         let wants = |u: &Unit| u.moves_left > 0 && (matches!(u.order, UnitOrder::None | UnitOrder::Goto | UnitOrder::Home) || u.order.is_work());
         if !ids.iter().any(|id| wants(self.unit(*id))) {
@@ -1622,6 +1626,7 @@ impl Game {
                         self.unit_loop.centred = true;
                     }
                     self.unit_loop.last = i as u8;
+                    self.unit_loop.started = true;
                     self.unit_waits(id);
                     return Some(id);
                 }
