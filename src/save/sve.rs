@@ -778,6 +778,21 @@ pub fn exe_land_links(sve: &Path) -> Result<Vec<u8>, SaveError> {
 /// from civrs's turns and from the import of CIV.EXE's own save after those turns diff field
 /// by field. Units are keyed by owner, type and their order of position, cities by record id.
 pub fn state_text(g: &Game) -> String {
+    // a city that shrank without a worker assignment (an attack, 0x618a) keeps its specialist
+    // count in the worked word, which the import clamps to the citizens not working (above):
+    // the state is shown as a save of it imports
+    if g.all_cities().any(|c| c.workers() as usize + c.specialists.len() > c.size as usize) {
+        let mut h = g.clone();
+        for c in h.cities.iter_mut().flatten() {
+            let n = (c.size as usize).saturating_sub(c.workers() as usize);
+            c.specialists.truncate(n);
+        }
+        return state_text_of(&h);
+    }
+    state_text_of(g)
+}
+
+fn state_text_of(g: &Game) -> String {
     use std::fmt::Write;
     let mut o = String::new();
     let _ = writeln!(o, "turn {}\nyear {}", g.turn, g.year);
@@ -1131,6 +1146,21 @@ mod tests {
             assert_eq!(g.score_acc[c], want, "civ {c}");
         }
         assert!(g.score_acc.iter().any(|v| *v > 0));
+    }
+
+    /// The state dump shows a city that shrank before its worker assignment as its save
+    /// imports: no more specialists than citizens not working (D7 t351).
+    #[test]
+    fn the_dump_clamps_the_specialists_as_the_import_does() {
+        let Some((data, map)) = sample_bytes(4) else { return };
+        let mut g = import_bytes(&data, &map).unwrap();
+        let c = g.all_cities().next().unwrap().id;
+        let w = g.city(c).workers() as u8;
+        g.city_mut(c).size = w;
+        g.city_mut(c).specialists = vec![Specialist::Entertainer];
+        let text = state_text(&g);
+        assert!(text.contains(&format!("city{c}.worked {:08x} specialists []", g.city(c).worked)), "{text}");
+        assert_eq!(g.city(c).specialists.len(), 1, "the game itself is left alone");
     }
 
     #[test]
