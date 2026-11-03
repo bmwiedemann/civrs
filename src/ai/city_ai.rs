@@ -15,13 +15,15 @@ pub fn choose_production(g: &mut Game, c: CityId) -> Production {
 /// Re-choose on every city of `slot` on continent index `k` (`None`: all of them),
 /// CIV.EXE 0x18bef `ai_rechoose_production`.
 pub fn rechoose(g: &mut Game, slot: Slot, k: Option<usize>) {
-    for c in g.cities_of(slot) {
-        let city = g.city(c);
-        if k.map(|k| crate::game::production::continent_index(g.map.tile(city.x, city.y).continent) == k).unwrap_or(true) {
-            let p = g.ai_rechoose(c);
-            g.city_mut(c).production = p;
-        }
-    }
+    let cities = g
+        .cities_of(slot)
+        .into_iter()
+        .filter(|c| {
+            let city = g.city(*c);
+            k.map(|k| crate::game::production::continent_index(g.map.tile(city.x, city.y).continent) == k).unwrap_or(true)
+        })
+        .collect();
+    g.rechoose_loop(cities);
 }
 
 /// Per-turn management of one AI city.

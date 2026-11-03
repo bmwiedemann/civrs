@@ -69,9 +69,13 @@ pub struct Census {
     /// empty the civ's last city (0xdfd1), the human's empire-size unhappiness (0xf45d), the
     /// barbarians' target test (0x1920e), their attack on a last city (0x19913), the civil
     /// war (0x13dec), Communism for the computer (0x16024), the treasury warning (0x2697), the
-    /// audience's threats, grovelling and schism (o 0x655a, 0x657d, 0x7270, 0x799f) and the
-    /// unrest's defection (o 0x1bdc6) read it (`Game::census_cities`). Not modelled: the
-    /// destroyed-civ test of game_turn (0x2577, with the census Settlers ds:0x8068).
+    /// audience's threats, grovelling and schism (o 0x655a, 0x657d, 0x7270, 0x799f), the
+    /// unrest's defection (o 0x1bdc6), the human's end at his turn (0x2577, with the census
+    /// Settlers ds:0x8068, `Game::human_destroyed_check`), the replay's census entry
+    /// (0x283c), the gang-up on a leading human (0x32ef, 0x3343), the palace of the sidebar
+    /// and the historian's rows (0x3852) and the civil war's free slot (o 0x14b9e) read it
+    /// (`Game::census_cities`); the debug summary of overlay 13 (o 0x12167) too, which civrs
+    /// does not have.
     pub city_total: [i32; 8],
     /// ds:0x2a6e bit civ (0x15f3f): forces of the civ on a continent where the human has two
     /// or more cities.
@@ -416,8 +420,19 @@ impl Game {
         let current = self.city(c).production;
         match advice {
             Ok(_) if current == Production::Improvement(imp::PALACE) => current,
-            Ok(a) => a.best.map(|b| b.0).unwrap_or(current),
+            Ok(a) => a.best.map(|b| b.0).unwrap_or_else(|| self.exe_unvalued_choice(current)),
             Err(p) => p,
+        }
+    }
+
+    /// A computer city none of whose items is valued below 999 takes the menu entry that
+    /// [bp-0x144], never initialised, names (0xb864..0xb86a): with `exe_quirks`, inside a
+    /// re-choice loop after a city that found an item, that city's index into the list as the
+    /// loop's calls left it (`Game::exe_advice_menu`); otherwise the item it has.
+    fn exe_unvalued_choice(&self, current: Production) -> Production {
+        match &self.exe_advice_menu {
+            Some((menu, Some(i))) if self.exe_quirks => menu.get(*i).copied().unwrap_or(current),
+            _ => current,
         }
     }
 
@@ -440,10 +455,18 @@ impl Game {
 
     /// `ai_rechoose_production(civ, -1)` 0x18bef: every city of `civ` in record order.
     pub fn rechoose_all(&mut self, civ: Slot) {
-        for c in self.cities_of(civ) {
+        self.rechoose_loop(self.cities_of(civ));
+    }
+
+    /// The loop of 0x18bef: `city_rechoose_production` (0x18c4c) on each city in record order,
+    /// every call at the same stack depth (`Game::exe_advice_menu`).
+    pub fn rechoose_loop(&mut self, cities: Vec<CityId>) {
+        let outer = self.exe_advice_menu.replace((Vec::new(), None));
+        for c in cities {
             let p = self.ai_rechoose(c);
             self.city_mut(c).production = p;
         }
+        self.exe_advice_menu = outer;
     }
 
     /// An AUTO city of the human (0xb871..0xb896): the best improvement if its value is 500 or
@@ -521,6 +544,14 @@ impl Game {
         let p = self.player(slot).clone();
         let k = continent_index(self.map.tile(city.x, city.y).continent);
         let census = self.census();
+        // the menu list (0xaa23..): entry 0 is the city's item, then what it can build; it is
+        // written before the early answers below, over the last call's entries
+        let candidates = self.available_production(c);
+        if let Some((menu, _)) = &mut self.exe_advice_menu {
+            menu.resize(menu.len().max(candidates.len() + 1), city.production);
+            menu[0] = city.production;
+            menu[1..=candidates.len()].copy_from_slice(&candidates);
+        }
         // the policy the civ's last AI turn set (0xaf56)
         let policy = self.stored_policy(slot, k);
         // [bp-0x13c]: a war footing on this continent
@@ -605,8 +636,7 @@ impl Game {
         let civilized = self.traits(slot).civilized as i32;
         let barracks = city.has_improvement(imp::BARRACKS);
         let mut advice = BuildAdvice::default();
-        let candidates = self.available_production(c);
-        for item in candidates {
+        for (n, item) in candidates.into_iter().enumerate() {
             let value = match item {
                 Production::Unit(u) if u < unit_ids::DIPLOMAT => {
                     let Some(v) = self.unit_value(u, &census, slot, k, policy, need, surplus, units, &owned, &in_production, &here, &building_here) else { continue };
@@ -643,6 +673,9 @@ impl Game {
             };
             if advice.best.map(|(_, b)| value < b).unwrap_or(value < 999) {
                 advice.best = Some((item, value));
+                if let Some((_, best)) = &mut self.exe_advice_menu {
+                    *best = Some(n + 1);
+                }
             }
             let unit = matches!(item, Production::Unit(u) if u < unit_ids::DIPLOMAT);
             let slot_best = if unit { &mut advice.unit } else { &mut advice.improvement };
@@ -821,6 +854,33 @@ mod tests {
         let settler = g.units_of(slot).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
         let c = g.found_city(settler).unwrap();
         (g, c)
+    }
+
+    /// choose_production's [bp-0x144] is set only by an item valued below 999 (0xb7df) and
+    /// never initialised: a computer city with nothing below 999 takes the entry of its list
+    /// that an earlier city's index names, inside one re-choice loop (0x18bef; N t145).
+    #[test]
+    fn exe_quirks_an_unvalued_city_takes_the_last_best_index_of_its_loop() {
+        let (mut g, _) = ai_city();
+        let (cur, a, b) = (Production::Unit(unit_ids::KNIGHTS), Production::Unit(unit_ids::MILITIA), Production::Improvement(imp::TEMPLE));
+        g.exe_quirks = true;
+        g.exe_advice_menu = Some((vec![cur, a, b], Some(2)));
+        assert_eq!(g.exe_unvalued_choice(cur), b);
+        // the first city of a loop, outside a loop, past the list or as meant: its own item
+        g.exe_advice_menu = Some((vec![cur, a, b], None));
+        assert_eq!(g.exe_unvalued_choice(cur), cur);
+        g.exe_advice_menu = Some((vec![cur, a, b], Some(5)));
+        assert_eq!(g.exe_unvalued_choice(cur), cur);
+        g.exe_advice_menu = None;
+        assert_eq!(g.exe_unvalued_choice(cur), cur);
+        g.exe_quirks = false;
+        g.exe_advice_menu = Some((vec![cur, a, b], Some(2)));
+        assert_eq!(g.exe_unvalued_choice(cur), cur);
+        // a loop starts without an index and leaves none behind
+        g.exe_advice_menu = None;
+        let civ = g.city(0).owner;
+        g.rechoose_all(civ);
+        assert!(g.exe_advice_menu.is_none());
     }
 
     #[test]

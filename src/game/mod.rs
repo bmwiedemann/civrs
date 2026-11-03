@@ -298,6 +298,16 @@ pub struct Game {
     /// specialists counted where nine are left, one happy citizen less. Not saved.
     #[serde(skip)]
     pub exe_specialists: Option<(CityId, i32)>,
+    /// choose_production's menu list [bp-0xde] (entry 0 the city's item, 0xaa35, then what it
+    /// can build) and its best entry [bp-0x144] (0xb7df) as the calls of the re-choice loop in
+    /// progress (0x18bef, `Game::rechoose_all`, `city_ai::rechoose`) left them; None outside
+    /// such a loop. [bp-0x144] is set only by an item valued below 999 and never initialised,
+    /// so a computer city with nothing below 999 takes the entry the index of an earlier city
+    /// of the loop names (0xb864..0xb86a), with `exe_quirks`: N t145, Corinth gets Athens's
+    /// fifth entry, a Temple. The loop's calls are made at one stack depth with nothing between
+    /// them reaching that frame; what the first call finds there is not known. Not saved.
+    #[serde(skip)]
+    pub exe_advice_menu: Option<(Vec<Production>, Option<usize>)>,
     /// With `exe_quirks`: the totals (`economy::TurnTotals`, ds:0x70da..0x70de, ds:0x6546,
     /// ds:0x6c98, ds:0xb882) as the last quiet run of the city routine left them
     /// (`city_routine_quiet`), and the city whose turn reads its trade in place of its own
@@ -708,6 +718,7 @@ impl Game {
             last_moods: (0, 0),
             screen_distance: None,
             exe_specialists: None,
+            exe_advice_menu: None,
             nested_totals: None,
             trade_carry: None,
             abroad_carry: None,
