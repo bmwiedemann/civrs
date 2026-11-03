@@ -746,15 +746,16 @@ impl Game {
     }
 
     /// The end of CIV.EXE's power ranking (0x3121, once a turn): when the human leads the
-    /// world (`world_gangs_up`) every computer player with more than one city turns against
-    /// him: a treaty is to be broken (`BREAK`), else contact (war).
+    /// world (`world_gangs_up`) every computer player with more than one city by the census
+    /// (ds:0x6b66, 0x3343) turns against him: a treaty is to be broken (`BREAK`), else contact
+    /// (war).
     pub fn gang_up_on_leader(&mut self) {
         if !self.world_gangs_up() {
             return;
         }
         let h = self.human_slot;
         for j in 1..8u8 {
-            if j == h || self.cities_of(j).len() <= 1 {
+            if j == h || self.census_cities(j) <= 1 {
                 continue;
             }
             if self.treaty(j, h) {
@@ -894,6 +895,18 @@ mod tests {
         }
         assert_eq!(g.human_slot, 1);
         g
+    }
+
+    /// The gang-up on a leading human takes the computers with more than one city by their
+    /// census (ds:0x6b66, 0x3343), not by the cities they hold now.
+    #[test]
+    fn the_gang_up_counts_census_cities() {
+        let mut g = game();
+        g.ai_memory.gang_up = true;
+        g.ai_memory.census.city_total = [0, 5, 2, 1, 0, 0, 0, 0];
+        g.gang_up_on_leader();
+        assert_eq!(g.diplo(2, 1) & CONTACT, CONTACT, "two cities by the census");
+        assert_eq!(g.diplo(3, 1) & CONTACT, 0, "one city");
     }
 
     #[test]
@@ -1059,6 +1072,8 @@ mod tests {
         g.add_city(3, "B1".into(), 30, 26);
         g.add_city(3, "B2".into(), 33, 26);
         g.add_city(4, "C1".into(), 36, 26);
+        // the cities as the civs' census counts them (ds:0x6b66, 0x32ef / 0x3343)
+        g.take_census_all();
         g.rank_powers();
         assert!(g.world_gangs_up());
         g.gang_up_on_leader();

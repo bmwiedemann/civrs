@@ -276,9 +276,10 @@ impl Game {
                 crate::ai::city_ai::rechoose(self, defender.owner, Some(k));
             }
             self.refresh_vision(attacker.owner);
+            // (a civilization left without cities and Settlers goes at its own turn, not
+            // here: `check_destroyed`)
             for l in losers {
                 self.refresh_vision(l);
-                self.check_destroyed(l);
             }
             MoveOutcome::Attacked { won: true, at: (x, y), defender: defender.kind }
         } else {
@@ -291,7 +292,6 @@ impl Game {
                 self.push_event(GameEvent::UnitVeteran(def_id));
             }
             self.refresh_vision(attacker.owner);
-            self.check_destroyed(attacker.owner);
             MoveOutcome::Attacked { won: false, at: (x, y), defender: defender.kind }
         }
     }
@@ -388,7 +388,6 @@ impl Game {
         self.refresh_vision(by);
         for l in losers {
             self.refresh_vision(l);
-            self.check_destroyed(l);
         }
         MoveOutcome::Attacked { won: true, at: (x, y), defender: unit_ids::NUCLEAR }
     }
@@ -648,7 +647,9 @@ impl Game {
         if from == 0 || !self.player(from).alive {
             return false;
         }
-        let free = |g: &Game, s: Slot| !g.all_cities().any(|c| c.owner == s) && !g.all_units().any(|u| u.owner == s);
+        // the first civ 1..7 whose census counts no unit (ds:0x6b76: Settlers and Nuclear
+        // not among them) and no city (ds:0x6b66) (o 0x14b97 / 0x14b9e)
+        let free = |g: &Game, s: Slot| g.ai_memory.census.units[s as usize] == 0 && g.census_cities(s) == 0;
         let Some(new_slot) = (1..8u8).find(|s| free(self, *s)) else { return false };
         // citizens per continent and the Palace city (the one at ds:0xdcec[civ] if several)
         let cont = |g: &Game, c: &super::City| g.map.tile(c.x, c.y).continent as usize & 15;
@@ -889,8 +890,24 @@ impl Game {
         best.map(|b| b.0)
     }
 
-    /// Mark a civilisation destroyed when it has no cities and no settlers left (the computer's
-    /// turn, 0x15f98, and the loss of units).
+    /// The human is out of the game when his census, just taken in his ai_civ_turn, counts no
+    /// city (ds:0x6b66) and no Settlers (ds:0x8068): game_turn tests it at his turn, after his
+    /// cities, politics and census (0x2577..0x258f, the archaeologists' screen o 0x209f),
+    /// never in a fight. With a city lost or the last Settlers killed in the computers' turns
+    /// he plays on to his next turn.
+    pub fn human_destroyed_check(&mut self) {
+        let h = self.human_slot;
+        if !self.player(h).alive || self.census_cities(h) > 0 || self.all_units().any(|u| u.owner == h && u.kind == unit_ids::SETTLERS) {
+            return;
+        }
+        let by = self.last_combat.and_then(|(a, _, _)| self.owner_at(a.0, a.1)).filter(|b| *b != h).unwrap_or(0);
+        self.destroy_civ(h, by);
+    }
+
+    /// Mark a computer civilisation destroyed when it has no cities and no settlers left: its
+    /// ai_civ_turn tests its census counts (ds:0x8068, ds:0x6b66) right after taking them
+    /// (0x15fb7 -> civ_destroyed o5 0x4fe1, which looks for a city of its own again); a fight
+    /// that kills its last unit does not (no call from combat 0x19724).
     pub fn check_destroyed(&mut self, slot: Slot) {
         if slot == 0 || !self.player(slot).in_game || !self.player(slot).alive {
             return;
@@ -907,14 +924,10 @@ impl Game {
 
     /// A city of `slot` was lost to `by` (captured, destroyed, defected, incited): a computer
     /// civilization without cities is destroyed even if it still has units (`civ_destroyed`
-    /// o5 0x4fe1, called by 0x61b5, 0xd159, 0xe041 and 0x14356); the human keeps the
-    /// cities-and-settlers rule.
+    /// o5 0x4fe1, called by 0x61b5, 0xd159, 0xe041 and 0x14356); it returns at once for the
+    /// human (0x4ff4), who goes at his turn (`human_destroyed_check`).
     pub fn city_lost_check(&mut self, slot: Slot, by: Slot) {
-        if slot == 0 || !self.player(slot).in_game || !self.player(slot).alive {
-            return;
-        }
-        if slot == self.human_slot {
-            self.check_destroyed(slot);
+        if slot == 0 || slot == self.human_slot || !self.player(slot).in_game || !self.player(slot).alive {
             return;
         }
         if self.all_cities().any(|c| c.owner == slot) {
@@ -1111,6 +1124,66 @@ mod tests {
         let draws = crate::game::rng::trace_take();
         assert!(draws.iter().any(|d| d.at == crate::game::rng::ovl(0x4bd7)));
         assert!(draws.iter().any(|d| d.at == crate::game::rng::ovl(0x4be9)));
+    }
+
+    /// A civilization whose last unit dies in a fight is not destroyed by the fight (no
+    /// civ_destroyed call in combat 0x19724): a computer goes at its ai_civ_turn (0x15fb7),
+    /// the human when his turn tests his census (0x2577).
+    #[test]
+    fn a_civ_losing_its_last_unit_in_a_fight_goes_at_its_turn() {
+        let mut g = flat_game();
+        // past the last turn of a new tribe: the slot stays empty
+        g.turn = 400;
+        let h = g.human_slot;
+        for s in [2u8, h] {
+            for id in g.units_of(s) {
+                g.remove_unit(id);
+            }
+            for c in g.cities_of(s) {
+                g.city_mut(c).owner = 7;
+            }
+        }
+        // slot 2's last Settlers attacked by the human's Armor
+        let a = g.add_unit(h, unit_ids::ARMOR, 10, 10);
+        g.add_unit(2, unit_ids::SETTLERS, 11, 10);
+        g.set_relation(h, 2, Relation::War);
+        assert!(matches!(g.attack(a, 11, 10), MoveOutcome::Attacked { won: true, .. }));
+        assert!(g.units_of(2).is_empty());
+        assert!(g.player(2).alive && g.player(2).destroyed_turn.is_none(), "not in the fight");
+        g.check_destroyed(2);
+        assert_eq!(g.player(2).destroyed_turn, Some(g.turn), "at its ai_civ_turn");
+        // the human's Settlers lost against slot 3's Armor
+        g.remove_unit(a);
+        let s = g.add_unit(h, unit_ids::SETTLERS, 20, 10);
+        let b = g.add_unit(3, unit_ids::ARMOR, 21, 10);
+        g.set_relation(3, h, Relation::War);
+        g.take_census_all();
+        assert!(matches!(g.attack(b, 20, 10), MoveOutcome::Attacked { won: true, .. }));
+        assert!(g.unit_opt(s).is_none() && g.player(h).alive && g.ended.is_none());
+        g.human_destroyed_check();
+        assert!(!g.player(h).alive);
+        assert_eq!(g.ended, Some(crate::game::EndReason::Destroyed));
+    }
+
+    /// game_turn's test of the human (0x2577) reads his census: cities (ds:0x6b66) and
+    /// Settlers (ds:0x8068), not the cities he has now.
+    #[test]
+    fn the_human_goes_by_his_census_cities() {
+        let mut g = flat_game();
+        let h = g.human_slot;
+        for id in g.units_of(h) {
+            g.remove_unit(id);
+        }
+        for c in g.cities_of(h) {
+            g.city_mut(c).owner = 7;
+        }
+        g.take_census_all();
+        g.ai_memory.census.city_total[h as usize] = 1;
+        g.human_destroyed_check();
+        assert!(g.player(h).alive, "the census still counts a city");
+        g.ai_memory.census.city_total[h as usize] = 0;
+        g.human_destroyed_check();
+        assert!(!g.player(h).alive);
     }
 
     #[test]
@@ -2031,7 +2104,7 @@ mod tests {
             ids.push(c);
         }
         assert_eq!(g.player(2).capital, Some(ids[0]));
-        g.take_census_all();
+        census_with_units(&mut g);
         g.rank_powers();
         let a = g.add_unit(1, unit_ids::LEGION, 6, 11);
         assert_eq!(g.try_move(a, crate::game::Dir8::N).unwrap(), MoveOutcome::CapturedCity(ids[0]));
@@ -2048,6 +2121,43 @@ mod tests {
         assert!(rebels.iter().all(|c| g.city(*c).x >= 18));
         assert!(g.player(new_slot).capital.is_some());
         assert_eq!(g.cities_of(2).len(), 3);
+    }
+
+    /// The census, each civ with a unit of any kind counting one in ds:0x6b76: these games
+    /// have only Settlers, which ds:0x6b76 leaves out, so every civ in the game would look
+    /// free to the civil war (o 0x14b97).
+    fn census_with_units(g: &mut Game) {
+        g.take_census_all();
+        for s in 1..8u8 {
+            if !g.units_of(s).is_empty() {
+                g.ai_memory.census.units[s as usize] = g.ai_memory.census.units[s as usize].max(1);
+            }
+        }
+    }
+
+    /// The rebels take the first civ 1..7 whose census (o 0x14b97 / 0x14b9e) counts no unit
+    /// (ds:0x6b76) and no city (ds:0x6b66), not the first one empty now.
+    #[test]
+    fn civil_war_takes_the_first_slot_empty_by_the_census() {
+        let mut g = flat_game_with(3);
+        let mut ids = Vec::new();
+        for (x, y) in [(6, 10), (9, 10), (12, 10), (24, 24)] {
+            let c = g.add_city(2, format!("C{x}"), x, y);
+            g.city_mut(c).size = 3;
+            ids.push(c);
+        }
+        g.city_mut(ids[0]).add_improvement(imp::PALACE);
+        let empty: Vec<Slot> = (1..8u8).filter(|s| g.cities_of(*s).is_empty() && g.units_of(*s).is_empty()).collect();
+        assert!(empty.len() >= 2);
+        g.take_census_all();
+        // the first empty slot still had a unit at its census; the civs in the game have their
+        // Settlers outside the arena, which ds:0x6b76 leaves out: a unit more for each
+        for s in (1..8u8).filter(|s| *s == empty[0] || !empty.contains(s)) {
+            g.ai_memory.census.units[s as usize] = 1;
+        }
+        assert!(g.civil_war(2, ids[0]));
+        let got: Vec<Slot> = (1..8u8).filter(|s| *s != 2 && !g.cities_of(*s).is_empty()).collect();
+        assert_eq!(got, vec![empty[1]], "empty {empty:?}");
     }
 
     #[test]
@@ -2084,7 +2194,7 @@ mod tests {
         g.unit_mut(rebel_follow).home = Some(ids[4]);
         g.player_mut(2).gold = 301;
         let n = (1..8u8).find(|s| g.cities_of(*s).is_empty() && g.units_of(*s).is_empty()).unwrap();
-        g.take_census_all();
+        census_with_units(&mut g);
         assert!(g.civil_war(2, ids[0]));
         let mut rebels = g.cities_of(n);
         rebels.sort();
@@ -2117,7 +2227,7 @@ mod tests {
             ids.push(c);
         }
         let n = (1..8u8).find(|s| g.cities_of(*s).is_empty() && g.units_of(*s).is_empty()).unwrap();
-        g.take_census_all();
+        census_with_units(&mut g);
         assert!(g.civil_war(2, ids[0]));
         // one continent: the farthest cities go until 3 * 9 >= 21
         let mut rebels = g.cities_of(n);
@@ -2148,7 +2258,7 @@ mod tests {
             g.unit_mut(*u).home = Some(ids[6]);
         }
         let n = (1..8u8).find(|s| g.cities_of(*s).is_empty() && g.units_of(*s).is_empty()).unwrap();
-        g.take_census_all();
+        census_with_units(&mut g);
         g.ai_memory.census.citizens[n as usize] = 1;
         let loyal = g.ai_memory.census.citizens[2];
         assert!(g.civil_war(2, ids[0]));
@@ -2165,7 +2275,7 @@ mod tests {
             let c = h.add_city(2, format!("C{i}"), 6 + i * 3, 10);
             h.city_mut(c).size = 3;
         }
-        h.take_census_all();
+        census_with_units(&mut h);
         h.ai_memory.census.citizens[n as usize] = 1;
         let first = h.cities_of(2)[0];
         assert!(h.civil_war(2, first));
@@ -2195,7 +2305,7 @@ mod tests {
             }
         }
         let n = (1..8u8).find(|s| g.cities_of(*s).is_empty() && g.units_of(*s).is_empty()).unwrap();
-        g.take_census_all();
+        census_with_units(&mut g);
         g.ai_memory.census.strength[2] = 41;
         crate::game::rng::trace_start();
         assert!(g.civil_war(2, ids[0]));
@@ -2227,11 +2337,12 @@ mod tests {
             g.city_mut(c).size = 3;
             ids.push(c);
         }
+        census_with_units(&mut g);
         assert!(!g.civil_war(2, ids[0]));
         let a = g.add_unit(1, unit_ids::LEGION, 6, 11);
         g.player_mut(1).gold = 0;
         g.player_mut(2).gold = 3000;
-        g.take_census_all();
+        census_with_units(&mut g);
         g.rank_powers();
         assert!(g.power_rank(g.human_slot) < g.power_rank(2));
         assert_eq!(g.try_move(a, crate::game::Dir8::N).unwrap(), MoveOutcome::CapturedCity(ids[0]));
@@ -2253,7 +2364,7 @@ mod tests {
             if weak {
                 g.player_mut(1).gold = 30000;
             }
-            g.take_census_all();
+            census_with_units(&mut g);
             g.rank_powers();
             assert_eq!(g.power_rank(1) < g.power_rank(2), !weak);
             let a = g.add_unit(1, unit_ids::LEGION, 6, 11);

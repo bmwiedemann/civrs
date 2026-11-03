@@ -269,7 +269,8 @@ impl Game {
             let Some(c) = best.1 else { continue };
             values[c as usize] = -1;
             let shown = c == me || self.human().has_embassy(c) || self.setup.difficulty == rules::Difficulty::Chieftain;
-            let has_cities = self.all_cities().any(|k| k.owner == c);
+            // draw_palace draws the pieces while the census counts a city (ds:0x6b66, 0x3852)
+            let has_cities = self.census_cities(c) > 0;
             rows.push(super::events::HistorianRow { slot: c, palace_level: super::palace::tri5_level(self.score_acc[c as usize]), has_cities, shown });
         }
         self.push_event(super::events::GameEvent::HistorianReport { historian, category, rows });

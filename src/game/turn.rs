@@ -300,8 +300,10 @@ impl TurnRunner {
                     // ai_civ_turn for the human (0x2536): his census and continent policies,
                     // which his AUTO cities and the computer players read
                     crate::ai::unit_ai::civ_turn(g, slot);
-                    // the human's sidebar after his cities (0x256f)
+                    // the human's sidebar after his cities (0x256f), then his census tested
+                    // (0x2577)
                     g.population_milestone();
+                    g.human_destroyed_check();
                     g.reset_goals(slot);
                     self.pending.push_back(TurnStepSer::Progress(15));
                     // move_units (0x4046): the GENERAL PRINCIPLES notes, then the moves

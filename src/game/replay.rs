@@ -201,7 +201,8 @@ impl Game {
         }
         self.ai_memory.ranks = ranks;
         let h = self.human_slot;
-        self.ai_memory.gang_up = ranks[h as usize & 7] == 7 && self.cities_of(h).len() > 4 && self.nuclear_units(h) == 0 && self.turn > 200;
+        // more than four cities by the census (ds:0x6b66, 0x32ef)
+        self.ai_memory.gang_up = ranks[h as usize & 7] == 7 && self.census_cities(h) > 4 && self.nuclear_units(h) == 0 && self.turn > 200;
     }
 
     /// The power history entry of `power_ranking` (0x31be..0x3214), at the end of every turn
@@ -231,7 +232,8 @@ impl Game {
         }
         self.update_research_catch_up();
         let h = self.human_slot;
-        let cities = self.cities_of(h).len() as u8;
+        // the census count (ds:0x6b66, 0x283c)
+        let cities = self.census_cities(h) as u8;
         let pop: i32 = self.all_cities().filter(|c| c.owner == h).map(|c| c.size as i32 * (c.size as i32 + 1) / 2).sum();
         self.replay_log(kind::CENSUS, &[cities, (pop / 256) as u8, pop as u8]);
         // rank r (7 = strongest) puts the civ in word r / 2, the odd ranks in the high nibble;
@@ -322,6 +324,21 @@ mod tests {
         g.player_mut(2).gold = 0;
         g.record_power();
         assert_eq!(g.history.power_at(0, 2), 0, "nothing from turn 600 on");
+    }
+
+    /// The fifty-turn census entry counts the human's cities as his census does (ds:0x6b66,
+    /// 0x283c).
+    #[test]
+    fn the_census_entry_reads_the_census_cities() {
+        let mut g = game();
+        g.history = History::default();
+        g.set_turn(50);
+        let h = g.human_slot;
+        g.ai_memory.census.city_total[h as usize] = 3;
+        assert_ne!(g.cities_of(h).len(), 3);
+        g.fifty_turn_block();
+        let r = g.history.records();
+        assert_eq!((r[0].kind, r[0].args[0]), (kind::CENSUS, 3));
     }
 
     #[test]
