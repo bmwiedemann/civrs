@@ -15,6 +15,8 @@ pub enum DialogResult {
     No,
     /// Generic "done" result for informational screens.
     Done,
+    /// A menu's help request on an item (`MenuDialog::with_help_to_caller`).
+    Help(usize),
 }
 
 pub enum Transition {

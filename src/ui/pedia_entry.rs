@@ -551,8 +551,10 @@ impl Screen for EntryScreen {
         let title = self.entry.name().to_ascii_uppercase();
         draw_spaced_centred(fb, &ctx.fonts, FONT_TITLE, BLACK, cx, 20, &title, SPACING);
         draw_spaced_centred(fb, &ctx.fonts, FONT_TEXT, GREY, cx, 36, self.entry.subtitle(), SPACING);
+        // the unit at (216, 48) also on a bare page (o 0xba09..0xba19, after the ds:0x3c62
+        // test that leaves out only the picture)
         if let Entry::Unit(u) = self.entry {
-            Self::draw_unit_sprite(fb, ctx, u, cx - 9, 47);
+            Self::draw_unit_sprite(fb, ctx, u, 215, 47);
         }
         if let Some(items) = self.pages.get(self.page) {
             for it in items {

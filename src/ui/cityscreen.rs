@@ -25,6 +25,8 @@ enum Pending {
     None,
     /// The production menu's entries (None = "more...") and the page "more..." opens.
     Change(Vec<Option<Production>>, ChangePage),
+    /// A help page of the production menu on this page of it, which is asked again after.
+    ChangeHelp(ChangePage),
     Buy,
     Sell(u8),
     Rename,
@@ -448,7 +450,7 @@ impl CityScreen {
             })
             .collect();
         self.pending = Pending::Change(list, next);
-        let menu = MenuDialog::new(vec![title], items).with_pos(80, 8).with_help_entries(pages);
+        let menu = MenuDialog::new(vec![title], items).with_pos(80, 8).with_help_entries(pages).with_help_to_caller();
         Transition::Push(Box::new(if small { menu.with_font(1) } else { menu }))
     }
 
@@ -1289,6 +1291,29 @@ impl Screen for CityScreen {
                 }
                 None => Ok(()),
             },
+            // a help request: pedia_article with ds:0x3c62 set (0xba6c -> o 0xb59f: no picture,
+            // the title at 160, colour 255 of the palette in use), then the listing again
+            // (0xbaa6 -> 0xaa23), its valuation once, the notes as they stand, the first row up
+            (Pending::Change(list, next), DialogResult::Help(i)) => {
+                let entry = match list.get(i) {
+                    Some(Some(Production::Unit(k))) => Entry::Unit(*k),
+                    Some(Some(Production::Improvement(k))) => Entry::Improvement(*k),
+                    Some(Some(Production::Wonder(k))) => Entry::Wonder(*k),
+                    _ => return Transition::None,
+                };
+                let page = match next {
+                    ChangePage::All => ChangePage::All,
+                    ChangePage::Units => ChangePage::Buildings,
+                    ChangePage::Buildings => ChangePage::Units,
+                };
+                self.advisors = advisors;
+                self.pending = Pending::ChangeHelp(page);
+                return Transition::Push(Box::new(crate::ui::pedia_entry::EntryScreen::bare(entry)));
+            }
+            (Pending::ChangeHelp(page), _) => {
+                self.advisors = advisors;
+                return self.change_page(ctx, page, false);
+            }
             (Pending::Buy, DialogResult::Yes) => ctx.game_mut().buy(self.city),
             (Pending::Sell(id), DialogResult::Yes) => ctx.game_mut().sell_improvement(self.city, id).map(|_| ()),
             (Pending::Rename, DialogResult::Text(name)) => ctx.game_mut().rename_city(self.city, &name),
@@ -1533,6 +1558,24 @@ mod tests {
         assert!(matches!(cs.resume(DialogResult::Choice(more), &mut ctx), Transition::Push(_)));
         assert!(matches!(cs.pending, Pending::Change(_, ChangePage::Units)));
         assert_eq!(cs.advisors, shown);
+    }
+
+    #[test]
+    fn a_help_page_of_the_change_menu_is_bare_and_the_menu_is_asked_again() {
+        // choose_production sets ds:0x3c62 before pedia_article (0xba6c) and starts over from
+        // its listing after it (0xbaa6 -> 0xaa23): a new menu, its first row up
+        let Some((mut ctx, mut cs)) = screen() else { return };
+        let Transition::Push(mut menu) = cs.handle_event(&key(Key::Char('c')), &mut ctx) else { panic!("no menu") };
+        menu.on_enter(&mut ctx);
+        menu.handle(&key(Key::Down), &mut ctx);
+        let alt_h = Event::Key { key: Key::Char('h'), mods: Mods { alt: true, ..Mods::default() }, down: true, repeat: false };
+        let Transition::Pop(r) = menu.handle(&alt_h, &mut ctx) else { panic!("no help request") };
+        assert_eq!(r, DialogResult::Help(1));
+        let Transition::Push(page) = cs.resume(r, &mut ctx) else { panic!("no page") };
+        assert!(page.parent_palette(), "a bare page, over the palette in use");
+        assert!(matches!(cs.pending, Pending::ChangeHelp(ChangePage::All)));
+        let Transition::Push(_) = cs.resume(DialogResult::Done, &mut ctx) else { panic!("not asked again") };
+        assert!(matches!(cs.pending, Pending::Change(_, ChangePage::All)));
     }
 
     #[test]

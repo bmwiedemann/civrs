@@ -341,6 +341,10 @@ pub struct MenuDialog {
     /// (production 0xba5b, research 0xc266): an item chosen with the right button shows its
     /// page and the menu is asked again.
     help_entries: Vec<Option<crate::ui::pedia_data::Entry>>,
+    /// A help request closes the menu with `DialogResult::Help` and the caller shows the page
+    /// and asks again: choose_production draws it bare (ds:0x3c62, 0xba6c -> o 0xb59f) and
+    /// starts over from its listing (0xbaa6 -> 0xaa23).
+    help_to_caller: bool,
     /// ds:0xd7f2: items whose leading blank menu_draw turns into a check mark as it draws
     /// them, after measuring (o 0x1d16f), so the box is as wide as without the marks.
     pub checked: Vec<bool>,
@@ -405,6 +409,7 @@ impl MenuDialog {
             mouse_sel: None,
             help: false,
             help_entries: Vec::new(),
+            help_to_caller: false,
             checked: Vec::new(),
             pitch: None,
             speaker: None,
@@ -443,6 +448,20 @@ impl MenuDialog {
         self.help = true;
         self.help_entries = entries;
         self
+    }
+
+    /// Help requests go to the caller (`help_to_caller`).
+    pub fn with_help_to_caller(mut self) -> Self {
+        self.help_to_caller = true;
+        self
+    }
+
+    /// A help request on item `i`: its Civilopedia page over the menu, or the caller's.
+    fn help_page(&self, i: usize) -> Transition {
+        if self.help_to_caller {
+            return Transition::Pop(DialogResult::Help(i));
+        }
+        Transition::Push(crate::ui::civilopedia::entry_screen(self.help_entries[i].unwrap(), 0))
     }
 
     /// Draw the menu once without taking input, as `popup_menu3` does with ds:0xdb38 set
@@ -792,7 +811,7 @@ impl MenuDialog {
             }
             // Alt-H (0x2300) asks for help on the highlighted item (o 0x1cbbc)
             Event::Key { key: Key::Char('h'), mods, down: true, .. } if mods.alt && self.help_entries.get(self.sel).is_some_and(Option::is_some) => {
-                return Transition::Push(crate::ui::civilopedia::entry_screen(self.help_entries[self.sel].unwrap(), 0));
+                return self.help_page(self.sel);
             }
             Event::Key { key, down: true, .. } => match key {
                 Key::Up | Key::Kp(8) => self.move_sel(-1),
@@ -858,7 +877,7 @@ impl MenuDialog {
                 self.mouse_sel = None;
                 return match row {
                     Some(i) if *button == MouseButton::Right && self.help_entries.get(i).is_some_and(Option::is_some) => {
-                        Transition::Push(crate::ui::civilopedia::entry_screen(self.help_entries[i].unwrap(), 0))
+                        self.help_page(i)
                     }
                     Some(i) => Transition::Pop(DialogResult::Choice(i)),
                     None if self.cancel_ok => Transition::Pop(DialogResult::Cancelled),
