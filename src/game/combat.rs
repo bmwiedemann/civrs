@@ -470,6 +470,9 @@ impl Game {
             // without a civil war the most central other city starts on a new Palace
             // (0x13e12..0x13e37: production byte -1)
             if let Some(m) = self.most_central_city(from, Some(c)) {
+                // with no dec of the old item in ds:0xd308
+                let old = self.city(m).production;
+                self.exe_d308_add(from, old, 1);
                 self.city_mut(m).production = super::Production::Improvement(imp::PALACE);
             }
         }
@@ -506,6 +509,11 @@ impl Game {
             self.city_lost_check(from, by);
             return MoveOutcome::DestroyedCity;
         }
+        // the mover stands in the city already: the step links it into the square's ring and
+        // writes its position (0x67ae..0x67e0) before it calls capture_city (0x6aa9), so the
+        // advisor's re-choices below find it there (the defender test, 0xb13f). It keeps its
+        // orders and goto (capture_city 0x13d76 leaves its record alone)
+        self.place_unit(id, city.x, city.y, cost);
         // the captor's city-site goals around it are dropped (0x13faf)
         self.remove_goals_near(by, super::goals::goal::SETTLE, city.x, city.y, 4);
         // the replay records the city as taken (0x13f97)
@@ -528,6 +536,7 @@ impl Game {
             cm.caravan_shields = 0;
             cm.improvements &= kept;
         }
+        self.exe_d308_moved(from, by, city.production);
         self.city_changed_hands(c, from, by);
         // steal_advance (0x14239) comes after the new owner and the losses are set (0x13ef5,
         // 0x13fb7), so Gunpowder or Combustion taken also clears the new city's Barracks: an
@@ -537,6 +546,7 @@ impl Game {
         if adv.is_some() && !self.player(by).human {
             self.rechoose_all(by);
         }
+        self.exe_d308_capture(c, from, by);
         // capture_city leaves the production byte to a human captor (0x142fc..0x1431a); a
         // computer's is set to 0 and chosen again (0x14328, `rechoose_after_capture`) only
         // now: the re-choice in all its cities above still sees the loser's item in the new
@@ -555,8 +565,6 @@ impl Game {
         for h in homed {
             self.remove_unit(h);
         }
-        // the mover keeps its orders and goto (capture_city 0x13d76 leaves its record alone)
-        self.place_unit(id, city.x, city.y, cost);
         // the worked squares stay (capture_city 0x13d76 leaves city +0x10 alone); the city
         // routine that follows (0x1430d) fits them to the smaller size
         self.fix_workers(c);
@@ -745,8 +753,12 @@ impl Game {
             }
             picked
         };
+        // (civ_init returned at its mask test, o5 0x4b41, before zeroing the slot's counts of
+        // ds:0xd308, o5 0x4fcb: a dead civ's stay)
         for c in &rebels {
             let (x, y) = self.city(*c).pos();
+            let p = self.city(*c).production;
+            self.exe_d308_moved(from, new_slot, p);
             self.city_mut(*c).owner = new_slot;
             self.note_occupant(new_slot, x, y);
             // transfer_city (o 0x153f4) adds the size to the rebels' citizens
@@ -1007,6 +1019,8 @@ impl Game {
         self.players[slot as usize].research_count = 1;
         self.players[slot as usize].unit_counter = [0; 28];
         self.players[slot as usize].units_lost_by_type = [0; 28];
+        // and the production counts (o5 0x4fcb)
+        self.exe_d308_recount(slot);
         self.refresh_vision(slot);
         true
     }
@@ -1591,6 +1605,51 @@ mod tests {
         // a human captor's city keeps its production byte (0x142fc)
         assert_eq!(g.city(c).production, crate::game::Production::Improvement(imp::GRANARY));
         assert!(g.events.iter().any(|e| matches!(e, GameEvent::CityCaptured { city, by: 1, from: 2, gold: 180, .. } if *city == c)));
+    }
+
+    /// `exe_quirks`: ds:0xd308 as capture_city keeps it: the loser's row loses the city's item
+    /// (0x142f8), the human captor's never gets it (0x142fc), until his ai_civ_turn recounts
+    /// (0x159cb).
+    #[test]
+    fn a_captured_city_s_unit_drops_out_of_the_production_counts() {
+        let mut g = flat_game();
+        g.exe_quirks = true;
+        let h = g.human_slot;
+        let loser = if h == 2 { 3 } else { 2 };
+        g.players[loser as usize].in_game = true;
+        g.players[loser as usize].alive = true;
+        g.set_relation(h, loser, Relation::War);
+        let c = g.add_city(loser, "Loot".into(), 20, 20);
+        let home = g.add_city(loser, "Home".into(), 40, 30);
+        g.city_mut(c).size = 3;
+        let ph = crate::game::Production::Unit(unit_ids::PHALANX);
+        g.city_mut(c).production = ph;
+        g.city_mut(home).production = ph;
+        let p = unit_ids::PHALANX as usize;
+        assert_eq!(g.exe_d308(loser)[p], 2);
+        let a = g.add_unit(h, unit_ids::LEGION, 19, 20);
+        assert_eq!(g.try_move(a, crate::game::Dir8::E).unwrap(), MoveOutcome::CapturedCity(c));
+        assert_eq!(g.city(c).production, ph);
+        assert_eq!(g.exe_d308(loser)[p], 1);
+        assert_eq!(g.exe_d308(h)[p], 0);
+        g.take_census(h);
+        assert_eq!(g.exe_d308(h)[p], 1);
+    }
+
+    /// `exe_quirks`: found_city's item (o 0x1b824) is not counted in ds:0xd308.
+    #[test]
+    fn a_new_computer_city_s_unit_is_not_counted() {
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        g.exe_quirks = true;
+        let slot = (1..8).find(|s| *s != g.human_slot && g.player(*s).alive && !g.units_of(*s).is_empty()).unwrap();
+        let settler = g.units_of(slot).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
+        g.take_census(slot);
+        let c = g.found_city(settler).unwrap();
+        let live = |g: &Game| g.all_cities().filter(|x| x.owner == slot && matches!(x.production, crate::game::Production::Unit(_))).count() as i32;
+        let unit = matches!(g.city(c).production, crate::game::Production::Unit(_)) as i32;
+        assert_eq!(g.exe_d308(slot).iter().sum::<i32>(), live(&g) - unit);
+        g.take_census(slot);
+        assert_eq!(g.exe_d308(slot).iter().sum::<i32>(), live(&g));
     }
 
     #[test]

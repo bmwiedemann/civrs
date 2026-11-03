@@ -159,6 +159,8 @@ impl Game {
         let h = self.human_slot as usize;
         let faces = h < 8 && (1..15).any(|k| m.defence[s][k] != 0 && m.cities[h][k] > 1);
         m.faces_human = m.faces_human & !(1 << s) | (faces as u8) << s;
+        // the same loop over the cities recounts their production (0x159cb / 0x15a5a)
+        self.exe_d308_recount(slot);
     }
 
     /// Empty census rows for `slot`, whose civilization is gone or starts afresh. (CIV.EXE keeps
@@ -176,6 +178,84 @@ impl Game {
         m.strength[s] = 0;
         m.citizens[s] = 0;
         m.faces_human &= !(1 << s);
+    }
+
+    /// `exe_quirks`: move `civ`'s count of cities building `p` (ds:0xd308) by `d` against the
+    /// cities' own productions (`Game::exe_d308_drift`); nothing for an improvement.
+    pub(crate) fn exe_d308_add(&mut self, civ: Slot, p: Production, d: i16) {
+        let Production::Unit(u) = p else { return };
+        if !self.exe_quirks || civ as usize >= 8 {
+            return;
+        }
+        if self.exe_d308_drift.len() < 8 {
+            self.exe_d308_drift.resize(8, [0; 28]);
+        }
+        self.exe_d308_drift[civ as usize][u as usize % 28] += d;
+        if std::env::var("CIVRS_AI_TRACE").is_ok() {
+            eprintln!("TRACE D308 t{} civ {civ} unit {u} {d:+} -> {:?}", self.turn, self.exe_d308_drift[civ as usize]);
+        }
+    }
+
+    /// found_city's production (o 0x1b375): Militia, Musketeers or Riflemen (o 0x1b586..
+    /// 0x1b5be), which a computer replaces by its advisor's item at once (o 0x1b824); none of
+    /// them is counted in ds:0xd308 (`exe_quirks`), the human's CHANGE on the city screen
+    /// moves its counts by a dec/inc pair.
+    pub(crate) fn found_city_production(&mut self, c: CityId) {
+        let owner = self.city(c).owner;
+        let first = self.city(c).production;
+        self.exe_d308_add(owner, first, -1);
+        if !self.player(owner).human {
+            let p = self.ai_production(c);
+            self.city_mut(c).production = p;
+            self.exe_d308_add(owner, first, 1);
+            self.exe_d308_add(owner, p, -1);
+        }
+    }
+
+    /// `exe_quirks`: a city building `p` goes from `from` to `to` by its owner byte alone,
+    /// which moves no count of ds:0xd308 (capture_city 0x13ef5, civil war's transfer_city
+    /// o 0x153f4).
+    pub(crate) fn exe_d308_moved(&mut self, from: Slot, to: Slot, p: Production) {
+        self.exe_d308_add(from, p, 1);
+        self.exe_d308_add(to, p, -1);
+    }
+
+    /// `exe_quirks`: ds:0xd308 at the end of capture_city for city `c`, taken from `from` by
+    /// `to` (`exe_d308_moved` before): after steal_advance's re-choice the loser's row loses
+    /// the item the city has now (0x142e0..0x142f8), and a computer captor's re-choice
+    /// (0x14328..0x1434c) adds its new item without taking that one off.
+    pub(crate) fn exe_d308_capture(&mut self, c: CityId, from: Slot, to: Slot) {
+        let now = self.city(c).production;
+        self.exe_d308_add(from, now, -1);
+        if !self.player(to).human {
+            self.exe_d308_add(to, now, 1);
+        }
+    }
+
+    /// The recount of `civ`'s row of ds:0xd308 (ai_civ_turn 0x159cb / 0x15a5a, civ_init's
+    /// zeroing o5 0x4fcb with no city of its own).
+    pub(crate) fn exe_d308_recount(&mut self, civ: Slot) {
+        if let Some(r) = self.exe_d308_drift.get_mut(civ as usize) {
+            *r = [0; 28];
+        }
+    }
+
+    /// `civ`'s count of cities building each unit type as CIV.EXE keeps it (ds:0xd308 + 0x38 *
+    /// civ): the cities' productions, with `exe_quirks` and the drift of the uncounted
+    /// changes (`Game::exe_d308_drift`).
+    pub fn exe_d308(&self, civ: Slot) -> [i32; 28] {
+        let mut n = [0i32; 28];
+        for c in self.all_cities().filter(|c| c.owner == civ) {
+            if let Production::Unit(u) = c.production {
+                n[u as usize % 28] += 1;
+            }
+        }
+        if let Some(r) = self.exe_d308_drift.get(civ as usize) {
+            for (k, d) in r.iter().enumerate() {
+                n[k] += *d as i32;
+            }
+        }
+        n
     }
 
     /// Every civilization's census rows as things stand now (a game from an older save).
@@ -457,6 +537,12 @@ impl Game {
                 if other.id != c && continent_index(self.map.tile(other.x, other.y).continent) == k {
                     building_here[u as usize] += 1;
                 }
+            }
+        }
+        // CIV.EXE reads its kept counts (ds:0xd308), which drift from the cities'
+        if let Some(r) = self.exe_d308_drift.get(slot as usize).filter(|_| self.exe_quirks) {
+            for (k, d) in r.iter().enumerate() {
+                in_production[k] += *d as i32;
             }
         }
         if units == 0 && !p.human && p.govt as u8 <= Govt::Despotism as u8 {

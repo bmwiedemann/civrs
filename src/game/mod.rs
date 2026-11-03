@@ -430,6 +430,18 @@ pub struct Game {
     /// save; not saved.
     #[serde(skip)]
     pub exe_unit_bit_lost: Vec<bool>,
+    /// CIV.EXE's count of a civilization's cities building each unit type (ds:0xd308 +
+    /// 0x38 * civ, read by the production advisor for Diplomats 0xb3d2, Nuclear 0xb5cb,
+    /// Bombers 0xb5fe and every ship and aircraft 0xb665) less the cities building it now,
+    /// at `civ`. ai_civ_turn recounts the civ's row (0x159cb / 0x15a5a) and civ_init zeroes it
+    /// (o5 0x4fcb); the changes of production in between move it by one (dec/inc pairs at
+    /// 0x18c7c, 0xebb9, 0x117e4, 0x12756, ...), but a computer's new city (o 0x1b824), a
+    /// capture (0x142f8 / 0x1434c), the Palace a captured capital's civ starts (0x13e2f) and
+    /// the cities a civil war or a revolt hands over change production or owner without
+    /// them (`Game::exe_d308_add`). Imported from a save (stored count less the cities'),
+    /// kept with `exe_quirks` only; not saved.
+    #[serde(skip)]
+    pub exe_d308_drift: Vec<[i16; 28]>,
     /// With `exe_quirks`: units whose home byte (+0xb) still names a free city record, as
     /// destroy_city leaves the units of other civilizations homed there (it disbands only the
     /// owner's, 0xa89c): a city founded in that record supports them (create_city writes no
@@ -703,6 +715,7 @@ impl Game {
             exe_unit_ghost: Vec::new(),
             exe_dead_link: vec![0; 8 * 128],
             exe_unit_bit_lost: Vec::new(),
+            exe_d308_drift: Vec::new(),
             exe_stale_home: Vec::new(),
             exe_job_bits: std::collections::HashMap::new(),
         };

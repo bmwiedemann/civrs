@@ -425,10 +425,7 @@ impl Game {
         // Settlers still stand in the new city: 'b' deletes the unit only after found_city
         // returns (0x5829 -> 0x57e9), so the advisor counts them among the civ's units and
         // the city is not empty
-        if !self.player(u.owner).human {
-            let p = self.ai_production(c);
-            self.city_mut(c).production = p;
-        }
+        self.found_city_production(c);
         self.remove_unit(id);
         // the human's new city opens its screen (process_city_and_redraw, o 0x1b7ff), whose
         // city routine stores its trade (0xf13d)

@@ -13,7 +13,7 @@
 //! visibility byte is set (`tile_has_hut` 0x1a68:0x189a).
 //!
 //! Not imported (civrs has no such state or computes it): the per-type production counts
-//! ds:0xd308, the per-civ and per-continent AI statistics (ds:0x6cac, 0x807a, 0x6b96,
+//! ds:0xd308 (but for `Game::exe_d308_drift`), the per-civ and per-continent AI statistics (ds:0x6cac, 0x807a, 0x6b96,
 //! 0xdcfe, 0xe16a, 0x8068, 0xd2f8, 0x6e82, 0x803c, 0xb1ee), the coarse block tables
 //! (far 0x1f88, ds:0xdb44), the unit type table copy, the kills matrix ds:0xe418, the
 //! historian's scores ds:0x6c9c, the colonist counts ds:0xdeec, the human's view of the
@@ -47,6 +47,7 @@ mod off {
     pub const GOLD: usize = 0x0138;
     pub const BEAKERS: usize = 0x0148;
     pub const UNIT_COUNTS: usize = 0x0158;
+    pub const PRODUCTION_COUNTS: usize = 0x0318;
     pub const RESEARCH_COUNT: usize = 0x04d8;
     pub const ADVANCES: usize = 0x04e8;
     pub const GOVERNMENT: usize = 0x0538;
@@ -512,6 +513,22 @@ fn import_slot_with(data: &[u8], map_pic: &[u8], moves_back: bool, resume: bool)
         cities.pop();
     }
     g.cities = cities;
+    // the kept counts of cities building each unit type (ds:0xd308) against the cities'
+    // (`Game::exe_d308_drift`)
+    g.exe_d308_drift = (0..8u8)
+        .map(|civ| {
+            let mut r = [0i16; 28];
+            for (k, d) in r.iter_mut().enumerate() {
+                *d = s.w(off::PRODUCTION_COUNTS + 0x38 * civ as usize + 2 * k);
+            }
+            for c in g.cities.iter().flatten().filter(|c| c.owner == civ) {
+                if let Production::Unit(u) = c.production {
+                    r[u as usize % 28] -= 1;
+                }
+            }
+            r
+        })
+        .collect();
     for i in 0..g.cities.len() {
         let Some((x, y, owner, worked, palace)) = g.cities[i].as_ref().map(|c| (c.x, c.y, c.owner, c.worked, c.has_improvement(rules::improvement_ids::PALACE))) else { continue };
         if let Some(t) = g.map.get_mut(x, y) {
@@ -772,6 +789,8 @@ pub fn state_text(g: &Game) -> String {
             let _ = writeln!(o, "{k}.researching {:?}", p.researching);
         }
         let _ = writeln!(o, "{k}.units_per_type {:?}", &p.unit_counter[..]);
+        // the kept counts of cities building each unit type (ds:0xd308, SVE 0x318)
+        let _ = writeln!(o, "{k}.in_production {:?}", g.exe_d308(p.slot));
         // the losses in combat by type (SVE 0x869e, counted by delete_unit 0x8d71)
         let _ = writeln!(o, "{k}.lost_per_type {:?}", &p.units_lost_by_type[..]);
         let _ = writeln!(o, "{k}.cities {}", g.all_cities().filter(|c| c.owner == p.slot).count());

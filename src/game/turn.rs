@@ -2314,8 +2314,7 @@ impl Game {
         }
         // the trade routes stay, both ways (capture_city 0x13d76 leaves the route bytes)
         let unrest = self.captured_in_disorder(to);
-        // a human's new city keeps its production (capture_city 0x142fc)
-        let keep_production = self.player(to).human;
+        let before = self.city(c).production;
         {
             let cm = self.city_mut(c);
             cm.owner = to;
@@ -2326,13 +2325,11 @@ impl Game {
             cm.auto_build = false;
             cm.garrison_out = false;
             cm.specialists.clear();
-            if !keep_production {
-                cm.production = Production::Unit(unit_ids::MILITIA);
-            }
             cm.shields = 0;
             cm.caravan_shields = 0;
             cm.improvements &= kept;
         }
+        self.exe_d308_moved(from, to, before);
         self.city_changed_hands(c, from, to);
         // city_revolt shows the new owner the city's 21 squares (o 0x1e183, 0x1e1b0)
         for (dx, dy) in rules::CITY_RADIUS {
@@ -2340,6 +2337,18 @@ impl Game {
         }
         // steal_advance after the messages (0x14232), as for a city taken by force
         let adv = self.capture_steal(to, from);
+        // as for a city taken by force (`capture_city`): a computer captor re-chooses in all
+        // its cities after an advance taken (0x1462f), then capture_city leaves the production
+        // to a human captor (0x142fc) and sets a computer's to 0 (0x14328) for the re-choice
+        // below
+        let computer = !self.player(to).human;
+        if adv.is_some() && computer {
+            self.rechoose_all(to);
+        }
+        self.exe_d308_capture(c, from, to);
+        if computer {
+            self.city_mut(c).production = Production::Unit(unit_ids::SETTLERS);
+        }
         self.players[to as usize].stats.cities_captured += 1;
         self.players[from as usize].stats.cities_lost += 1;
         self.auto_assign(c);
@@ -2347,7 +2356,7 @@ impl Game {
         if self.player(to).human {
             self.note_trade(c);
         }
-        self.rechoose_after_capture(to, adv.is_some(), Some(c));
+        self.rechoose_after_capture(to, false, Some(c));
         (gold, adv)
     }
 }
