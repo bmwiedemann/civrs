@@ -117,7 +117,8 @@ pub fn paint_top_five(fb: &mut Surface, ctx: &UiContext) {
         let line = format!("{}. {} ({})", i + 1, c.name, g.player(c.owner).adjective());
         let w = crate::gfx::text::text_width(&ctx.fonts, FONT, &line);
         crate::gfx::text::draw_text(fb, &ctx.fonts, &crate::gfx::TextStyle::new(FONT, colour), 160 - w / 2, y + 3, &line);
-        crate::ui::cityscreen::draw_citizens(fb, ctx, *id, 48, y + 10, 160);
+        // (no gap after the happy citizens: the uninitialised local of 0x13845 is 0 here)
+        crate::ui::cityscreen::draw_citizens_gap(fb, ctx, *id, 48, y + 10, 160, false);
         let mut x = 48 + (8 * c.size as i32).clamp(0, 160) + 8;
         for wd in 1..=21u8 {
             if g.wonders_built[wd as usize] == Some(*id) {

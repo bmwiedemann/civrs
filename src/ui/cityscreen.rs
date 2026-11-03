@@ -1157,16 +1157,19 @@ struct CitizenRow<'a> {
 /// The x of each figure in a citizens row from `x` with step `step`: the happy citizens, 2 px,
 /// the content ones, 2 px more when there were any, the unhappy ones, 4 px, the specialists
 /// (0x13816..0x13942). The first 2-px gap tests a local the original never sets (0x13845
-/// `[bp-2]`); the city screen captures show it taken (content figures from x + 2 with no
-/// happy ones), so it is always taken here.
-fn citizen_xs(x: i32, step: i32, happy: i32, content: i32, unhappy: i32, specialists: i32) -> Vec<i32> {
+/// `[bp-2]`), so it depends on what the caller's stack held: the city screen and the
+/// attitude survey captures show it taken (content figures from x + 2 with no happy ones),
+/// the Top Five Cities capture not (`first_gap`).
+fn citizen_xs(x: i32, step: i32, happy: i32, content: i32, unhappy: i32, specialists: i32, first_gap: bool) -> Vec<i32> {
     let mut out = Vec::new();
     let mut x = x;
     for _ in 0..happy.max(0) {
         out.push(x);
         x += step;
     }
-    x += 2;
+    if first_gap {
+        x += 2;
+    }
     for _ in 0..content.max(0) {
         out.push(x);
         x += step;
@@ -1191,8 +1194,12 @@ impl CitizenRow<'_> {
     /// unhappy ones get recolour(x, y, 12, 14, 5 -> 12) (0x138eb), specialists show their
     /// kind's figure (ds:0x6ea0[type]).
     fn draw(&self, fb: &mut Surface, ctx: &UiContext, x: i32, y: i32, width: i32) {
+        self.draw_gap(fb, ctx, x, y, width, true)
+    }
+
+    fn draw_gap(&self, fb: &mut Surface, ctx: &UiContext, x: i32, y: i32, width: i32, first_gap: bool) {
         let step = citizen_step(self.size.max(1), width);
-        let xs = citizen_xs(x, step, self.happy, self.content, self.unhappy, self.specialists.len() as i32);
+        let xs = citizen_xs(x, step, self.happy, self.content, self.unhappy, self.specialists.len() as i32, first_gap);
         let mut xs = xs.into_iter();
         for (count, kind) in [(self.happy, 0), (self.content, 1), (self.unhappy, 2)] {
             for i in 0..count.max(0) {
@@ -1212,11 +1219,17 @@ impl CitizenRow<'_> {
 /// `draw_citizens(city, x, y, .., width)` (0xc91:0x6eca): the city's happy, content and
 /// unhappy citizens and its specialists as [`citizen_xs`] places them.
 pub fn draw_citizens(fb: &mut Surface, ctx: &UiContext, city: crate::game::CityId, x: i32, y: i32, width: i32) {
+    draw_citizens_gap(fb, ctx, city, x, y, width, true)
+}
+
+/// `draw_citizens` with the 2-px gap after the happy citizens taken or not (see
+/// [`citizen_xs`]).
+pub fn draw_citizens_gap(fb: &mut Surface, ctx: &UiContext, city: crate::game::CityId, x: i32, y: i32, width: i32, first_gap: bool) {
     let g = ctx.game();
     let c = g.city(city);
     let h = g.city_happiness(city);
     let row = CitizenRow { size: c.size as i32, happy: h.happy, content: h.content, unhappy: h.unhappy, extra: h.extra, specialists: &c.specialists };
-    row.draw(fb, ctx, x, y, width);
+    row.draw_gap(fb, ctx, x, y, width, first_gap);
 }
 
 impl Screen for CityScreen {
@@ -1332,11 +1345,14 @@ mod tests {
         assert_eq!(citizen_step(14, 92), 6);
         assert_eq!(citizen_step(13, 92), 7);
         // content only: 2 px in (the unset local's gap), as the captures show
-        assert_eq!(citizen_xs(8, 7, 0, 1, 0, 0), vec![10]);
+        assert_eq!(citizen_xs(8, 7, 0, 1, 0, 0, true), vec![10]);
         // 2 happy, 2 content, 1 unhappy, 1 specialist
-        assert_eq!(citizen_xs(8, 7, 2, 2, 1, 1), vec![8, 15, 24, 31, 40, 51]);
+        assert_eq!(citizen_xs(8, 7, 2, 2, 1, 1, true), vec![8, 15, 24, 31, 40, 51]);
         // no content: no second gap
-        assert_eq!(citizen_xs(100, 7, 1, 0, 1, 0), vec![100, 109]);
+        assert_eq!(citizen_xs(100, 7, 1, 0, 1, 0, true), vec![100, 109]);
+        // the Top Five Cities: no gap after the happy ones (CIV.EXE capture, 0x13845)
+        assert_eq!(citizen_xs(48, 8, 8, 1, 0, 0, false)[8], 48 + 64);
+        assert_eq!(citizen_xs(48, 8, 6, 0, 1, 0, false)[6], 48 + 48);
     }
 
     #[test]

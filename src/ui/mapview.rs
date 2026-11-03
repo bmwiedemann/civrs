@@ -230,6 +230,9 @@ pub struct MapView {
     /// The frame the current wait for a key began (each key or click starts `blink_wait`
     /// 0x8932 again, which begins with the hidden phase).
     blink_from: u64,
+    /// The square the blink has redrawn while the map waited for orders: the part of a city
+    /// name over it is gone (see `draw_viewport`).
+    blinked_at: Option<(i32, i32)>,
     last_centered: Option<UnitId>,
     bar_menu_open: Option<usize>,
     /// The last pull-down menu, and the one left on the screen behind the Options list
@@ -283,6 +286,7 @@ impl MapView {
             pause: 0,
             blink: true,
             blink_from: 0,
+            blinked_at: None,
             last_centered: None,
             bar_menu_open: None,
             last_pulldown: None,
@@ -1232,6 +1236,19 @@ impl MapView {
             }
         }
         fb.set_clip(Some(Rect::new(VIEW_X, VIEW_Y, VIEW_W * TILE, VIEW_H * TILE)));
+        // the blink (blink_wait 0x8932, from its hidden phase on) redraws the active unit's
+        // square alone with draw_tile, which knows nothing of the labels: the part of a city
+        // name over that square is gone until the next full redraw
+        if matches!(self.mode, Mode::Normal | Mode::Goto) && !self.terrain_only {
+            if let Some(u) = active.and_then(|a| g.unit_opt(a)).filter(|u| u.owner == me && self.on_view(u.x, u.y) && self.blinked_at == Some(u.pos())) {
+                let (x, y) = u.pos();
+                let (px, py) = (VIEW_X + Map::wrap_x(x - self.vx) * TILE, VIEW_Y + (y - self.vy) * TILE);
+                draw_tile(fb, ctx, g, me, x, y, px, py, (!self.blink).then_some(u.id));
+                if self.blink && g.explored(me, x, y) {
+                    tilerender::draw_unit(fb, ctx, g, u.id, px, py, g.units_at(x, y).len() > 1);
+                }
+            }
+        }
         // the look cursor: draw_outline(x, y, 15, 15, col), a 16x16 frame, white while the
         // active unit blinks off (0x8a43), black while it shows (0x8aff)
         if let Some((x, y)) = self.look.filter(|&(x, y)| self.on_view(x, y)) {
@@ -1462,6 +1479,9 @@ impl Screen for MapView {
         // blink_wait (0x8932): the square without the active unit for 10 ticks, then with it
         // for 10 (0x8a1b / 0x8ad4 delay 10), as long as no key is waiting
         self.blink = (ctx.frame.saturating_sub(self.blink_from) / 10) % 2 == 1;
+        if matches!(self.mode, Mode::Normal | Mode::Goto) {
+            self.blinked_at = ctx.game.as_ref().and_then(|g| g.active_unit.and_then(|a| g.unit_opt(a)).map(|u| u.pos()));
+        }
         // the goto choice with a mouse shows the GO pointer (`app::draw_cursor`)
         ctx.goto_pointer = self.mode == Mode::Goto && !ctx.keyboard_only;
         if let Some((n, vx, vy)) = self.recentre.take() {
