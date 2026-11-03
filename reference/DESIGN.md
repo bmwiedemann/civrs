@@ -1410,6 +1410,32 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   (CIV.EXE the last one); during the civilizations' turns civrs's panel is now empty (its
   "Please wait..." is gone, CIV.EXE has no such text) but draws no progress square.
 
+  Round w108 (scratchpad w108: pl.sh / dd.sh for the staged runs, pln.sh / dn.sh for fresh
+  games, u/civui.sh / u/pair.sh for screens, diag/ and diag2/ hold CIV.EXE builds whose
+  RANDOM.LOG records carry the caller's [bp-0x10] / [bp-0x28] (the direction scores) or
+  ds:0x70e2 / ds:0x70e4 (the moods) in place of the caller's arguments: a cheap probe of a
+  value at the next draw). Fixed: the SVE import no longer lets every unit look (TRBR/TRBA t37:
+  a staged German Militia had explored row 23 in civrs only, so the Legions' exploration
+  scores 0x18617 differed; the tribute stagings now agree over 12 turns); with `exe_quirks` a
+  city's turn rebalances its moods with the specialists its own placement counted
+  (`Game::exe_specialists`, [bp-0x8] 0xdbef) after a Settlers shrank it (CW2b t411); the
+  Civilopedia text is laid out by draw_text_block (0x1ed3e) at widths 37 and 36 x 8 with the
+  load_text_entry string (blanks kept, 13 lines, the rest never shown); an audience's advance
+  page is drawn as pedia_article with ds:0x3c62 set (no icon, title at 160, colour 255 of the
+  leader's palette); the city screen keeps the capital distance it opened with
+  (`Game::screen_distance`, setup 0xc94b..0xcd65 skipped by every action's redraw 0x121ac);
+  a step's messages (hut, its look's audience) keep the panel of before the step and show the
+  unit on its new square (`MapView::step_held`); game_turn's progress square (grey 8 as a civ
+  starts, white 15 before its units, `TurnStep::Progress`). Fresh games (pln.sh, from turn 0:
+  J 1234 Prince 1,1,1,1; K 4321 King 2,1,0,2; L 9876 Warlord 0,2,1,1; N 3141 Emperor
+  1,2,2,0): the cities a civ counts (ds:0x6b66) are its last census's, less those destroyed
+  since (`Census::city_total`, SVE 0x06c8, save VERSION 33, dump civN.city_census): a hut's
+  horde placed by a civ that founded its second city in the same turn steps by 3 (N t32);
+  choose_production counts the units in the census word itself and its two early answers
+  (no units: Militia, the barbarians) leave that count there (0xafe8..0xb105, L t62);
+  civ_init zeroes both counts (o 0x49d2 / 0x49d8, L t65). The [bp-0x108] placements
+  (0xd81d, not modellable) were skipped with SKIPFF in N (70,38,12,2) and K (9,25,41,2).
+
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
@@ -1419,8 +1445,8 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   `CIVRS_FRAMES` = 15k and 15k + 10 (k = 0..15) and take the best. With that, captures of CIVIL0, 1, 3 and 4 match pixel for pixel, map and
   sidebar. `reference/tools/sve_edit.py` `imp:` and `unit:...:SEEN` stage improvements (real and
   as the human saw them) and foreign units next to the human's.
-- Known differences of a staged save: the squares around added human units are explored in civrs
-  (the import's vision pass) and not in CIV.EXE until the units look. draw_map_view draws the
+- Staged saves: the import runs no looks (`Game::refresh_all_sight`, as load_files o 0xf5b0), so
+  the squares around added units stay unexplored in both games until the units look. draw_map_view draws the
   squares in a random order (an LCG seeded with random(256), 0x1a68e), so a Settlers' job frame
   (x - 1, y - 1) or a stack's second copy (+1, +1) may be covered by a neighbour drawn later;
   civrs draws row by row.
