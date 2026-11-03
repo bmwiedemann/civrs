@@ -553,8 +553,10 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   Each `turn T` block runs at the start of the human's turn T, right after the harness saved
   t<T>.SVE, so its effects show in the later saves. Unit lines name the square of the active unit
   and send map keys (keypad moves k1..k9, r i m f s b w space h, P pillage, D disband, `ret` for a
-  message box; `kN:ROW` answers the menu a move opens: a caravan's "Will you?", a treaty
-  partner's "Break treaty."); `tax`/`lux`
+  message box, `esc` for a city screen; `kN:ROW` answers the menu a move opens: a caravan's
+  "Will you?", a treaty partner's "Break treaty.", a Diplomat's actions (0 embassy .. 4 incite;
+  Meet with King is not scripted) or a bribe; `kN:ROW:ROW2` also the menu that row opens: the
+  incite offer, the treaty question before a theft); `tax`/`lux`
   move the cursor of the rate menus ('=' / '-', which start on the current rate); `revolution` uses
   the GAME menu; `city NAME X,Y change ROW | buy | sell ROW | spec N | tile DX,DY` opens the city
   screen with FindCity ('/' and the name, which centres the map: the city at column 7, row
@@ -1373,6 +1375,40 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   squares only on a full redraw; computer Diplomats' and other incoming messages are shown
   after the unit is gone; the remaining civrs MessageBox users (famine, disbanded units,
   advances, huts, the science advice, sold buildings, SDI) are unchecked against popup_menu.
+
+  Round w107 (scratchpad w107: pl.sh / dd.sh / jobs.sh play and diff staged saves, u/ui.sh /
+  u/civui.sh / u/pair.sh / u/jobs.sh the screens, mk107.sh / mk107b.sh / mkact*.sh the
+  stagings; sve_edit.py gained beakers:, options:, census: and a unit goto). Scripted
+  Diplomats (`kN:ROW[:ROW2]`, `esc`), bribes and the load's audience (`audience`, keys sent
+  before the options) now drive both games; embassy, investigate, steal (enemy, treaty partner,
+  nothing to steal), sabotage, incite (subvert, at war, unaffordable), Caravan trade route and
+  wonder help, bribe forgotten and paid all agree draw for draw and field for field over two
+  turns (incite's re-created units and the Diplomat's deletion included: the records match).
+  Fixed: a Nuclear unit's attack on units is a fight up to nuclear_attack (0x19fdd: combat's
+  two rolls, FOUGHT both ways, treaty effects; SDI run now agrees); capture_city's message
+  comes before the human captor's theft menu (0x14014 before 0x14239); the audience's mood
+  [bp-0xa] is not the face ds:0x3936 (o 0x6ad7, 0x6b7f, 0x6ff1 set the face only): a
+  threatened leader asks no TAKECIV after a refused exchange; an advance got in an audience
+  shows its Civilopedia page at once (grant_advance 0xc5d9); the load's emissary comes over the
+  map at (x - 8, y - 2), the panel empty, game_turn's square (0x2549) up and no blink; huts and
+  SDI are popup_menu boxes (0x98a5.., 0x1a556); a human's conquest or exchange advance shows only
+  its page (no box: grant_advance 0xc4c7 boxes only the Great Library's for the human); the city
+  screen's sale has no message (0x120ab); the science advice is a draw-only popup_menu3 at (8,
+  168 - 8n) in font 2 under the research menu (0xbfde..0xc0f2; the text's unended last "-" is no
+  line); the discovery picture's text is a frameless popup_menu3 at (96, 1) in font 6 (modern
+  (96, 25), font 1, DISCOVR2 from Electricity), its icon centred at (174, 96) / (174, 87) in its
+  own palette (0xbe2b..0xbf52); a nuclear strike's explosion plays in the view as it stands, a
+  meltdown's view is x - 8, y - 6 (0x12fab); FindCity no longer types the '/' that opened it.
+  Equal now: hut box, SDI box, discovery picture, science advice and research menu, Diplomat and
+  Caravan screens, tribute (paid / refused: REJECT), exchange (refused / accepted with the
+  theft and pick), peace (accepted: TREATY, the friendship text, THREAT; refused: GROVEL,
+  MOBILIZE). There is no ceasefire in v474 (no KING.TXT section; GIVECIV / GIVECASH / GROVEL
+  are the offers for peace). Still different: a hut's box comes before the step is drawn (the
+  unit still on its old square, the panel's old moves); the advance page inside an audience is
+  drawn in CIV.EXE without its icon over the leader's palette; Civilopedia text wraps a word
+  earlier in places (Horseback Riding); a mid-turn audience shows the next unit in the panel
+  (CIV.EXE the last one); during the civilizations' turns civrs's panel is now empty (its
+  "Please wait..." is gone, CIV.EXE has no such text) but draws no progress square.
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
