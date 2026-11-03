@@ -647,9 +647,17 @@ impl Game {
         if from == 0 || !self.player(from).alive {
             return false;
         }
-        // the first civ 1..7 whose census counts no unit (ds:0x6b76: Settlers and Nuclear
-        // not among them) and no city (ds:0x6b66) (o 0x14b97 / 0x14b9e)
-        let free = |g: &Game, s: Slot| g.ai_memory.census.units[s as usize] == 0 && g.census_cities(s) == 0;
+        // a slot without cities and units; with `exe_quirks` as CIV.EXE finds it: the first
+        // civ 1..7 whose census counts no unit (ds:0x6b76: Settlers and Nuclear not among
+        // them) and no city (ds:0x6b66) (o 0x14b97 / 0x14b9e), so a civilization with nothing
+        // but Settlers, the human too, may get the rebels
+        let free = |g: &Game, s: Slot| {
+            if g.exe_quirks {
+                g.ai_memory.census.units[s as usize] == 0 && g.census_cities(s) == 0
+            } else {
+                !g.all_cities().any(|c| c.owner == s) && !g.all_units().any(|u| u.owner == s)
+            }
+        };
         let Some(new_slot) = (1..8u8).find(|s| free(self, *s)) else { return false };
         // citizens per continent and the Palace city (the one at ds:0xdcec[civ] if several)
         let cont = |g: &Game, c: &super::City| g.map.tile(c.x, c.y).continent as usize & 15;
@@ -673,20 +681,25 @@ impl Game {
         // when random(2) == 0 (o5 0x4ad0..0x4b36, grant_advance 0xc2f4 with the slot as the
         // source): the advances are overwritten by those of `from` below (o 0x14e34), but the
         // draws are made and the Great Library's owner may get an advance by them
+        // (for the human's slot civ_init returns at once, o5 0x4944..0x4953: the human
+        // keeps his rates, contacts, units counts and scores, and no advance is drawn)
         let old = self.player(new_slot).clone();
-        let mut reset = Player::new(new_slot, old.civ, false);
-        reset.in_game = true;
-        reset.alive = true;
-        reset.start_civ = old.start_civ;
-        self.players[new_slot as usize] = reset;
-        for s in 0..8usize {
-            self.players[s].diplo[new_slot as usize] = 0;
-        }
+        let to_human = new_slot == self.human_slot;
         let human = self.human_slot;
-        for a in 0..rules::advances::ADVANCE_COUNT as u8 {
-            let f = self.first_discoverer(a);
-            if self.player(human).knows(a) && f != 0 && f != human && self.rng.random(super::rng::ovl(0x4b12), 2) == 0 {
-                self.grant_advance(new_slot, a, super::science::AdvanceSource::From(new_slot));
+        if !to_human {
+            let mut reset = Player::new(new_slot, old.civ, false);
+            reset.in_game = true;
+            reset.alive = true;
+            reset.start_civ = old.start_civ;
+            self.players[new_slot as usize] = reset;
+            for s in 0..8usize {
+                self.players[s].diplo[new_slot as usize] = 0;
+            }
+            for a in 0..rules::advances::ADVANCE_COUNT as u8 {
+                let f = self.first_discoverer(a);
+                if self.player(human).knows(a) && f != 0 && f != human && self.rng.random(super::rng::ovl(0x4b12), 2) == 0 {
+                    self.grant_advance(new_slot, a, super::science::AdvanceSource::From(new_slot));
+                }
             }
         }
         let mut start_civ = old.start_civ;
@@ -698,25 +711,34 @@ impl Game {
             start_civ = new_slot + 8;
             new_slot + 8
         };
-        let mut p = Player::new(new_slot, civ, false);
-        p.in_game = true;
-        p.alive = true;
-        p.start_civ = start_civ;
-        p.tax = 40;
-        p.lux = 20;
-        self.ai_memory.persistent[new_slot as usize] = [super::goals::Goal::FREE; super::goals::PERSISTENT_GOALS];
-        // civ_init zeroes the continent policies (o5 0x49bb), so the rebels' first AI turn
-        // re-chooses on every continent whose policy is not 0 (0x15f12 -> 0x18bef)
-        self.ai_memory.policies[new_slot as usize] = Some([super::production::POLICY_NONE; 16]);
-        // and the census counts of cities and units (o5 0x49d2 / 0x49d8)
-        self.ai_memory.census.city_total[new_slot as usize] = 0;
-        self.ai_memory.census.units[new_slot as usize] = 0;
-        // civ_init and civil_war leave the slot's census rows (ds:0x6cac, 0x807a, 0x6b96,
-        // 0xd2f8, 0x2a6e) as its last AI turn wrote them: with `exe_quirks` a dead slot's
-        // citizens stay and add to the rebels' (transfer_city o 0x15428), so the loyal side
-        // loses them too (o 0x1501b) and the captured capital's plunder (0x14437) grows
-        if !self.exe_quirks {
-            self.clear_census(new_slot);
+        let mut p = if to_human {
+            // the tribe and its names go to the human's slot (o 0x14cff..0x14dcb)
+            let fresh = Player::new(new_slot, civ, true);
+            Player { civ, leader: fresh.leader, tribe_names: None, start_civ, ..old.clone() }
+        } else {
+            let mut p = Player::new(new_slot, civ, false);
+            p.in_game = true;
+            p.alive = true;
+            p.start_civ = start_civ;
+            p.tax = 40;
+            p.lux = 20;
+            p
+        };
+        if !to_human {
+            self.ai_memory.persistent[new_slot as usize] = [super::goals::Goal::FREE; super::goals::PERSISTENT_GOALS];
+            // civ_init zeroes the continent policies (o5 0x49bb), so the rebels' first AI turn
+            // re-chooses on every continent whose policy is not 0 (0x15f12 -> 0x18bef)
+            self.ai_memory.policies[new_slot as usize] = Some([super::production::POLICY_NONE; 16]);
+            // and the census counts of cities and units (o5 0x49d2 / 0x49d8)
+            self.ai_memory.census.city_total[new_slot as usize] = 0;
+            self.ai_memory.census.units[new_slot as usize] = 0;
+            // civ_init and civil_war leave the slot's census rows (ds:0x6cac, 0x807a, 0x6b96,
+            // 0xd2f8, 0x2a6e) as its last AI turn wrote them: with `exe_quirks` a dead slot's
+            // citizens stay and add to the rebels' (transfer_city o 0x15428), so the loyal side
+            // loses them too (o 0x1501b) and the captured capital's plunder (0x14437) grows
+            if !self.exe_quirks {
+                self.clear_census(new_slot);
+            }
         }
         // the rebels get half the military strength of the census (ds:0x6e82, o 0x14e0f)
         self.ai_memory.census.strength[new_slot as usize] = self.ai_memory.census.strength[from as usize & 7] / 2;
@@ -730,11 +752,14 @@ impl Game {
         p.advances = src.advances;
         p.future_techs = src.future_techs;
         p.last_contact = self.turn as i32 - 8;
-        p.diplo[from as usize] = super::diplomacy::flags::CONTACT | super::diplomacy::flags::VENDETTA;
+        // contact and vendetta are or-ed in (o 0x14e77 / 0x14e86), over what civ_init cleared
+        p.diplo[from as usize] |= super::diplomacy::flags::CONTACT | super::diplomacy::flags::VENDETTA;
         self.players[from as usize].diplo[new_slot as usize] |= super::diplomacy::flags::CONTACT;
         self.players[new_slot as usize] = p;
         // civ_init zeroes the new civ's score accumulator (o 0x4a47)
-        self.score_acc[new_slot as usize] = 0;
+        if !to_human {
+            self.score_acc[new_slot as usize] = 0;
+        }
         self.push_event(GameEvent::CivilWar { slot: from, new_slot });
 
         // the split
@@ -2135,11 +2160,43 @@ mod tests {
         }
     }
 
-    /// The rebels take the first civ 1..7 whose census (o 0x14b97 / 0x14b9e) counts no unit
-    /// (ds:0x6b76) and no city (ds:0x6b66), not the first one empty now.
+    /// With `exe_quirks` the rebels take the first civ 1..7 whose census (o 0x14b97 /
+    /// 0x14b9e) counts no unit (ds:0x6b76) and no city (ds:0x6b66), not the first one empty
+    /// now; as meant, a slot without cities and units.
     #[test]
     fn civil_war_takes_the_first_slot_empty_by_the_census() {
+        for quirks in [false, true] {
+            let mut g = flat_game_with(3);
+            g.exe_quirks = quirks;
+            let mut ids = Vec::new();
+            for (x, y) in [(6, 10), (9, 10), (12, 10), (24, 24)] {
+                let c = g.add_city(2, format!("C{x}"), x, y);
+                g.city_mut(c).size = 3;
+                ids.push(c);
+            }
+            g.city_mut(ids[0]).add_improvement(imp::PALACE);
+            let empty: Vec<Slot> = (1..8u8).filter(|s| g.cities_of(*s).is_empty() && g.units_of(*s).is_empty()).collect();
+            assert!(empty.len() >= 2);
+            g.take_census_all();
+            // the first empty slot still had a unit at its census; the civs in the game have
+            // their Settlers outside the arena, which ds:0x6b76 leaves out: a unit more each
+            for s in (1..8u8).filter(|s| *s == empty[0] || !empty.contains(s)) {
+                g.ai_memory.census.units[s as usize] = 1;
+            }
+            assert!(g.civil_war(2, ids[0]));
+            let got: Vec<Slot> = (1..8u8).filter(|s| *s != 2 && !g.cities_of(*s).is_empty()).collect();
+            assert_eq!(got, vec![if quirks { empty[1] } else { empty[0] }], "quirks {quirks} empty {empty:?}");
+        }
+    }
+
+    /// `exe_quirks`: a human with nothing but Settlers counts no unit in ds:0x6b76, so the
+    /// rebels can take his slot; civ_init returns at once for him (o5 0x4953): he stays the
+    /// human with his rates, gets the tribe, the gold, advances and government of the rebels.
+    #[test]
+    fn exe_quirks_the_rebels_can_take_the_humans_slot() {
         let mut g = flat_game_with(3);
+        g.exe_quirks = true;
+        let h = g.human_slot;
         let mut ids = Vec::new();
         for (x, y) in [(6, 10), (9, 10), (12, 10), (24, 24)] {
             let c = g.add_city(2, format!("C{x}"), x, y);
@@ -2147,17 +2204,17 @@ mod tests {
             ids.push(c);
         }
         g.city_mut(ids[0]).add_improvement(imp::PALACE);
-        let empty: Vec<Slot> = (1..8u8).filter(|s| g.cities_of(*s).is_empty() && g.units_of(*s).is_empty()).collect();
-        assert!(empty.len() >= 2);
+        g.player_mut(h).tax = 60;
+        g.player_mut(h).lux = 10;
+        g.player_mut(2).gold = 300;
         g.take_census_all();
-        // the first empty slot still had a unit at its census; the civs in the game have their
-        // Settlers outside the arena, which ds:0x6b76 leaves out: a unit more for each
-        for s in (1..8u8).filter(|s| *s == empty[0] || !empty.contains(s)) {
-            g.ai_memory.census.units[s as usize] = 1;
-        }
+        assert!(g.units_of(h).iter().all(|u| g.unit(*u).kind == unit_ids::SETTLERS));
         assert!(g.civil_war(2, ids[0]));
-        let got: Vec<Slot> = (1..8u8).filter(|s| *s != 2 && !g.cities_of(*s).is_empty()).collect();
-        assert_eq!(got, vec![empty[1]], "empty {empty:?}");
+        assert!(!g.cities_of(h).is_empty(), "the rebel cities are the human's");
+        let p = g.player(h);
+        assert!(p.human && p.alive);
+        assert_eq!((p.tax, p.lux, p.gold), (60, 10, 150));
+        assert_eq!(p.advances, g.player(2).advances);
     }
 
     #[test]
