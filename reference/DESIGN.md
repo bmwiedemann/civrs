@@ -1336,6 +1336,44 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   is not found), CW2b t411 civ 5's score_acc 21 against 20 (Ayotzinco's advisor run after
   its Settlers, size 16 to 15 with nine specialists: one happy citizen more in civrs).
 
+  Round w106: screens and dialogs (scratchpad w106: ui.sh / civui.sh / pair.sh / jobs.sh run
+  CIV.EXE and civrs side by side on staged saves, sbs.sh / zoom.sh / pdiff.py compare; mk7.sh
+  stages from the tracked CIVIL0 and late/CIVIL7). Tool pitfalls: dosciv.py writes dosciv.conf
+  next to the game directory, so CIV.EXEs started in parallel from game directories with one
+  parent mount each other's games (w103's ui.sh had that; w106's gives each game its own
+  parent); civrs's Hall of Fame goes to its data directory (set XDG_DATA_HOME for test runs);
+  the seeded CIV.EXE without --quiet-ui draws presentation randoms (leader animation, page
+  border, newspaper) from the game generator, so for audiences use the --quiet-ui build, for
+  city views the plain one. Compared and now equal (pixels, but water cycles, the blink
+  phase and a staged unit's unexplored squares): the Diplomat menu (greyed rows, the
+  highlight resting on one, o 0x1d575 / menu_select), embassy dossier, Investigate City,
+  steal / no technology / sabotage reports, the treaty and Senate questions, Meet with King
+  audiences (first contact war, peace treaty overruled by the Senate), incite offer with and
+  without subversion, the revolt announcement and capture, bribe offers, the Caravan's "Will
+  you?" and trade route message, the revolution question and newspaper, Wonders, Top Five,
+  Civilization Score, Demographics, Intelligence, Civilopedia list, the palace screen, the
+  retirement's graph, score, rating and Hall of Fame. Fixed: the Diplomat (and a trade route's
+  Caravan) stays on the map until its report closes (`Game::diplomat_action_shown`,
+  `caravan_action_shown`, `diplomat_done`); Incite a Revolt pays (`incite_pay`), announces
+  with the radius explored and the view moved (`announce_revolt`), then hands the city over
+  and only then deletes the Diplomat (`incite_finish`, 0x1db29 / 0x1db51: the re-created
+  units no longer take its record) and opens the city screen; re-created units have no moves
+  (create_unit never writes +4); a trade route's goods come from the unit record; the census
+  unit count ds:0x6b76 (Settlers and Nuclear left out, `Census::units`, SVE 0x06d8, save
+  VERSION 32, dumped as civN.unit_census and equal in every stored run) feeds "N Units.", the
+  Military Service and the FIRSTUNIT notes; the blink erases city names over the active
+  unit's square; the Top Five citizens strip has no first gap (the uninitialised 0x13845
+  local); popup boxes instead of civrs message boxes for no technology, bribes, the revolt and
+  trade route messages, the palace texts and "Press any key"; the newspaper's *NEWSx filler;
+  fit_text in the Civilopedia; "CIVILIZATION POWERGraph"; the score page before the rating;
+  the rating's advisor pictures; the End of Turn wait without a unit that asked for orders
+  (move_units [bp-0x6], 0x76b6). Still different: presentation randoms (newspaper masthead
+  and badge, rating border) under the --quiet-ui build; the emissary question at a load comes
+  in CIV.EXE before the loop shows the unit (blank panel); CIV.EXE redraws newly explored
+  squares only on a full redraw; computer Diplomats' and other incoming messages are shown
+  after the unit is gone; the remaining civrs MessageBox users (famine, disbanded units,
+  advances, huts, the science advice, sold buildings, SDI) are unchecked against popup_menu.
+
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
