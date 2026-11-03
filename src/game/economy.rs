@@ -683,6 +683,10 @@ impl Game {
             }
             let settlers = self.supported_units(c).iter().filter(|u| self.unit(**u).kind == unit_ids::SETTLERS).count() as i32;
             let eaten = 2 * size + self.settler_food(slot) * settlers;
+            // Not copied: CIV.EXE goes into the pass below only when [bp-0x108], first written
+            // inside it, is not -1 (0xd81d), a leftover of earlier frames at that depth, so a
+            // run now and then skips it (seen in the production advisor's runs after a
+            // computer city built a unit, 0xe3b1 -> 0x18c4c -> 0xa9fd -> 0xaa1b)
             // food first
             while (eaten > food + remaining / 2 || size < 3) && remaining > specialists {
                 let mut best: Option<(u8, i32, i32)> = None;
