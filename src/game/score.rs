@@ -204,7 +204,8 @@ impl Game {
         row("Life Expectancy:", v, format!("{} years", v[me]), " yrs", false);
         let family = per_civ(&|c| 40 * surplus[c] / size[c] + 20);
         row("Family Size:", family.map(|f| f / 10), format!("{}.{} children", family[me] / 10, family[me] % 10), "", false);
-        let v = per_civ(&|c| 10 * self.units_of(c as Slot).len() as i32 / size[c]);
+        // the census's units (ds:0x6b76, no Settlers or Nuclear)
+        let v = per_civ(&|c| 10 * self.ai_memory.census.units[c] / size[c]);
         row("Military Service:", v, format!("{} years", v[me]), " yrs", false);
         let v = per_civ(&|c| {
             let advances = self.player(c as Slot).research_count as i32;

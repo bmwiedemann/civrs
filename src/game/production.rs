@@ -59,6 +59,10 @@ pub struct Census {
     /// ds:0xd2f8: the citizens of the civ's cities (0x15a3e), read by the power ranking and
     /// the plunder of a captured city.
     pub citizens: [i32; 8],
+    /// ds:0x6b76: the civ's units but its Settlers (counted in ds:0x8068 instead) and Nuclear
+    /// (0x15810..0x1597f), shown by the intelligence report and the dossier ("N Units."),
+    /// the demographics' Military Service and the FIRSTUNIT notes (create_unit 0x8cf4).
+    pub units: [i32; 8],
     /// ds:0x2a6e bit civ (0x15f3f): forces of the civ on a continent where the human has two
     /// or more cities.
     pub faces_human: u8,
@@ -99,6 +103,9 @@ impl Game {
                 continue;
             }
             c.strength[u.owner as usize] += u.info().att as i32 + u.info().def as i32;
+            if u.kind != unit_ids::SETTLERS {
+                c.units[u.owner as usize] += 1;
+            }
             let t = self.map.tile(u.x, u.y);
             if t.is_ocean() {
                 continue;
@@ -155,6 +162,7 @@ impl Game {
         m.cities[s] = live.cities[s];
         m.strength[s] = live.strength[s];
         m.citizens[s] = live.citizens[s];
+        m.units[s] = live.units[s];
         (m.squares, m.sites) = self.ai_memory.world_counts.unwrap_or((live.squares, live.sites));
         let h = self.human_slot as usize;
         let faces = h < 8 && (1..15).any(|k| m.defence[s][k] != 0 && m.cities[h][k] > 1);
@@ -177,6 +185,7 @@ impl Game {
         m.cities[s] = [0; CONTINENTS];
         m.strength[s] = 0;
         m.citizens[s] = 0;
+        m.units[s] = 0;
         m.faces_human &= !(1 << s);
     }
 
@@ -959,9 +968,14 @@ mod tests {
         assert_eq!(g.census().attack[h as usize], before.attack[h as usize]);
         assert_eq!(g.military_strength(h), before.strength[h as usize]);
         // his turn: the Knights count (4 + 2 each), the Nuclear not
+        g.add_unit(h, unit_ids::SETTLERS, x + 1, y);
         g.take_census(h);
         assert_eq!(g.census().attack[h as usize][k], before.attack[h as usize][k] + 12);
-        assert_eq!(g.military_strength(h), before.strength[h as usize] + 18);
+        // ds:0x6b76 counts the Knights only: Settlers go to ds:0x8068 (0x1597a), Nuclear
+        // nowhere (0x1596f)
+        assert_eq!(g.census().units[h as usize], before.units[h as usize] + 3);
+        // (the Settlers' defence 1 is strength all the same)
+        assert_eq!(g.military_strength(h), before.strength[h as usize] + 19);
         // the computer's rows stay as its own turn left them
         assert_eq!(g.census().cities[slot as usize], before.cities[slot as usize]);
     }

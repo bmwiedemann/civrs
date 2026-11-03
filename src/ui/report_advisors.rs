@@ -254,7 +254,8 @@ impl Screen for Intelligence {
             line(fb, 8, y, &name, 15);
             let mut info = format!("{}, {}$", rules::GOVERNMENTS[p.govt as usize].adjective, p.gold);
             if g.difficulty() as u8 <= 1 {
-                info += &format!(", {} Units.", g.units_of(s).len());
+                // the census's count (ds:0x6b76: no Settlers, as the civ's last turn began)
+                info += &format!(", {} Units.", g.ai_memory.census.units[s as usize & 7]);
             }
             line(fb, 160, y, &info, colour);
             y += 8;
@@ -365,7 +366,7 @@ impl Screen for Dossier {
         line(fb, 16, y, &format!("Treasury:\u{8f} {}$", p.gold), 9);
         y += 8;
         if g.difficulty() as u8 <= 1 {
-            line(fb, 16, y, &format!("Military:\u{8f} {} Units.", g.units_of(s).len()), 9);
+            line(fb, 16, y, &format!("Military:\u{8f} {} Units.", g.ai_memory.census.units[s as usize & 7]), 9);
             y += 12;
         }
         line(fb, 16, y, "Foreign Affairs:", 9);

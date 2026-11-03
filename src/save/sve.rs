@@ -55,6 +55,7 @@ mod off {
     pub const DIPLOMACY: usize = 0x0648;
     pub const CITIZENS: usize = 0x0708;
     pub const STRENGTH: usize = 0x0718;
+    pub const UNIT_CENSUS: usize = 0x06d8;
     pub const RANKS: usize = 0x0728;
     pub const TAX: usize = 0x0738;
     pub const SCORE_ACC: usize = 0x0748;
@@ -659,6 +660,8 @@ fn import_slot_with(data: &[u8], map_pic: &[u8], moves_back: bool, resume: bool)
             }
             m.census.citizens[c] = s.civ_w(off::CITIZENS, c) as i32;
             m.census.strength[c] = s.civ_w(off::STRENGTH, c) as i32;
+            // ds:0x6b76 (SVE 0x06d8): the units but Settlers and Nuclear at that turn
+            m.census.units[c] = s.civ_w(off::UNIT_CENSUS, c) as i32;
             m.ranks[c] = s.civ_w(off::RANKS, c).clamp(0, 7) as u8;
         }
         // ds:0xdcfe (SVE 0x0a88) and ds:0xb1ee (0x0b88), as the world generator left them
@@ -809,6 +812,8 @@ fn state_text_of(g: &Game) -> String {
         // the losses in combat by type (SVE 0x869e, counted by delete_unit 0x8d71)
         let _ = writeln!(o, "{k}.lost_per_type {:?}", &p.units_lost_by_type[..]);
         let _ = writeln!(o, "{k}.cities {}", g.all_cities().filter(|c| c.owner == p.slot).count());
+        // the census's unit count (ds:0x6b76, SVE 0x06d8)
+        let _ = writeln!(o, "{k}.unit_census {}", g.ai_memory.census.units[p.slot as usize & 7]);
         // the word [civ][0] carries the revolution flag (bit 4) that civrs keeps in
         // `Player::anarchy_turns`
         let mut diplo = p.diplo.clone();

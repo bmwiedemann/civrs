@@ -45,11 +45,9 @@ impl Game {
             }
             // create_unit (CIV.EXE 0x8cd9): any unit of the human after turn 0, FIRSTUNIT1 while
             // its unit count ds:0x6b76 is 0, FIRSTUNIT2 while it is 1. That count is the census
-            // of ai_civ_turn (0x15810, Nuclear units left out); civrs counts the units the human
-            // has besides the new one.
+            // of ai_civ_turn (0x15810: Settlers and Nuclear left out), as his turn began.
             GameEvent::ItemBuilt { city, item: Production::Unit(_) } if self.city(*city).owner == me && self.turn != 0 => {
-                let others = self.all_units().filter(|u| u.owner == me && u.kind != unit_ids::NUCLEAR).count().saturating_sub(1);
-                match others {
+                match self.ai_memory.census.units[me as usize & 7] {
                     0 => after.extend(self.hint("FIRSTUNIT1")),
                     1 => after.extend(self.hint("FIRSTUNIT2")),
                     _ => {}
@@ -198,9 +196,14 @@ mod tests {
             g.push_event(GameEvent::ItemBuilt { city: c, item: Production::Unit(k) });
             g.take_events().into_iter().filter_map(|e| if let GameEvent::Hint(s) = e { Some(s) } else { None }).collect::<Vec<_>>()
         };
-        // any unit counts, Settlers too (create_unit 0x8cd9)
+        // any unit built is noted (create_unit 0x8cd9) by the census's count ds:0x6b76, which
+        // only the human's next turn takes again and which leaves out the Settlers
+        g.take_census(me);
         assert_eq!(built(&mut g, unit_ids::SETTLERS), vec!["FIRSTUNIT1".to_string()]);
-        assert_eq!(built(&mut g, unit_ids::MILITIA), vec!["FIRSTUNIT2".to_string()]);
+        assert_eq!(built(&mut g, unit_ids::MILITIA), vec!["FIRSTUNIT1".to_string()], "the same turn");
+        g.take_census(me);
+        assert_eq!(built(&mut g, unit_ids::MILITIA), vec!["FIRSTUNIT2".to_string()], "one Militia, the Settlers left out");
+        g.take_census(me);
         assert!(built(&mut g, unit_ids::MILITIA).is_empty());
     }
 

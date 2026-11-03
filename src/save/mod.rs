@@ -78,7 +78,9 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// 31: then by the world generator's continent tables (`AiMemory::world_counts`): a byte 1
 /// and 16 land sizes and 16 site counts (i16 LE), or a byte 0; older saves count them on the
 /// map.
-pub const VERSION: u16 = 31;
+/// 32: then by the census's unit counts (`Census::units`, ds:0x6b76: 8 i16 LE); older saves
+/// count the units as they stand.
+pub const VERSION: u16 = 32;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -214,6 +216,9 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
         }
         None => data.push(0),
     }
+    for u in &g.ai_memory.census.units {
+        data.extend_from_slice(&(*u as i16).to_le_bytes());
+    }
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -331,6 +336,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     let mut claims: Option<Vec<u8>> = None;
     let mut sentry_jobs: Option<Vec<u8>> = None;
     let mut world_counts: Option<([i32; 16], [i32; 16])> = None;
+    let mut unit_census: Option<[i32; 8]> = None;
     // version 14: the tribe names, after the counters
     if ver >= 14 {
         let mut at = counters + 112 * g.players.len();
@@ -421,6 +427,12 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
                                                     if let Some(b) = rest.get(at..at + 65).filter(|b| ver >= 31 && b[0] == 1) {
                                                         let w = |k: usize| i16::from_le_bytes([b[1 + 2 * k], b[2 + 2 * k]]) as i32;
                                                         world_counts = Some((std::array::from_fn(w), std::array::from_fn(|k| w(16 + k))));
+                                                    }
+                                                    if ver >= 31 {
+                                                        at += if rest.get(at) == Some(&1) { 65 } else { 1 };
+                                                        if let Some(b) = rest.get(at..at + 16).filter(|_| ver >= 32) {
+                                                            unit_census = Some(std::array::from_fn(|k| i16::from_le_bytes([b[2 * k], b[2 * k + 1]]) as i32));
+                                                        }
                                                     }
                                                 }
                                             }
@@ -517,6 +529,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
             g.rank_powers();
         }
     }
+    g.ai_memory.census.units = unit_census.unwrap_or_else(|| g.live_census().units);
     match coastal {
         Some(b) => {
             for (c, k) in g.cities.iter_mut().zip(b) {
