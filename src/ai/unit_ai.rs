@@ -1923,6 +1923,10 @@ fn run_unit(g: &mut Game, slot: Slot, id: UnitId, first: u8, sink: &mut dyn FnMu
 /// whose look opened an audience, once the audience is over or, where nobody answers in
 /// the loop, at once.
 fn deferred_hut(g: &mut Game, sink: &mut dyn FnMut(TurnStep)) {
+    if g.deferred_capture.is_some() {
+        g.finish_capture();
+        flush_events(g, sink);
+    }
     if g.deferred_look.is_some() {
         g.finish_look();
         flush_events(g, sink);

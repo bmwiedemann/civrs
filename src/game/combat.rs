@@ -481,6 +481,7 @@ impl Game {
         // civil war (0x13db4..0x13e3b), before anything else: the Palace city of a computer
         // player with more than four cities that ranks above the human (ds:0x803c)
         let h = self.human_slot;
+        let audiences = self.audience_pending;
         if from != 0 && from != h && city.has_improvement(imp::PALACE) && self.census_cities(from) > 4 && self.power_rank(h) < self.power_rank(from) && !self.civil_war(from, c) {
             // without a civil war the most central other city starts on a new Palace
             // (0x13e12..0x13e37: production byte -1)
@@ -491,6 +492,41 @@ impl Game {
                 self.city_mut(m).production = super::Production::Improvement(imp::PALACE);
             }
         }
+        // the units civil_war re-creates look (create_unit 0x8b51 -> unit_look 0x8cd3), and a
+        // meeting there with the human holds its audience inside capture_city (civs_meet
+        // 0x1508d -> overlay 6, the greeting's random(4) o 0x7c1d before 0x13f05): in a
+        // computer's unit loop the rest of the capture, and of the step, waits for the answer
+        // (`Game::deferred_capture`, `finish_capture`). The mover stands in the city already
+        // (0x67ae..0x67e0 before 0x6aa9). (Not modelled: the rest of civil_war, the other
+        // re-created units and the new Palaces, comes after the audience in CIV.EXE too.)
+        let weak_barbarian = by == 0 && attacker.info().att <= 2;
+        if self.ai_memory.moving == Some(by) && self.audience_pending & !audiences != 0 && city.size > 1 && !weak_barbarian {
+            self.place_unit(id, city.x, city.y, cost);
+            self.deferred_capture = Some(super::DeferredCapture { id, city: c, cost, attacker, from, was_capital, step: None });
+            return MoveOutcome::CapturedCity(c);
+        }
+        self.capture_rest(id, c, cost, attacker, from, was_capital, false)
+    }
+
+    /// The rest of a capture that waited for an audience (`Game::deferred_capture`), once it
+    /// is answered, and the rest of the step that made it (`Game::capture_step_tail`).
+    pub fn finish_capture(&mut self) {
+        let Some(d) = self.deferred_capture.take() else { return };
+        if self.unit_opt(d.id).is_none() || self.city_opt(d.city).is_none() {
+            return;
+        }
+        self.capture_rest(d.id, d.city, d.cost, d.attacker, d.from, d.was_capital, true);
+        if let Some((slot, to, o, goto)) = d.step {
+            self.capture_step_tail(d.id, slot, to, o, goto);
+        }
+    }
+
+    /// `capture_city` after the civil war (0x13e6c..): `placed` when the mover stands in the
+    /// city already.
+    #[allow(clippy::too_many_arguments)]
+    fn capture_rest(&mut self, id: UnitId, c: CityId, cost: u8, attacker: Unit, from: Slot, was_capital: bool, placed: bool) -> MoveOutcome {
+        let city = self.city(c).clone();
+        let by = attacker.owner;
         // the plunder is reckoned first and leaves the loser even when the city is destroyed
         // or the barbarians take it (0x13e6c, 0x13f52)
         let gold = self.plunder_value(c);
@@ -528,7 +564,9 @@ impl Game {
         // writes its position (0x67ae..0x67e0) before it calls capture_city (0x6aa9), so the
         // advisor's re-choices below find it there (the defender test, 0xb13f). It keeps its
         // orders and goto (capture_city 0x13d76 leaves its record alone)
-        self.place_unit(id, city.x, city.y, cost);
+        if !placed {
+            self.place_unit(id, city.x, city.y, cost);
+        }
         // the captor's city-site goals around it are dropped (0x13faf)
         self.remove_goals_near(by, super::goals::goal::SETTLE, city.x, city.y, 4);
         // the replay records the city as taken (0x13f97)
@@ -2215,6 +2253,63 @@ mod tests {
         assert!(p.human && p.alive);
         assert_eq!((p.tax, p.lux, p.gold), (60, 10, 150));
         assert_eq!(p.advances, g.player(2).advances);
+    }
+
+    /// A unit civil_war re-creates for the human meets the old owner's units and opens an
+    /// audience inside capture_city (civs_meet 0x1508d, the greeting o 0x7c1d before
+    /// 0x13f05): in the computer's unit loop the rest of the capture waits for the answer.
+    #[test]
+    fn a_civil_war_audience_holds_the_capture() {
+        let mut g = flat_game_with(4);
+        g.exe_quirks = true;
+        g.turn = 50;
+        let h = g.human_slot;
+        g.players[3].in_game = true;
+        g.players[3].alive = true;
+        let mut ids = Vec::new();
+        for (x, y) in [(6, 10), (9, 10), (12, 10), (15, 10), (24, 24)] {
+            let c = g.add_city(2, format!("C{x}"), x, y);
+            g.city_mut(c).size = 3;
+            ids.push(c);
+        }
+        g.city_mut(ids[0]).add_improvement(imp::PALACE);
+        g.player_mut(2).capital = Some(ids[0]);
+        g.player_mut(2).gold = 300;
+        // a unit in the farthest city goes over to the rebels, one beside it stays
+        g.add_unit(2, unit_ids::PHALANX, 24, 24);
+        let stays = g.add_unit(2, unit_ids::PHALANX, 25, 24);
+        g.unit_mut(stays).home = Some(ids[0]);
+        let legion = g.add_unit(3, unit_ids::LEGION, 7, 10);
+        g.set_relation(3, 2, Relation::War);
+        g.take_census_all();
+        g.ai_memory.ranks[h as usize] = 0;
+        g.ai_memory.ranks[2] = 5;
+        g.events.clear();
+        g.ai_memory.moving = Some(3);
+        assert!(matches!(g.try_move(legion, crate::game::Dir8::W).unwrap(), MoveOutcome::CapturedCity(_)));
+        assert_eq!(g.city(ids[4]).owner, h, "the rebels are the human's");
+        assert!(g.deferred_capture.is_some());
+        assert!(g.take_events().iter().any(|e| matches!(e, GameEvent::NeedsDecision(crate::game::Decision::Diplomacy(_)))));
+        // the capital is not taken yet, the captor stands in it
+        assert_eq!(g.city(ids[0]).owner, 2);
+        assert_eq!(g.unit(legion).pos(), (6, 10));
+        let gold = g.player(3).gold;
+        g.finish_capture();
+        assert!(g.deferred_capture.is_none());
+        assert_eq!(g.city(ids[0]).owner, 3);
+        assert!(g.player(3).gold > gold, "the plunder comes after the answer");
+        // without the computer's loop the capture goes on at once
+        let mut g2 = flat_game_with(4);
+        g2.exe_quirks = true;
+        let c = g2.add_city(2, "Lone".into(), 6, 10);
+        let l2 = g2.add_unit(3, unit_ids::LEGION, 7, 10);
+        g2.players[3].in_game = true;
+        g2.players[3].alive = true;
+        g2.set_relation(3, 2, Relation::War);
+        g2.city_mut(c).size = 3;
+        g2.try_move(l2, crate::game::Dir8::W).unwrap();
+        assert!(g2.deferred_capture.is_none());
+        assert_eq!(g2.city(c).owner, 3);
     }
 
     #[test]

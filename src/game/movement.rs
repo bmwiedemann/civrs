@@ -419,28 +419,10 @@ impl Game {
         }
         if let Some((c, o)) = capture {
             let out = self.capture_city(id, c, cost);
-            // then the step writes the mover's owner | 8 on the layer x+160 (set_tile_owner
-            // 0x6ac8 after 0x6aa9): a mark destroy_city's sweep left there goes again
-            self.note_occupant(slot, tx, ty);
-            // the step has reached a goto there before the capture (0x6848..0x6878 come
-            // before 0x6aa9): the goto goes, and a computer's unit stops
-            if u.goto == Some((tx, ty)) && self.unit_opt(id).is_some() {
-                self.clear_goto(id);
-                self.set_heading(id, 0xff);
-                if !self.is_human(slot) {
-                    self.unit_mut(id).moves_left = 0;
-                }
-            }
-            // the step has made the city's old owner see the unit (0x6a83, before the
-            // capture at 0x6aa9), and the capture's placing does not clear that
-            if let Some(cu) = self.units.get_mut(id as usize).and_then(|u| u.as_mut()) {
-                cu.seen_by |= 1 << o;
-            }
-            // and the step goes on to the unit's look (unit_look 0x6ae2), so the civilizations
-            // of units next to the taken or destroyed city meet
-            if self.unit_opt(id).is_some() {
-                self.mark_sightings(id);
-                self.unit_look_goals(id);
+            if let Some(d) = self.deferred_capture.as_mut() {
+                d.step = Some((slot, (tx, ty), o, u.goto));
+            } else {
+                self.capture_step_tail(id, slot, (tx, ty), o, u.goto);
             }
             return Ok(out);
         }
@@ -520,6 +502,34 @@ impl Game {
             return Ok(MoveOutcome::EnteredHut);
         }
         Ok(boarded.map_or(MoveOutcome::Moved, MoveOutcome::Boarded))
+    }
+
+    /// The step after capture_city (0x6aa9) has returned; `goto` is the mover's from before
+    /// the step.
+    pub fn capture_step_tail(&mut self, id: UnitId, slot: Slot, (tx, ty): (i32, i32), o: Slot, goto: Option<(i32, i32)>) {
+        // then the step writes the mover's owner | 8 on the layer x+160 (set_tile_owner
+        // 0x6ac8 after 0x6aa9): a mark destroy_city's sweep left there goes again
+        self.note_occupant(slot, tx, ty);
+        // the step has reached a goto there before the capture (0x6848..0x6878 come
+        // before 0x6aa9): the goto goes, and a computer's unit stops
+        if goto == Some((tx, ty)) && self.unit_opt(id).is_some() {
+            self.clear_goto(id);
+            self.set_heading(id, 0xff);
+            if !self.is_human(slot) {
+                self.unit_mut(id).moves_left = 0;
+            }
+        }
+        // the step has made the city's old owner see the unit (0x6a83, before the
+        // capture at 0x6aa9), and the capture's placing does not clear that
+        if let Some(cu) = self.units.get_mut(id as usize).and_then(|u| u.as_mut()) {
+            cu.seen_by |= 1 << o;
+        }
+        // and the step goes on to the unit's look (unit_look 0x6ae2), so the civilizations
+        // of units next to the taken or destroyed city meet
+        if self.unit_opt(id).is_some() {
+            self.mark_sightings(id);
+            self.unit_look_goals(id);
+        }
     }
 
     /// The ship a land unit of `u`'s owner boards stepping onto the sea square `to`: the

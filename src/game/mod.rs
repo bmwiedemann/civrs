@@ -238,6 +238,11 @@ pub struct Game {
     /// waits for the answer (`Game::finish_look`, before `deferred_hut`). Not saved.
     #[serde(skip)]
     pub deferred_look: Option<(UnitId, usize)>,
+    /// A computer's capture whose civil war opened an audience with the human (the units it
+    /// re-creates look, civs_meet 0x1508d): the rest of capture_city and of the step waits
+    /// for the answer (`Game::finish_capture`, before `finish_look`). Not saved.
+    #[serde(skip)]
+    pub deferred_capture: Option<DeferredCapture>,
     /// ds:0x3934 between audiences: -1 (none, the initial value), else 0 after a
     /// `diplomacy_close` outside an audience (see `diplo_ai::open`). Not saved.
     #[serde(skip, default = "no_audience")]
@@ -509,6 +514,21 @@ fn no_audience() -> i8 {
     -1
 }
 
+/// A capture that waits for the audience its civil war opened (`Game::deferred_capture`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeferredCapture {
+    pub id: UnitId,
+    pub city: CityId,
+    pub cost: u8,
+    /// The mover as it was before its step.
+    pub attacker: Unit,
+    pub from: Slot,
+    pub was_capital: bool,
+    /// The rest of the step (`Game::capture_step_tail`): the mover's civ, the city square,
+    /// the city's old owner and the mover's goto before the step.
+    pub step: Option<(Slot, (i32, i32), Slot, Option<(i32, i32)>)>,
+}
+
 /// The si a caller of the city routine's quiet runs holds (`Game::quiet_si`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QuietSi {
@@ -703,6 +723,7 @@ impl Game {
             audience_pending: 0,
             deferred_hut: None,
             deferred_look: None,
+            deferred_capture: None,
             diplo_latch: -1,
             treaty_break_ok: None,
             treaty_step: None,
