@@ -1279,7 +1279,18 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   the turn keeps the human's MET bits that civ_turn_politics 0x14b38 clears at the human's
   turn, while at CW2b t416 the first save has them cleared; the human's looks before the first
   save do not explain C7's), defend-goal targets (F3 t149: civ 6's defend goal at (49,30) of
-  civrs's list fits CIV.EXE's assignments only if absent; D3 t276 the same kind).
+  civrs's list fits CIV.EXE's assignments only if absent; D3 t276 the same kind). F3's goal
+  comes from a look resumed after an audience (`deferred_look`) with the w103 ds:0xd7f0 quirk:
+  the audience's emissary question redraws the whole view (o 0x7a7a -> draw_map_view 0x1a68e),
+  whose tile order the harness's --quiet-ui CIV.EXE takes from its own generator, so the last
+  unit drawn (ds:0xd7f0) is not modellable under the harness. Counter only: D5 t329 civ 3's
+  Caravan counter -1 after civ 4 lost a stack at (57,27) (a stack kill deleting a free record
+  of the ring, as destroy_city's sweep does, 0xa8bc; untraced). Runs (all draws agree; local
+  overrides in w104/size-*.txt): E2 6161 t112-t226 (t172 and t173 by the fixes, the rest
+  0x16e94 releases, t192 with two ships on one square), E3 t227-t246, A4 2024 t193-t237 (game
+  over), D2 4242 t134-t253, D4b t281-t290, D5 t291-t330, F4 8086 t198-t235 (game over), G3
+  1999 t140-t165, H3 2718 t107-t123, CIVIL8 t421-t461, CIVIL2 t341-t357, CIVIL7 t351-t369;
+  stored CIVIL1/2/6/7/9-late, A3, C8v, C7d, G2, H2 and w102's CW, SEN, WOB1, WOB2, ARRH agree.
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
