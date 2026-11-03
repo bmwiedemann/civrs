@@ -1120,7 +1120,19 @@ impl Game {
         let Some(dead) = self.unit_opt(id).cloned() else { return };
         let lost: Vec<UnitId> = if dead.carries_units() && self.map.tile(dead.x, dead.y).is_ocean() {
             let carrier = dead.kind == rules::unit_ids::CARRIER;
-            self.all_units().filter(|u| u.id != id && u.owner == dead.owner && u.pos() == dead.pos() && if carrier { u.is_air() } else { u.is_land() }).map(|u| u.id).collect()
+            let kind_lost = |u: &Unit| if carrier { u.is_air() } else { u.is_land() };
+            if self.exe_quirks {
+                // CIV.EXE's walk (for_each_in_stack 0x92a7 from the ship, 0x8df0 / 0x8e3c with
+                // kill_land_cb 0x946c / kill_air_cb 0x94d2) visits ten records, the ship the
+                // first: in a bigger stack the units beyond them stay at sea
+                self.exe_walk(dead.owner, dead.record)
+                    .into_iter()
+                    .filter_map(|r| self.exe_record_unit(dead.owner, r))
+                    .filter(|o| *o != id && kind_lost(self.unit(*o)))
+                    .collect()
+            } else {
+                self.all_units().filter(|u| u.id != id && u.owner == dead.owner && u.pos() == dead.pos() && kind_lost(u)).map(|u| u.id).collect()
+            }
         } else {
             Vec::new()
         };

@@ -219,6 +219,31 @@ mod tests {
     }
 
     #[test]
+    fn a_lost_ship_takes_ten_records_of_its_ring_along_with_exe_quirks() {
+        // delete_unit 0x8dba: for_each_in_stack (0x92a7) from the ship visits ten records
+        for quirks in [false, true] {
+            let mut g = flat_game();
+            g.exe_quirks = quirks;
+            g.map.tiles[crate::game::Map::idx(10, 10)].terrain = Terrain::Ocean;
+            let s = g.human_slot;
+            let ship = g.add_unit(s, unit_ids::FRIGATE, 10, 10);
+            let land: Vec<_> = (0..11).map(|_| g.add_unit(s, unit_ids::MILITIA, 10, 10)).collect();
+            // the ring runs ship -> the last added -> ... -> the first added
+            let ring = g.stack_ring(ship, 20);
+            assert_eq!(ring.len(), 12);
+            g.remove_unit(ship);
+            let left: Vec<_> = land.iter().filter(|u| g.unit_opt(**u).is_some()).copied().collect();
+            if quirks {
+                let mut beyond = ring[10..].to_vec();
+                beyond.sort();
+                assert_eq!(left, beyond, "the ring's 11th and 12th stay at sea");
+            } else {
+                assert!(left.is_empty());
+            }
+        }
+    }
+
+    #[test]
     fn a_unit_joins_the_ring_after_the_squares_first_unit() {
         let mut g = flat_game();
         let s = g.human_slot;
