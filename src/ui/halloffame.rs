@@ -71,7 +71,7 @@ impl Screen for HallOfFame {
     /// (<level>)" at (20, y + 8) in 7 and "    --- CIVILIZATION RATING: N% ---" at (20, y + 16)
     /// in 12; an empty slot is " ---" at (8, y). The sixth record shows only when it is the
     /// highlighted one, in the fifth one's place; the highlighted entry's colour 15 turns 14
-    /// over (4, y - 2, 296, 26), and "Clear" stands at (252, 189).
+    /// over (4, y - 2, 296, 26), and "Clear" stands at (252, 189) in a frame.
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
         fb.fill(15);
         let st = |c: u8| TextStyle::new(FONT, c);
@@ -107,8 +107,11 @@ impl Screen for HallOfFame {
             y += 26;
         }
         if self.highlight.is_some() {
-            draw_text(fb, &ctx.fonts, &st(0), 252, 189, "Clear");
-            fb.rect_outline(Rect::new(236, 187, 60, 10), 11);
+            // "C\x83lear" (the 0x83 code turns the rest to colour 3) and draw_outline(236,
+            // 187, 60, 10, 11), a 61x11 frame (o 0x28fa..)
+            let end = draw_text(fb, &ctx.fonts, &st(0), 252, 189, "C");
+            draw_text(fb, &ctx.fonts, &st(3), end, 189, "lear");
+            fb.rect_outline(Rect::new(236, 187, 61, 11), 11);
         }
     }
     /// From the title menu the screen keeps LOGO.PIC's palette (cream 15, brown 7, red 12).

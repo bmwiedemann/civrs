@@ -145,12 +145,20 @@ pub fn paint_top_five(fb: &mut Surface, ctx: &UiContext) {
 /// at 40% luxuries (o 0x1c0e0). Once the game has ended and goes on (ds:0x4cd8 bit 0x100),
 /// only "SCORING COMPLETED" centred at (160, 100) in 15 (o 0x1c05a).
 pub fn paint_score(fb: &mut Surface, ctx: &UiContext) {
-    title_block(fb, ctx, "CIVILIZATION SCORE");
-    let g = ctx.game();
-    if g.scoring_over {
+    if ctx.game().scoring_over {
+        title_block(fb, ctx, "CIVILIZATION SCORE");
         text_c(fb, ctx, 160, 100, "SCORING COMPLETED", WHITE);
         return;
     }
+    paint_final_score(fb, ctx);
+}
+
+/// The score as end_game_scores shows it (civ_score(human, 1) at 0x2c4e, after the power
+/// graph and the replay): the bit ds:0x4cd8 0x100 is set only after these screens (0x2bd2),
+/// so this is the full score page, not "SCORING COMPLETED".
+pub fn paint_final_score(fb: &mut Surface, ctx: &UiContext) {
+    title_block(fb, ctx, "CIVILIZATION SCORE");
+    let g = ctx.game();
     let me = g.human_slot;
     let s = g.score(me);
     let adj = g.human().adjective();

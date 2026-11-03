@@ -9,8 +9,10 @@
 //! centred at (160, 11): random(4) picks "<City> Weekly", "<City> Today", "The <City> Times" or
 //! "The <City> Tribune", "<City> News" when wider than 300 px, with ",-." at (8, 11) and
 //! (268, 11) when narrower than 200; "FLASH" (random(2) == 0) or "EXTRA!" in font 3 at (6, 3)
-//! and (272, 3); "January 1, <year>" at (8, 28) and "10 cents" at (272, 28) in font 1. The
-//! KING.TXT section *NEWSA.. it then draws does not exist in the shipped file.
+//! and (272, 3); "January 1, <year>" at (8, 28) and "10 cents" at (272, 28) in font 1; last
+//! the KING.TXT section *NEWSA + random(14) (*NEWSA..*NEWSN, "Iliad tops bestseller list,
+//! see BOOKS.") in font 2 centred at (160, 3) (o 0x1cf06..0x1cf3e). The box is menu_keep(text, 80, 128)
+//! (o 0x1cf6c).
 
 use crate::game::rng::MsRand;
 use crate::game::CityId;
@@ -19,10 +21,11 @@ use crate::gfx::{Rect, Surface, TextStyle};
 use crate::platform::Event;
 use crate::ui::context::UiContext;
 use crate::ui::screen::{DialogResult, Screen, Transition};
-use crate::ui::widgets::MessageBox;
+use crate::ui::widgets::MenuDialog;
 
 /// civrs font indexes of CIV.EXE window fonts 1, 3, 4 and 5.
 const FONT1: usize = 0;
+const FONT2: usize = 1;
 const FONT3: usize = 2;
 const FONT4: usize = 3;
 const FONT5: usize = 4;
@@ -34,17 +37,21 @@ pub struct Newspaper {
     masthead: String,
     flanks: bool,
     badge: &'static str,
+    /// The *NEWSx filler line over the masthead.
+    filler: String,
     edge: [i32; 16],
     date: String,
     /// "Press any key to continue." (left out by newspaper(-2), which only draws the page)
-    press: Option<MessageBox>,
+    press: Option<MenuDialog>,
+    /// Frames before a key counts, so the key that opened the paper does not close it.
+    guard: u32,
 }
 
 /// The newspaper with `headline` (one string per line), named after `city`, or after the
 /// human's city when `None` (the -1 argument).
 pub fn newspaper(headline: Vec<String>, city: Option<CityId>) -> Box<dyn Screen> {
     let mut n = front_page(headline, city);
-    n.press = Some(MessageBox::new(vec!["Press any key to continue.".into()]).with_pos(80, 128));
+    n.press = Some(MenuDialog::new(vec!["Press any key to continue.".into()], Vec::new()).with_pos(80, 128));
     Box::new(n)
 }
 
@@ -52,7 +59,7 @@ pub fn newspaper(headline: Vec<String>, city: Option<CityId>) -> Box<dyn Screen>
 /// returning at once, without the screen save, the "Press any key" box and its wait. The
 /// caller draws the rest and waits itself (government_changed o 0x5d17).
 pub fn front_page(headline: Vec<String>, city: Option<CityId>) -> Newspaper {
-    Newspaper { headline, city, masthead: String::new(), flanks: false, badge: "EXTRA!", edge: [100; 16], date: String::new(), press: None }
+    Newspaper { headline, city, masthead: String::new(), flanks: false, badge: "EXTRA!", filler: String::new(), edge: [100; 16], date: String::new(), press: None, guard: 2 }
 }
 
 /// The city of a newspaper(-1) (o 0x1cb7d..0x1cbbb): the first of the human's cities in table
@@ -102,21 +109,30 @@ impl Screen for Newspaper {
         }
         self.flanks = w < 200;
         self.badge = if rng.random(2) == 0 { "FLASH" } else { "EXTRA!" };
+        let section = format!("NEWS{}", (b'A' + rng.random(14) as u8) as char);
+        self.filler = ctx.texts.king.entry_text(&section).unwrap_or_default().trim().to_string();
         self.date = format!("January 1, {}", ctx.game.as_ref().map(|g| g.year_text()).unwrap_or_default());
         if let Some(p) = self.press.as_mut() {
             p.on_enter(ctx);
         }
     }
     fn update(&mut self, ctx: &mut UiContext) -> Transition {
+        self.guard = self.guard.saturating_sub(1);
         match self.press.as_mut() {
             Some(p) => p.update(ctx),
             None => Transition::Pop(DialogResult::Done),
         }
     }
-    fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
-        match self.press.as_mut().map(|p| p.handle(ev, ctx)) {
-            Some(Transition::Pop(_)) | None => Transition::Pop(DialogResult::Done),
-            Some(t) => t,
+    fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
+        if self.guard > 0 && self.press.is_some() {
+            return Transition::None;
+        }
+        // "Press any key to continue.": any key or click
+        match ev {
+            Event::Key { down: true, key, .. } if *key != crate::platform::Key::Unknown => Transition::Pop(DialogResult::Done),
+            Event::MouseButton { down: true, .. } => Transition::Pop(DialogResult::Done),
+            _ if self.press.is_none() => Transition::Pop(DialogResult::Done),
+            _ => Transition::None,
         }
     }
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
@@ -146,6 +162,7 @@ impl Screen for Newspaper {
         draw_text(fb, &ctx.fonts, &TextStyle::new(FONT3, 0), 272, 3, self.badge);
         draw_text(fb, &ctx.fonts, &TextStyle::new(FONT1, 0), 272, 28, "10 cents");
         draw_text(fb, &ctx.fonts, &TextStyle::new(FONT1, 0), 8, 28, &self.date);
+        draw_text_centered(fb, &ctx.fonts, &TextStyle::new(FONT2, 0), 160, 3, &self.filler);
         if let Some(p) = self.press.as_mut() {
             p.draw(fb, ctx);
         }

@@ -97,7 +97,9 @@ fn end_game_scores(ctx: &UiContext, retired: bool) -> Vec<Box<dyn Screen>> {
     }
     if let Some(g) = ctx.game.as_ref() {
         let me = g.human_slot;
-        // civ_score(human) of end_game_scores (0x2c4e) leaves its parts for fame_insert
+        // civ_score(human, 1) of end_game_scores (0x2c4e): the score page, whose parts
+        // fame_insert takes
+        s.push(Box::new(crate::ui::reports::Page::new(crate::ui::reports::BG_TEAL, crate::ui::report_world::paint_final_score)));
         let parts = g.score(me);
         let score = g.player(me).final_score.unwrap_or(parts.total);
         s.extend(rating_screen_for(ctx, score));
@@ -343,7 +345,8 @@ pub fn rating_screen(ctx: &UiContext, score: i32) -> Box<dyn Screen> {
 }
 
 /// The page of `rating_screen`: tune 0x22, colour 15 with the random SP299 page border, the
-/// SP299 pictures (200, 140) and (240, 140) (40x60) at (10, 10) and (270, 10), a stone panel
+/// pictures of page ds:0x19e8 (200, 140) and (240, 140) (40x60, two of the government's
+/// advisors, whose strip lies over SP299 there) at (10, 10) and (270, 10), a stone panel
 /// (80, 4, 160, 27) with a 11/8 bevel and three lines in font 7, colour 15, centred at y 6, 14
 /// and 22: "Sire, your Civilization" / "Rating of N% exceeds even" / "<ruler>!" (with no
 /// score "Sire, your fame now" / "exceeds even that of" / "<ruler>!"); then the rulers of
@@ -378,9 +381,22 @@ impl Screen for RatingScreen {
         const FONT7: usize = 6;
         fb.fill(15);
         crate::ui::pedia_entry::draw_border(fb, ctx, self.border);
-        let sp = &ctx.pic("SP299").surf;
-        fb.blit_part(sp, Rect::new(200, 140, 40, 60), 10, 10, None);
-        fb.blit_part(sp, Rect::new(240, 140, 40, 60), 270, 10, None);
+        // page ds:0x19e8 (200, 140) and (240, 140): SP299 with the advisors' strip of the
+        // government's GOVT sheet over its bottom right (as the speaker boxes cut them), so
+        // two of the current advisors
+        let advisors = ctx.game.as_ref().map(|_| crate::ui::reports::advisor_pic_name(ctx));
+        match advisors {
+            Some(name) => {
+                let pic = &ctx.pic(&name).surf;
+                fb.blit_part(pic, Rect::new(40, 0, 40, 60), 10, 10, None);
+                fb.blit_part(pic, Rect::new(80, 0, 40, 60), 270, 10, None);
+            }
+            None => {
+                let sp = &ctx.pic("SP299").surf;
+                fb.blit_part(sp, Rect::new(200, 140, 40, 60), 10, 10, None);
+                fb.blit_part(sp, Rect::new(240, 140, 40, 60), 270, 10, None);
+            }
+        }
         crate::ui::widgets::fill_texture(fb, ctx, Rect::new(80, 4, 160, 27));
         crate::ui::widgets::bevel(fb, 80, 4, 159, 26, 11, 8);
         let ruler = |i: usize| rules::RATINGS[19 - i];

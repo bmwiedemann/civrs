@@ -31,8 +31,9 @@ fn axis_year(year: i32) -> String {
 /// `power_graph()` (o 0x106e8) on a colour-8 screen: a black frame (4, 9)..(315, 192) with a
 /// black line every 50 turns up to the current turn (and turn 600), the year under every
 /// second one in font 2; in font 1 the adjective of each civilization in the game (active, or
-/// one of the first ds:0xd2f4 + 1) at (8, 8 * civ + 4) in its colour, "CIVILIZATION POWER"
-/// shadowed at (100, 2), and each one's power history as a line 2 px per row, scaled so the
+/// one of the first ds:0xd2f4 + 1) at (8, 8 * civ + 4) in its colour, "CIVILIZATION
+/// POWERGraph" shadowed at (100, 2) (the string has no break before "Graph"), and each
+/// one's power history as a line 2 px per row, scaled so the
 /// highest value of all (at least 50) is 180 px. Any key returns. (CIV.EXE takes that maximum
 /// over turn / 4 rows, past the 150 rows of the history after turn 600, o 0x1080d..0x10842;
 /// civrs stops at the last row.)
@@ -60,8 +61,8 @@ impl PowerGraph {
                 max = max.max(g.history.power_at(i, s) as u32);
             }
         }
-        draw_text(fb, &ctx.fonts, &TextStyle::new(FONT, 0), 100, 3, "CIVILIZATION POWER");
-        draw_text(fb, &ctx.fonts, &TextStyle::new(FONT, 15), 100, 2, "CIVILIZATION POWER");
+        draw_text(fb, &ctx.fonts, &TextStyle::new(FONT, 0), 100, 3, "CIVILIZATION POWERGraph");
+        draw_text(fb, &ctx.fonts, &TextStyle::new(FONT, 15), 100, 2, "CIVILIZATION POWERGraph");
         for &s in &civs {
             let (mut px, mut py) = (0, 0);
             for i in 0..rows {

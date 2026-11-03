@@ -131,9 +131,14 @@ impl Screen for ListScreen {
         Transition::None
     }
 
-    fn handle(&mut self, ev: &Event, _ctx: &mut UiContext) -> Transition {
+    fn handle(&mut self, ev: &Event, ctx: &mut UiContext) -> Transition {
         if self.guard > 0 {
             return Transition::None;
+        }
+        // with a mouse (ds:0x1a3c) the list waits for a button or a key, and a key is EXIT
+        // (pedia_index o 0xafdb); only the keyboard-only list moves a cursor
+        if !ctx.keyboard_only && matches!(ev, Event::Key { down: true, key, .. } if *key != Key::Unknown) {
+            return Transition::Pop(DialogResult::Done);
         }
         match ev {
             Event::Key { key, down: true, .. } => match key {
@@ -193,22 +198,17 @@ impl Screen for ListScreen {
         let exit_w = spaced_width(&ctx.fonts, FONT, "EXIT", SPACING);
         draw_spaced(fb, &ctx.fonts, FONT, RED, 312 - exit_w, 4, "EXIT", SPACING);
         if self.pages() > 1 {
-            draw_spaced(fb, &ctx.fonts, FONT, RED, MORE_RECT.x + 2, 4, "MORE", SPACING);
+            // "MORE" at (8, 4) (o 0xb088: draw_text("MORE", 8, 4, 12))
+            draw_spaced(fb, &ctx.fonts, FONT, RED, MORE_RECT.x, 4, "MORE", SPACING);
         }
         let start = self.page * self.per_page();
         let end = (start + self.per_page()).min(self.entries.len());
         // names wider than the column are cut and end in a '.' ("Genetic Engineeri.")
-        let max_w = self.col_w() - 3;
+        let max_w = self.col_w();
         for i in start..end {
             let (x, y) = self.pos(i);
             let colour = if self.sel == Some(i) { BLUE } else { BLACK };
-            let mut name = self.entries[i].name();
-            if spaced_width(&ctx.fonts, FONT, &name, SPACING) > max_w {
-                while !name.is_empty() && spaced_width(&ctx.fonts, FONT, &format!("{name}."), SPACING) > max_w {
-                    name.pop();
-                }
-                name.push('.');
-            }
+            let name = fit_name(&self.entries[i].name(), |t| spaced_width(&ctx.fonts, FONT, t, SPACING), max_w);
             draw_spaced(fb, &ctx.fonts, FONT, colour, x, y, &name, SPACING);
         }
     }
@@ -218,9 +218,34 @@ impl Screen for ListScreen {
     }
 }
 
+/// `fit_text(s, width)` (0x1f1ad) as the lists call it with the column's width (100 or 150,
+/// o 0xb2f6): while the name is wider, its second last character becomes a '.' (unless a
+/// space comes before it) and the last is dropped, so "Copernicus' Observatory" ends as
+/// "Copernicus' Obser.".
+fn fit_name(name: &str, width: impl Fn(&str) -> i32, max_w: i32) -> String {
+    let mut b: Vec<char> = name.chars().collect();
+    while b.len() >= 2 && width(&b.iter().collect::<String>()) > max_w {
+        let n = b.len();
+        if n < 3 || b[n - 3] != ' ' {
+            b[n - 2] = '.';
+        }
+        b.pop();
+    }
+    b.into_iter().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_are_cut_as_fit_text_does() {
+        // one pixel per character: cut to 18 characters
+        let w = |t: &str| t.chars().count() as i32;
+        assert_eq!(fit_name("Copernicus' Observatory", w, 18), "Copernicus' Obser.");
+        assert_eq!(fit_name("Isaac Newton's College", w, 18), "Isaac Newton's Co.");
+        assert_eq!(fit_name("Ceremonial Burial", w, 18), "Ceremonial Burial");
+    }
 
     #[test]
     fn list_clicks_pick_column_and_row_as_civ_exe() {

@@ -250,6 +250,10 @@ pub struct MapView {
     /// messages are over (capture_city 0x13d76 ends with the city screen, 0xc91:0x3b).
     captured: Option<(crate::game::CityId, Vec<(i32, i32)>)>,
     auto_end: u32,
+    /// move_units [bp-0x6]: a unit of the human has waited for orders in this turn's loop
+    /// (0x45e9). Without one the loop waits at "Press Enter" whatever the End of Turn option
+    /// (0x76b6).
+    unit_waited: bool,
     /// Events taken from the game but not yet shown (one dialog at a time).
     queued: std::collections::VecDeque<crate::game::GameEvent>,
     /// The turn whose unit loop has used up its advice latch (`move_units` [bp-0x8]: set by
@@ -297,6 +301,7 @@ impl MapView {
             tutorial_shown: false,
             captured: None,
             auto_end: 0,
+            unit_waited: false,
             queued: Default::default(),
             advice_turn: None,
             terrain_only: false,
@@ -467,6 +472,7 @@ impl MapView {
             let _ = crate::save::save_game(&path, ctx.game());
         }
         self.last_centered = None;
+        self.unit_waited = false;
         // the turn's loop has started from the first record (move_units 0x4149) and taken
         // its first unit (`Phase::HumanStart`); one that moves by itself goes on in `update`
         self.adopt_active(ctx);
@@ -1555,7 +1561,10 @@ impl Screen for MapView {
             return Transition::Push(Box::new(YesNo::new(vec!["Are you sure you".into(), "want to Quit?".into()], "Keep Playing", "Yes, Quit").with_pos(100, 80)));
         }
         // automatic end of turn when nothing is left to do and the option is off
-        if self.mode == Mode::EndOfTurn && !ctx.game().options.end_turn_confirm {
+        if self.mode == Mode::Normal && ctx.game().active_unit.is_some() {
+            self.unit_waited = true;
+        }
+        if self.mode == Mode::EndOfTurn && self.unit_waited && !ctx.game().options.end_turn_confirm {
             self.auto_end += 1;
             if self.auto_end > 45 {
                 self.auto_end = 0;
