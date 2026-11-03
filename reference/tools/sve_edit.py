@@ -12,8 +12,9 @@ The .MAP next to IN.SVE is copied next to OUT.SVE. Edits (offsets as src/save/sv
                                specialist codes +0x14: 1 taxman, 2 scientist, 3 entertainer),
                                status, trade (the stored trade +0xa), route (a trade route to
                                that city in the first free slot +0x17..0x19); a size change also changes the owner's citizens (0x708)
-    unit:CIV:TYPE:X,Y[:HOME[:FLAGS[:SEEN]]]   a new unit in the civ's lowest free record, with no
-                               goto, full moves (thirds) and the stack ring of its square; the
+    unit:CIV:TYPE:X,Y[:HOME[:FLAGS[:SEEN[:GX,GY]]]]   a new unit in the civ's lowest free record,
+                               with no goto (or one to GX,GY), full moves (thirds) and the
+                               stack ring of its square; the
                                civ's unit counters (0x158, and 0x6d8 for non-Settlers) go up;
                                SEEN = the civs that have seen it (+9, bit per civ)
     imp:X,Y:REAL[:SEEN]        the square's improvement bits on map page 2 (0x02 irrigation,
@@ -21,6 +22,11 @@ The .MAP next to IN.SVE is copied next to OUT.SVE. Edits (offsets as src/save/sv
                                pollution; low nibble at (x, y+100), high at (x, y+150)) and the
                                human's view of them at (x+80, ...) (default: REAL)
     gold:CIV:N                 the civ's gold
+    beakers:CIV:N              the civ's research store (0x148)
+    census:CIV:K:DEF,ATT,CITIES[:STRENGTH]   the census row of continent K as the civ's last
+                               turn left it (0x788 / 0x888 / 0x988, strength 0x718)
+    options:N                  the options byte (0x8aa4: 1 Instant Advice, 2 AutoSave, 4 End
+                               of Turn, 8 Animations, 0x10 Sound, 0x20 Enemy Moves, ...)
     diplo:A:B:V                the diplomacy word of A towards B (0x648 + 16 A + 2 B)
     build:CITY:A,B,...         build the improvements A, B (ids as src/rules/improvements.rs:
                                record bit id - 1)
@@ -45,6 +51,7 @@ import sys
 
 CITIES, UNITS, ADV, RCOUNT, COUNTS, NUNITS, CITIZENS, GOLD, DIPLO = 0x1508, 0x26c0, 0x4e8, 0x4d8, 0x158, 0x6d8, 0x708, 0x138, 0x648
 WONDERS, GOVT, TAX, SCIENCE, POLLUTED = 0x8672, 0x538, 0x738, 0x8bb0, 0x8a9e
+BEAKERS, OPTIONS = 0x148, 0x8aa4
 # the city radius in CIV.EXE's order (ds:0x2498 / 0x24c2, src/game/economy.rs EXE_RADIUS)
 RADIUS = [(0, -1), (1, 0), (0, 1), (-1, 0), (1, -1), (1, 1), (-1, 1), (-1, -1), (0, -2), (2, 0), (0, 2), (-2, 0),
           (-1, -2), (1, -2), (2, -1), (2, 1), (1, 2), (-1, 2), (-2, 1), (-2, -1)]
@@ -108,7 +115,8 @@ def edit(d, e, page):
         i = next(i for i in range(128) if d[base + 12 * i + 3] == 0xff)
         here = [j for j in range(128) if d[base + 12 * j + 3] != 0xff and d[base + 12 * j + 1] == x and d[base + 12 * j + 2] == y]
         r = base + 12 * i
-        d[r:r + 12] = bytes([flags, x, y, typ, 3 * MOVES[typ], 0, 0xff, 0, 0xff, seen, 0xff, home])
+        gx, gy = map(int, a[6].split(',')) if len(a) > 6 else (0xff, 0)
+        d[r:r + 12] = bytes([flags, x, y, typ, 3 * MOVES[typ], 0, gx, gy, 0xff, seen, 0xff, home])
         if here:
             # the stack ring +0xa: put the new unit after the first one of the square
             first = base + 12 * here[0]
@@ -120,6 +128,18 @@ def edit(d, e, page):
             put(d, NUNITS + 2 * civ, w(d, NUNITS + 2 * civ) + 1)
     elif kind == 'gold':
         put(d, GOLD + 2 * int(a[0]), int(a[1]))
+    elif kind == 'census':
+        # the last AI turn's census (0x788 defence, 0x888 attack, 0x988 cities by continent;
+        # 0x718 strength) that an audience at the load reads
+        civ, k = int(a[0]), int(a[1])
+        for base, v in zip((0x788, 0x888, 0x988), a[2].split(',')):
+            put(d, base + 32 * civ + 2 * k, int(v))
+        if len(a) > 3:
+            put(d, 0x718 + 2 * civ, int(a[3]))
+    elif kind == 'beakers':
+        put(d, BEAKERS + 2 * int(a[0]), int(a[1]))
+    elif kind == 'options':
+        d[OPTIONS] = int(a[0], 0)
     elif kind == 'diplo':
         put(d, DIPLO + 16 * int(a[0]) + 2 * int(a[1]), int(a[2], 0))
     elif kind == 'build':

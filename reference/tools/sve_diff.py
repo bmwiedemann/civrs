@@ -80,11 +80,17 @@ def rows(n):
 def unit_keys(k):
     if k == 'ret':
         return ['Return', 'sleep2']
+    if k == 'esc':
+        # closes a city screen (a Diplomat's Investigate City, a city taken)
+        return ['Escape', 'sleep2']
     if k[0] == 'k':
-        # kN:ROW: the move opens a menu (a caravan's "Will you?"), answered with its row
-        if ':' in k:
-            return [KEYPAD[k[1]], 'sleep2'] + rows(k.split(':')[1]) + ['Return', 'sleep2']
-        return [KEYPAD[k[1]], 'sleep2']
+        # kN:ROW: the move opens a menu (a caravan's "Will you?", a Diplomat's actions, a
+        # bribe), answered with its row; kN:ROW:ROW2 answers the menu that row opens next
+        # (the incite offer, the treaty question before a theft)
+        out = [KEYPAD[k[1]], 'sleep2']
+        for r in k.split(':')[1:]:
+            out += rows(r) + ['Return', 'sleep3']
+        return out
     if k == 'b':
         # the name prompt takes the proposed name, then the founding animation and city view
         return ['b', 'sleep2', 'Return', 'sleep8', 'Escape', 'sleep2']
@@ -148,6 +154,9 @@ def act(w, k, click, shot):
         # the treaty question a goto step opened (0x656d -> 0x1a3b4): row 0 cancels, 1 breaks
         # the treaty; a Senate overrule after that needs one more Return
         k(rows(w[1]) + ['Return', 'sleep2'])
+    elif w[0] == 'audience':
+        # sent at the load (play)
+        pass
     else:
         raise ValueError('unknown action %s' % w)
 
@@ -200,6 +209,11 @@ def play(game, slot, turns, out, script=None, seed=None):
             f.seek(0x8aa4)
             opts = f.read(1)[0]
         last = turn_of(os.path.join(game, 'CIVIL%s.SVE' % slot))
+        # the audience the load's looks open (an emissary) takes its keys before the options
+        for w in actions.get(last, []):
+            if w[0] == 'audience':
+                for key in w[1:]:
+                    k((['Return'] if key == 'ret' else rows(key) + ['Return']) + ['sleep3'])
     # and AutoSave off (its save every 50th turn to CIVIL4..9, game_turn 0x2796, would take
     # the harness's Return for its drive prompt and overwrite a slot of GAME_DIR)
     toggle = (['Return'] if opts & 1 else []) + ['Down'] + (['Return'] if opts & 2 else []) + ['Down'] + (['Return'] if not opts & 4 else [])

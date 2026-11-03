@@ -17,10 +17,23 @@
 //!                          Senate overrules with a message box: add `ret`) and its row;
 //!                          a caravan entering a foreign city sets up its route, a move onto a
 //!                          foreign unit attacks
+//! unit 13,24 k9:4:1 ret ret esc   a Diplomat entering a foreign city: the action's row
+//!                          (0 embassy, 1 investigate, 2 steal, 3 sabotage, 4 incite; Meet with
+//!                          King is not scripted) and, for a theft from a treaty partner (0
+//!                          cancel, 1 break the treaty) or an incite offer (0 forget it, 1
+//!                          incite, 2 subvert), the next menu's row; then a `ret` (Return) for
+//!                          each report or popup and an `esc` (Escape) for a city screen. A
+//!                          Diplomat onto a lone foreign unit: kN:1 pays the bribe, kN:0 forgets
+//!                          it, kN alone meets a price above the treasury (`ret`)
 //! menu 1                  answers the menu a unit's goto opened as the loop came to it
 //!                          (a treaty partner's land or unit: 0 cancel, 1 break the
 //!                          treaty), as kN:ROW does for a move by hand; the next action
 //!                          must be this one
+//! audience ret 0 ret 1    only in the first turn block: the keys for the audience the loaded
+//!                          game opens with (its first looks meet a computer's unit): `ret` a
+//!                          Return for a screen without choices, N a menu's row (the harness
+//!                          sends them before the options; civrs gives the rows to the
+//!                          audience's menus in turn, later menus get row 0)
 //! select 7,23 Caesarea 9,25   FindCity, a click on the square and Return: its one unit
 //!                          of the human's becomes the active unit
 //! tax +1 / lux -2          the rate menus ('+' / '-'): rows down from the current rate
@@ -54,9 +67,14 @@ pub enum Action {
     City { name: String, at: (i32, i32), op: CityOp },
     /// The row for the menu a goto opened (`run_autos`).
     Menu(usize),
+    /// The keys for the audience the loaded game opens with (the first looks' emissary):
+    /// `None` a Return for a screen without choices, `Some(row)` a menu row.
+    Audience(Vec<Option<usize>>),
 }
 
 thread_local! {
+    /// The rows still to give the audience's menus (`Action::Audience`); others get row 0.
+    static ANSWERS: std::cell::RefCell<std::collections::VecDeque<usize>> = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
     /// The treaty question a goto step opened (`run_autos`): the unit, its step, the partner.
     static OPEN: std::cell::Cell<Option<(crate::game::UnitId, Dir8, crate::game::Slot)>> = const { std::cell::Cell::new(None) };
 }
@@ -103,6 +121,7 @@ pub fn parse(text: &str) -> Result<Vec<(u32, Action)>, String> {
             "tax" | "lux" => Action::Rate { lux: w[0] == "lux", rows: num(w.get(1))? },
             "revolution" => Action::Revolution,
             "menu" => Action::Menu(num(w.get(1))? as usize),
+            "audience" => Action::Audience(w[1..].iter().map(|k| if *k == "ret" { Ok(None) } else { k.parse().map(Some).map_err(|_| err("bad audience key")) }).collect::<Result<_, _>>()?),
             "select" => Action::Select {
                 at: pos(w.get(1).ok_or_else(|| err("missing X,Y"))?)?,
                 city: w.get(2).ok_or_else(|| err("missing city"))?.to_string(),
@@ -165,11 +184,24 @@ fn run_autos(g: &mut Game) -> Result<(), String> {
     }
 }
 
-/// Answer the decisions among the new events with their first choice; the rest go.
+/// Answer the decisions among the new events with their first choice (an audience's menus
+/// with the rows `Action::Audience` left); the rest go.
 fn settle(g: &mut Game) {
-    for e in g.take_events() {
-        if let crate::game::GameEvent::NeedsDecision(d) = e {
-            g.apply_decision(&d, crate::game::DecisionReply::Choice(0));
+    // an answered audience screen queues the next one: until none is left
+    loop {
+        let mut answered = false;
+        for e in g.take_events() {
+            if let crate::game::GameEvent::NeedsDecision(d) = e {
+                let row = match &d {
+                    crate::game::Decision::Diplomacy(st) if st.choices() > 0 => ANSWERS.with_borrow_mut(|a| a.pop_front()).unwrap_or(0),
+                    _ => 0,
+                };
+                g.apply_decision(&d, crate::game::DecisionReply::Choice(row));
+                answered = true;
+            }
+        }
+        if !answered {
+            return;
         }
     }
 }
@@ -181,6 +213,8 @@ pub fn apply(g: &mut Game, a: &Action) -> Result<(), String> {
         open_question()?;
     }
     match a {
+        // taken before the load's looks (`play`)
+        Action::Audience(_) => Ok(()),
         Action::Menu(row) => {
             let (id, d, o) = OPEN.take().ok_or("no menu is open")?;
             answer_treaty(g, id, d, o, Some(*row), "menu")?;
@@ -193,7 +227,7 @@ pub fn apply(g: &mut Game, a: &Action) -> Result<(), String> {
             }
             for k in keys {
                 // a Return for a message box in CIV.EXE (a trade route, a fight's report)
-                if k == "ret" {
+                if k == "ret" || k == "esc" {
                     continue;
                 }
                 let id = g.active_unit.ok_or_else(|| format!("no active unit for key {k}"))?;
@@ -303,11 +337,18 @@ fn unit_key(g: &mut Game, id: crate::game::UnitId, k: &str) -> Result<(), String
         activate_next(g)
     };
     if let Some(n) = k.strip_prefix('k') {
-        // kN:ROW answers the menu the move opens with its row
-        let (n, row) = match n.split_once(':') {
-            Some((n, r)) => (n, Some(r.parse::<usize>().map_err(|_| format!("bad menu row in {k}"))?)),
-            None => (n, None),
-        };
+        // kN:ROW answers the menu the move opens with its row, kN:ROW:ROW2 the menu that
+        // row opens next (a Diplomat's incite offer or treaty question)
+        let mut parts = n.split(':');
+        let n = parts.next().unwrap_or("");
+        let rows: Vec<usize> = parts.map(|r| r.parse::<usize>().map_err(|_| format!("bad menu row in {k}"))).collect::<Result<_, _>>()?;
+        if rows.len() > 2 {
+            return Err(format!("too many menu rows in {k}"));
+        }
+        let (row, row2) = (rows.first().copied(), rows.get(1).copied());
+        if row2.is_some() && g.unit(id).kind != rules::unit_ids::DIPLOMAT {
+            return Err(format!("move {k}: a second menu row is for a Diplomat"));
+        }
         let d = n.parse().ok().and_then(Dir8::from_keypad).ok_or_else(|| format!("bad key {k}"))?;
         let caravan = g.unit(id).kind == rules::unit_ids::CARAVAN;
         match g.try_move(id, d).map_err(|e| e.message().to_string())? {
@@ -316,6 +357,25 @@ fn unit_key(g: &mut Game, id: crate::game::UnitId, k: &str) -> Result<(), String
             MoveOutcome::CapturedCity(_) | MoveOutcome::DestroyedCity if row.is_none() => {}
             // a caravan in a foreign city sets up the route at once (0x5d15)
             MoveOutcome::EnteredForeignCity(c) if caravan && row.is_none() => g.caravan_action(id, CaravanAction::TradeRoute(c)).map_err(|e| e.message().to_string())?,
+            // "ADJ diplomat arrives in CITY..." (o 0x1d575)
+            MoveOutcome::EnteredForeignCity(c) if !caravan => diplomat(g, id, c, row, row2, k)?,
+            // "ADJ UNIT will desert for N$." (o 0x1dd15): with the price in the treasury 0
+            // Forget it., 1 Pay (and the Diplomat moves on); else a message box (`ret`)
+            MoveOutcome::BribeOffer(t) if row2.is_none() => {
+                let (cost, gold) = (g.bribe_cost(t), g.player(g.human_slot).gold);
+                match row {
+                    None if cost > gold => {}
+                    Some(0) if cost <= gold => {}
+                    Some(1) if cost <= gold => {
+                        g.bribe_unit(g.human_slot, t);
+                        match g.try_move(id, d).map_err(|e| e.message().to_string())? {
+                            MoveOutcome::Moved => {}
+                            out => return Err(format!("move {k} after the bribe: {out:?}")),
+                        }
+                    }
+                    _ => return Err(format!("move {k}: no bribe menu row {row:?} (price {cost}, treasury {gold})")),
+                }
+            }
             // "Will you?" (0x5cbe): Keep moving, Establish trade route (greyed for a wonder
             // city within 10 squares of home, ds:0xb276 = 2), Help build WONDER.
             MoveOutcome::CaravanArrived(c) => {
@@ -385,6 +445,46 @@ fn unit_key(g: &mut Game, id: crate::game::UnitId, k: &str) -> Result<(), String
     }
 }
 
+/// A Diplomat's menu at the foreign city `c` (o 0x1d575, rows as `DIPLOMAT_MENU`; a greyed
+/// row is an error), as `ui::unit_actions` performs it: Steal Technology from a treaty
+/// partner asks first (`row2` 0 Cancel action., 1 Break treaty.; a Senate overrules with a
+/// message box), Incite a Revolt makes its offer (`row2` 0 Forget it., 1 Incite revolt, 2
+/// Subvert city; a price above the treasury is a message box, no `row2`). The reports,
+/// popups and city screens that follow take a `ret` each in CIV.EXE. Meet with King is not
+/// scripted.
+fn diplomat(g: &mut Game, id: crate::game::UnitId, c: crate::game::CityId, row: Option<usize>, row2: Option<usize>, k: &str) -> Result<(), String> {
+    use crate::game::turn::DiplomatAction as A;
+    let row = row.ok_or_else(|| format!("move {k}: the Diplomat's menu needs a row"))?;
+    let (us, them) = (g.unit(id).owner, g.city(c).owner);
+    if g.diplomat_menu_disabled(us, c).get(row).copied().unwrap_or(true) {
+        return Err(format!("move {k}: Diplomat menu row {row} is greyed or missing"));
+    }
+    let action = match A::from_menu(row) {
+        Some(A::MeetKing) | None => return Err(format!("move {k}: Meet with King is not scripted")),
+        Some(A::StealTech) if g.treaty(us, them) => match row2 {
+            Some(0) => return Ok(()),
+            Some(1) if g.senate_overrules(us) => return Ok(()),
+            Some(1) => A::StealTech,
+            _ => return Err(format!("move {k}: no treaty menu row {row2:?}")),
+        },
+        Some(A::InciteRevolt { .. }) => {
+            let cost = g.incite_cost(c).ok_or("a capital cannot be incited")?;
+            let gold = g.player(us).gold;
+            let subvert = cost * 2 <= gold && g.treaty(us, them);
+            match row2 {
+                None if cost > gold => return Ok(()),
+                Some(0) if cost <= gold => return Ok(()),
+                Some(1) if cost <= gold => A::InciteRevolt { subvert: false },
+                Some(2) if subvert => A::InciteRevolt { subvert: true },
+                _ => return Err(format!("move {k}: no incite menu row {row2:?} (price {cost}, treasury {gold})")),
+            }
+        }
+        Some(a) if row2.is_none() => a,
+        Some(_) => return Err(format!("move {k}: Diplomat menu row {row} opens no second menu")),
+    };
+    g.diplomat_action(id, action, c).map(|_| ()).map_err(|e| e.message().to_string())
+}
+
 /// After a move: the map view follows the unit (scroll_to 0x9505, MapView::ensure_visible);
 /// a unit with moves left and no order keeps the focus (0x6d7f -> 0x442c), else the loop
 /// goes on.
@@ -429,6 +529,14 @@ fn answer_treaty(g: &mut Game, id: crate::game::UnitId, d: Dir8, o: crate::game:
 pub fn play(g: &mut Game, ai: &mut crate::ai::Ai, actions: &[(u32, Action)], turns: u32) -> Result<(), String> {
     use crate::game::turn::TurnStep;
     OPEN.set(None);
+    // the audience the load's looks open is answered before anything else, as the harness
+    // sends its keys before the options (`Action::Audience`)
+    let start = g.turn;
+    let rows: std::collections::VecDeque<usize> = actions.iter().filter(|(t, _)| *t == start).flat_map(|(_, a)| match a {
+        Action::Audience(keys) => keys.iter().flatten().copied().collect(),
+        _ => Vec::new(),
+    }).collect();
+    ANSWERS.set(rows);
     // a new game's turn 0 runs up to the human's first move first, as the map view starts it
     if let Some(mut r) = g.take_opening() {
         loop {
@@ -440,6 +548,10 @@ pub fn play(g: &mut Game, ai: &mut crate::ai::Ai, actions: &[(u32, Action)], tur
         }
     }
     run_autos(g)?;
+    let left = ANSWERS.with_borrow(|a| a.len());
+    if left != 0 {
+        return Err(format!("{left} audience rows left over: no audience at the load"));
+    }
     // the harness's first key after the load is a Space: with no unit of the human waiting
     // for orders it ends the turn at once, before any save at record 0x80 (the options menu
     // before it returns no command, ds:0xd4ca = -1)
@@ -562,6 +674,65 @@ mod tests {
         let draws = crate::game::rng::trace_take();
         assert_eq!(draws.iter().map(|d| (d.at, d.n)).collect::<Vec<_>>(), vec![(0xb3e0, 5)]);
         assert_eq!(g.city(c).production, crate::game::Production::Unit(unit_ids::MILITIA));
+    }
+
+    /// A flat arena with a city of civ 2 at (20, 20) (its capital at (8, 20)) and the human's
+    /// Diplomat west of it, the active unit.
+    fn diplomat_arena() -> (Game, crate::game::CityId, crate::game::UnitId) {
+        use crate::game::GameSetup;
+        use crate::rules::unit_ids;
+        let mut g = Game::new(GameSetup { seed: 7, ..Default::default() }, None);
+        g.players[2].in_game = true;
+        g.players[2].alive = true;
+        for y in 5..30 {
+            for x in 5..30 {
+                let t = g.map.get_mut(x, y).unwrap();
+                t.terrain = crate::rules::Terrain::Grassland;
+                t.flags = 0;
+            }
+        }
+        let ids: Vec<_> = g.all_units().filter(|u| (5..30).contains(&u.x) && (5..30).contains(&u.y)).map(|u| u.id).collect();
+        for id in ids {
+            g.remove_unit(id);
+        }
+        g.set_relation(1, 2, crate::game::Relation::War);
+        let cap = g.add_city(2, "Capital".into(), 8, 20);
+        g.city_mut(cap).add_improvement(crate::rules::improvement_ids::PALACE);
+        let c = g.add_city(2, "Target".into(), 20, 20);
+        let d = g.add_unit(1, unit_ids::DIPLOMAT, 19, 20);
+        g.active_unit = Some(d);
+        assert_eq!(g.human_slot, 1);
+        (g, c, d)
+    }
+
+    #[test]
+    fn a_scripted_diplomat_takes_its_menu_rows() {
+        // kN:ROW:ROW2 (o 0x1d575): Incite a Revolt (row 4), then the offer's row
+        let unit = |k: &str| Action::Unit { at: (19, 20), keys: vec![k.into()] };
+        let (mut g, c, d) = diplomat_arena();
+        g.player_mut(1).gold = 5000;
+        // the offer's "Forget it." leaves everything as it was
+        apply(&mut g, &unit("k6:4:0")).unwrap();
+        assert_eq!((g.city(c).owner, g.unit_opt(d).is_some(), g.player(1).gold), (2, true, 5000));
+        // no subversion without a treaty, and a theft from an enemy asks nothing more
+        assert!(apply(&mut g, &unit("k6:4:2")).is_err());
+        assert!(apply(&mut g, &unit("k6:2:1")).is_err());
+        // Meet with King is not scripted; a capital's Incite row is greyed
+        assert!(apply(&mut g, &unit("k6:5")).is_err());
+        apply(&mut g, &unit("k6:4:1")).unwrap();
+        assert_eq!(g.city(c).owner, 1);
+        assert!(g.unit_opt(d).is_none(), "deleted after the transfer (o 0x1db51)");
+        assert!(g.player(1).gold < 5000);
+        let (mut g, _, d) = diplomat_arena();
+        g.unit_mut(d).x = 9;
+        let cap = g.city_at(8, 20).unwrap();
+        assert!(diplomat(&mut g, d, cap, Some(4), Some(1), "k4:4:1").is_err(), "greyed");
+        // Establish Embassy uses the Diplomat up
+        let (mut g, _, d) = diplomat_arena();
+        apply(&mut g, &unit("k6:0")).unwrap();
+        assert!(g.player(1).has_embassy(2));
+        assert!(g.unit_opt(d).is_none());
+        assert_eq!(parse("turn 1\nunit 19,20 k6:4:1 ret ret esc\n").unwrap()[0].1, Action::Unit { at: (19, 20), keys: vec!["k6:4:1".into(), "ret".into(), "ret".into(), "esc".into()] });
     }
 
     #[test]
