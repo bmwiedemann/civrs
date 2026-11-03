@@ -1005,6 +1005,33 @@ mod tests {
         assert_eq!(g.view, Some((13, 14)));
     }
 
+    /// `exe_quirks`: move_units compares the columns unwrapped (0x4357 / 0x4372), so a view at
+    /// the east edge hides the units of the map's west columns (C7 t336).
+    #[test]
+    fn exe_quirks_the_loop_s_view_test_does_not_wrap() {
+        for quirks in [false, true] {
+            let mut g = Game::new(GameSetup { seed: 5, ..Default::default() }, None);
+            g.exe_quirks = quirks;
+            let slot = g.human_slot;
+            for u in g.units_of(slot) {
+                g.unit_mut(u).moves_left = 0;
+            }
+            let a = g.add_unit(slot, unit_ids::MILITIA, 2, 20);
+            g.add_unit(slot, unit_ids::MILITIA, 40, 30);
+            g.active_unit = None;
+            g.view = Some((75, 15));
+            let first = g.next_active_unit();
+            if quirks {
+                // a round without a unit in the view, then the first one by record, centred
+                assert_eq!(first, Some(a));
+                assert_eq!(g.view, Some(Game::view_centred_on(2, 20)));
+            } else {
+                assert_eq!(first, Some(a));
+                assert_eq!(g.view, Some((75, 15)), "a is in the wrapped view");
+            }
+        }
+    }
+
     #[test]
     fn off_the_screen_the_loop_goes_on_from_its_mark_not_from_the_last_unit() {
         // move_units 0x4150 / 0x4381: with nobody left in the view, a unit outside it is

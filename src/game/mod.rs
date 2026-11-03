@@ -1548,7 +1548,8 @@ impl Game {
     /// (columns vx+1..vx+14, rows vy+1..vy+9, 0x434f..0x437f), and only after a whole round
     /// without one the first of the others, on which the view is centred (0x43c9).
     /// CIV.EXE compares the columns without the east-west wrap, so near x = 0 it takes
-    /// visible units for hidden ones; civrs wraps.
+    /// visible units for hidden ones; civrs wraps but for `exe_quirks` (where it decides the
+    /// order of the looks and of the units moving by themselves).
     ///
     /// The unit may be one that moves by itself (`is_auto_unit`): a goto, taken by the same
     /// rule, or a Settlers at work or an aircraft returning to base, taken wherever it is
@@ -1635,7 +1636,13 @@ impl Game {
             // as the loop passed takes units off, `unit_opt`)
             if let Some(id) = by_record[i].filter(|id| self.unit_opt(*id).is_some_and(wants)) {
                 let u = self.unit(id);
-                let shown = self.view.is_some_and(|(vx, vy)| (1..=14).contains(&Map::wrap_x(u.x - vx)) && (1..=9).contains(&(u.y - vy)));
+                // (`exe_quirks`: the columns compared unwrapped, vx < x <= vx + 14, 0x4357 /
+                // 0x4372, so a view at the east edge hides the units at the map's west end and
+                // the loop passes, every unit looking, to the end of its round; C7 t336)
+                let shown = self.view.is_some_and(|(vx, vy)| {
+                    let col = if self.exe_quirks { (vx + 1..=vx + 14).contains(&u.x) } else { (1..=14).contains(&Map::wrap_x(u.x - vx)) };
+                    col && (1..=9).contains(&(u.y - vy))
+                });
                 let (on_screen, (x, y)) = (shown || u.order == UnitOrder::Home || u.order.is_work(), u.pos());
                 if on_screen || self.unit_loop.round {
                     if !on_screen {
