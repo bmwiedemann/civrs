@@ -356,8 +356,9 @@ fn run(g: &mut Game, mut m: Meeting) -> Option<DiplomacyState> {
                     m.step = Step::AfterExchange;
                 }
             }
+            // the leader's mood ([bp-0xa]) stays: the exchange sets only his face (ds:0x3936
+            // = 1, o 0x6ad7; after an exchange again 1, o 0x6b7f)
             Step::ExchangeShow => {
-                m.mood = 1;
                 let mut st = screen(g, &m, Proposal::Exchange);
                 st.advance = m.offer;
                 st.rplc1 = m.offer.map(name).unwrap_or_default();
@@ -470,8 +471,8 @@ fn run(g: &mut Game, mut m: Meeting) -> Option<DiplomacyState> {
                     open!(Step::PeaceShow, Step::Attitude);
                 }
             }
+            // the face only (ds:0x3936 = 0, o 0x6ff1); the mood the ATTITUDE test reads stays
             Step::PeaceShow => {
-                m.mood = 0;
                 let st = screen(g, &m, Proposal::Peace);
                 return wrap(m, Await::Peace, st);
             }
@@ -649,7 +650,6 @@ pub fn respond(g: &mut Game, st: &DiplomacyState, choice: usize) -> Option<Diplo
                 g.transfer_advance(ai, h, a, "exchange");
             }
             m.want = false;
-            m.mood = 1;
             m.step = Step::Exchange;
         }
         Await::Cancel => {
@@ -1103,6 +1103,30 @@ mod tests {
         assert!(g.player(human).knows(crate::rules::advance_ids::ALPHABET));
         let took = [crate::rules::advance_ids::POTTERY, crate::rules::advance_ids::BRONZE_WORKING].iter().filter(|a| g.player(ai).knows(**a)).count();
         assert_eq!(took, 1, "the leader takes one");
+    }
+
+    #[test]
+    fn a_threatened_leaders_exchange_leaves_his_mood() {
+        // o 0x6ad7 / 0x6ff1 set the face (ds:0x3936), not the mood [bp-0xa]: a leader who
+        // feels threatened (mood 0) makes no TAKECIV demand after a refused exchange, as
+        // captured (CIVIL0 t35 staged, w107 exc)
+        let (mut g, human, ai) = meeting_game();
+        for a in [crate::rules::advance_ids::POTTERY, crate::rules::advance_ids::BRONZE_WORKING, crate::rules::advance_ids::ALPHABET] {
+            g.player_mut(ai).forget(a);
+            g.player_mut(human).forget(a);
+        }
+        g.player_mut(ai).learn(crate::rules::advance_ids::ALPHABET);
+        g.player_mut(human).learn(crate::rules::advance_ids::POTTERY);
+        g.player_mut(human).learn(crate::rules::advance_ids::BRONZE_WORKING);
+        // the human's attack outweighs the leader's defence where his city is: a threat
+        let k = crate::game::production::continent_index(g.map.tile(20, 20).continent);
+        g.ai_memory.census.cities[ai as usize][k] = 1;
+        g.ai_memory.census.defence[ai as usize][k] = 1;
+        g.ai_memory.census.attack[human as usize][k] = 10;
+        let st = meeting(&mut g, ai, (15, 15), 1).expect("greeting");
+        let seen = play(&mut g, st, &|_| 0);
+        assert!(seen.contains(&Proposal::Exchange), "{seen:?}");
+        assert!(!seen.contains(&Proposal::TakeCiv), "{seen:?}");
     }
 
     #[test]

@@ -159,9 +159,6 @@ impl Game {
 
     pub fn attack(&mut self, id: UnitId, x: i32, y: i32) -> MoveOutcome {
         let attacker = self.unit(id).clone();
-        if attacker.kind == unit_ids::NUCLEAR {
-            return self.nuke(id, x, y);
-        }
         let targets = self.units_at(x, y);
         if targets.is_empty() {
             return MoveOutcome::Blocked;
@@ -199,6 +196,12 @@ impl Game {
         }
         self.last_combat = Some(((attacker.x, attacker.y), (x, y), won));
         self.fight_diplomacy(attacker.owner, defender.owner);
+        // a Nuclear unit's attack is a fight up to here, its rolls, the two sides' FOUGHT
+        // bits and treaty included, whatever they say; then nuclear_attack (0x19fdd ->
+        // 0x1a463) and combat returns a win
+        if attacker.kind == unit_ids::NUCLEAR {
+            return self.nuke(id, x, y);
+        }
         // a computer city whose defender loses goes on alert (city status 0x10, CIV.EXE
         // 0x6114..0x6141): its next turn re-chooses production and buys. A beaten attacker
         // ends the move before that (0x60cd -> 0x6d7f)
@@ -418,6 +421,19 @@ impl Game {
         (word0 << 1) | rest
     }
 
+    /// capture_city's "PLURAL capture CITY." (0x14014..0x14130) as an event: it comes before
+    /// the human captor's "Select one..." of steal_advance (0x14239 -> 0x14550), which
+    /// `capture_steal` has queued since `mark`, so it goes in front of that decision.
+    pub(crate) fn push_capture_event(&mut self, mark: usize, e: GameEvent) {
+        let theft = self.events.iter().skip(mark).position(|e| matches!(e, GameEvent::NeedsDecision(super::Decision::StealAdvance { .. })));
+        let Some(i) = theft else { return self.push_event(e) };
+        let (before, after) = self.hints_for_event(&e);
+        let group: Vec<GameEvent> = before.into_iter().chain(std::iter::once(e)).chain(after).collect();
+        for (k, ev) in group.into_iter().enumerate() {
+            self.events.insert(mark + i + k, ev);
+        }
+    }
+
     /// `steal_advance(captor, victim)` (CIV.EXE 0x14468) after a city changed hands: a
     /// computer captor takes the advance it values most, the human picks one from a menu;
     /// nothing when either side is the barbarians. Returns a computer captor's advance.
@@ -542,6 +558,7 @@ impl Game {
         // 0x13fb7), so Gunpowder or Combustion taken also clears the new city's Barracks: an
         // advance taken makes the computer captor re-choose in all its cities, the new one
         // too (0x1462f), before the loser's units go
+        let mark = self.events.len();
         let adv = self.capture_steal(by, from);
         if adv.is_some() && !self.player(by).human {
             self.rechoose_all(by);
@@ -575,7 +592,7 @@ impl Game {
         self.rechoose_after_capture(by, false, Some(c));
         self.players[by as usize].stats.cities_captured += 1;
         self.players[from as usize].stats.cities_lost += 1;
-        self.push_event(GameEvent::CityCaptured { city: c, by, from, gold, adv });
+        self.push_capture_event(mark, GameEvent::CityCaptured { city: c, by, from, gold, adv });
         if was_capital {
             self.lose_capital(from, c);
         }
@@ -1979,6 +1996,24 @@ mod tests {
     }
 
     #[test]
+    fn a_nuclear_attack_on_units_rolls_the_fight_first() {
+        // combat 0x19724 runs for a Nuclear attacker up to its rolls and the FOUGHT bits, then
+        // nuclear_attack (0x19fdd -> 0x1a463)
+        let mut g = flat_game();
+        g.add_unit(2, unit_ids::MUSKETEERS, 20, 20);
+        let n = g.add_unit(1, unit_ids::NUCLEAR, 19, 20);
+        g.nukes_enabled = true;
+        crate::game::rng::trace_start();
+        assert!(matches!(g.attack(n, 20, 20), MoveOutcome::Attacked { won: true, .. }));
+        let draws: Vec<u32> = crate::game::rng::trace_take().iter().map(|d| d.at).collect();
+        assert_eq!(&draws[..2], &[0x19a2d, 0x19a3a]);
+        assert!(draws[2..].iter().all(|a| *a == 0x1a5eb), "then only the fallout: {draws:x?}");
+        assert!(g.units_at(20, 20).is_empty() && g.unit_opt(n).is_none());
+        assert_ne!(g.diplo(1, 2) & crate::game::diplomacy::flags::FOUGHT, 0);
+        assert_ne!(g.diplo(2, 1) & crate::game::diplomacy::flags::FOUGHT, 0);
+    }
+
+    #[test]
     fn capital_loss_with_six_cities_splits_the_empire() {
         // 3 civilisations leave slots free for the rebels
         let mut g = flat_game_with(3);
@@ -2386,6 +2421,28 @@ mod tests {
         let rebels = g.events.iter().position(|e| matches!(e, GameEvent::CityRebels { city, from: 2, to: 1 } if *city == c)).expect("rebellion");
         let captured = g.events.iter().position(|e| matches!(e, GameEvent::CityCaptured { .. })).unwrap();
         assert!(rebels < captured);
+    }
+
+    #[test]
+    fn the_capture_message_comes_before_the_human_captors_theft() {
+        // capture_city: the message (0x14014..0x14130), then steal_advance's menu (0x14239)
+        use crate::game::turn::DiplomatAction;
+        use crate::rules::advance_ids as adv;
+        let theft = |g: &Game| g.events.iter().position(|e| matches!(e, GameEvent::NeedsDecision(crate::game::Decision::StealAdvance { .. }))).expect("theft");
+        let captured = |g: &Game| g.events.iter().position(|e| matches!(e, GameEvent::CityCaptured { .. })).expect("capture");
+        let (mut g, c, d) = diplomat_game();
+        g.player_mut(1).gold = 5000;
+        let fresh = (0..72u8).find(|a| rules::is_real(*a) && !g.player(1).knows(*a) && *a != adv::FUTURE_TECH).unwrap();
+        g.player_mut(2).learn(fresh);
+        g.diplomat_action(d, DiplomatAction::InciteRevolt { subvert: false }, c).unwrap();
+        assert!(captured(&g) < theft(&g));
+        // and by force
+        let (mut g, c, d) = diplomat_game();
+        g.remove_unit(d);
+        g.player_mut(2).learn(fresh);
+        let a = g.add_unit(1, unit_ids::ARMOR, 19, 20);
+        assert!(matches!(g.capture_city(a, c, 3), MoveOutcome::CapturedCity(_)));
+        assert!(captured(&g) < theft(&g));
     }
 
     /// Industrial Sabotage that finds no improvement has drawn random(2) and 99 x random(24),

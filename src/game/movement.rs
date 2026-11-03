@@ -233,7 +233,9 @@ impl Game {
                 // 0x6075 only when the attacker or the defender is the human, cleared at 0x60ae)
                 self.counting_losses = slot == self.human_slot || o == self.human_slot;
                 let out = if u.kind == unit_ids::NUCLEAR {
-                    self.nuke(id, tx, ty);
+                    // combat's rolls first (0x6093 -> 0x19724), then nuclear_attack; the move
+                    // ends with the unit gone
+                    self.attack(id, tx, ty);
                     MoveOutcome::Attacked { won: true, at: (tx, ty), defender: unit_ids::NUCLEAR }
                 } else {
                     let out = self.attack(id, tx, ty);

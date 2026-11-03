@@ -2269,8 +2269,9 @@ impl Game {
     /// `CityRebels` event and no view change.
     fn transfer_city_announced(&mut self, c: CityId, to: Slot, announced: bool) {
         let from = self.city(c).owner;
+        let mark = self.events.len();
         let (gold, adv) = self.revolt_city(c, to, announced);
-        self.push_event(GameEvent::CityCaptured { city: c, by: to, from, gold, adv });
+        self.push_capture_event(mark, GameEvent::CityCaptured { city: c, by: to, from, gold, adv });
     }
 
     /// city_revolt's announcement (o 0x1e2ba), before capture_city's own message: the human
