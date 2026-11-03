@@ -737,7 +737,7 @@ fn import_slot_with(data: &[u8], map_pic: &[u8], moves_back: bool, resume: bool)
     // unit types built: bit 3 of the first-discoverer words (0xdf46)
     g.history.units_built = (0..28).filter(|t| s.w(off::FIRST + 2 * t) & 8 != 0).fold(0, |m, t| m | 1 << t);
 
-    g.refresh_all_vision();
+    g.refresh_all_sight();
     g.update_research_catch_up();
     if !resume {
         g.derive_pop_milestone();

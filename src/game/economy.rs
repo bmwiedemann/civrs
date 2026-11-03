@@ -454,6 +454,15 @@ impl Game {
     /// Distance used for corruption (CIV.EXE 0xca04): 0 in a city with a Palace, else the
     /// travel distance to the nearest own Palace (32 without one); a flat 10 under Communism.
     fn corruption_distance(&self, c: CityId) -> i32 {
+        if let Some((_, d)) = self.screen_distance.filter(|(s, _)| *s == c) {
+            return d;
+        }
+        self.setup_capital_distance(c)
+    }
+
+    /// ds:0x6b30 as process_city's setup computes it (0xc94b..): 10 under Communism, 0 in the
+    /// capital, else the distance to the nearest own city with a Palace (32 without one).
+    pub fn setup_capital_distance(&self, c: CityId) -> i32 {
         let city = self.city(c);
         if self.player(city.owner).govt == Govt::Communism {
             return 10;
@@ -773,8 +782,10 @@ impl Game {
                 cm.shields = 0;
             }
             // (a quiet run counts the squares and units again; `trade_carry` and
-            // `abroad_carry` are only for the turn's reads after it)
+            // `abroad_carry` are only for the turn's reads after it; it places its own
+            // specialists, `exe_specialists`)
             let carry = (self.trade_carry.take(), self.abroad_carry.take());
+            let specialists = self.exe_specialists.take();
             // every run places the workers (0xd454..0xdc5d): a computer city starts over when
             // (city + turn) & 3 == 0, also in the runs between its turns
             self.assign_workers(c, false);
@@ -787,6 +798,7 @@ impl Game {
                 self.nested_totals = Some(self.turn_totals(c));
             }
             (self.trade_carry, self.abroad_carry) = carry;
+            self.exe_specialists = specialists;
             // a run in a mode other than 0 ends at the garrison check (0x125d6 -> 0x131d2)
             self.restash_garrison_quiet(c);
         }
@@ -1927,5 +1939,19 @@ mod tests {
         g.map.set_claim(x, y, 0);
         g.build_advice(c).unwrap();
         assert_eq!(g.map.claim_at(x, y), human, "the production advisor's mode -1");
+    }
+
+    #[test]
+    fn the_city_screen_keeps_the_distance_to_the_capital_it_opened_with() {
+        // process_city's setup (0xc94b..0xcd65) runs as the screen opens; a sale redraws
+        // from 0xcd65 (0x121ac), so a sold Palace leaves the corruption as it was
+        let (mut g, c) = fixture();
+        g.city_mut(c).improvements |= 1 << imp::PALACE;
+        assert_eq!(g.setup_capital_distance(c), 0);
+        g.screen_distance = Some((c, 0));
+        g.city_mut(c).improvements &= !(1 << imp::PALACE);
+        assert_eq!(g.corruption(c, 100, false), 0);
+        g.screen_distance = None;
+        assert_eq!(g.corruption(c, 100, false), 100 * 32 * 3 / (20 * g.player(g.city(c).owner).govt as i32 + 80));
     }
 }

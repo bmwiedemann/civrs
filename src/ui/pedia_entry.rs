@@ -28,10 +28,14 @@ const SPACING: i32 = 1;
 
 const BODY_X: i32 = 12;
 const BODY_Y: i32 = 76;
-const BODY_W: i32 = 297;
-/// The game-effect notes wrap a little narrower than the history text (measured).
-const NOTE_W: i32 = 290;
+/// draw_text_block's widths in 8-pixel units: the history text (o 0xb7e1: 37) and the
+/// game-effect notes (o 0xb847: 36)
+const BODY_W8: i32 = 37;
+const NOTE_W8: i32 = 36;
 const BODY_PITCH: i32 = 9;
+/// draw_text_block stops once its y passes 192 (0x1ee27): 13 lines from y 76, the rest of a
+/// longer history text is never shown (after the key the text is cleared for the notes and
+/// stats, o 0xb7ed..0xb809)
 const BODY_LINES: usize = 13;
 const STAT_PITCH: i32 = 8;
 
@@ -78,6 +82,37 @@ pub fn draw_spaced(fb: &mut Surface, fonts: &FontSet, font: usize, colour: u8, x
 pub fn draw_spaced_centred(fb: &mut Surface, fonts: &FontSet, font: usize, colour: u8, cx: i32, y: i32, s: &str, spacing: i32) -> i32 {
     let w = spaced_width(fonts, font, s, spacing);
     draw_spaced(fb, fonts, font, colour, cx - w / 2, y, s, spacing)
+}
+
+/// The lines `draw_text_block(width8, ...)` (CIV.EXE 0x1ed3e) makes of `s`: it adds up the
+/// glyph widths (`drv_char_width` 0:0x78b: the width table + the font's spacing byte, 1 in
+/// every font) from the line's start and, once the sum passes width8 * 8 or at a '\n' or '^',
+/// ends the line at the last ' ', '\n' or '^' seen (that one left out; after a '^' also the
+/// next character) and counts again from just after it. Blanks are kept as they are: a
+/// double blank can leave one at a line's start.
+pub fn text_block_lines(fonts: &FontSet, font: usize, width8: i32, s: &str) -> Vec<String> {
+    let f = fonts.get(font);
+    let b: Vec<char> = s.chars().collect();
+    let mut lines = Vec::new();
+    let (mut start, mut brk, mut w, mut a) = (0usize, 0usize, 0, 0usize);
+    while a < b.len() {
+        let c = b[a];
+        w += f.advance_of(c) as i32 + crate::assets::fonts::GLYPH_SPACING;
+        if matches!(c, ' ' | '\n' | '^') {
+            brk = a;
+        }
+        if matches!(c, '\n' | '^') || w > width8 * 8 {
+            lines.push(b[start.min(brk)..brk].iter().collect());
+            w = 0;
+            start = brk + if c == '^' { 2 } else { 1 };
+            a = brk;
+        }
+        a += 1;
+    }
+    if w > 0 && start < b.len() {
+        lines.push(b[start..].iter().collect());
+    }
+    lines
 }
 
 /// Word-wrap with glyph spacing taken into account.
@@ -161,27 +196,22 @@ pub struct EntryScreen {
     guard: u32,
     /// Border tile set, picked at random when the entry opens.
     border: u8,
+    /// pedia_article with ds:0x3c62 set (o 0xb5ee, 0xb663, 0xb699; set before the advances an
+    /// audience grants, o 0x6b37 / 0x6b56 / 0x712d / 0x736b): no picture, the title centred at
+    /// x 160, the page filled with colour 255 of the palette in use (the leader's).
+    bare: bool,
 }
 
 impl EntryScreen {
     pub fn new(entry: Entry, page: usize) -> EntryScreen {
-        EntryScreen { entry, pages: Vec::new(), page, guard: 2, border: 0 }
+        EntryScreen { entry, pages: Vec::new(), page, guard: 2, border: 0, bare: false }
     }
 
-    fn wrap_paragraphs(fonts: &FontSet, paras: &[String], max_w: i32) -> Vec<String> {
-        let mut lines = Vec::new();
-        for p in paras {
-            if p.is_empty() {
-                lines.push(String::new());
-            } else {
-                lines.extend(wrap_spaced(fonts, FONT_TEXT, max_w, p, SPACING));
-            }
-        }
-        while lines.last().map(|l| l.is_empty()).unwrap_or(false) {
-            lines.pop();
-        }
-        lines
+    /// The page without its picture, over the palette in use (`bare`).
+    pub fn bare(entry: Entry) -> EntryScreen {
+        EntryScreen { bare: true, ..EntryScreen::new(entry, 0) }
     }
+
 
     fn build(&mut self, ctx: &UiContext) {
         let fonts = &ctx.fonts;
@@ -189,7 +219,8 @@ impl EntryScreen {
         // history text, BODY_LINES lines per page, only with the Civilopedia Text option
         // (ds:0x19c0 bit 0x40, o 0xb7bb); the notes and stats page comes either way
         let history = ctx.game.as_ref().is_none_or(|g| g.options.civilopedia_text);
-        let body = if history { Self::wrap_paragraphs(fonts, &self.entry.blurb(ctx), BODY_W) } else { Vec::new() };
+        let mut body = if history { text_block_lines(fonts, FONT_TEXT, BODY_W8, &self.entry.blurb(ctx)) } else { Vec::new() };
+        body.truncate(BODY_LINES);
         for chunk in body.chunks(BODY_LINES) {
             let mut items = Vec::new();
             for (i, l) in chunk.iter().enumerate() {
@@ -201,7 +232,7 @@ impl EntryScreen {
         }
         // notes + stats page
         let mut items = Vec::new();
-        let note = Self::wrap_paragraphs(fonts, &self.entry.blurb2(ctx), NOTE_W);
+        let note = text_block_lines(fonts, FONT_TEXT, NOTE_W8, &self.entry.blurb2(ctx));
         for (i, l) in note.iter().enumerate() {
             if !l.is_empty() {
                 items.push(text(BODY_X, BODY_Y + i as i32 * BODY_PITCH, BLUE, l.clone()));
@@ -417,6 +448,9 @@ impl EntryScreen {
     }
 
     fn title_centre(&self) -> i32 {
+        if self.bare {
+            return 160;
+        }
         match self.entry {
             Entry::Advance(_) | Entry::Improvement(_) | Entry::Terrain(_) => 204,
             Entry::Unit(_) => 224,
@@ -425,6 +459,9 @@ impl EntryScreen {
     }
 
     fn page_colour(&self) -> u8 {
+        if self.bare {
+            return 255;
+        }
         if matches!(self.entry, Entry::Terrain(_) | Entry::Wonder(_) | Entry::Concept(_)) {
             WHITE
         } else {
@@ -506,7 +543,7 @@ impl Screen for EntryScreen {
         let page = self.page_colour();
         fb.fill_rect(Rect::new(0, 0, 320, 200), page);
         draw_border(fb, ctx, self.border);
-        if let Some((sheet, r, x, y, key)) = self.picture() {
+        if let Some((sheet, r, x, y, key)) = self.picture().filter(|_| !self.bare) {
             let pic = ctx.pic(sheet);
             fb.blit_part(&pic.surf, r, x, y, key);
         }
@@ -563,6 +600,10 @@ impl Screen for EntryScreen {
         false
     }
 
+    fn parent_palette(&self) -> bool {
+        self.bare
+    }
+
     fn wants_cursor(&self) -> bool {
         false
     }
@@ -589,5 +630,32 @@ mod tests {
         let arctic = lines(Terrain::Arctic);
         assert_eq!(&arctic[..4], ["Arctic", "nothing", "Seals", "Food: 2 units."]);
         assert_eq!(lines(Terrain::Mountains)[4], "Trade: 6%*");
+    }
+
+    fn mono(advance: u8) -> FontSet {
+        let font = crate::assets::fonts::Font { first: 32, last: 126, height: 7, bytes_per_row: 1, glyphs: (32..=126).map(|_| crate::assets::fonts::Glyph { advance, rows: Vec::new() }).collect() };
+        FontSet(vec![font; 7])
+    }
+
+    #[test]
+    fn text_blocks_break_as_draw_text_block() {
+        // 3 + 1 pixels a glyph: two glyphs to 8 pixels, the third passes
+        let f = mono(3);
+        assert_eq!(text_block_lines(&f, 6, 1, "ab cd "), ["ab", "cd"]);
+        // the blank that passes the width ends the line; a double blank then starts the next
+        assert_eq!(text_block_lines(&f, 6, 2, "abcd  ef "), ["abcd", " ef "]);
+        // '^' breaks and the blank after it is skipped
+        assert_eq!(text_block_lines(&f, 6, 10, "ab^ cd "), ["ab", "cd "]);
+        // a word that passes the width goes to the next line whole
+        assert_eq!(text_block_lines(&f, 6, 3, "abc defg hi "), ["abc", "defg", "hi "]);
+    }
+
+    #[test]
+    fn an_audience_page_has_no_picture_and_the_leaders_palette() {
+        let e = EntryScreen::bare(Entry::Advance(0));
+        assert_eq!((e.title_centre(), e.page_colour()), (160, 255));
+        assert!(e.parent_palette());
+        let n = EntryScreen::new(Entry::Advance(0), 0);
+        assert_eq!((n.title_centre(), n.parent_palette()), (204, false));
     }
 }

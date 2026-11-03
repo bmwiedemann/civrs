@@ -261,7 +261,8 @@ impl Game {
         let city = self.city(c);
         let slot = city.owner;
         let p = self.player(slot);
-        let mut m = Moods { happy: 0, unhappy: self.base_unhappy(c), extra: 0, size: city.size as i32, specialists: city.specialists.len() as i32 };
+        let specialists = self.exe_specialists.filter(|(s, _)| *s == c).map_or(city.specialists.len() as i32, |(_, n)| n);
+        let mut m = Moods { happy: 0, unhappy: self.base_unhappy(c), extra: 0, size: city.size as i32, specialists };
         let mut steps = Vec::new();
         // base: unhappiness beyond the city size is kept aside (0xf496), then the specialists
         // leave the working citizens (0xf4d9)
@@ -588,5 +589,19 @@ mod tests {
         assert!(h.celebration);
         g.player_mut(slot).govt = Govt::Anarchy;
         assert!(!g.city_happiness(c).celebration);
+    }
+
+    #[test]
+    fn a_turns_moods_count_the_specialists_it_placed() {
+        // exe_quirks (0xdbef, 0xf4d9): the run's specialist count, not the city's after a
+        // Settlers shrank it
+        let (mut g, c) = emperor_fixture();
+        set_size(&mut g, c, 8);
+        let all = g.city_happiness(c).steps[0].unhappy;
+        g.exe_specialists = Some((c, 4));
+        let h = g.city_happiness(c);
+        assert_eq!((all, h.steps[0].unhappy), (6, 4));
+        g.exe_specialists = Some((c + 1, 4));
+        assert_eq!(g.city_happiness(c).steps[0].unhappy, 6, "another city's count");
     }
 }

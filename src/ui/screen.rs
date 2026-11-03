@@ -49,6 +49,10 @@ pub trait Screen {
     fn draws_parent(&self) -> bool {
         true
     }
+    /// A screen drawn in the palette of the screen below it (it sets none of its own).
+    fn parent_palette(&self) -> bool {
+        false
+    }
     /// Whether the mouse cursor should be drawn over this screen.
     fn wants_cursor(&self) -> bool {
         true
@@ -172,6 +176,12 @@ impl ScreenStack {
         let mut start = self.stack.len() - 1;
         while start > 0 && self.stack[start].draws_parent() {
             start -= 1;
+        }
+        while start > 0 && self.stack[start].parent_palette() {
+            start -= 1;
+            while start > 0 && self.stack[start].draws_parent() {
+                start -= 1;
+            }
         }
         self.stack[start].palette(ctx)
     }

@@ -4,7 +4,6 @@
 //! Picture cells were measured on the decoded sheets; the mapping of cells to names was done
 //! by looking at the artwork, so a few entries are best guesses (marked below).
 
-use crate::assets::text::paragraphs;
 use crate::gfx::Rect;
 use crate::rules::{self, AdvanceId, ImprovementId, Terrain, UnitTypeId, WonderId};
 use crate::ui::context::UiContext;
@@ -97,19 +96,20 @@ impl Entry {
         }
     }
 
-    /// History text (paragraphs) of the entry.
-    pub fn blurb(self, ctx: &UiContext) -> Vec<String> {
+    /// History text of the entry as `load_text_entry` (0x1ee63) builds it: the section's lines
+    /// each followed by a blank, empty lines and leading blanks skipped (`Text::entry_text`).
+    pub fn blurb(self, ctx: &UiContext) -> String {
         match self.blurb_key() {
-            Some((file, key)) => correct(self, ctx.texts.blurb[file].section(&key).map(paragraphs).unwrap_or_default()),
-            None => Vec::new(),
+            Some((file, key)) => correct(self, ctx.texts.blurb[file].entry_text(&key).unwrap_or_default()),
+            None => String::new(),
         }
     }
 
     /// Game-effect note (the `NAME2` section), if the entry has one.
-    pub fn blurb2(self, ctx: &UiContext) -> Vec<String> {
+    pub fn blurb2(self, ctx: &UiContext) -> String {
         let text = match self.blurb_key() {
-            Some((file, key)) if file != 0 => ctx.texts.blurb[file].section(&format!("{key}2")).map(paragraphs).unwrap_or_default(),
-            _ => Vec::new(),
+            Some((file, key)) if file != 0 => ctx.texts.blurb[file].entry_text(&format!("{key}2")).unwrap_or_default(),
+            _ => String::new(),
         };
         match self {
             Entry::Wonder(w) => mark_missing_obsolescence(w, text),
@@ -130,22 +130,20 @@ const CORRECTIONS: [(&str, &str, &str); 2] = [
     ("DEMOCRACY", "Civil disorder leads to Anarchy.", "Two turns of civil disorder lead to Anarchy."),
 ];
 
-fn correct(entry: Entry, text: Vec<String>) -> Vec<String> {
+fn correct(entry: Entry, text: String) -> String {
     let Entry::Concept(c) = entry else { return text };
     let key = CONCEPTS[c].key;
-    text.into_iter()
-        .map(|p| CORRECTIONS.iter().filter(|(k, _, _)| *k == key).fold(p, |p, (_, old, new)| p.replace(old, new)))
-        .collect()
+    CORRECTIONS.iter().filter(|(k, _, _)| *k == key).fold(text, |p, (_, old, new)| p.replace(old, new))
 }
 
 /// A wonder whose page says it works "until the development of" an advance, while the rules
 /// (CIV.EXE's table) never make it obsolete, gets "not implemented: " in front of that part
 /// (Copernicus' Observatory and the Automobile).
-fn mark_missing_obsolescence(w: WonderId, text: Vec<String>) -> Vec<String> {
+fn mark_missing_obsolescence(w: WonderId, text: String) -> String {
     if rules::WONDERS[w as usize].obsolete_by.is_some() {
         return text;
     }
-    text.into_iter().map(|p| p.replacen("until the development", "not implemented: until the development", 1)).collect()
+    text.replacen("until the development", "not implemented: until the development", 1)
 }
 
 /// The index order of pedia_index (o 0xafdb): each next name is the smallest one
@@ -300,10 +298,10 @@ mod tests {
 
     #[test]
     fn copernicus_page_says_its_obsolescence_is_not_implemented() {
-        let text = vec!["Doubles knowledge production in city, until the development of the AUTOMOBILE.".to_string()];
+        let text = "Doubles knowledge production in city, until the development of the AUTOMOBILE. ".to_string();
         assert_eq!(
             mark_missing_obsolescence(won::COPERNICUS_OBSERVATORY, text.clone()),
-            vec!["Doubles knowledge production in city, not implemented: until the development of the AUTOMOBILE.".to_string()]
+            "Doubles knowledge production in city, not implemented: until the development of the AUTOMOBILE. ".to_string()
         );
         // wonders that do become obsolete keep their text
         assert_eq!(mark_missing_obsolescence(won::ORACLE, text.clone()), text);
@@ -312,13 +310,13 @@ mod tests {
     #[test]
     fn democracy_pages_say_two_turns_of_disorder() {
         let democracy = Entry::Concept(CONCEPTS.iter().position(|c| c.key == "DEMOCRACY").unwrap());
-        let page1 = vec!["Also, if any city in a democracy slips into civil disorder, the government is immediately overthrown and becomes an anarchy for several turns.".to_string()];
+        let page1 = "Also, if any city in a democracy slips into civil disorder, the government is immediately overthrown and becomes an anarchy for several turns. ".to_string();
         assert_eq!(
             correct(democracy, page1),
-            vec!["Also, if any city in a democracy stays in civil disorder for two turns in a row, the government is overthrown and becomes an anarchy for several turns.".to_string()]
+            "Also, if any city in a democracy stays in civil disorder for two turns in a row, the government is overthrown and becomes an anarchy for several turns. ".to_string()
         );
-        let page2 = vec!["No corruption. Civil disorder leads to Anarchy.".to_string()];
-        assert_eq!(correct(democracy, page2), vec!["No corruption. Two turns of civil disorder lead to Anarchy.".to_string()]);
+        let page2 = "No corruption. Civil disorder leads to Anarchy. ".to_string();
+        assert_eq!(correct(democracy, page2), "No corruption. Two turns of civil disorder lead to Anarchy. ".to_string());
     }
 
     #[test]

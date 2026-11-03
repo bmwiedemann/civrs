@@ -285,6 +285,19 @@ pub struct Game {
     /// every city's after an advance). Not saved.
     #[serde(skip)]
     pub last_moods: (i32, i32),
+    /// The open city screen's distance to the capital (ds:0x6b30): process_city works it out
+    /// in its setup (0xc94b..0xcd65), which only opening the screen runs; every action on the
+    /// screen (a sale, 0x121ac) redraws it from 0xcd65, so a sold Palace leaves the city's
+    /// corruption as it was until the screen is opened again. Not saved.
+    #[serde(skip)]
+    pub screen_distance: Option<(CityId, i32)>,
+    /// With `exe_quirks`: the specialists a city's turn placed (process_city [bp-0x8] =
+    /// [bp-0x50], 0xdbef). The run's happiness rebalances with that local (0xf4d9, 0xf54e,
+    /// 0xf7c4, 0xfa5c, 0xfb83) even after a completed Settlers shrank the city and the
+    /// advisor's run (0xaa1b) placed its workers anew: CW2b t411, Ayotzinco 16 -> 15 with ten
+    /// specialists counted where nine are left, one happy citizen less. Not saved.
+    #[serde(skip)]
+    pub exe_specialists: Option<(CityId, i32)>,
     /// With `exe_quirks`: the totals (`economy::TurnTotals`, ds:0x70da..0x70de, ds:0x6546,
     /// ds:0x6c98, ds:0xb882) as the last quiet run of the city routine left them
     /// (`city_routine_quiet`), and the city whose turn reads its trade in place of its own
@@ -693,6 +706,8 @@ impl Game {
             gov_case: (0, 0),
             chieftain_science: 0,
             last_moods: (0, 0),
+            screen_distance: None,
+            exe_specialists: None,
             nested_totals: None,
             trade_carry: None,
             abroad_carry: None,
@@ -980,6 +995,19 @@ impl Game {
     /// (a ship's on ocean only), but not the unit's own square, which only its creation marks
     /// (create_unit 0x8bcc); the human that square too. A city's sight explores nothing.
     pub fn refresh_vision(&mut self, slot: Slot) {
+        self.recompute_vision(slot, true);
+    }
+
+    /// What every civilization sees, without any unit looking: a loaded game (`load_files`
+    /// o 0xf5b0 reads the save and the map and runs no `unit_look`), so squares beside a unit
+    /// stay unexplored when the save has them so (an edited save's units).
+    pub fn refresh_all_sight(&mut self) {
+        for s in 0..8u8 {
+            self.recompute_vision(s, false);
+        }
+    }
+
+    fn recompute_vision(&mut self, slot: Slot, looks: bool) {
         let bit = 1u8 << slot;
         for v in self.vision.iter_mut() {
             *v &= !bit;
@@ -988,7 +1016,7 @@ impl Game {
         let mut spots: Vec<(i32, i32, i32, bool, bool)> = Vec::new();
         for u in self.all_units() {
             if u.owner == slot {
-                spots.push((u.x, u.y, u.sight_range(), u.is_sea(), true));
+                spots.push((u.x, u.y, u.sight_range(), u.is_sea(), looks));
             }
         }
         for c in self.all_cities() {
@@ -1818,6 +1846,26 @@ mod calendar_tests {
         g.map.get_mut(41, 23).unwrap().explored = 0;
         g.refresh_vision(ai);
         assert!(g.visible_to(ai, 41, 23) && !g.explored(ai, 41, 23));
+    }
+
+    #[test]
+    fn a_loaded_game_sees_without_its_units_looking() {
+        // load_files (o 0xf5b0) runs no unit_look: an edited save's unit leaves the squares
+        // around it unexplored (TRBR t37: the German Legions' scores, 0x18617)
+        let mut g = Game::new(GameSetup { seed: 9, ..Default::default() }, None);
+        let ai = (1..8u8).find(|s| *s != g.human_slot).unwrap();
+        for y in 20..30 {
+            for x in 30..40 {
+                let t = g.map.get_mut(x, y).unwrap();
+                t.terrain = Terrain::Grassland;
+                t.explored = 0;
+            }
+        }
+        g.add_unit(ai, rules::unit_ids::MILITIA, 35, 25);
+        g.refresh_all_sight();
+        assert!(g.visible_to(ai, 36, 26) && !g.explored(ai, 36, 26));
+        g.refresh_vision(ai);
+        assert!(g.explored(ai, 36, 26));
     }
 
     #[test]

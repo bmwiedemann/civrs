@@ -273,6 +273,13 @@ pub struct MapView {
     loop_unshown: bool,
     /// The loop's view while a load's audience shows the map around the meeting.
     loop_view: Option<(i32, i32)>,
+    /// A step's message is up (a hut, hut_outcome 0x0978d at 0x6b05, or its look's audience,
+    /// unit_look 0x6ae2: inside the move, before the unit loop redraws the panel): the unit,
+    /// its moves and square before the step, which the panel still shows; the unit stands
+    /// drawn on its new square (no blink).
+    step_held: Option<(UnitId, u8, (i32, i32))>,
+    /// game_turn's progress square while the civilizations' turns run (`TurnStep::Progress`).
+    progress_square: Option<u8>,
 }
 
 /// Ticks the unit loop waits before it centres the view on a unit off the screen (0x4396).
@@ -316,6 +323,8 @@ impl MapView {
             recentre: None,
             loop_unshown: false,
             loop_view: None,
+            step_held: None,
+            progress_square: None,
         }
     }
 
@@ -403,6 +412,7 @@ impl MapView {
         let g = ctx.game_mut();
         g.active_unit = None;
         self.runner = Some(g.end_turn());
+        self.progress_square = None;
         self.mode = Mode::Processing;
         self.pause = 0;
     }
@@ -450,6 +460,7 @@ impl MapView {
                         break;
                     }
                 }
+                TurnStep::Progress(c) => self.progress_square = Some(c),
                 TurnStep::AiMove { to, visible, .. } => {
                     if visible && ctx.game().options.enemy_moves {
                         self.ensure_visible(to.0, to.1);
@@ -545,6 +556,7 @@ impl MapView {
     fn move_active(&mut self, ctx: &mut UiContext, d: Dir8, keep_moving: bool) -> Transition {
         let Some(id) = ctx.game().active_unit else { return Transition::None };
         let before = ctx.game().unit(id).pos();
+        let moves_before = ctx.game().unit(id).moves_left;
         let attacker_kind = ctx.game().unit(id).kind;
         // the squares around the target the human does not know yet: a capture's city
         // screen comes before the step's look explores them (0x6aa9, 0x6ae2)
@@ -587,6 +599,11 @@ impl MapView {
                 };
                 // show any events (huts, captures)
                 if let Some(s) = self.next_event_screen(ctx) {
+                    // what the step brought (its look's audience 0x6ae2 -> 0x8491, a hut
+                    // 0x6b05) comes inside the move, before the loop redraws the panel
+                    if alive && ctx.game().unit(id).pos() != before {
+                        self.step_held = Some((id, moves_before, before));
+                    }
                     self.pending = Pending::Event;
                     return Transition::Push(s);
                 }
@@ -1205,20 +1222,22 @@ impl MapView {
         let g = ctx.game();
         let me = g.human_slot;
         let active = g.active_unit;
+        // the step's last frame stays while its hut box is up: the unit shown, no blink
+        let blink = self.blink || self.step_held.is_some_and(|(h, ..)| Some(h) == active);
         fb.set_clip(Some(Rect::new(VIEW_X, VIEW_Y, VIEW_W * TILE, VIEW_H * TILE)));
         for ty in 0..VIEW_H {
             for tx in 0..VIEW_W {
                 let (x, y) = (Map::wrap_x(self.vx + tx), self.vy + ty);
                 let (px, py) = (VIEW_X + tx * TILE, VIEW_Y + ty * TILE);
                 // the active unit blinks: hide it on the off phase
-                let hide = if !self.blink { active.filter(|a| g.unit_opt(*a).map(|u| u.pos() == (x, y)).unwrap_or(false)) } else { None };
+                let hide = if !blink { active.filter(|a| g.unit_opt(*a).map(|u| u.pos() == (x, y)).unwrap_or(false)) } else { None };
                 // draw the active unit on top of its stack
                 if self.terrain_only {
                     tilerender::draw_tile_without_units(fb, ctx, g, me, x, y, px, py);
                     continue;
                 }
                 draw_tile(fb, ctx, g, me, x, y, px, py, hide);
-                if self.blink {
+                if blink {
                     if let Some(a) = active {
                         if let Some(u) = g.unit_opt(a) {
                             if u.pos() == (x, y) && g.explored(me, x, y) {
@@ -1258,8 +1277,8 @@ impl MapView {
             if let Some(u) = active.and_then(|a| g.unit_opt(a)).filter(|u| u.owner == me && self.on_view(u.x, u.y) && self.blinked_at == Some(u.pos())) {
                 let (x, y) = u.pos();
                 let (px, py) = (VIEW_X + Map::wrap_x(x - self.vx) * TILE, VIEW_Y + (y - self.vy) * TILE);
-                draw_tile(fb, ctx, g, me, x, y, px, py, (!self.blink).then_some(u.id));
-                if self.blink && g.explored(me, x, y) {
+                draw_tile(fb, ctx, g, me, x, y, px, py, (!blink).then_some(u.id));
+                if blink && g.explored(me, x, y) {
                     tilerender::draw_unit(fb, ctx, g, u.id, px, py, g.units_at(x, y).len() > 1);
                 }
             }
@@ -1380,12 +1399,20 @@ impl MapView {
             }
             // CIV.EXE writes nothing in the panel while the civilizations' turns run (it has no
             // "Please wait" text; game_turn only draws its progress square, 0x24cf / 0x2549)
-            Mode::Processing => {}
+            Mode::Processing => {
+                if let Some(c) = self.progress_square {
+                    fb.fill_rect(Rect::new(2, 192, 6, 6), c);
+                }
+            }
             // the loop has not drawn its unit yet (`loop_unshown`): game_turn's square
             _ if self.loop_unshown => fb.fill_rect(Rect::new(2, 192, 6, 6), 15),
             _ => {
                 if let Some(id) = g.active_unit {
                     if let Some(u) = g.unit_opt(id) {
+                        // while a step's hut box is up the panel is still the one of before the
+                        // step (`step_held`): its moves, square and the stack there
+                        let held = self.step_held.filter(|(h, ..)| *h == id);
+                        let (m, (sx, sy)) = held.map_or((u.moves_left, u.pos()), |(_, m, at)| (m, at));
                         // draw_unit_panel (0x788d): lines 8 px apart from y 99
                         draw_text(fb, &ctx.fonts, &st, 4, y, p.adjective());
                         y += 8;
@@ -1396,7 +1423,7 @@ impl MapView {
                             y += 8;
                         }
                         // "Moves: n[.thirds]", for aircraft "(n + fuel left * rate)" after it
-                        let m = u.moves_left as i32;
+                        let m = m as i32;
                         let mut moves = format!("Moves: {}", (m / 3).clamp(0, 99));
                         if m % 3 != 0 {
                             moves += &format!(".{}", m % 3);
@@ -1412,9 +1439,9 @@ impl MapView {
                         // strcat_city_name ("NONE" for no home) in the panel's font (o 0x7ad9)
                         draw_text(fb, &ctx.fonts, &st, 4, y, &home);
                         y += 8;
-                        draw_text(fb, &ctx.fonts, &st, 4, y, &format!("({})", g.map.tile(u.x, u.y).terrain.info().name));
+                        draw_text(fb, &ctx.fonts, &st, 4, y, &format!("({})", g.map.tile(sx, sy).terrain.info().name));
                         y += 8;
-                        let t = g.map.tile(u.x, u.y);
+                        let t = g.map.tile(sx, sy);
                         let road = if t.has(tile_flags::RAILROAD) { Some("(RailRoad)") } else { t.has(tile_flags::ROAD).then_some("(Road)") };
                         let farm = if t.has(tile_flags::IRRIGATION) { Some("(Irrigation)") } else { t.has(tile_flags::MINE).then_some("(Mining)") };
                         for label in [road, farm, t.has(tile_flags::POLLUTION).then_some("(Pollution)")].into_iter().flatten() {
@@ -1426,14 +1453,18 @@ impl MapView {
                         // "+" at (74, 192) for the rest
                         y += 4;
                         let mut x = 8;
-                        if let Some(c) = g.city_at(u.x, u.y) {
+                        if let Some(c) = g.city_at(sx, sy) {
                             for (kind, _) in g.city(c).garrison_units() {
                                 tilerender::draw_unit_kind(fb, ctx, kind, u.owner, x, y);
                                 x += 16;
                             }
                         }
                         // (the ring links +0xa from the unit's successor round to it, 0x7cb9)
-                        for o in g.stack_ring(id, 128).iter().skip(1) {
+                        let others: Vec<UnitId> = match held {
+                            Some(_) => g.units_at(sx, sy).first().map(|f| g.stack_ring(*f, 128)).unwrap_or_default(),
+                            None => g.stack_ring(id, 128).into_iter().skip(1).collect(),
+                        };
+                        for o in others.iter() {
                             if y >= 184 {
                                 draw_text(fb, &ctx.fonts, &st, 74, 192, "+");
                                 break;
@@ -1603,6 +1634,7 @@ impl Screen for MapView {
     }
 
     fn resume(&mut self, result: DialogResult, ctx: &mut UiContext) -> Transition {
+        self.step_held = None;
         let pending = std::mem::replace(&mut self.pending, Pending::None);
         self.bar_menu_open = None;
         self.menu_behind = None;

@@ -365,11 +365,13 @@ pub struct AudienceScreen {
     /// The Civilopedia page of an advance the human got in the audience is up (an exchange,
     /// an offer for peace): grant_advance shows it at once (0xc5d9), then the next screen.
     page_shown: bool,
+    /// The audience is over once that page is read.
+    end_after_page: bool,
 }
 
 impl AudienceScreen {
     fn empty(ai: Slot) -> AudienceScreen {
-        AudienceScreen { state: None, ai, start: None, sub_shown: false, has_items: false, anthem: false, face: Face::new(0x2545_f491 ^ ai as u64), page_shown: false }
+        AudienceScreen { state: None, ai, start: None, sub_shown: false, has_items: false, anthem: false, face: Face::new(0x2545_f491 ^ ai as u64), page_shown: false, end_after_page: false }
     }
 }
 
@@ -447,7 +449,7 @@ impl AudienceScreen {
         let Some(st) = self.state.clone() else { return Transition::Pop(DialogResult::Done) };
         let next = crate::ai::diplo_ai::respond(ctx.game_mut(), &st, choice);
         // an advance the human got: its Civilopedia page comes before the next screen
-        let page = take_acquired(ctx).and_then(|adv| crate::ui::dialogs::advance_page(adv));
+        let page = take_acquired(ctx).and_then(crate::ui::dialogs::audience_advance_page);
         match next {
             Some(n) => {
                 self.enter_state(ctx, n);
@@ -460,8 +462,14 @@ impl AudienceScreen {
                     None => Transition::None,
                 }
             }
+            // the page is drawn over the leader's palette, so the audience stays below it
+            // until it is read
             None => match page {
-                Some(p) => Transition::Replace(p),
+                Some(p) => {
+                    self.page_shown = true;
+                    self.end_after_page = true;
+                    Transition::Push(p)
+                }
                 None => Transition::Pop(DialogResult::Done),
             },
         }
@@ -523,6 +531,9 @@ impl Screen for AudienceScreen {
 
     fn resume(&mut self, result: DialogResult, ctx: &mut UiContext) -> Transition {
         if std::mem::take(&mut self.page_shown) {
+            if std::mem::take(&mut self.end_after_page) {
+                return Transition::Pop(DialogResult::Done);
+            }
             self.sub_shown = false;
             return Transition::None;
         }

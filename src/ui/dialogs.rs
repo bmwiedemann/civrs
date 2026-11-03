@@ -664,6 +664,13 @@ pub fn advance_page(adv: rules::AdvanceId) -> Option<Box<dyn Screen>> {
     with_pedia(None, adv)
 }
 
+/// The page of an advance an audience gave the human: grant_advance's page (0xc5d9) with
+/// ds:0x3c62 set by the audience (o 0x6b37, 0x6b56, 0x712d, 0x736b), so without its icon and
+/// over the leader's palette (`EntryScreen::bare`).
+pub fn audience_advance_page(adv: rules::AdvanceId) -> Option<Box<dyn Screen>> {
+    (adv != rules::advance_ids::FUTURE_TECH).then(|| Box::new(crate::ui::pedia_entry::EntryScreen::bare(crate::ui::pedia_data::Entry::Advance(adv))) as Box<dyn Screen>)
+}
+
 /// Follows the message about a new advance of the human player with the advance's
 /// Civilopedia page, as CIV.EXE's grant routine does (0xc5d9; not for Future Tech).
 fn with_pedia(first: Option<Box<dyn Screen>>, adv: rules::AdvanceId) -> Option<Box<dyn Screen>> {

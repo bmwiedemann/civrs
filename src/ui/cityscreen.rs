@@ -1233,6 +1233,22 @@ pub fn draw_citizens_gap(fb: &mut Surface, ctx: &UiContext, city: crate::game::C
 }
 
 impl Screen for CityScreen {
+    fn on_enter(&mut self, ctx: &mut UiContext) {
+        // opening the screen runs process_city's setup, with the distance to the capital
+        // (0xc94b..0xcd65); its actions redraw from 0xcd65 (`Game::screen_distance`)
+        if let Some(g) = ctx.game.as_mut() {
+            if g.city_opt(self.city).is_some() {
+                g.screen_distance = Some((self.city, g.setup_capital_distance(self.city)));
+            }
+        }
+    }
+
+    fn on_exit(&mut self, ctx: &mut UiContext) {
+        if let Some(g) = ctx.game.as_mut() {
+            g.screen_distance = None;
+        }
+    }
+
     fn update(&mut self, ctx: &mut UiContext) -> Transition {
         let Some(start) = self.start.take() else { return Transition::None };
         match start.as_str() {

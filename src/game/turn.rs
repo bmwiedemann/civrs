@@ -28,6 +28,10 @@ pub enum TurnStep {
     /// An AI unit moved (for the "enemy moves" animation); `visible` to the human.
     AiMove { unit: UnitId, from: (i32, i32), to: (i32, i32), visible: bool },
     Combat { attacker_at: (i32, i32), defender_at: (i32, i32), won: bool, visible: bool, attacker: UnitTypeId, defender: UnitTypeId, defender_owner: Slot },
+    /// game_turn's progress square in the unit panel, fill_rect(2, 192, 6, 6) in this colour:
+    /// 8 as a civilization's turn starts (0x24cf), 15 once its cities and politics are done,
+    /// before its units (0x2549).
+    Progress(u8),
     Done,
 }
 
@@ -75,6 +79,7 @@ pub enum TurnStepSer {
     Decision(Decision),
     AiMove { unit: UnitId, from: (i32, i32), to: (i32, i32), visible: bool },
     Combat { attacker_at: (i32, i32), defender_at: (i32, i32), won: bool, visible: bool, attacker: UnitTypeId, defender: UnitTypeId, defender_owner: Slot },
+    Progress(u8),
 }
 
 impl From<TurnStepSer> for TurnStep {
@@ -84,6 +89,7 @@ impl From<TurnStepSer> for TurnStep {
             TurnStepSer::Decision(d) => TurnStep::Decision(d),
             TurnStepSer::AiMove { unit, from, to, visible } => TurnStep::AiMove { unit, from, to, visible },
             TurnStepSer::Combat { attacker_at, defender_at, won, visible, attacker, defender, defender_owner } => TurnStep::Combat { attacker_at, defender_at, won, visible, attacker, defender, defender_owner },
+            TurnStepSer::Progress(c) => TurnStep::Progress(c),
         }
     }
 }
@@ -95,6 +101,7 @@ impl From<TurnStep> for Option<TurnStepSer> {
             TurnStep::Event(e) => Some(TurnStepSer::Event(e)),
             TurnStep::AiMove { unit, from, to, visible } => Some(TurnStepSer::AiMove { unit, from, to, visible }),
             TurnStep::Combat { attacker_at, defender_at, won, visible, attacker, defender, defender_owner } => Some(TurnStepSer::Combat { attacker_at, defender_at, won, visible, attacker, defender, defender_owner }),
+            TurnStep::Progress(c) => Some(TurnStepSer::Progress(c)),
             TurnStep::Done => None,
         }
     }
@@ -143,6 +150,11 @@ impl TurnRunner {
     fn civ_turn(&mut self, g: &mut Game, ai: &mut dyn AiDriver, slot: Slot) {
         // the score accumulator of every civ 0..7 as its turn comes, alive or not (0x25f5)
         g.score_acc[slot as usize] = 0;
+        // the progress square, grey as every civ's turn starts (0x24cf; the human's comes in
+        // `Phase::HumanStart`)
+        if slot != g.human_slot {
+            self.pending.push_back(TurnStepSer::Progress(8));
+        }
         if slot == 0 {
             // the barbarians' cities (0xa5e2 for civ 0), then their units
             for c in g.cities_of(0) {
@@ -154,16 +166,23 @@ impl TurnRunner {
             // ai_reset_goals (0x2541)
             crate::ai::unit_ai::civ_turn(g, 0);
             g.reset_goals(0);
+            self.pending.push_back(TurnStepSer::Progress(15));
             self.run_ai(g, ai, 0);
             return;
         }
         if slot == g.human_slot || !g.player(slot).in_game || !g.player(slot).alive {
+            // (white again after a civ out of the game: 0x2549 comes for every slot)
+            if slot != g.human_slot {
+                self.pending.push_back(TurnStepSer::Progress(15));
+            }
             return;
         }
         g.process_player_cities(slot);
         self.drain_events(g);
         g.process_player_turn_start(slot);
         self.drain_events(g);
+        // white before the units move (0x2549)
+        self.pending.push_back(TurnStepSer::Progress(15));
         // move_units gives the units their moves, and each one its work turn, look and fuel
         self.run_ai(g, ai, slot);
     }
@@ -274,6 +293,7 @@ impl TurnRunner {
                 Phase::HumanStart => {
                     let slot = g.human_slot;
                     g.score_acc[slot as usize] = 0;
+                    self.pending.push_back(TurnStepSer::Progress(8));
                     g.process_player_cities(slot);
                     self.drain_events(g);
                     g.process_player_turn_start(slot);
@@ -283,6 +303,7 @@ impl TurnRunner {
                     // the human's sidebar after his cities (0x256f)
                     g.population_milestone();
                     g.reset_goals(slot);
+                    self.pending.push_back(TurnStepSer::Progress(15));
                     // move_units (0x4046): the GENERAL PRINCIPLES notes, then the moves
                     g.principles_hints();
                     // (his Settlers work and his units finish fortifying as his loop comes
@@ -753,6 +774,11 @@ impl Game {
         // anywhere (ds:0x6546, counted at 0xd26b before the workers)
         let abroad = self.aggressive_units_abroad(c);
         self.assign_workers(c, true);
+        // with `exe_quirks` the happiness of this run counts the specialists of this placement
+        // (`Game::exe_specialists`)
+        if self.exe_quirks {
+            self.exe_specialists = Some((c, self.city(c).specialists.len() as i32));
+        }
         let y = self.city_yield_raw(c);
         // the totals the rest of the turn reads (`TurnTotals`), counted before the production:
         // a unit, building or growth of this turn counts from the next
@@ -779,6 +805,7 @@ impl Game {
             self.complete_production(c, prod);
         }
         if self.city_opt(c).is_none() {
+            self.exe_specialists = None;
             return None;
         }
         if self.player(slot).human {
@@ -872,6 +899,7 @@ impl Game {
             self.note_trade(c);
             self.restash_garrison_turn(c);
         }
+        self.exe_specialists = None;
         // (ds:0x70e2 - ds:0x70e4, 0x13223)
         Some(happy - unhappy)
     }
@@ -3455,6 +3483,25 @@ mod tests {
             }
         }
         assert!((1..77).contains(&g.score_acc[g.human_slot as usize]));
+    }
+
+    #[test]
+    fn the_progress_square_goes_grey_then_white_for_every_civ() {
+        // game_turn: fill_rect(2, 192, 6, 6) in 8 as each civ 0..7 starts (0x24cf), in 15 after
+        // its cities and politics (0x2549)
+        let (mut g, _) = fixture();
+        let mut ai = Ai::new(7);
+        let mut r = g.end_turn();
+        let mut squares = Vec::new();
+        loop {
+            match r.step(&mut g, &mut ai) {
+                TurnStep::Done => break,
+                TurnStep::Decision(_) => r.resolve(&mut g, DecisionReply::Choice(0)),
+                TurnStep::Progress(c) => squares.push(c),
+                _ => {}
+            }
+        }
+        assert!(squares.len() >= 16 && squares.chunks(2).all(|p| p == [8, 15]), "{squares:?}");
     }
 
     #[test]
