@@ -1439,6 +1439,58 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   computer city's production choice, draws agreeing), J t1-109 (t110 Bremen's choice after
   its Militia and the revolution to Monarchy; the game ends at t133, the human destroyed).
 
+  Round w109 (scratchpad w109: pln.sh plays, dcont.sh / dnew.sh / dall.sh diffs, mkdiag.sh the
+  local diagnostic build with SKIPFF, SIZE16E94, UNVALUED (diagpatch4.py) and the CIVRS_DBG
+  advice print (diagpatch5.py), autounv.py fills UNVALUED from the saves, rescue.sh gives
+  the human's last Settlers four fortified Riflemen, u/pair.sh screens). J t110 was the
+  [bp-0x108] food-first skip (0xd81d) in the advisor's run after Bremen's Militia (0xe3b1 ->
+  0x18c4c -> 0xa9fd -> 0xaa1b; with the pass skipped civrs places CIV.EXE's squares 5 and
+  10 and values a Granary); skipping it in every nested run breaks J t46, K t66, L t15 and N
+  t28, so it stays a local override (J 38,11,109,4). N t146 was choose_production's
+  uninitialised best entry [bp-0x144]: it is set only by an item valued below 999 (0xb7df)
+  and read for the computer's answer (0xb864..0xb86a) whatever happened, so a city valuing
+  nothing below 999 takes the entry of its list ([bp-0xde], entry 0 the city's item, 0xaa35)
+  that the frame's last value names. Inside one re-choice loop (0x18bef) every call has the
+  same frame and nothing reaches it in between, so with `exe_quirks` a later city takes the
+  index an earlier city of the loop chose (`Game::exe_advice_menu`; N t145 Corinth gets
+  Athens's fifth entry, a Temple); the loop's first city, and calls outside a loop (0xe3b1,
+  0xe720, 0xec34), read what other frames left there (N: a Caravan, Cavalry, Knights, a
+  Library the city has, a wonder it cannot build), not modellable, overridden locally
+  (UNVALUED). Both N cities that value nothing are complete cities of a slow civ, so N needs
+  an override most turns. A civilization's end: no civ_destroyed call comes from combat
+  (0x19724); a computer goes at its ai_civ_turn by its census Settlers ds:0x8068 and cities
+  ds:0x6b66 (0x15fb7, civ_destroyed o5 0x4fe1 looking for a city of its own again) or at the
+  loss of a city (0x61b5, 0xd159, 0xe041, 0x14356), the human only at his turn after his
+  census (0x2577 -> o 0x209f, `Game::human_destroyed_check`; civ_destroyed returns for him,
+  o5 0x4ff4). The census city count is read too by the replay's census entry (0x283c), the
+  gang-up on a leading human (0x32ef human, 0x3343 the others), draw_palace for the sidebar
+  and the historian (0x3852) and the civil war's free slot (o 0x14b97 / 0x14b9e: the first
+  civ 1..7 whose census counts no unit, ds:0x6b76 without Settlers and Nuclear, and no city,
+  so a slot with only Settlers is free); the debug summary of overlay 13 (o 0x12167, with
+  ds:0x8068) is not in civrs. The production menu's help pages are pedia_article with
+  ds:0x3c62 set (0xba6c): no picture, the title and subtitle at x 160, colour 255 of the
+  palette in use; a unit's icon stays at (216, 48) (o 0xba09..0xba19, after the test); then
+  choose_production starts over from its listing (0xbaa6 -> 0xaa23), its first row up
+  (unit, improvement and wonder pages and the menu after them pixel-equal on C7I's Rome, but
+  the page border, a presentation random). The civil war's free slot by the census is a
+  quirk (`exe_quirks`; as meant: no city and no unit now): K t205 gave a computer's rebels
+  to the human, who had only Settlers; civ_init returns at once for the human (o5 0x4953),
+  so he stays human, keeps his rates and contacts, gets the tribe's names, gold, advances
+  and government (o 0x14cff..0x14e86). Still apart there: the re-created units' looks open
+  an audience with the old owner inside capture_city (greeting random(4), o 0x7c1d, before
+  0x13f05), which civrs queues as a decision. Runs (all draws and fields agree; the human of
+  J, L and N had no city, so his last Settlers got four fortified Riflemen, rescue.sh, at
+  J t132, L t186, N t159): J t1-133, t133-197 (game over again); K t1-150, t151-200,
+  t201-204 (t205 above); L t1-150, t151-187, t187-212 (two 0x16e94 transport sizes,
+  size-L3.txt; t213 civ 2's Phalanx and Catapult tasked to (37, 29) and nowhere where
+  CIV.EXE sends them to the human's stack at (38, 29), the attack goal there at priority 1
+  in civrs; a diag CIV.EXE, w109/diag3, logs the return addresses two and three frames up
+  in RANDOM.LOG: the next draw is civ 3's 0xe3b1 re-choice); N t1-150, t151-160, t160-189
+  (UNVALUED most turns, one 0xd81d skip; t190 a fortified Phalanx of Kashgar leaves the
+  city in CIV.EXE); new games from turn 0: R seed 8642 Warlord 1,0,2,1 t1-150, P seed 2468
+  King 0,0,0,0 and Q seed 1357 Chieftain 2,2,2,2 (the human founds his capital at once)
+  t1-61 / t1-60, the plays slowed down to minutes a turn.
+
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
