@@ -351,6 +351,9 @@ pub struct MenuDialog {
     /// Advisor, 5 Foreign Minister, 6 Science Advisor); menu_draw widens the frame for the
     /// speaker's picture and name (o 0x1ce49..0x1cf8e).
     speaker: Option<u8>,
+    /// Boxes drawn once without input before this menu (popup_menu3 with ds:0xdb38 set) that
+    /// stay under it, painted first (`with_under`).
+    under: Vec<MenuDialog>,
 }
 
 /// The speakers of menu_draw (ds:0x2fa6); the first three get " report:".
@@ -405,7 +408,15 @@ impl MenuDialog {
             checked: Vec::new(),
             pitch: None,
             speaker: None,
+            under: Vec::new(),
         }
+    }
+
+    /// A draw-only box (popup_menu3 with ds:0xdb38 = 1, which returns at once) left on the
+    /// screen under this menu, as the science advice under the research menu (0xc0f2).
+    pub fn with_under(mut self, m: MenuDialog) -> Self {
+        self.under.push(m);
+        self
     }
 
     /// Rows `p` apart whatever the font (ds:0x2fa4 = 8 with a leader on the screen).
@@ -757,6 +768,9 @@ impl Screen for MenuDialog {
     }
 
     fn draw(&mut self, fb: &mut Surface, ctx: &mut UiContext) {
+        for u in &mut self.under {
+            u.paint(fb, ctx);
+        }
         self.draw_menu(fb, ctx);
     }
 }

@@ -187,8 +187,9 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
         }
     };
     match ev {
-        GameEvent::CityGrew(_) | GameEvent::CityShrank(_) | GameEvent::TurnStarted(_) | GameEvent::UnitVeteran(_) => None,
-        GameEvent::Famine(c) if g.city_opt(*c).map(|c| c.owner == me).unwrap_or(false) => msg(vec![format!("Famine in {}!", city_name(*c)), "Population decreases.".into()]),
+        // a starving city has only its newspaper (`FoodExhausted`); `Famine` comes from old
+        // saves alone and CIV.EXE has no such text
+        GameEvent::CityGrew(_) | GameEvent::CityShrank(_) | GameEvent::TurnStarted(_) | GameEvent::UnitVeteran(_) | GameEvent::Famine(_) => None,
         // CIV.EXE 0xd0a4..0xd0ff, the newspaper of the city
         GameEvent::FoodExhausted { city, name, owner, settlers_lost } if *owner == me => {
             paper(vec!["Food storage exhausted".into(), format!("in {name}!"), if *settlers_lost { "Settlers lost." } else { "Famine feared." }.into()], Some(*city))
@@ -208,9 +209,9 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
             let lines = vec![format!("{} can't support", city_name(*city)), format!("{}.", rules::UNITS[*unit_kind as usize].name)];
             Some(Box::new(MenuDialog::new(lines, vec![" Unit Disbanded.".into()]).with_pos(100, 80).with_speaker(SPEAKER_DEFENSE)))
         }
-        GameEvent::UnitDisbanded { unit_kind, city, reason } if g.city_opt(*city).map(|c| c.owner == me).unwrap_or(false) => {
-            msg(vec![format!("{} in {} disbanded", rules::UNITS[*unit_kind as usize].name, city_name(*city)), format!("({reason})")])
-        }
+        // the city turn disbands units only for want of shields (0xfee7); a starving city's
+        // Settlers are its newspaper's "Settlers lost." (`FoodExhausted`)
+        GameEvent::UnitDisbanded { .. } => None,
         GameEvent::ItemBuilt { city, item } if g.city(*city).owner == me => match item {
             // "CITY builds UNIT." only for Settlers, Diplomats and Caravans, from the Defense
             // Minister at (80, 80) (CIV.EXE 0xe3dc..0xe45e)
@@ -316,9 +317,10 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
             l.extend(rules::UNITS.iter().filter(|u| u.prereq == Some(*adv)).map(|u| format!(" {}", u.name)));
             speaker(SPEAKER_SPIES, l)
         }
-        GameEvent::AdvanceAcquired { slot, adv, source } if *slot == me => {
-            with_pedia(msg(vec![format!("You acquire {}", rules::ADVANCES[*adv as usize].name), format!("({source})")]), *adv)
-        }
+        // grant_advance has no box for the human's own advances but the Great Library's
+        // (0xc4c7: the box needs another civ or the Library); a conquest's or an exchange's
+        // advance shows only its Civilopedia page (0xc5d9)
+        GameEvent::AdvanceAcquired { slot, adv, .. } if *slot == me => with_pedia(None, *adv),
         GameEvent::UnitLost { slot, kind, reason, .. } if *slot == me => msg(vec![format!("{} {}.", rules::UNITS[*kind as usize].name, reason)]),
         // capture_city (CIV.EXE 0x14014..0x14130): with the human on either side "PLURAL
         // capture\nCITY. N gold\npieces plundered."; with Animations (ds:0x19c0 bit 3) in a
@@ -435,9 +437,9 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
         // the explosion over the city, then "Nuclear Catastrophe\nin CITY!\nContamination
         // feared!" (CIV.EXE 0x12fab..0x1301f)
         GameEvent::Meltdown { city } if g.city(*city).owner == me => {
+            // in the view drawn around the city (x - 8, y - 6, `MapView::event_screen`)
             let at = g.city(*city).pos();
-            let vx = crate::game::Map::wrap_x(at.0 - crate::ui::mapview::VIEW_W / 2);
-            let vy = (at.1 - crate::ui::mapview::VIEW_H / 2).clamp(0, crate::rules::MAP_H as i32 - crate::ui::mapview::VIEW_H);
+            let (vx, vy) = g.view.unwrap_or((crate::game::Map::wrap_x(at.0 - 8), (at.1 - 6).clamp(0, crate::rules::MAP_H as i32 - crate::ui::mapview::VIEW_H)));
             let anim = eventpics::nuke_animation_at_tile(at.0, at.1, vx, vy);
             let text = paper(vec!["Nuclear Catastrophe".into(), format!("in {}!", city_name(*city)), "Contamination feared!".into()], Some(*city));
             // the explosion's own tune 42 first, then 36 over the newspaper (0x12fe9)
@@ -502,9 +504,9 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
         GameEvent::CantMaintain { city, improvement } if g.city(*city).owner == me => {
             speaker(SPEAKER_DOMESTIC, vec![city_name(*city), "can't maintain".into(), format!("{}.", rules::IMPROVEMENTS[*improvement as usize].name)])
         }
-        GameEvent::ImprovementSold { city, improvement, gold } if g.city(*city).owner == me => {
-            msg(vec![format!("{} sold in {} for {} gold.", rules::IMPROVEMENTS[*improvement as usize].name, city_name(*city), gold)])
-        }
+        // the city screen's sale has its question only ("Do you want to sell\nyour X for N$?",
+        // 0x120ab..0x121ac): nothing follows it
+        GameEvent::ImprovementSold { .. } => None,
         // "<Plural> LAUNCH space ship!" / "Estimate arrival in <year>.", then the ship
         // (CIV.EXE o 0x18b38)
         GameEvent::SpaceshipLaunched(s) => {
@@ -561,7 +563,8 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
             80,
             80,
         ),
-        // the boxes of hut_outcome (CIV.EXE 0x0978d, ds:0x212c..0x21e6)
+        // the boxes of hut_outcome (CIV.EXE 0x0978d, ds:0x212c..0x21e6): popup_menu(text,
+        // 100, 80) without a speaker (0x98a5, 0x990e, 0x9947, 0x9a1a, 0x9a7f)
         GameEvent::HutEntered { slot, outcome, .. } if *slot == me => {
             let found = |what: &[&str]| std::iter::once("You have discovered").chain(what.iter().copied()).map(String::from).collect::<Vec<_>>();
             let text = match outcome {
@@ -572,25 +575,15 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
                 HutOutcome::AdvancedTribe(_) | HutOutcome::Empty => found(&["an advanced tribe."]),
             };
             match outcome {
-                HutOutcome::Advance(a) => with_pedia(msg(text), *a),
-                _ => msg(text),
+                HutOutcome::Advance(a) => with_pedia(popup(text, 100, 80), *a),
+                _ => popup(text, 100, 80),
             }
         }
         GameEvent::CityFounded { .. } => None,
-        // CIV.EXE 0x0bfde..0x0c0f2 (ds:0x2327..0x2369): the units and buildings the advance
-        // allows, the box at (8, 168 - 8 * their number); the advisor's portrait is not drawn
+        // drawn without a key under the research menu that follows (`science_advice`)
         GameEvent::ScienceAdvice { slot, adv } if *slot == me => {
-            let mut lines = vec!["Science Advisor:".into(), "I recommend we".into(), format!("develop {}.", rules::ADVANCES[*adv as usize].name)];
-            let units = rules::UNITS.iter().filter(|u| u.prereq == Some(*adv)).map(|u| u.name);
-            // improvements 0..23: the SS Module (24) is left out
-            let buildings = rules::IMPROVEMENTS.iter().take(24).filter(|i| i.prereq == Some(*adv)).map(|i| i.name);
-            let items: Vec<String> = units.chain(buildings).map(|n| format!("-{n}")).collect();
-            let n = items.len() as i32;
-            if n > 0 {
-                lines.push("So we can build:".into());
-                lines.extend(items);
-            }
-            Some(Box::new(MessageBox::new(lines).with_pos(8, 168 - 8 * n)))
+            ctx.research_advice = Some(*adv);
+            None
         }
         GameEvent::Hint(section) => {
             if !g.options.instant_advice {
@@ -614,10 +607,10 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
         // nuclear_attack (CIV.EXE 0x1a463): a computer's strike is announced first by the
         // Defense Minister (ds:0x2f9e = 3) at (100, 80), "<Plural> use\nnuclear weapons!"
         // (ds:0x2b77); the explosion follows (o 0x1dedc). The human's own strike has no text.
-        // The explosion plays at the viewport centre (the map view centres on the strike first).
+        // The explosion plays over the square in the view as it stands (nuke_animation o
+        // 0x1df5d: (x - view x) * 16 + 0x42, clamped to the map area), which does not move.
         GameEvent::NuclearStrike { at, by, .. } => {
-            let vx = crate::game::Map::wrap_x(at.0 - crate::ui::mapview::VIEW_W / 2);
-            let vy = (at.1 - crate::ui::mapview::VIEW_H / 2).clamp(0, crate::rules::MAP_H as i32 - crate::ui::mapview::VIEW_H);
+            let (vx, vy) = g.view.unwrap_or((crate::game::Map::wrap_x(at.0 - crate::ui::mapview::VIEW_W / 2), (at.1 - crate::ui::mapview::VIEW_H / 2).clamp(0, crate::rules::MAP_H as i32 - crate::ui::mapview::VIEW_H)));
             let anim = eventpics::nuke_animation_at_tile(at.0, at.1, vx, vy);
             if *by == me {
                 return Some(anim);
@@ -626,7 +619,8 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
                 Box::new(MenuDialog::new(vec![format!("{} use", g.player(*by).plural()), "nuclear weapons!".into()], Vec::new()).with_pos(100, 80).with_speaker(SPEAKER_DEFENSE));
             Some(Box::new(Sequence { first: Some(text), then: Some(anim) }))
         }
-        GameEvent::SdiProtects { city } => Some(Box::new(MessageBox::new(vec![format!("SDI protects {}.", city_name(*city))]).with_pos(80, 100))),
+        // popup_menu(text, 80, 100) without a speaker (nuclear_attack 0x1a51f..0x1a556)
+        GameEvent::SdiProtects { city } => popup(vec![format!("SDI protects {}.", city_name(*city))], 80, 100),
         GameEvent::GameEnded(reason) => Some(crate::ui::endgame::end_screen(ctx, *reason)),
         GameEvent::GameEndedAgain(reason) => Some(crate::ui::endgame::end_again_screen(ctx, *reason)),
         // a computer Diplomat's deeds are announced to the human whoever was involved, from
@@ -641,6 +635,33 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
         }
         _ => None,
     }
+}
+
+/// choose_research's advice on Chieftain with Instant Advice (CIV.EXE 0x0bfde..0x0c0fe,
+/// ds:0x2327..0x2369): popup_menu3 at (8, 168 - 8 * the number of items) in font 2 (the
+/// window's +0x10) with ds:0xdb38 = 1, so it is drawn and left on the screen without a key
+/// while the research menu comes up. The units, then the buildings 0..23 the advance allows
+/// (the SS Module left out), each "-NAME"; every item appends "\n-", so the text ends in a
+/// lone "-" without a line break, which the menu does not count as a line (the box ends
+/// under the last item, as captured); without any item "So we can build:" is cut off again
+/// (0xc0c6). The advisor's portrait is not drawn.
+fn science_advice(adv: rules::AdvanceId) -> MenuDialog {
+    let mut lines = vec!["Science Advisor:".into(), "I recommend we".into(), format!("develop {}.", rules::ADVANCES[adv as usize].name)];
+    let units = rules::UNITS.iter().filter(|u| u.prereq == Some(adv)).map(|u| u.name);
+    let buildings = rules::IMPROVEMENTS.iter().take(24).filter(|i| i.prereq == Some(adv)).map(|i| i.name);
+    let items: Vec<String> = units.chain(buildings).map(|n| format!("-{n}")).collect();
+    let n = items.len() as i32;
+    if n > 0 {
+        lines.push("So we can build:".into());
+        lines.extend(items);
+    }
+    MenuDialog::new(lines, Vec::new()).with_pos(8, 168 - 8 * n).with_font(crate::ui::city_draw::SMALL)
+}
+
+/// The Civilopedia page grant_advance shows the human for an advance (0xc5d9; none for
+/// Future Technology).
+pub fn advance_page(adv: rules::AdvanceId) -> Option<Box<dyn Screen>> {
+    with_pedia(None, adv)
 }
 
 /// Follows the message about a new advance of the human player with the advance's
@@ -699,7 +720,11 @@ pub fn screen_for_decision(ctx: &mut UiContext, d: &Decision) -> Box<dyn Screen>
             // a right-button (or Alt-H) choice shows the advance's Civilopedia page and asks
             // again (0xc266)
             let pages = options.iter().map(|a| (*a != rules::advance_ids::FUTURE_TECH).then_some(crate::ui::pedia_data::Entry::Advance(*a))).collect();
-            Box::new(MenuDialog::new(head, items).with_pos(80, 64).with_help_entries(pages).with_speaker(SPEAKER_SCIENCE).no_cancel())
+            let menu = MenuDialog::new(head, items).with_pos(80, 64).with_help_entries(pages).with_speaker(SPEAKER_SCIENCE).no_cancel();
+            Box::new(match ctx.research_advice.take() {
+                Some(adv) => menu.with_under(science_advice(adv)),
+                None => menu,
+            })
         }
         Decision::ChooseGovernment { options, .. } => {
             let items: Vec<String> = options.iter().map(|gv| rules::GOVERNMENTS[*gv as usize].name.to_string()).collect();
@@ -799,6 +824,28 @@ mod tests {
     use super::*;
     use crate::game::GameSetup;
     use crate::rules::{unit_ids, wonder_ids, Govt};
+
+    #[test]
+    fn the_science_advice_lists_what_the_advance_allows() {
+        // 0xbfde..0xc0f2: "So we can build:\n-" and "\n-" after each item (the unended last
+        // "-" is no line), y = 168 - 8 n
+        use crate::rules::advance_ids as adv;
+        let m = science_advice(adv::MAP_MAKING);
+        assert_eq!(m.title, ["Science Advisor:", "I recommend we", "develop MapMaking.", "So we can build:", "-Trireme"]);
+        assert_eq!(m.pos, Some((8, 160)));
+        let m = science_advice(adv::BRONZE_WORKING);
+        let n = m.title.iter().filter(|l| l.starts_with('-')).count() as i32;
+        assert!(n > 0);
+        assert_eq!(m.title[3], "So we can build:");
+        assert_eq!(m.title.len() as i32, 4 + n);
+        assert_eq!(m.pos, Some((8, 168 - 8 * n)));
+        assert!(m.items.is_empty());
+        // without items the text stops after the advance (0xc0c6)
+        let none = (0..72u8).find(|a| rules::is_real(*a) && !rules::UNITS.iter().any(|u| u.prereq == Some(*a)) && !rules::IMPROVEMENTS.iter().take(24).any(|i| i.prereq == Some(*a))).unwrap();
+        let m = science_advice(none);
+        assert_eq!(m.title.len(), 3);
+        assert_eq!(m.pos, Some((8, 168)));
+    }
 
     #[test]
     fn event_tunes_follow_the_call_sites() {

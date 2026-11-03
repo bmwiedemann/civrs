@@ -83,6 +83,9 @@ pub struct UiContext {
     pub center_request: Option<(i32, i32)>,
     /// The pointer is the GO icon of the goto choice (set by the map view, `app::draw_cursor`).
     pub goto_pointer: bool,
+    /// The Science Advisor's pick (`GameEvent::ScienceAdvice`), drawn under the research menu
+    /// that follows it (0x0bfde..0x0c0f2).
+    pub research_advice: Option<crate::rules::AdvanceId>,
 }
 
 impl UiContext {
@@ -122,6 +125,7 @@ impl UiContext {
             menu_pause: 0,
             center_request: None,
             goto_pointer: false,
+            research_advice: None,
         })
     }
 

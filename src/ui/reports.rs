@@ -520,6 +520,9 @@ impl Screen for OptionsDialog {
 pub struct FindCity {
     edit: crate::ui::widgets::LineEdit,
     unknown: bool,
+    /// A key has been pressed in the box: the text of the '/' or '?' that opened it comes
+    /// after the box and is not typed (CIV.EXE's line starts empty).
+    armed: bool,
 }
 
 impl Default for FindCity {
@@ -530,7 +533,7 @@ impl Default for FindCity {
 
 impl FindCity {
     pub fn new() -> FindCity {
-        FindCity { edit: crate::ui::widgets::LineEdit::new(66, 89, 16, FONT, ""), unknown: false }
+        FindCity { edit: crate::ui::widgets::LineEdit::new(66, 89, 16, FONT, ""), unknown: false, armed: false }
     }
 
     /// The typed name against the city names (prompt_city_name o 0x1ecf4..0x1ed6b): the first
@@ -565,6 +568,11 @@ impl Screen for FindCity {
                 Event::Key { down: true, .. } | Event::MouseButton { down: true, .. } => Transition::Pop(DialogResult::Done),
                 _ => Transition::None,
             };
+        }
+        match ev {
+            Event::Key { down: true, .. } => self.armed = true,
+            Event::Text(_) if !self.armed => return Transition::None,
+            _ => {}
         }
         match self.edit.handle(ev) {
             Some(_) => match self.lookup(ctx) {
@@ -621,5 +629,20 @@ mod tests {
         assert_eq!(super::find_city_by_name(&g, "aac"), Some(aachen));
         g.rename_city(babylon, "Abc").unwrap();
         assert_eq!(super::find_city_by_name(&g, "a"), Some(babylon), "Babylon's entry comes first");
+    }
+
+    #[test]
+    fn the_key_that_opens_find_city_is_not_typed() {
+        use crate::platform::{Event, Key, Mods};
+        use crate::ui::screen::Screen;
+        let Ok(dir) = crate::assets::AssetDir::locate(None) else { return };
+        let Ok(mut ctx) = crate::ui::context::UiContext::new(dir, std::env::temp_dir().join(format!("civrs-findcity-{}", std::process::id()))) else { return };
+        let mut f = super::FindCity::new();
+        // the '/' arrives as text after the map view took its key
+        f.handle(&Event::Text('/'), &mut ctx);
+        assert_eq!(f.edit.text().trim(), "");
+        f.handle(&Event::Key { key: Key::Char('r'), down: true, mods: Mods::default(), repeat: false }, &mut ctx);
+        f.handle(&Event::Text('r'), &mut ctx);
+        assert_eq!(f.edit.text().trim(), "r");
     }
 }

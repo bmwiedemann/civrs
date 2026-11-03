@@ -362,11 +362,14 @@ pub struct AudienceScreen {
     /// The leader's anthem is playing (the throne room is up).
     anthem: bool,
     face: Face,
+    /// The Civilopedia page of an advance the human got in the audience is up (an exchange,
+    /// an offer for peace): grant_advance shows it at once (0xc5d9), then the next screen.
+    page_shown: bool,
 }
 
 impl AudienceScreen {
     fn empty(ai: Slot) -> AudienceScreen {
-        AudienceScreen { state: None, ai, start: None, sub_shown: false, has_items: false, anthem: false, face: Face::new(0x2545_f491 ^ ai as u64) }
+        AudienceScreen { state: None, ai, start: None, sub_shown: false, has_items: false, anthem: false, face: Face::new(0x2545_f491 ^ ai as u64), page_shown: false }
     }
 }
 
@@ -442,12 +445,25 @@ impl AudienceScreen {
     /// The human answered (or acknowledged) the current screen.
     fn answer(&mut self, ctx: &mut UiContext, choice: usize) -> Transition {
         let Some(st) = self.state.clone() else { return Transition::Pop(DialogResult::Done) };
-        match crate::ai::diplo_ai::respond(ctx.game_mut(), &st, choice) {
+        let next = crate::ai::diplo_ai::respond(ctx.game_mut(), &st, choice);
+        // an advance the human got: its Civilopedia page comes before the next screen
+        let page = take_acquired(ctx).and_then(|adv| crate::ui::dialogs::advance_page(adv));
+        match next {
             Some(n) => {
                 self.enter_state(ctx, n);
-                Transition::None
+                match page {
+                    Some(p) => {
+                        self.sub_shown = true;
+                        self.page_shown = true;
+                        Transition::Push(p)
+                    }
+                    None => Transition::None,
+                }
             }
-            None => Transition::Pop(DialogResult::Done),
+            None => match page {
+                Some(p) => Transition::Replace(p),
+                None => Transition::Pop(DialogResult::Done),
+            },
         }
     }
 
@@ -459,6 +475,18 @@ impl AudienceScreen {
         let modern = self.era(ctx);
         let (govt, civ) = ctx.game.as_ref().map(|g| (g.player(self.ai).govt, g.player(self.ai).civ)).unwrap_or((crate::rules::Govt::Despotism, 1));
         (back_sheet(govt, modern), govt_sheet(govt, modern), format!("KING{:02}", king_index(civ)))
+    }
+}
+
+/// The human's advance an answer has just granted (`transfer_advance` queues it), taken out
+/// of the game's events so the map view does not show it again after the audience.
+fn take_acquired(ctx: &mut UiContext) -> Option<crate::rules::AdvanceId> {
+    let g = ctx.game_mut();
+    let me = g.human_slot;
+    let i = g.events.iter().position(|e| matches!(e, crate::game::GameEvent::AdvanceAcquired { slot, .. } if *slot == me))?;
+    match g.events.remove(i) {
+        Some(crate::game::GameEvent::AdvanceAcquired { adv, .. }) => Some(adv),
+        _ => None,
     }
 }
 
@@ -494,6 +522,10 @@ impl Screen for AudienceScreen {
     }
 
     fn resume(&mut self, result: DialogResult, ctx: &mut UiContext) -> Transition {
+        if std::mem::take(&mut self.page_shown) {
+            self.sub_shown = false;
+            return Transition::None;
+        }
         let Some(st) = self.state.as_ref() else { return Transition::Pop(DialogResult::Done) };
         let choice = match (st.proposal, result) {
             (_, DialogResult::Choice(i)) => i,

@@ -266,6 +266,13 @@ pub struct MapView {
     /// The loop's pause before it centres the view on a unit off the screen (CIV.EXE
     /// 0x439a): the ticks left and the view to show then (`adopt_view`).
     recentre: Option<(u32, i32, i32)>,
+    /// The loop of a loaded game has not shown its unit yet: what the first looks brought (an
+    /// emissary's question, `on_enter`) comes while game_turn's progress square for the
+    /// human (0x2549: fill_rect(2, 192, 6, 6) in 15) is up and before draw_unit_panel
+    /// (0x788d): the panel is empty and no unit blinks.
+    loop_unshown: bool,
+    /// The loop's view while a load's audience shows the map around the meeting.
+    loop_view: Option<(i32, i32)>,
 }
 
 /// Ticks the unit loop waits before it centres the view on a unit off the screen (0x4396).
@@ -307,6 +314,8 @@ impl MapView {
             terrain_only: false,
             look: None,
             recentre: None,
+            loop_unshown: false,
+            loop_view: None,
         }
     }
 
@@ -1369,9 +1378,11 @@ impl MapView {
                 draw_text(fb, &ctx.fonts, &st, 4, 136, "Press Enter");
                 draw_text(fb, &ctx.fonts, &st, 4, 144, "to continue");
             }
-            Mode::Processing => {
-                draw_text(fb, &ctx.fonts, &st, 4, 124, "Please wait...");
-            }
+            // CIV.EXE writes nothing in the panel while the civilizations' turns run (it has no
+            // "Please wait" text; game_turn only draws its progress square, 0x24cf / 0x2549)
+            Mode::Processing => {}
+            // the loop has not drawn its unit yet (`loop_unshown`): game_turn's square
+            _ if self.loop_unshown => fb.fill_rect(Rect::new(2, 192, 6, 6), 15),
             _ => {
                 if let Some(id) = g.active_unit {
                     if let Some(u) = g.unit_opt(id) {
@@ -1479,13 +1490,24 @@ impl Screen for MapView {
         if ctx.game().active_unit.is_none() {
             self.mode = Mode::EndOfTurn;
         }
+        self.loop_unshown = !ctx.game().events.is_empty();
+        // the emissary asks over the map drawn around the meeting (o 0x7a63, the view at
+        // x - 8, y - 2); the loop's unit and its view come after the audience
+        let meeting = ctx.game().events.iter().find_map(|e| match e {
+            crate::game::GameEvent::NeedsDecision(Decision::Diplomacy(st)) if st.proposal == crate::game::diplomacy::Proposal::Emissary => st.meeting.as_ref().map(|m| m.at),
+            _ => None,
+        });
+        if let Some((x, y)) = meeting.filter(|&(x, _)| x != -1 && self.loop_unshown) {
+            self.loop_view = Some((self.vx, self.vy));
+            (self.vx, self.vy) = (Map::wrap_x(x - 8), (y - 2).clamp(0, MAP_H as i32 - VIEW_H));
+        }
     }
 
     fn update(&mut self, ctx: &mut UiContext) -> Transition {
         // blink_wait (0x8932): the square without the active unit for 10 ticks, then with it
         // for 10 (0x8a1b / 0x8ad4 delay 10), as long as no key is waiting
-        self.blink = (ctx.frame.saturating_sub(self.blink_from) / 10) % 2 == 1;
-        if matches!(self.mode, Mode::Normal | Mode::Goto) {
+        self.blink = self.loop_unshown || (ctx.frame.saturating_sub(self.blink_from) / 10) % 2 == 1;
+        if matches!(self.mode, Mode::Normal | Mode::Goto) && !self.loop_unshown {
             self.blinked_at = ctx.game.as_ref().and_then(|g| g.active_unit.and_then(|a| g.unit_opt(a)).map(|u| u.pos()));
         }
         // the goto choice with a mouse shows the GO pointer (`app::draw_cursor`)
@@ -1544,6 +1566,10 @@ impl Screen for MapView {
             // it came to moves if it moves by itself (0x44b3)
             if !ctx.game().events.is_empty() {
                 return self.show_events(ctx);
+            }
+            self.loop_unshown = false;
+            if let Some((vx, vy)) = self.loop_view.take() {
+                (self.vx, self.vy) = (vx, vy);
             }
             if self.mode == Mode::Normal {
                 if let Some(id) = ctx.game().active_unit.filter(|id| ctx.game().is_auto_unit(*id)) {
@@ -2040,14 +2066,18 @@ impl MapView {
     }
 
     fn event_screen(&mut self, ctx: &mut UiContext, e: &crate::game::GameEvent) -> Option<Box<dyn Screen>> {
-        let blast = match e {
-            crate::game::GameEvent::NuclearStrike { at, .. } => Some(*at),
-            crate::game::GameEvent::Meltdown { city } => ctx.game().city_opt(*city).filter(|c| c.owner == ctx.game().human_slot).map(|c| c.pos()),
-            _ => None,
-        };
-        if let Some(at) = blast {
-            self.vx = Map::wrap_x(at.0 - VIEW_W / 2);
-            self.vy = (at.1 - VIEW_H / 2).clamp(0, MAP_H as i32 - VIEW_H);
+        // a meltdown draws the map with the city at column 8, row 6 first (draw_map_view(human,
+        // x - 8, y - 6), 0x12fab); a nuclear strike's explosion plays in the view as it
+        // stands, its box clamped to the map area (nuclear_attack 0x1a463, nuke_animation
+        // o 0x1df5d)
+        if let crate::game::GameEvent::Meltdown { city } = e {
+            if let Some(at) = ctx.game().city_opt(*city).filter(|c| c.owner == ctx.game().human_slot).map(|c| c.pos()) {
+                self.vx = Map::wrap_x(at.0 - 8);
+                self.vy = (at.1 - 6).clamp(0, MAP_H as i32 - VIEW_H);
+            }
+        }
+        if matches!(e, crate::game::GameEvent::Meltdown { .. } | crate::game::GameEvent::NuclearStrike { .. }) {
+            ctx.game_mut().view = Some((self.vx, self.vy));
         }
         // barbarians: an uprising shows its city (0x2fcb), a landing scrolls only when the
         // square is outside the inner window (scroll_to 0x09505)
