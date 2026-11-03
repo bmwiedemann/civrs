@@ -2326,6 +2326,31 @@ mod tests {
         assert_eq!(g.player(1).gold, gold - 172 + 200);
     }
 
+    /// The incited city changes hands before the Diplomat is deleted (city_revolt o 0x1db29,
+    /// delete_unit 0x1db51): the garrison re-created for the inciter does not take the
+    /// Diplomat's record. The price is paid before the announcement, the plunder after.
+    #[test]
+    fn incited_garrison_does_not_take_the_diplomats_record() {
+        let (mut g, c, d) = diplomat_game();
+        for u in g.units_of(1) {
+            if u != d {
+                g.remove_unit(u);
+            }
+        }
+        g.player_mut(1).gold = 2000;
+        let guard = g.add_unit(2, unit_ids::PHALANX, 20, 20);
+        let drec = g.unit(d).record;
+        let cost = g.incite_pay(d, c, false).unwrap();
+        assert_eq!(g.player(1).gold, 2000 - cost);
+        assert!(matches!(g.announce_revolt(c, 1), GameEvent::CityRebels { from: 2, to: 1, .. }));
+        assert_eq!(g.city(c).owner, 2, "nothing has changed hands yet");
+        g.incite_finish(d, c, true);
+        assert_eq!(g.city(c).owner, 1);
+        assert!(g.unit_opt(d).is_none());
+        assert_ne!(g.unit(guard).record, drec);
+        assert!(!g.events.iter().any(|e| matches!(e, GameEvent::CityRebels { .. })), "announced once, by the caller");
+    }
+
     #[test]
     fn diplomat_subverts_only_at_peace_and_keeps_it() {
         use crate::game::turn::DiplomatAction;
@@ -2405,6 +2430,29 @@ mod tests {
         }
         assert_eq!(g.diplomat_action(d3, DiplomatAction::StealTech, c2).unwrap(), DiplomatResult::NoTechnology);
         assert!(g.unit_opt(d3).is_some());
+    }
+
+    /// The human's menu: the Diplomat stays on the map while the city screen or the report is
+    /// up (o 0x1d6a8 / the popups before delete_unit 0x1d6b6); the embassy deletes it first.
+    #[test]
+    fn diplomat_stays_until_the_report_is_closed() {
+        use crate::game::turn::{DiplomatAction, DiplomatResult};
+        let (mut g, c, d) = diplomat_game();
+        assert_eq!(g.diplomat_action_shown(d, DiplomatAction::Investigate, c).unwrap(), DiplomatResult::Investigated);
+        assert!(g.unit_opt(d).is_some());
+        g.diplomat_done(d);
+        assert!(g.unit_opt(d).is_none());
+        let d2 = g.add_unit(1, unit_ids::DIPLOMAT, 19, 20);
+        assert!(matches!(g.diplomat_action_shown(d2, DiplomatAction::Sabotage, c).unwrap(), DiplomatResult::Sabotaged(_)));
+        assert!(g.unit_opt(d2).is_some());
+        let d3 = g.add_unit(1, unit_ids::DIPLOMAT, 19, 20);
+        let owner = g.city(c).owner;
+        assert_eq!(g.diplomat_action_shown(d3, DiplomatAction::Embassy, c).unwrap(), DiplomatResult::Embassy);
+        assert!(g.unit_opt(d3).is_none() && g.player(1).has_embassy(owner));
+        // the plain call deletes it at once
+        let d4 = g.add_unit(1, unit_ids::DIPLOMAT, 19, 20);
+        g.diplomat_action(d4, DiplomatAction::Investigate, c).unwrap();
+        assert!(g.unit_opt(d4).is_none());
     }
 
     #[test]

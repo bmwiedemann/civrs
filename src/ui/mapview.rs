@@ -197,6 +197,12 @@ pub(crate) enum Pending {
     TreatyBreak(UnitId, crate::game::CityId),
     /// "Dissidents in ... will revolt for $N."
     Incite(UnitId, crate::game::CityId),
+    /// The city screen or report of a Diplomat's action is up; the Diplomat goes when it
+    /// closes (`Game::diplomat_done`), then as `Event`.
+    DiplomatDone(UnitId),
+    /// The announcement of a revolt the human's Diplomat incited is up; the city goes over
+    /// when it closes.
+    InciteDone(UnitId, crate::game::CityId),
     /// "We have signed a peace treaty..." before a unit attacks or enters the land of a treaty
     /// partner: (unit, direction, partner).
     AttackTreaty(UnitId, Dir8, crate::game::Slot),
@@ -624,8 +630,8 @@ impl MapView {
         Transition::Push(Box::new(MenuDialog::new(vec!["Will you?".into()], items).with_pos(100, 80).with_disabled(disabled)))
     }
 
-    /// "ADJ UNIT\nwill desert for N$.\nTreasury: N$" with "Forget it." / "Pay", the latter only
-    /// when the treasury holds the price (CIV.EXE o 0x1dc4b).
+    /// "ADJ UNIT\nwill desert for N$.\nTreasury: N$" at (100, 80) with "Forget it." / "Pay"
+    /// when the treasury holds the price, else with no choices (CIV.EXE o 0x1dd15, 0x1dd39).
     fn bribe_offer(&mut self, ctx: &mut UiContext, id: UnitId, t: UnitId, d: Dir8) -> Transition {
         let g = ctx.game();
         let tu = g.unit(t);
@@ -637,10 +643,10 @@ impl MapView {
             format!("Treasury: {gold}$"),
         ];
         if cost > gold {
-            return Transition::Push(Box::new(MessageBox::new(lines)));
+            return Transition::Push(Box::new(MenuDialog::new(lines, Vec::new()).with_pos(100, 80)));
         }
         self.pending = Pending::Bribe(id, t, d);
-        Transition::Push(Box::new(MenuDialog::new(lines, vec!["Forget it.".into(), "Pay".into()])))
+        Transition::Push(Box::new(MenuDialog::new(lines, vec!["Forget it.".into(), "Pay".into()]).with_pos(100, 80)))
     }
 
     /// Carry out a caravan's choice at city `c`: 0 keep moving, 1 trade route, 2 help build
@@ -652,12 +658,17 @@ impl MapView {
             2 => CaravanAction::HelpWonder(c),
             _ => CaravanAction::KeepMoving,
         };
-        if let Err(e) = ctx.game_mut().caravan_action(id, action) {
+        if let Err(e) = ctx.game_mut().caravan_action_shown(id, action) {
             return self.error(ctx, &e);
         }
+        // the trade route's message comes up with the Caravan still there (0x1488c, 0x1489f)
+        let route = matches!(action, CaravanAction::TradeRoute(_));
         if let Some(s) = self.next_event_screen(ctx) {
-            self.pending = Pending::Event;
+            self.pending = if route { Pending::DiplomatDone(id) } else { Pending::Event };
             return Transition::Push(s);
+        }
+        if route {
+            ctx.game_mut().diplomat_done(id);
         }
         if ctx.game().unit_opt(id).is_none() {
             self.activate_next(ctx);
@@ -1559,7 +1570,10 @@ impl Screen for MapView {
                 }
                 Transition::None
             }
-            Pending::Event | Pending::Error => {
+            Pending::Event | Pending::Error | Pending::DiplomatDone(_) => {
+                if let Pending::DiplomatDone(id) = pending {
+                    ctx.game_mut().diplomat_done(id);
+                }
                 if let Some(d) = self.loose_decision.take() {
                     let reply = dialogs::reply_for(&d, &result);
                     let done = Self::done_playing(&d, &reply);
@@ -1697,6 +1711,7 @@ impl Screen for MapView {
                 DialogResult::Choice(1) => crate::ui::unit_actions::treaty_broken(self, ctx, id, c),
                 _ => Transition::None,
             },
+            Pending::InciteDone(id, c) => crate::ui::unit_actions::incite_done(self, ctx, id, c),
             Pending::Incite(id, c) => match result {
                 DialogResult::Choice(i) => crate::ui::unit_actions::incite_choice(self, ctx, id, c, i),
                 _ => Transition::None,
@@ -2025,6 +2040,12 @@ impl MapView {
 
     pub(crate) fn set_pending(&mut self, p: Pending) {
         self.pending = p;
+    }
+
+    /// City `c` has just become the human's (capture_city 0x13d76 ends with its city screen,
+    /// 0x1430d, also when a Diplomat incited it): open it after the messages.
+    pub(crate) fn set_captured(&mut self, c: crate::game::CityId) {
+        self.captured = Some((c, Vec::new()));
     }
 
     /// Show the next queued game event, or else move on to the next unit when the active

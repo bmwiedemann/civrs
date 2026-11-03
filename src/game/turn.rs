@@ -1818,6 +1818,17 @@ impl Game {
 
     /// A caravan next to (or in) a city acts.
     pub fn caravan_action(&mut self, id: UnitId, action: CaravanAction) -> Result<(), RuleError> {
+        self.caravan_action_shown(id, action)?;
+        if matches!(action, CaravanAction::TradeRoute(_)) {
+            self.diplomat_done(id);
+        }
+        Ok(())
+    }
+
+    /// `caravan_action` for the human's screen: a Caravan that set up a trade route is still
+    /// on the map while "... Trade route established" is up (popup 0x1488c before
+    /// delete_unit 0x1489f); the caller deletes it with `diplomat_done` afterwards.
+    pub fn caravan_action_shown(&mut self, id: UnitId, action: CaravanAction) -> Result<(), RuleError> {
         let u = self.unit_opt(id).cloned().ok_or(RuleError::Other("No such unit."))?;
         if u.kind != unit_ids::CARAVAN {
             return Err(RuleError::Other("Only Caravans can do that."));
@@ -1860,10 +1871,9 @@ impl Game {
                 let p = self.player_mut(u.owner);
                 p.gold += bonus;
                 p.beakers += bonus;
-                self.remove_unit(id);
-                self.refresh_vision(u.owner);
                 self.add_trade_route(home, target);
-                self.push_event(GameEvent::TradeRouteMade { city: home, with: target, bonus, goods: (id & 7) as u8 });
+                // the goods are named by the caravan's record (ds:0x1972[unit & 7], 0x147f7)
+                self.push_event(GameEvent::TradeRouteMade { city: home, with: target, bonus, goods: u.record & 7 });
                 Ok(())
             }
         }
@@ -2009,6 +2019,19 @@ impl Game {
     /// at peace breaks the treaty (the caller asks first, `senate_blocks_war` permitting), and so
     /// does inciting one unless it is a subversion at twice the price.
     pub fn diplomat_action(&mut self, id: UnitId, action: DiplomatAction, city: CityId) -> Result<DiplomatResult, RuleError> {
+        let r = self.diplomat_action_shown(id, action, city)?;
+        if matches!(r, DiplomatResult::Investigated | DiplomatResult::Stole(_) | DiplomatResult::Sabotaged(_)) {
+            self.diplomat_done(id);
+        }
+        Ok(r)
+    }
+
+    /// `diplomat_action` for the human's menu: after Investigate City, a theft and a sabotage
+    /// the Diplomat is still on the map and the caller deletes it with `diplomat_done` once
+    /// the city screen or the report is closed (o 0x1d575: the city screen 0x1a5e:0x3e6 and
+    /// the reports' popups come before delete_unit at o 0x1d6b0); the embassy deletes it
+    /// before the intelligence report, as here.
+    pub fn diplomat_action_shown(&mut self, id: UnitId, action: DiplomatAction, city: CityId) -> Result<DiplomatResult, RuleError> {
         let u = self.unit_opt(id).cloned().ok_or(RuleError::Other("No such unit."))?;
         if u.kind != unit_ids::DIPLOMAT {
             return Err(RuleError::Other("Only Diplomats can do that."));
@@ -2025,7 +2048,8 @@ impl Game {
         let result = match action {
             DiplomatAction::Embassy => {
                 self.establish_embassy(us, them);
-                DiplomatResult::Embassy
+                self.diplomat_done(id);
+                return Ok(DiplomatResult::Embassy);
             }
             DiplomatAction::Investigate => DiplomatResult::Investigated,
             DiplomatAction::StealTech => {
@@ -2040,28 +2064,8 @@ impl Game {
             }
             DiplomatAction::Sabotage => DiplomatResult::Sabotaged(self.sabotage_city(city)),
             DiplomatAction::InciteRevolt { subvert } => {
-                let Some(cost) = self.incite_cost(city) else { return Err(RuleError::Other("A capital cannot be incited to revolt.")) };
-                // subversion needs a treaty in the inciter's word (o 0x1d9f4)
-                let at_peace = self.treaty(us, them);
-                if subvert && !at_peace {
-                    return Err(RuleError::Other("Only a city at peace can be subverted."));
-                }
-                let cost = if subvert { cost * 2 } else { cost };
-                if self.player(us).gold < cost {
-                    return Err(RuleError::NotEnoughGold);
-                }
-                // inciting a treaty partner's city ends the treaty and earns its vendetta; a
-                // subversion keeps the peace (o 0x1daf5..0x1db10)
-                if !subvert && self.treaty(them, us) {
-                    self.clear_diplo_flag(them, us, super::diplomacy::flags::PEACE);
-                    self.raise_flag(them, us, super::diplomacy::flags::VENDETTA);
-                }
-                self.player_mut(us).gold -= cost;
-                self.remove_unit(id);
-                self.transfer_city(city, us);
-                self.refresh_vision(us);
-                self.refresh_vision(them);
-                self.city_lost_check(them, us);
+                let cost = self.incite_pay(id, city, subvert)?;
+                self.incite_finish(id, city, false);
                 return Ok(DiplomatResult::Incited { cost });
             }
             DiplomatAction::MeetKing => {
@@ -2072,9 +2076,53 @@ impl Game {
                 return Ok(DiplomatResult::MetKing);
             }
         };
+        Ok(result)
+    }
+
+    /// The first half of Incite a Revolt (o 0x1d9b7..0x1db1e): the price is paid and a
+    /// treaty partner's peace ends unless the city is subverted. Returns the price.
+    pub fn incite_pay(&mut self, id: UnitId, city: CityId, subvert: bool) -> Result<i32, RuleError> {
+        let us = self.unit_opt(id).ok_or(RuleError::Other("No such unit."))?.owner;
+        let them = self.city_opt(city).ok_or(RuleError::Other("No such city."))?.owner;
+        let Some(cost) = self.incite_cost(city) else { return Err(RuleError::Other("A capital cannot be incited to revolt.")) };
+        // subversion needs a treaty in the inciter's word (o 0x1d9f4)
+        if subvert && !self.treaty(us, them) {
+            return Err(RuleError::Other("Only a city at peace can be subverted."));
+        }
+        let cost = if subvert { cost * 2 } else { cost };
+        if self.player(us).gold < cost {
+            return Err(RuleError::NotEnoughGold);
+        }
+        // inciting a treaty partner's city ends the treaty and earns its vendetta; a
+        // subversion keeps the peace (o 0x1daf5..0x1db10)
+        if !subvert && self.treaty(them, us) {
+            self.clear_diplo_flag(them, us, super::diplomacy::flags::PEACE);
+            self.raise_flag(them, us, super::diplomacy::flags::VENDETTA);
+        }
+        self.player_mut(us).gold -= cost;
+        Ok(cost)
+    }
+
+    /// The second half: city_revolt (o 0x1e06a; its announcement already shown when
+    /// `announced`), then the Diplomat is deleted (o 0x1db51, after the city has changed
+    /// hands, so the re-created units do not get its record).
+    pub fn incite_finish(&mut self, id: UnitId, city: CityId, announced: bool) {
+        let Some(us) = self.unit_opt(id).map(|u| u.owner) else { return };
+        let them = self.city(city).owner;
+        self.transfer_city_announced(city, us, announced);
         self.remove_unit(id);
         self.refresh_vision(us);
-        Ok(result)
+        self.refresh_vision(them);
+        self.city_lost_check(them, us);
+    }
+
+    /// The Diplomat that investigated, stole or sabotaged is used up (o 0x1d6b0 delete_unit),
+    /// as is a Caravan that set up a trade route (0x1489f).
+    pub fn diplomat_done(&mut self, id: UnitId) {
+        if let Some(us) = self.unit_opt(id).map(|u| u.owner) {
+            self.remove_unit(id);
+            self.refresh_vision(us);
+        }
     }
 
     /// Steal Technology (CIV.EXE o 0x1d757): 72 tries from a random advance on, the first one
@@ -2214,14 +2262,38 @@ impl Game {
     /// the city is plundered, an advance is taken (`capture_steal`) and it loses one citizen
     /// (never the last) and its Palace, Temple, Courthouse and Cathedral (`capture_losses`).
     pub fn transfer_city(&mut self, c: CityId, to: Slot) {
+        self.transfer_city_announced(c, to, false);
+    }
+
+    /// `transfer_city` with city_revolt's announcement already shown (`announced`): no
+    /// `CityRebels` event and no view change.
+    fn transfer_city_announced(&mut self, c: CityId, to: Slot, announced: bool) {
         let from = self.city(c).owner;
-        let (gold, adv) = self.revolt_city(c, to);
+        let (gold, adv) = self.revolt_city(c, to, announced);
         self.push_event(GameEvent::CityCaptured { city: c, by: to, from, gold, adv });
     }
 
-    /// The work of `transfer_city`, without the announcement; returns the plunder and the
-    /// advance taken.
-    fn revolt_city(&mut self, c: CityId, to: Slot) -> (i32, Option<AdvanceId>) {
+    /// city_revolt's announcement (o 0x1e2ba), before capture_city's own message: the human
+    /// is told when involved or with an embassy with either side (the event's screen checks
+    /// that again), and then the view moves to the city when its square is known (always to
+    /// `to`, whose radius city_revolt has just explored, o 0x1e1b0).
+    pub fn announce_revolt(&mut self, c: CityId, to: Slot) -> GameEvent {
+        let (pos, from) = (self.city(c).pos(), self.city(c).owner);
+        // first city_revolt shows the new owner the city's 21 squares (o 0x1e183, 0x1e1b0)
+        for (dx, dy) in rules::CITY_RADIUS {
+            self.map.explore(to, pos.0 + dx as i32, pos.1 + dy as i32, 0);
+        }
+        let h = self.human_slot;
+        let told = from == h || to == h || self.player(h).has_embassy(from) || self.player(h).has_embassy(to);
+        if told && (to == h || self.map.tile(pos.0, pos.1).explored_by(h)) {
+            self.show_map_at(pos.0 - 8, pos.1 - 5);
+        }
+        GameEvent::CityRebels { city: c, from, to }
+    }
+
+    /// The work of `transfer_city`, without the capture's announcement; returns the plunder
+    /// and the advance taken.
+    fn revolt_city(&mut self, c: CityId, to: Slot, announced: bool) -> (i32, Option<AdvanceId>) {
         // stashed units change sides with the others (CIV.EXE would keep them in the record of
         // a city it can no longer let them out of)
         self.unstash_garrison(c);
@@ -2229,14 +2301,10 @@ impl Game {
             let city = self.city(c);
             (city.pos(), city.owner, city.size)
         };
-        // city_revolt's announcement (o 0x1e1d4), before capture_city's own message; the
-        // radius is explored for `to` first (o 0x1e1b0)
-        let h = self.human_slot;
-        let told = from == h || to == h || self.player(h).has_embassy(from) || self.player(h).has_embassy(to);
-        if told && (to == h || self.map.tile(pos.0, pos.1).explored_by(h)) {
-            self.show_map_at(pos.0 - 8, pos.1 - 5);
+        if !announced {
+            let e = self.announce_revolt(c, to);
+            self.push_event(e);
         }
-        self.push_event(GameEvent::CityRebels { city: c, from, to });
         // the leaders remember, as for a city taken by force (capture_city 0x13da6, 0x13e5c)
         if to == self.human_slot && from != 0 {
             self.player_mut(from).last_contact = -2;
@@ -2289,11 +2357,13 @@ impl Game {
                 self.players[to as usize].unit_counter[u.kind as usize % 28] += 1;
                 // re-created for the new owner by create_unit (0x8b51: no veteran status,
                 // orders or goto), seen by the old owner and homed to the city (o 0x1e3af,
-                // 0x1e3b6); its moves are left alone
+                // 0x1e3b6); create_unit never writes the moves (+4) and a freed record has
+                // none, so the unit waits for its owner's next move loop (the human's units
+                // after an incited revolt do not move this turn)
                 let fresh = super::Unit::new(u.id, to, u.kind, u.x, u.y, turn);
                 let record = used.iter().position(|b| !b).unwrap_or(255);
                 used[record] = true;
-                *u = super::Unit { moves_left: u.moves_left, home: Some(c), seen_by: 1 << to | 1 << from, record: record as u8, ..fresh };
+                *u = super::Unit { moves_left: 0, home: Some(c), seen_by: 1 << to | 1 << from, record: record as u8, ..fresh };
                 gone_heading.push(id);
                 let (x, y) = (u.x, u.y);
                 self.stack_link(id, x, y);
@@ -2331,10 +2401,6 @@ impl Game {
         }
         self.exe_d308_moved(from, to, before);
         self.city_changed_hands(c, from, to);
-        // city_revolt shows the new owner the city's 21 squares (o 0x1e183, 0x1e1b0)
-        for (dx, dy) in rules::CITY_RADIUS {
-            self.map.explore(to, pos.0 + dx as i32, pos.1 + dy as i32, 0);
-        }
         // steal_advance after the messages (0x14232), as for a city taken by force
         let adv = self.capture_steal(to, from);
         // as for a city taken by force (`capture_city`): a computer captor re-chooses in all
@@ -3562,7 +3628,14 @@ mod tests {
         let expected = (15 + 10) * (g.city(home).trade + g.city(far).trade) / 24 / 2 / 2;
         assert_eq!(g.trade_route_revenue(slot, home, far), expected);
         let (gold, beakers) = (g.player(slot).gold, g.player(slot).beakers);
-        assert!(g.caravan_action(c, CaravanAction::TradeRoute(far)).is_ok());
+        let rec = g.unit(c).record;
+        // the human's screen: the Caravan stays until the message is closed (0x1489f)
+        assert!(g.caravan_action_shown(c, CaravanAction::TradeRoute(far)).is_ok());
+        assert!(g.unit_opt(c).is_some());
+        g.diplomat_done(c);
+        assert!(g.unit_opt(c).is_none());
+        // the goods are named by the record (0x147f7), not the unit id
+        assert!(g.events.iter().any(|e| matches!(e, GameEvent::TradeRouteMade { goods, .. } if *goods == rec & 7)));
         assert_eq!(g.player(slot).gold, gold + expected);
         assert_eq!(g.player(slot).beakers, beakers + expected);
         assert_eq!(g.city(home).trade_routes, vec![far]);

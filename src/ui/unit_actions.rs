@@ -6,7 +6,7 @@ use crate::rules;
 use crate::ui::context::UiContext;
 use crate::ui::mapview::{MapView, Pending};
 use crate::ui::screen::{Screen, Transition};
-use crate::ui::widgets::{MenuDialog, MessageBox, SPEAKER_DOMESTIC, SPEAKER_FOREIGN, SPEAKER_SPIES};
+use crate::ui::widgets::{MenuDialog, SPEAKER_DOMESTIC, SPEAKER_FOREIGN, SPEAKER_SPIES};
 
 /// "<Adjective> diplomat arrives in <city>..." with the six actions, the impossible ones greyed.
 pub fn diplomat_menu(view: &mut MapView, ctx: &mut UiContext, id: UnitId, c: CityId) -> Transition {
@@ -79,10 +79,40 @@ fn incite_offer(view: &mut MapView, ctx: &mut UiContext, id: UnitId, c: CityId) 
 
 /// Line `choice` of the incite offer: 1 incite, 2 subvert.
 pub fn incite_choice(view: &mut MapView, ctx: &mut UiContext, id: UnitId, c: CityId, choice: usize) -> Transition {
-    match choice {
-        1 | 2 => perform(view, ctx, id, c, DiplomatAction::InciteRevolt { subvert: choice == 2 }),
-        _ => Transition::None,
+    if !matches!(choice, 1 | 2) || ctx.game().unit_opt(id).is_none() || ctx.game().city_opt(c).is_none() {
+        return Transition::None;
     }
+    // the price is paid, then city_revolt announces the revolt (o 0x1e2ba, the view moved to
+    // the city) while the city, its units and the Diplomat are as they were; the city
+    // changes hands when the box is closed
+    let g = ctx.game_mut();
+    let us = g.unit(id).owner;
+    if let Err(e) = g.incite_pay(id, c, choice == 2) {
+        return view.show_error(ctx, &e);
+    }
+    g.view = Some((view.vx, view.vy));
+    let ev = g.announce_revolt(c, us);
+    if let Some((vx, vy)) = g.view {
+        (view.vx, view.vy) = (vx, vy);
+    }
+    match crate::ui::dialogs::screen_for_event(ctx, &ev) {
+        Some(s) => {
+            view.set_pending(Pending::InciteDone(id, c));
+            Transition::Push(s)
+        }
+        None => incite_done(view, ctx, id, c),
+    }
+}
+
+/// The revolt's announcement is closed: the city goes over (`Game::incite_finish`).
+pub fn incite_done(view: &mut MapView, ctx: &mut UiContext, id: UnitId, c: CityId) -> Transition {
+    if ctx.game().city_opt(c).is_some() {
+        ctx.game_mut().incite_finish(id, c, true);
+        if ctx.game().city_opt(c).is_some_and(|city| city.owner == ctx.game().human_slot) {
+            view.set_captured(c);
+        }
+    }
+    view.show_events(ctx)
 }
 
 fn perform(view: &mut MapView, ctx: &mut UiContext, id: UnitId, c: CityId, action: DiplomatAction) -> Transition {
@@ -91,7 +121,7 @@ fn perform(view: &mut MapView, ctx: &mut UiContext, id: UnitId, c: CityId, actio
         let city = ctx.game().city(c);
         (city.name.clone(), city.production.name())
     };
-    let result = match ctx.game_mut().diplomat_action(id, action, c) {
+    let result = match ctx.game_mut().diplomat_action_shown(id, action, c) {
         Ok(r) => r,
         Err(e) => return view.show_error(ctx, &e),
     };
@@ -104,7 +134,8 @@ fn perform(view: &mut MapView, ctx: &mut UiContext, id: UnitId, c: CityId, actio
             let lines = vec![format!("{} steal", g.player(g.human_slot).plural()), format!("{}.", rules::ADVANCES[a as usize].name)];
             Box::new(MenuDialog::new(lines, Vec::new()).with_pos(80, 80).with_speaker(SPEAKER_SPIES))
         }
-        DiplomatResult::NoTechnology => Box::new(MessageBox::new(vec!["No new technology found.".into()]).with_pos(80, 80)),
+        // popup_menu(text, 80, 80) without a speaker; the Diplomat stays (o 0x1d908)
+        DiplomatResult::NoTechnology => Box::new(MenuDialog::new(vec!["No new technology found.".into()], Vec::new()).with_pos(80, 80)),
         DiplomatResult::Sabotaged(what) => {
             let first = match what {
                 Some(i) => format!("{} destroyed", rules::IMPROVEMENTS[i as usize].name),
@@ -117,6 +148,9 @@ fn perform(view: &mut MapView, ctx: &mut UiContext, id: UnitId, c: CityId, actio
         DiplomatResult::Incited { .. } => return view.show_events(ctx),
         DiplomatResult::MetKing => crate::ui::diplomacy_ui::human_audience(owner, ctx.game().city(c).pos()),
     };
-    view.set_pending(Pending::Event);
+    // the city screen and the reports come up with the Diplomat still on the map; it is
+    // deleted when they close (o 0x1d6b0)
+    let done = matches!(result, DiplomatResult::Investigated | DiplomatResult::Stole(_) | DiplomatResult::Sabotaged(_));
+    view.set_pending(if done { Pending::DiplomatDone(id) } else { Pending::Event });
     Transition::Push(screen)
 }

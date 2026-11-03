@@ -652,8 +652,10 @@ impl MenuDialog {
             draw_text(fb, &ctx.fonts, &TextStyle::new(1, 10), x + w - 74, y + h - 4, "(HELP AVAILABLE)");
         }
         // the highlight recolours the row's background (o 0x1cab2), so text and the title's
-        // descenders keep their colours; on the stone also its second colour 0x16 -> 3
-        if let Some(i) = Some(self.sel).filter(|&i| i < self.items.len() && !self.disabled[i]) {
+        // descenders keep their colours; on the stone also its second colour 0x16 -> 3. A
+        // greyed row the keys rest on is highlighted the same way (its text 3 then vanishes
+        // in the bar's pattern, as in CIV.EXE's Diplomat menu at a city with a Palace)
+        if let Some(i) = Some(self.sel).filter(|&i| i < self.items.len()) {
             let r = Rect::new(x + 3, self.row_y(i) - 1, widest + BARE_BAR_EXTRA, self.line_h);
             let second = if leader {
                 Some(8)

@@ -172,8 +172,10 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
     let news = |lines: Vec<String>| -> Option<Box<dyn Screen>> { Some(eventpics::travelers_report(lines)) };
     // popup_menu(text, 100, 80) with a speaker (ds:0x2f9e)
     let speaker = |s: u8, lines: Vec<String>| -> Option<Box<dyn Screen>> { Some(Box::new(MenuDialog::new(lines, Vec::new()).with_pos(100, 80).with_speaker(s))) };
+    // popup_menu(text, x, y) without a speaker or choices
+    let popup = |lines: Vec<String>, x: i32, y: i32| -> Option<Box<dyn Screen>> { Some(Box::new(MenuDialog::new(lines, Vec::new()).with_pos(x, y))) };
     // the same at popup_menu(text, x, y)
-    let speaker_at = |s: u8, lines: Vec<String>, x: i32, y: i32| -> Option<Box<dyn Screen>> { Some(Box::new(MenuDialog::new(lines, Vec::new()).with_pos(x, y).with_speaker(s))) };
+    let speaker_at =|s: u8, lines: Vec<String>, x: i32, y: i32| -> Option<Box<dyn Screen>> { Some(Box::new(MenuDialog::new(lines, Vec::new()).with_pos(x, y).with_speaker(s))) };
     // overlay 21, named after `city` (None: the human's city, the -1 argument)
     let paper = |lines: Vec<String>, city: Option<crate::game::CityId>| -> Option<Box<dyn Screen>> { Some(crate::ui::newspaper::newspaper(lines, city)) };
     let city_name = |id| g.city_opt(id).map(|c| c.name.clone()).unwrap_or_default();
@@ -353,7 +355,8 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
             } else {
                 vec![format!("{} rebel!", g.player(*from).plural()), "Civil War in".into(), format!("{}.", city_name(*city)), format!("{} influence", g.player(*to).adjective()), "suspected.".into()]
             };
-            Some(Box::new(MessageBox::new(lines).with_pos(100, 32)))
+            // popup_menu(text, 100, 32) (city_revolt o 0x1e2ba)
+            popup(lines, 100, 32)
         }
         GameEvent::CityDestroyed { name, by, from, .. } => {
             if *by == me {
@@ -547,13 +550,17 @@ fn event_message(ctx: &mut UiContext, ev: &GameEvent, tune: &mut Option<Tune>) -
         GameEvent::Schism(s) => note(ctx, "SCHISM", &Vars { them: civ(*s).to_string(), ..Default::default() }),
         GameEvent::EmbassyEstablished { slot, with } if *slot == me => news(vec!["Embassy established".into(), format!("with the {}.", civ(*with))]),
         GameEvent::ContactMade { .. } => None,
-        // CIV.EXE 0x147f7
-        GameEvent::TradeRouteMade { city, with, bonus, goods } if g.city(*city).owner == me => msg(vec![
-            format!("{} caravan from {}", crate::game::turn::CARAVAN_GOODS[*goods as usize & 7], city_name(*city)),
-            format!("arrives in {}", city_name(*with)),
-            "Trade route established".into(),
-            format!("Revenue: ${bonus}."),
-        ]),
+        // popup_menu(text, 80, 80) (CIV.EXE 0x147f7..0x1488c)
+        GameEvent::TradeRouteMade { city, with, bonus, goods } if g.city(*city).owner == me => popup(
+            vec![
+                format!("{} caravan from {}", crate::game::turn::CARAVAN_GOODS[*goods as usize & 7], city_name(*city)),
+                format!("arrives in {}", city_name(*with)),
+                "Trade route established".into(),
+                format!("Revenue: ${bonus}."),
+            ],
+            80,
+            80,
+        ),
         // the boxes of hut_outcome (CIV.EXE 0x0978d, ds:0x212c..0x21e6)
         GameEvent::HutEntered { slot, outcome, .. } if *slot == me => {
             let found = |what: &[&str]| std::iter::once("You have discovered").chain(what.iter().copied()).map(String::from).collect::<Vec<_>>();

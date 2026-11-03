@@ -13,7 +13,7 @@ use crate::gfx::text::{draw_text, draw_text_centered};
 use crate::gfx::{Rect, Surface, TextStyle};
 use crate::platform::{Event, Key};
 use crate::ui::context::UiContext;
-use crate::ui::eventpics::{draw_caption, Dismiss};
+use crate::ui::eventpics::Dismiss;
 use crate::ui::reveal::Reveal;
 use crate::ui::screen::{DialogResult, Screen, Transition};
 
@@ -319,13 +319,25 @@ impl PalaceScreen {
 }
 
 /// The palace of the human player with an optional caption.
+/// The *PALACE text and "Which section shall we improve?" are menu_keep(text, 20 / 40, 16)
+/// boxes without choices (o 0x16047, 0x160a9): the stone frame of the pop-up menus.
+fn text_box(fb: &mut Surface, ctx: &mut UiContext, x: i32, y: i32, lines: &[String]) {
+    crate::ui::widgets::MenuDialog::new(lines.to_vec(), Vec::new()).with_pos(x, y).paint(fb, ctx);
+}
+
 pub fn palace_screen(ctx: &UiContext, lines: Vec<String>) -> Box<dyn Screen> {
     Box::new(PalaceScreen::new(ctx, lines, Phase::View))
 }
 
 /// A palace addition: KING.TXT PALACE text, then the section and style choice.
 pub fn palace_addition(ctx: &UiContext) -> Box<dyn Screen> {
-    let lines = ctx.texts.king.section("PALACE").map(crate::assets::text::paragraphs).unwrap_or_default();
+    // the section as load_king_text leaves it (`diplomacy_ui::king_lines`): each line keeps
+    // the space before its break, which menu_draw measures
+    let raw = ctx.texts.king.entry_text("PALACE").unwrap_or_default();
+    let mut lines: Vec<String> = crate::assets::text::wrap_text(&raw, 80).split('\n').map(str::to_string).collect();
+    if lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
     Box::new(PalaceScreen::new(ctx, lines, Phase::Intro))
 }
 
@@ -394,13 +406,13 @@ impl Screen for PalaceScreen {
         draw_palace(&mut content, ctx, &self.palace);
         match self.phase {
             Phase::View if !self.lines.is_empty() => {
-                draw_caption(&mut content, ctx, &pal, 20, 16, 280, &self.lines, 0);
+                text_box(&mut content, ctx, 20, 16, &self.lines);
             }
             Phase::Intro => {
-                draw_caption(&mut content, ctx, &pal, 20, 16, 280, &self.lines, 0);
+                text_box(&mut content, ctx, 20, 16, &self.lines);
             }
             Phase::Section => {
-                draw_caption(&mut content, ctx, &pal, 40, 16, 240, &["Which section shall we improve?".to_string()], 0);
+                text_box(&mut content, ctx, 40, 16, &["Which section shall we improve?".to_string()]);
                 draw_section_labels(&mut content, ctx, &self.palace);
             }
             Phase::Style(part) => draw_style_chooser(&mut content, ctx, &self.palace, part),
