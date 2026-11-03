@@ -198,9 +198,11 @@ impl Game {
     pub fn tile_workable(&self, c: CityId, idx: u8) -> bool {
         let Some((x, y)) = self.radius_tile(c, idx) else { return false };
         let t = self.map.tile(x, y);
-        // a civilization works only what it has explored, the barbarians anything (0xd4b6)
+        // a civilization works only what it has explored, the barbarians anything (0xd4b6),
+        // the centre too (the loop runs to ds:0x6540 = 21): a city a civil war gave to the
+        // human, who never saw its square, idles its centre until a unit of his looks there
         let owner = self.city(c).owner;
-        if idx != 0 && !t.explored_by(owner) && owner != 0 {
+        if !t.explored_by(owner) && owner != 0 {
             return false;
         }
         if t.worked_by.is_some() && t.worked_by != Some(c) {
@@ -1497,6 +1499,20 @@ mod tests {
         assert!(!g.tile_workable(c, 9));
         g.city_mut(c).owner = 0;
         assert!(g.tile_workable(c, 9));
+    }
+
+    /// The explored test covers the centre too (0xd4b6, the loop to ds:0x6540 = 21): a city
+    /// whose owner never saw its square (a civil war's gift) idles its centre.
+    #[test]
+    fn an_unexplored_city_square_idles_the_centre() {
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        let (x, y) = g.city(c).pos();
+        assert!(g.tile_workable(c, 0));
+        g.map.get_mut(x, y).unwrap().explored &= !(1 << slot);
+        assert!(!g.tile_workable(c, 0));
+        g.assign_workers(c, true);
+        assert!(!g.city(c).works(0));
     }
 
     #[test]
