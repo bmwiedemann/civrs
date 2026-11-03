@@ -62,7 +62,7 @@ impl Game {
         let mut second_roll = false;
         if let Some(c) = t.city.and_then(|c| self.city_opt(c)) {
             if a.owner == 0 {
-                if self.cities_of(d.owner).len() == 1 {
+                if self.census_cities(d.owner) == 1 {
                     att = 0;
                 }
                 if c.has_improvement(imp::PALACE) {
@@ -482,7 +482,7 @@ impl Game {
         // civil war (0x13db4..0x13e3b), before anything else: the Palace city of a computer
         // player with more than four cities that ranks above the human (ds:0x803c)
         let h = self.human_slot;
-        if from != 0 && from != h && city.has_improvement(imp::PALACE) && self.cities_of(from).len() > 4 && self.power_rank(h) < self.power_rank(from) && !self.civil_war(from, c) {
+        if from != 0 && from != h && city.has_improvement(imp::PALACE) && self.census_cities(from) > 4 && self.power_rank(h) < self.power_rank(from) && !self.civil_war(from, c) {
             // without a civil war the most central other city starts on a new Palace
             // (0x13e12..0x13e37: production byte -1)
             if let Some(m) = self.most_central_city(from, Some(c)) {
@@ -707,6 +707,9 @@ impl Game {
         // civ_init zeroes the continent policies (o5 0x49bb), so the rebels' first AI turn
         // re-chooses on every continent whose policy is not 0 (0x15f12 -> 0x18bef)
         self.ai_memory.policies[new_slot as usize] = Some([super::production::POLICY_NONE; 16]);
+        // and the census counts of cities and units (o5 0x49d2 / 0x49d8)
+        self.ai_memory.census.city_total[new_slot as usize] = 0;
+        self.ai_memory.census.units[new_slot as usize] = 0;
         // civ_init and civil_war leave the slot's census rows (ds:0x6cac, 0x807a, 0x6b96,
         // 0xd2f8, 0x2a6e) as its last AI turn wrote them: with `exe_quirks` a dead slot's
         // citizens stay and add to the rebels' (transfer_city o 0x15428), so the loyal side
@@ -1022,6 +1025,9 @@ impl Game {
         // ai_clear_persistent_goals (0x189b9) and the continent strategy table (o5 0x49bb)
         self.ai_memory.persistent[slot as usize] = [super::goals::Goal::FREE; super::goals::PERSISTENT_GOALS];
         self.ai_memory.policies[slot as usize] = Some([super::production::POLICY_NONE; 16]);
+        // and its census counts of cities and units (o5 0x49d2 / 0x49d8)
+        self.ai_memory.census.city_total[slot as usize] = 0;
+        self.ai_memory.census.units[slot as usize] = 0;
         for a in granted {
             self.grant_advance(slot, a, super::science::AdvanceSource::Discovered);
         }

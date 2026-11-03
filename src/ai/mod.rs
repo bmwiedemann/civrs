@@ -79,7 +79,7 @@ pub fn govern(g: &mut Game, slot: Slot) {
         Govt::Despotism
     } else if p.knows(adv::THE_REPUBLIC) && republic >= 0 {
         Govt::Republic
-    } else if p.knows(adv::COMMUNISM) && g.cities_of(slot).len() > 10 {
+    } else if p.knows(adv::COMMUNISM) && g.census_cities(slot) > 10 {
         Govt::Communism
     } else if p.knows(adv::MONARCHY) {
         Govt::Monarchy

@@ -80,7 +80,9 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// map.
 /// 32: then by the census's unit counts (`Census::units`, ds:0x6b76: 8 i16 LE); older saves
 /// count the units as they stand.
-pub const VERSION: u16 = 32;
+/// 33: then by the census's city counts (`Census::city_total`, ds:0x6b66: 8 i16 LE); older
+/// saves count the cities as they stand.
+pub const VERSION: u16 = 33;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -219,6 +221,9 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     for u in &g.ai_memory.census.units {
         data.extend_from_slice(&(*u as i16).to_le_bytes());
     }
+    for n in &g.ai_memory.census.city_total {
+        data.extend_from_slice(&(*n as i16).to_le_bytes());
+    }
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -337,6 +342,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     let mut sentry_jobs: Option<Vec<u8>> = None;
     let mut world_counts: Option<([i32; 16], [i32; 16])> = None;
     let mut unit_census: Option<[i32; 8]> = None;
+    let mut city_census: Option<[i32; 8]> = None;
     // version 14: the tribe names, after the counters
     if ver >= 14 {
         let mut at = counters + 112 * g.players.len();
@@ -432,6 +438,9 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
                                                         at += if rest.get(at) == Some(&1) { 65 } else { 1 };
                                                         if let Some(b) = rest.get(at..at + 16).filter(|_| ver >= 32) {
                                                             unit_census = Some(std::array::from_fn(|k| i16::from_le_bytes([b[2 * k], b[2 * k + 1]]) as i32));
+                                                        }
+                                                        if let Some(b) = rest.get(at + 16..at + 32).filter(|_| ver >= 33) {
+                                                            city_census = Some(std::array::from_fn(|k| i16::from_le_bytes([b[2 * k], b[2 * k + 1]]) as i32));
                                                         }
                                                     }
                                                 }
@@ -530,6 +539,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
         }
     }
     g.ai_memory.census.units = unit_census.unwrap_or_else(|| g.live_census().units);
+    g.ai_memory.census.city_total = city_census.unwrap_or_else(|| g.live_census().city_total);
     match coastal {
         Some(b) => {
             for (c, k) in g.cities.iter_mut().zip(b) {

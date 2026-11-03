@@ -63,6 +63,14 @@ pub struct Census {
     /// (0x15810..0x1597f), shown by the intelligence report and the dossier ("N Units."),
     /// the demographics' Military Service and the FIRSTUNIT notes (create_unit 0x8cf4).
     pub units: [i32; 8],
+    /// ds:0x6b66: the civ's cities as its last census counted them (0x159b7 / 0x15a08), less
+    /// those destroyed since (destroy_city 0xa7c8). A city founded or taken in between counts
+    /// only from the next census: the hut's horde (0x99ef, 0x9add), the Settlers that would
+    /// empty the civ's last city (0xdfd1), the human's empire-size unhappiness (0xf45d), the
+    /// barbarians' target test (0x1920e), their attack on a last city (0x19913), the civil
+    /// war (0x13dec), Communism for the computer (0x16024) and the treasury warning (0x2697)
+    /// read it (`Game::census_cities`).
+    pub city_total: [i32; 8],
     /// ds:0x2a6e bit civ (0x15f3f): forces of the civ on a continent where the human has two
     /// or more cities.
     pub faces_human: u8,
@@ -87,6 +95,11 @@ impl Game {
         } else {
             1
         }
+    }
+
+    /// The civ's cities as its last census counted them (ds:0x6b66, `Census::city_total`).
+    pub fn census_cities(&self, slot: Slot) -> usize {
+        self.ai_memory.census.city_total.get(slot as usize).copied().unwrap_or(0).max(0) as usize
     }
 
     /// The census tables as the civilizations' last AI turns left them (`Census`).
@@ -118,6 +131,7 @@ impl Game {
             if (city.owner as usize) < 8 {
                 let k = continent_index(self.map.tile(city.x, city.y).continent);
                 c.cities[city.owner as usize][k] += 1;
+                c.city_total[city.owner as usize] += 1;
                 c.citizens[city.owner as usize] += city.size as i32;
                 // the stashed garrison (0x15a95..0x15b2a)
                 for (kind, _) in city.garrison_units() {
@@ -163,6 +177,7 @@ impl Game {
         m.strength[s] = live.strength[s];
         m.citizens[s] = live.citizens[s];
         m.units[s] = live.units[s];
+        m.city_total[s] = live.city_total[s];
         (m.squares, m.sites) = self.ai_memory.world_counts.unwrap_or((live.squares, live.sites));
         let h = self.human_slot as usize;
         let faces = h < 8 && (1..15).any(|k| m.defence[s][k] != 0 && m.cities[h][k] > 1);
@@ -186,6 +201,7 @@ impl Game {
         m.strength[s] = 0;
         m.citizens[s] = 0;
         m.units[s] = 0;
+        m.city_total[s] = 0;
         m.faces_human &= !(1 << s);
     }
 
@@ -554,6 +570,14 @@ impl Game {
                 in_production[k] += *d as i32;
             }
         }
+        // the count is taken in the census word itself (ds:0x6b76, saved at 0xafe8, emptied at
+        // 0xafec, counted 0xb067 / 0xb0b1, put back at 0xb83d): the two early answers return
+        // before it is put back (0xb105, 0xb11d / 0xb123), leaving this count in the census
+        if (units == 0 && !p.human && p.govt as u8 <= Govt::Despotism as u8) || slot == 0 {
+            if let Some(n) = self.ai_memory.census.units.get_mut(slot as usize) {
+                *n = units;
+            }
+        }
         if units == 0 && !p.human && p.govt as u8 <= Govt::Despotism as u8 {
             return Err(Production::Unit(unit_ids::MILITIA));
         }
@@ -795,6 +819,37 @@ mod tests {
         let settler = g.units_of(slot).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
         let c = g.found_city(settler).unwrap();
         (g, c)
+    }
+
+    #[test]
+    fn the_census_counts_cities_at_its_turn_and_loses_destroyed_ones_at_once() {
+        // ds:0x6b66: set by the census (0x159b7 / 0x15a08), lowered by destroy_city (0xa7c8),
+        // a founded city waits for the next census (N t32: a hut's horde placed by it)
+        let (mut g, c) = ai_city();
+        let slot = g.city(c).owner;
+        g.take_census(slot);
+        assert_eq!(g.census_cities(slot), 1);
+        let (x, y) = g.city(c).pos();
+        let other = g.add_city(slot, "Other".into(), x + 5, y);
+        assert_eq!(g.census_cities(slot), 1);
+        g.take_census(slot);
+        assert_eq!(g.census_cities(slot), 2);
+        g.destroy_city(other, 0);
+        assert_eq!(g.census_cities(slot), 1);
+    }
+
+    #[test]
+    fn a_computer_without_units_leaves_its_count_in_the_census() {
+        // choose_production counts in ds:0x6b76 itself and returns the Militia (0xb105) before
+        // putting the census value back (0xb83d): L t62, a city's last Militia killed
+        let (mut g, c) = ai_city();
+        let slot = g.city(c).owner;
+        for id in g.units_of(slot) {
+            g.remove_unit(id);
+        }
+        g.ai_memory.census.units[slot as usize] = 1;
+        assert_eq!(g.build_advice(c), Err(Production::Unit(unit_ids::MILITIA)));
+        assert_eq!(g.ai_memory.census.units[slot as usize], 0);
     }
 
     /// The advisor values from its own run of the city routine: the totals a city's turn

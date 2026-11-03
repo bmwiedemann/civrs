@@ -709,7 +709,7 @@ impl Game {
         let me = self.human_slot;
         let gold = self.player(me).gold;
         let Some(start) = self.taxes_mark.replace(gold) else { return };
-        if self.ended.is_none() && self.player(me).alive && self.cities_of(me).len() > 1 && gold < 100 && (gold - start) * 10 + gold < 0 {
+        if self.ended.is_none() && self.player(me).alive && self.census_cities(me) > 1 && gold < 100 && (gold - start) * 10 + gold < 0 {
             self.push_event(GameEvent::LowFunds { slot: me });
         }
     }
@@ -1438,7 +1438,7 @@ impl Game {
                 // (0xdfe3 only lowers the size: the squares stay worked, and the city's trade
                 // totals with them, until the next worker assignment, see `process_city` and
                 // the computer's re-choice below)
-                if k == unit_ids::SETTLERS && (self.city(c).size > 1 || self.cities_of(owner).len() > 1) {
+                if k == unit_ids::SETTLERS && (self.city(c).size > 1 || self.census_cities(owner) > 1) {
                     self.city_mut(c).size -= 1;
                     if self.city(c).size == 0 {
                         self.city_wiped_out(c);
@@ -2572,6 +2572,7 @@ mod tests {
         let (x, y) = g.city(c).pos();
         let count = |g: &Game| g.units_of(slot).into_iter().filter(|id| g.unit(*id).kind == unit_ids::SETTLERS).count();
         let before = count(&g);
+        g.take_census(slot);
         // the only city keeps its citizen (0xdfcb)
         g.city_mut(c).shields = 30;
         g.complete_production(c, Production::Unit(unit_ids::SETTLERS));
@@ -2579,6 +2580,12 @@ mod tests {
         assert_eq!(count(&g), before + 1);
         // with a second city the last citizen leaves and the city is gone (0xdfec)
         let other = g.add_city(slot, "Other".into(), x + 6, y);
+        // (the census count, ds:0x6b66 at 0xdfd1: the new city counts from the next census)
+        g.city_mut(c).shields = 30;
+        g.complete_production(c, Production::Unit(unit_ids::SETTLERS));
+        assert!(g.city_opt(c).is_some(), "not counted yet");
+        g.city_mut(c).size = 1;
+        g.take_census(slot);
         g.city_mut(c).shields = 30;
         g.complete_production(c, Production::Unit(unit_ids::SETTLERS));
         assert!(g.city_opt(c).is_none());
@@ -3246,6 +3253,8 @@ mod tests {
         let (x, y) = g.city(c).pos();
         let s = g.add_unit(me, unit_ids::SETTLERS, x + 3, y);
         g.found_city(s).unwrap();
+        // (the census count of cities, ds:0x6b66 at 0x2697)
+        g.take_census(me);
         g.take_events();
         let warned = |g: &mut Game| g.take_events().iter().any(|e| matches!(e, GameEvent::LowFunds { .. }));
         g.player_mut(me).gold = 90;
@@ -3259,6 +3268,7 @@ mod tests {
         assert!(!warned(&mut g), "-5 * 10 + 75 >= 0");
         g.player_mut(me).gold = 10;
         g.city_mut(c).owner = 0;
+        g.take_census(me);
         g.treasury_warning();
         assert!(!warned(&mut g), "one city left");
     }

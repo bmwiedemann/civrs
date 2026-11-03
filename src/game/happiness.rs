@@ -143,7 +143,8 @@ impl Game {
             return size - 3;
         }
         let t = self.empire_size_threshold(city.owner);
-        let cities = self.all_cities().filter(|o| o.owner == city.owner).count() as i32;
+        // the census count (ds:0x6b66, 0xf45d): a city founded since does not count yet
+        let cities = self.census_cities(city.owner) as i32;
         let content = rules::DIFFICULTY[self.setup.difficulty as usize].content_base as i32;
         // integer division truncates towards zero as `idiv` does
         size + (cities + c as i32 % t - t) / t - content
@@ -353,6 +354,8 @@ mod tests {
         let slot = g.human_slot;
         let settler: UnitId = g.units_of(slot).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
         let c = g.found_city(settler).unwrap();
+        // the empire size reads the census count (ds:0x6b66)
+        g.take_census_all();
         (g, c)
     }
 
@@ -416,6 +419,9 @@ mod tests {
         for i in 1..12 {
             others.push(g.add_city(slot, format!("C{i}"), x + 3 * i, y + 20));
         }
+        // counted from the next census (ds:0x6b66, 0xf45d)
+        assert_eq!(g.base_unhappy(c), 4 + (1 + c as i32 % 6 - 6) / 6 + 4 - 6);
+        g.take_census(slot);
         // 12 cities: (12 + slot % 6 − 6) / 6 = 1 for every city
         assert_eq!(g.base_unhappy(c), 4 + 1 + 4 - 6);
         // a city's penalty grows once cities + slot % 6 reach 12
@@ -438,6 +444,7 @@ mod tests {
         for i in 1..30 {
             g.add_city(slot, format!("C{i}"), x + 3 * (i % 20), (y + 10 + 2 * (i / 20)) % 50);
         }
+        g.take_census(slot);
         // 30 cities, threshold 6: unhappy 1 + (30 + c % 6 − 6) / 6 − 2 >= 3
         let base = g.base_unhappy(c);
         assert_eq!(base, 1 + (30 + c as i32 % 6 - 6) / 6 - 2);

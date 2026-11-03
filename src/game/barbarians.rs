@@ -215,7 +215,8 @@ impl Game {
         // without any city CIV.EXE reads the coordinates of the record before the city table
         // (ds:0x70d4/5); taken as far away here (unverified)
         let (_, d) = self.nearest_city_exe(u.x, u.y);
-        let cities = self.cities_of(slot).len();
+        // the census count (ds:0x6b66, 0x99ef / 0x9add): a city founded this turn is not in it
+        let cities = self.census_cities(slot);
         let roll = self.rng.random(0x9814, 4);
         let outcome = match roll {
             0 if d < 4 => self.hut_mercenaries(),
@@ -510,7 +511,7 @@ impl Game {
             if self.continent_exe(city.x, city.y) == here_cont && self.player(o).human {
                 sign = ((city.x - u.x).signum(), (city.y - u.y).signum());
             }
-            if o == 0 || (self.cities_of(o).len() < 2 && self.player(o).gold < 100) {
+            if o == 0 || (self.census_cities(o) < 2 && self.player(o).gold < 100) {
                 sign = (-2, -2);
             }
             if sign.0 != -2 {
@@ -878,6 +879,8 @@ mod tests {
             for c in tribes {
                 g.remove_city(c);
             }
+            // the horde reads the census count (ds:0x6b66, 0x99ef / 0x9add)
+            g.take_census(1);
             if hut_outcome(&mut g, unit_ids::LEGION, (10, 10)) == HutOutcome::Barbarians {
                 hordes += 1;
                 // one city: neighbours 1, 4, 7 (N, SE, W) of the hut square (11,10)

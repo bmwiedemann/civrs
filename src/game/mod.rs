@@ -1497,6 +1497,10 @@ impl Game {
             let c = self.city(id);
             (c.x, c.y, c.owner)
         };
+        // its owner's census count goes down at once (0xa7c8)
+        if let Some(n) = self.ai_memory.census.city_total.get_mut(owner as usize) {
+            *n -= 1;
+        }
         for t in self.map.tiles.iter_mut() {
             if t.worked_by == Some(id) {
                 t.worked_by = None;
