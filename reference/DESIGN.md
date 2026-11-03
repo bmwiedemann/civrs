@@ -1491,6 +1491,60 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   King 0,0,0,0 and Q seed 1357 Chieftain 2,2,2,2 (the human founds his capital at once)
   t1-61 / t1-60, the plays slowed down to minutes a turn.
 
+  Round w110 (scratchpad w110: plays.sh / plays2.sh, pln.sh with CIVFAST, dc2.sh / dcont.sh /
+  dnew.sh diffs, mkdiag.sh with the local hooks SKIPFF, SIZE16E94, UNVALUED, AUDD7F0
+  (diagpatch6.py) and TMPDBG grant prints (diagpatch7.py), tr.sh / dbg.sh traces,
+  autosize.py to find 0x16e94 releases in a run's saves, hist.py / units.py / city.py / xd.py
+  for raw records and draws). K t205: the units civil_war re-creates look (create_unit
+  0x8b51 -> unit_look 0x8cd3) and a meeting with the human holds its audience inside
+  capture_city: the greeting's random(4) (o 0x7c1d) comes before capture_losses' random(2)
+  (0x13f05). In a computer's unit loop the rest of capture_city and of the step waits for
+  the answer (`Game::deferred_capture`, `finish_capture` before `finish_look`; the mover
+  already stands in the city, 0x67ae..0x67e0); the rest of civil_war itself (later
+  re-created units, the Palaces) still comes before the audience in civrs. K t205 Nuremberg,
+  given to the human, idled its centre: the worker assignment's explored test (0xd4b6) runs
+  over all 21 squares (ds:0x6540), the centre too, and the human had never seen the square,
+  so the Phalanx it built went for want of shields. K t230: set_government (0x15042) gives a
+  computer taxes 4 - government / 2 and keeps its science, so science and taxes can pass ten
+  tenths; the trade split clamps the "negative luxuries" to none (0xf24d), as civrs's rates
+  do, but the next update_civ_tax_rates starts from science + taxes (0xa6a8) and a riot then
+  adds no luxuries: `exe_quirks` keeps the excess (`Player::exe_sci_excess`, VERSION 34
+  trailer, imported from SVE 0x738 / 0x8bb0). The fortified units that leave their city
+  with a ship (K t225, t231, t252, t254, t263, t264; N t190 Kashgar, t204, t206, t207; L
+  t214, t216, t217; J t221) are all transport_release's count (0x16e94: size / 5 of city
+  [bp-0xc] against the fortified unit's index in the ship's ring, `&= 0xf7`), [bp-0xc] being
+  set only by the Nuclear unit's city search of the same function (type 0x19,
+  0x1677e..0x16961), so a stack leftover; most cases are size / 5 = 0 (the second fortified unit on), some 1 or more
+  (N t230.. at (72, 11): none released where civrs's size releases one). Local SIZE16E94
+  overrides (size-NAME.txt); autosize.py proposes them from the saves (a fortifying unit of
+  a lower record than the ship counts as fortified, 0x4239 comes first; --keep adds the
+  turns nothing was released), but it also flags units that left for other reasons and
+  misses ships built that turn, so check those a diff needs. L t213: civ 2's attack goal at
+  priority 1 on the human's stack came from the w103 `exe_quirks` reading of ds:0xd7f0 after
+  a look's audience (the looker's civ). With the emissary question CIV.EXE redraws the whole
+  map view (o 0x7a7a -> draw_map_view 0x1a68e) in the order of an LCG seeded from the
+  picture generator (random(256) at 0x1a6e8, a separate generator under --quiet-ui), and the
+  last seen square with units decides (unit_at 0x1bb3c): here the human's civ. Not
+  modellable: local AUDD7F0 override (aud-L3.txt, "turn,x,y,owner"). Harness: every idle
+  unit of the human cost one step (a Space and a save, some 15 s); with CIVFAST
+  sve_diff play sends a Space to each waiting unit but one after a turn's first save
+  (`waiting_units`), so P and Q went from 75+ s to 45 s a turn with all draws agreeing.
+  Runs (all draws agree; rescued saves in w110/st get a fortress and Riflemen on the
+  human's last stack): K t201-250 (w109's run; one-turn goto fields t212, t229), t251-279
+  (game over), t279-318 (rescued t278); L t187-216 (w109's run; t216 Peking below),
+  t217-220 (game over), t220-259 (rescued t219); N t160-200 (w109's run), t201-216, t218-247
+  (from CIV.EXE's t217; t246 one release of two ships on one square); J t197-236 (rescued
+  t196); R t151-186; P t62-101 and Q t61-100 with CIVFAST.
+  Open: N t216 (from t216 replayed with w109/diag3 too): after civ 3's Sail unloads at
+  (51, 42) CIV.EXE moves the Catapult (record 16) before the Settlers (5, 14), whose
+  explore draws (0x17bd2) follow; civrs takes record 5 first as 0x7d8f's nearest record
+  after the ship, and the reason is not found. L t216 Peking after building Settlers
+  (size 8 -> 7): CIV.EXE re-places its workers on two Forests where civrs keeps Grassland
+  (no SKIPFF effect). R t186: civ 6's Chariot at (37, 15) attacks the lone barbarian
+  Diplomat at (37, 14) (on a hut square, defence 0) in civrs; CIV.EXE scores seven squares
+  as if no unit stood next to it (no zone of control, no fight), the Diplomat is gone at
+  t187; why unit_owner_at (0x1bb66) misses it there is not found.
+
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
