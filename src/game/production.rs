@@ -68,8 +68,10 @@ pub struct Census {
     /// only from the next census: the hut's horde (0x99ef, 0x9add), the Settlers that would
     /// empty the civ's last city (0xdfd1), the human's empire-size unhappiness (0xf45d), the
     /// barbarians' target test (0x1920e), their attack on a last city (0x19913), the civil
-    /// war (0x13dec), Communism for the computer (0x16024) and the treasury warning (0x2697)
-    /// read it (`Game::census_cities`).
+    /// war (0x13dec), Communism for the computer (0x16024), the treasury warning (0x2697), the
+    /// audience's threats, grovelling and schism (o 0x655a, 0x657d, 0x7270, 0x799f) and the
+    /// unrest's defection (o 0x1bdc6) read it (`Game::census_cities`). Not modelled: the
+    /// destroyed-civ test of game_turn (0x2577, with the census Settlers ds:0x8068).
     pub city_total: [i32; 8],
     /// ds:0x2a6e bit civ (0x15f3f): forces of the civ on a continent where the human has two
     /// or more cities.

@@ -1296,7 +1296,8 @@ impl Game {
         cm.food = 0;
         cm.shields = 0;
         // the message stays for the disaster's own (o 0x1bf3b) unless the city defects
-        if city.has_improvement(imp::PALACE) || self.cities_of(city.owner).len() <= 3 {
+        // (the census count, ds:0x6b66 at o 0x1bdc6)
+        if city.has_improvement(imp::PALACE) || self.census_cities(city.owner) <= 3 {
             return self.disaster_view(c);
         }
         let mut best = (4, None);

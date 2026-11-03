@@ -156,8 +156,9 @@ fn evaluate(g: &mut Game, ai: Slot, at: (i32, i32), mode: u8) -> Meeting {
     }
     let census = g.census();
     let chieftain = g.setup.difficulty as u8 == 0;
-    let ai_cities = g.cities_of(ai).len() as i32;
-    let h_cities = g.cities_of(h).len() as i32;
+    // the census counts (ds:0x6b66, o 0x655a, 0x657d, 0x6589)
+    let ai_cities = g.census_cities(ai) as i32;
+    let h_cities = g.census_cities(h) as i32;
     // per continent 1..14: the human's attack where the leader has cities (threat, [bp-0x2e])
     // and the leader's military advantage ([bp-6]); both with units on one: war is an option
     let thr = if ai_cities > 1 { 1 } else { 0 };
@@ -498,7 +499,7 @@ fn run(g: &mut Game, mut m: Meeting) -> Option<DiplomacyState> {
             }
             Step::Grovel => {
                 m.step = Step::Mobilize;
-                if m.threat != 0 && g.cities_of(ai).len() <= 1 && g.diplo(ai, h) & (PEACE | VENDETTA) == 0 {
+                if m.threat != 0 && g.census_cities(ai) <= 1 && g.diplo(ai, h) & (PEACE | VENDETTA) == 0 {
                     let mut st = screen(g, &m, Proposal::Grovel);
                     st.bucks = g.player(ai).gold;
                     return wrap(m, Await::Grovel, st);
@@ -596,7 +597,7 @@ fn finish(g: &mut Game, m: Meeting, schism: bool) -> Option<DiplomacyState> {
         }
         g.drop_flag(ai, h, FOUGHT);
         g.drop_flag(h, ai, FOUGHT);
-        if g.diplo_latch != -1 && g.cities_of(ai).len() > 4 && g.power_rank(h) + 1 < g.power_rank(ai) && !g.treaty(h, ai) && g.options.instant_advice && g.year() < 0 {
+        if g.diplo_latch != -1 && g.census_cities(ai) > 4 && g.power_rank(h) + 1 < g.power_rank(ai) && !g.treaty(h, ai) && g.options.instant_advice && g.year() < 0 {
             g.push_event(GameEvent::Schism(ai));
         }
     }

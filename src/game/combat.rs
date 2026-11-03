@@ -2558,6 +2558,10 @@ mod tests {
         // later slots are not compared, so two more cities only change the count
         g.add_city(1, "Third".into(), 25, 5);
         g.add_city(1, "Fourth".into(), 5, 25);
+        // (counted by the census, ds:0x6b66 at o 0x1bdc6)
+        g.city_unrest(c);
+        assert_eq!(g.city(c).owner, 1, "not counted before the census");
+        g.take_census(1);
         g.city_unrest(c);
         assert_eq!(g.city(c).owner, 2);
         assert!(g.events.iter().any(|e| matches!(e, GameEvent::CityDefected { city, admired: a, from: 1 } if *city == c && *a == admired)));
