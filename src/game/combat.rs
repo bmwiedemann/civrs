@@ -123,6 +123,40 @@ impl Game {
     }
 
     /// Resolve an attack by unit `id` on tile (x,y). Returns the outcome from the attacker's view.
+    /// One unit of the losing side dies in a fight on `at` (a ship's cargo goes down with it,
+    /// `remove_unit`); nothing when it is gone already.
+    fn kill_in_fight(&mut self, v: UnitId, at: (i32, i32), losers: &mut Vec<Slot>) {
+        let Some(vu) = self.unit_opt(v).cloned() else { return };
+        self.players[vu.owner as usize].stats.units_lost += 1;
+        self.push_event(GameEvent::UnitLost { slot: vu.owner, kind: vu.kind, at, reason: "destroyed".into() });
+        self.remove_unit(v);
+        if !losers.contains(&vu.owner) {
+            losers.push(vu.owner);
+        }
+    }
+
+    /// `exe_quirks`: the stack kill as CIV.EXE walks it (for_each_in_stack(def_civ, def_unit,
+    /// delete_unit) 0x1a0d0 -> 0x92a7): up to ten records from the defender's, each link read
+    /// before its delete. A ship sinking at sea first deletes the land units of its ring
+    /// (0x8dba -> 0x946c), so a record the walk has read as next may be free by then: its
+    /// delete counts the type -1, the Caravan counter of the civilization before the owner
+    /// (0x8e63), and its link (0xff, cleared by the earlier delete) ends the walk. Not copied
+    /// in play: the sane kill takes the whole ring once.
+    fn exe_kill_stack(&mut self, owner: Slot, first: u8, at: (i32, i32), losers: &mut Vec<Slot>) {
+        let mut cur = first;
+        for _ in 0..10 {
+            let next = self.exe_link(owner, cur);
+            match self.exe_record_unit(owner, cur) {
+                Some(v) => self.kill_in_fight(v, at, losers),
+                None => self.exe_delete_free_record(owner, cur),
+            }
+            if next == 0xff || next == first {
+                break;
+            }
+            cur = next;
+        }
+    }
+
     pub fn attack(&mut self, id: UnitId, x: i32, y: i32) -> MoveOutcome {
         let attacker = self.unit(id).clone();
         if attacker.kind == unit_ids::NUCLEAR {
@@ -188,16 +222,13 @@ impl Game {
             // the stack goes in the order of its ring from the defender (for_each_in_stack
             // 0x1a0d0). Not copied: that walk stops after ten units, so the rest of a bigger
             // stack would survive
-            let victims: Vec<UnitId> = if stack_safe { vec![def_id] } else { self.stack_ring(def_id, 128) };
             let mut losers: Vec<Slot> = Vec::new();
-            for v in victims {
-                // a ship's cargo goes down with it (`remove_unit`)
-                let Some(vu) = self.unit_opt(v).cloned() else { continue };
-                self.players[vu.owner as usize].stats.units_lost += 1;
-                self.push_event(GameEvent::UnitLost { slot: vu.owner, kind: vu.kind, at: (x, y), reason: "destroyed".into() });
-                self.remove_unit(v);
-                if !losers.contains(&vu.owner) {
-                    losers.push(vu.owner);
+            if self.exe_quirks && !stack_safe {
+                self.exe_kill_stack(defender.owner, defender.record, (x, y), &mut losers);
+            } else {
+                let victims: Vec<UnitId> = if stack_safe { vec![def_id] } else { self.stack_ring(def_id, 128) };
+                for v in victims {
+                    self.kill_in_fight(v, (x, y), &mut losers);
                 }
             }
             self.players[attacker.owner as usize].stats.units_killed += 1;
@@ -1207,6 +1238,40 @@ mod tests {
             g.events.clear();
         }
         wins * 100 / trials
+    }
+
+    /// `exe_quirks`: a stack sunk at sea goes by CIV.EXE's record walk (0x1a0d0 -> 0x92a7):
+    /// the ship's delete takes its land units first, so the walk's next record is free and
+    /// its delete counts the type -1, the previous civilization's Caravans (0x8e63; D5 t329).
+    #[test]
+    fn a_sunk_stack_deletes_the_free_record_the_walk_reads_next() {
+        for quirks in [false, true] {
+            let mut g = flat_game();
+            g.exe_quirks = quirks;
+            for x in 9..13 {
+                g.map.get_mut(x, 10).unwrap().terrain = Terrain::Ocean;
+            }
+            // the ring Settlers -> Phalanx -> Trireme -> Settlers, the Trireme defending
+            let t = g.add_unit(2, unit_ids::TRIREME, 11, 10);
+            let s = g.add_unit(2, unit_ids::SETTLERS, 11, 10);
+            let p = g.add_unit(2, unit_ids::PHALANX, 11, 10);
+            assert_eq!(g.stack_ring(t, 10), vec![t, p, s]);
+            let before = g.player(1).unit_counter[unit_ids::CARAVAN as usize];
+            let mut won = false;
+            for _ in 0..20 {
+                let a = g.add_unit(1, unit_ids::BATTLESHIP, 10, 10);
+                if let MoveOutcome::Attacked { won: true, .. } = g.attack(a, 11, 10) {
+                    won = true;
+                    break;
+                }
+            }
+            assert!(won);
+            assert!(g.units_at(11, 10).is_empty());
+            // the walk from the Trireme: its delete sinks both land units, the next record
+            // (the Phalanx's) is free
+            let after = g.player(1).unit_counter[unit_ids::CARAVAN as usize];
+            assert_eq!(after, before - quirks as i16);
+        }
     }
 
     /// The units lost in a fight count in `units_lost_by_type` only when the human fights
