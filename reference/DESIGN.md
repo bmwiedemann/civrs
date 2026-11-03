@@ -1435,6 +1435,9 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   (no units: Militia, the barbarians) leave that count there (0xafe8..0xb105, L t62);
   civ_init zeroes both counts (o 0x49d2 / 0x49d8, L t65). The [bp-0x108] placements
   (0xd81d, not modellable) were skipped with SKIPFF in N (70,38,12,2) and K (9,25,41,2).
+  With these, K and L agree draw for draw and field for field t1-150, N t1-145 (t146 a
+  computer city's production choice, draws agreeing), J t1-109 (t110 Bremen's choice after
+  its Militia and the revolution to Monarchy; the game ends at t133, the human destroyed).
 
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
