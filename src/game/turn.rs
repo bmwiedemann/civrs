@@ -619,7 +619,9 @@ impl Game {
     pub fn ai_tax_rates(&mut self, slot: Slot, flags: u8) {
         let turn = self.turn as i32;
         let p = self.player(slot);
-        let (sci, tax) = ((100 - p.tax as i32 - p.lux as i32) / 10, p.tax as i32 / 10);
+        // with `exe_quirks` the science a change of government kept above 10 - taxes (0xa6a8,
+        // `Player::exe_sci_excess`)
+        let (sci, tax) = ((100 - p.tax as i32 - p.lux as i32) / 10 + p.exe_sci_excess as i32, p.tax as i32 / 10);
         let mut lux = 10 - (sci + tax);
         if flags & 2 != 0 && sci + tax > 6 {
             lux += 1;
@@ -639,6 +641,7 @@ impl Game {
         let p = self.player_mut(slot);
         p.tax = (tax * 10) as u8;
         p.lux = (lux * 10) as u8;
+        p.exe_sci_excess = 0;
     }
 
     /// A computer player's first rates (civ_init o 0x4e0b): science the "civilized" trait + 3
@@ -651,15 +654,21 @@ impl Game {
     }
 
     /// `set_government` (CIV.EXE 0x15031) gives a computer player taxes of 4 - government / 2
-    /// tenths; its science stays and luxuries take the rest (none when the two exceed 10, which
-    /// civrs cannot hold: then science gets the rest).
+    /// tenths; its science stays and luxuries take the rest. When the two exceed 10, CIV.EXE
+    /// keeps them so ("negative luxuries", 0x15042 leaves ds:0xb210 alone): the trade split
+    /// gives no luxuries then (0xf24d clamps them to 0) and the rest to science, as civrs's
+    /// rates do, but the next update_civ_tax_rates (0xa6a8) starts from science + taxes
+    /// above 10, so a city in disorder adds no luxuries. Kept under `exe_quirks`
+    /// (`Player::exe_sci_excess`); else science gets the rest.
     pub fn ai_government_rates(&mut self, slot: Slot) {
         let p = self.player(slot);
-        let sci = (100 - p.tax as i32 - p.lux as i32) / 10;
+        let sci = (100 - p.tax as i32 - p.lux as i32) / 10 + p.exe_sci_excess as i32;
         let tax = 4 - p.govt as i32 / 2;
+        let quirks = self.exe_quirks;
         let p = self.player_mut(slot);
         p.tax = (tax * 10) as u8;
         p.lux = ((10 - sci - tax).max(0) * 10) as u8;
+        p.exe_sci_excess = if quirks { (sci + tax - 10).max(0) as u8 } else { 0 };
     }
 
     /// The population milestone of `draw_sidebar_status` (CIV.EXE 0x370a..0x381b), at every
@@ -3246,6 +3255,29 @@ mod tests {
         g.player_mut(ai).learn(adv::MONARCHY);
         g.choose_government(ai, Govt::Monarchy);
         assert_eq!(g.player(ai).tax, 30);
+    }
+
+    /// set_government's taxes (0x15042) with a science of 7: taxes 4 and science 7 pass 10;
+    /// with `exe_quirks` the next update_civ_tax_rates starts from 11 (0xa6a8), so a riot
+    /// adds no luxuries; as meant science gets the rest.
+    #[test]
+    fn exe_quirks_science_kept_past_ten_by_a_new_government() {
+        for quirks in [false, true] {
+            let (mut g, _c) = fixture();
+            g.exe_quirks = quirks;
+            let ai = g.alive_slots().into_iter().find(|s| *s != g.human_slot).unwrap();
+            g.set_turn(5);
+            g.player_mut(ai).gold = 0;
+            g.player_mut(ai).forget(adv::ROBOTICS);
+            g.player_mut(ai).govt = Govt::Despotism;
+            g.player_mut(ai).tax = 30;
+            g.player_mut(ai).lux = 0;
+            g.ai_government_rates(ai);
+            assert_eq!((g.player(ai).tax, g.player(ai).lux, g.player(ai).exe_sci_excess), (40, 0, quirks as u8));
+            g.ai_tax_rates(ai, 2);
+            assert_eq!(g.player(ai).lux, if quirks { 0 } else { 10 }, "exe_quirks {quirks}");
+            assert_eq!(g.player(ai).exe_sci_excess, 0);
+        }
     }
 
     #[test]

@@ -371,6 +371,8 @@ fn import_slot_with(data: &[u8], map_pic: &[u8], moves_back: bool, resume: bool)
         let sci = (s.civ_w(off::SCIENCE, c).clamp(0, 10) * 10) as u8;
         p.tax = tax;
         p.lux = 100u8.saturating_sub(tax).saturating_sub(sci);
+        // science and taxes past 10 tenths (`Player::exe_sci_excess`)
+        p.exe_sci_excess = ((sci as i32 + tax as i32 - 100).max(0) / 10) as u8;
         let mut adv = [0u8; 16];
         adv[..10].copy_from_slice(&data[off::ADVANCES + 10 * c..off::ADVANCES + 10 * c + 10]);
         p.advances = u128::from_le_bytes(adv) & ((1u128 << 72) - 1);

@@ -82,7 +82,9 @@ pub const MAGIC: [u8; 4] = *b"CIVR";
 /// count the units as they stand.
 /// 33: then by the census's city counts (`Census::city_total`, ds:0x6b66: 8 i16 LE); older
 /// saves count the cities as they stand.
-pub const VERSION: u16 = 33;
+/// 34: then by each slot's science past ten tenths (`Player::exe_sci_excess`, 8 bytes); older
+/// saves have none.
+pub const VERSION: u16 = 34;
 pub const SLOTS: u8 = 10;
 
 #[derive(Debug)]
@@ -224,6 +226,7 @@ pub fn save_game(path: &Path, g: &Game) -> Result<(), SaveError> {
     for n in &g.ai_memory.census.city_total {
         data.extend_from_slice(&(*n as i16).to_le_bytes());
     }
+    data.extend(g.players.iter().map(|p| p.exe_sci_excess));
     std::fs::write(path, data)?;
     Ok(())
 }
@@ -343,6 +346,7 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     let mut world_counts: Option<([i32; 16], [i32; 16])> = None;
     let mut unit_census: Option<[i32; 8]> = None;
     let mut city_census: Option<[i32; 8]> = None;
+    let mut sci_excess: Option<[u8; 8]> = None;
     // version 14: the tribe names, after the counters
     if ver >= 14 {
         let mut at = counters + 112 * g.players.len();
@@ -442,6 +446,9 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
                                                         if let Some(b) = rest.get(at + 16..at + 32).filter(|_| ver >= 33) {
                                                             city_census = Some(std::array::from_fn(|k| i16::from_le_bytes([b[2 * k], b[2 * k + 1]]) as i32));
                                                         }
+                                                        if let Some(b) = rest.get(at + 32..at + 40).filter(|_| ver >= 34) {
+                                                            sci_excess = Some(std::array::from_fn(|k| b[k]));
+                                                        }
                                                     }
                                                 }
                                             }
@@ -540,6 +547,9 @@ pub fn load_game(path: &Path) -> Result<Game, SaveError> {
     }
     g.ai_memory.census.units = unit_census.unwrap_or_else(|| g.live_census().units);
     g.ai_memory.census.city_total = city_census.unwrap_or_else(|| g.live_census().city_total);
+    for (p, e) in g.players.iter_mut().zip(sci_excess.unwrap_or_default()) {
+        p.exe_sci_excess = e;
+    }
     match coastal {
         Some(b) => {
             for (c, k) in g.cities.iter_mut().zip(b) {
@@ -1338,6 +1348,26 @@ mod tests {
         assert_eq!(old.ai_memory.census, now.ai_memory.census);
         assert!(!old.ai_memory.gang_up);
         assert_eq!(old.ai_memory.ranks.iter().filter(|r| **r == 7).count(), 1);
+    }
+
+    #[test]
+    fn science_past_ten_survives_a_save() {
+        let mut g = Game::new(GameSetup { seed: 8, ..Default::default() }, None);
+        g.players[3].exe_sci_excess = 2;
+        let dir = std::env::temp_dir().join(format!("civrs-scix-{}", std::process::id()));
+        let path = dir.join("s.sav");
+        super::save_game(&path, &g).unwrap();
+        let l = super::load_game(&path).unwrap();
+        assert_eq!(l.players[3].exe_sci_excess, 2);
+        // a version-33 file has none
+        let mut data = std::fs::read(&path).unwrap();
+        data[4..6].copy_from_slice(&33u16.to_le_bytes());
+        data.truncate(data.len() - 8);
+        std::fs::write(&path, &data).unwrap();
+        let old = super::load_game(&path).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(old.players[3].exe_sci_excess, 0);
+        assert_eq!(old.ai_memory.census.city_total, g.ai_memory.census.city_total);
     }
 
     #[test]

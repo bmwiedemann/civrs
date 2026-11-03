@@ -96,6 +96,13 @@ pub struct Player {
     /// Tax rate in percent (multiple of 10). Science = 100 - tax - lux.
     pub tax: u8,
     pub lux: u8,
+    /// With `exe_quirks`, the tenths of science above 10 - taxes - luxuries: set_government
+    /// (0x15042) gives a computer taxes of 4 - government / 2 and keeps its science
+    /// (ds:0xb210), so the two can pass 10, "negative luxuries" that the trade split clamps
+    /// to none (0xf24d) and that the next update_civ_tax_rates reads in science + taxes
+    /// (0xa6a8). Stored after the game body in version-34 saves.
+    #[serde(skip)]
+    pub exe_sci_excess: u8,
     /// Bit per AdvanceId (0..=71).
     pub advances: u128,
     pub researching: Option<AdvanceId>,
@@ -188,6 +195,7 @@ impl Player {
             gold: 0,
             tax: 50,
             lux: 0,
+            exe_sci_excess: 0,
             advances: 0,
             researching: None,
             beakers: 0,
