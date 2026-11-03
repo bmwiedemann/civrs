@@ -17,6 +17,9 @@
         A new game: $CIVLEVEL (0 Chieftain .. 4 Emperor) and $CIVWORLD (four menu rows 0..2,
         land, temperature, climate, age: Customize World) pick the setup; diff passes them
         on to civrs (--level, --world).
+        Each Space comes with a save (some 15 s a step), so idle units of the human make a
+        turn take minutes: with $CIVFAST set, after a turn's first save (and no action in
+        that turn) the human's waiting units but one get their Space without a save.
     python3 -I sve_diff.py diff CIVRS START.SVE RESULT.SVE [RESULT.SVE ...] [--actions SCRIPT] [--seed N]
         For each CIV.EXE result: civrs imports START.SVE (`new`: starts the new game of the
         seed with the same setup, `civrs --dump state:N:SEED`), plays (result turn - start turn)
@@ -52,6 +55,21 @@ sys.dont_write_bytecode = True
 def turn_of(path):
     with open(path, 'rb') as f:
         return struct.unpack('<h', f.read(2))[0]
+
+
+def waiting_units(path):
+    """The human's units in a save that his turn's loop will ask for orders: a type, no
+    order bits (sentry 1, jobs 0x02/0x40/0x80, fortifying 4, fortified 8), no goto and moves
+    left (unit records at 0x26c0 + 0x600 * civ, 12 bytes each). A lower bound for $CIVFAST."""
+    with open(path, 'rb') as f:
+        d = f.read()
+    civ = struct.unpack_from('<h', d, 2)[0] & 7
+    n = 0
+    for i in range(128):
+        st, x, y, typ, moves, _turns, gx = d[0x26c0 + 0x600 * civ + 12 * i:0x26c0 + 0x600 * civ + 12 * i + 7]
+        if typ != 0xff and st & 0xcf == 0 and gx == 0xff and moves > 0:
+            n += 1
+    return n
 
 
 # keypad digit -> X key (CIV.EXE reads the keypad scan codes; NumLock is off)
@@ -374,6 +392,13 @@ def play(game, slot, turns, out, script=None, seed=None):
             if last >= end:
                 break
             run_actions(t)
+            # $CIVFAST: a Space for each of the human's waiting units but the last, without
+            # the save of every step (a step takes some 15 s; with many idle units a turn took
+            # minutes). One unit is left for the step's own Space, so no key reaches the next
+            # turn before its first save
+            if os.environ.get('CIVFAST') and not actions.get(t):
+                for _ in range(waiting_units(save) - 1):
+                    k(['space', 'sleep2'])
     dosciv.stop()
     if seed is not None:
         shutil.copy(log, os.path.join(out, 'random.log'))
