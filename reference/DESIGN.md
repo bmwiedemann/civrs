@@ -1292,6 +1292,50 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   1999 t140-t165, H3 2718 t107-t123, CIVIL8 t421-t461, CIVIL2 t341-t357, CIVIL7 t351-t369;
   stored CIVIL1/2/6/7/9-late, A3, C8v, C7d, G2, H2 and w102's CW, SEN, WOB1, WOB2, ARRH agree.
 
+  Round w105 (scratchpad w105: setup.sh, cur104.sh / cmp104.sh re-diff w104's runs against
+  their w104 summaries, firstsize.sh the 0x16e94 entries of a run's first turn, d308all.sh;
+  ring.py now takes the transport-role ships Trireme, Sail, Frigate and Transport, 16/17/18/24,
+  not Ironclad and Battleship). A stack beaten outside a city goes by for_each_in_stack(def_civ,
+  def_unit, delete_unit) (0x1a0d0 -> 0x92a7), each link read before its delete: a ship sunk at
+  sea first deletes the land units of its ring (0x8dba -> 0x946c), so when the walk's next
+  record is one of them it deletes a free record, whose type 0xff counts as type -1, the
+  Caravan counter of the civilization before the owner (0x8e63; D5 t329, `exe_quirks`
+  `Game::exe_kill_stack`). ds:0xd308, the count of a civ's cities building each unit type that
+  the advisor reads for Diplomats (0xb3d2), Nuclear (0xb5cb), Bombers (0xb5fe) and every ship
+  and aircraft (0xb665), is CIV.EXE's own counter: ai_civ_turn recounts the civ's row from its
+  cities (0x159cb / 0x15a5a, the human's too), civ_init zeroes it on a successful start (o5
+  0x4fcb; not for civil war's rebels, which return at the mask test), and every change of
+  production in between is a dec/inc pair (0x18c7c, 0xebb9, 0x11446, 0x117e4, 0x12756, 0x128f4,
+  0xa7b3) but for found_city's item (o 0x1b586..0x1b5be, a computer's advisor choice o
+  0x1b824: uncounted), capture_city (the loser's row loses the item the city has after
+  steal_advance's re-choice, 0x142f8; a computer captor's new item is added without the old
+  one taken off, 0x1434c; a human captor's never counted), the Palace started in the loser's
+  most central city (0x13e2f) and civil war's transfer (owner byte only). `exe_quirks` keeps the
+  difference to the cities' items (`Game::exe_d308_drift`, imported from SVE 0x318) and the
+  state dump shows the counter (`in_production`); every stored run of w104 agrees on it. It
+  showed that the mover stands in the city during capture_city: the step links it into the
+  square's ring and writes its position (0x67ae..0x67e0) before calling capture_city
+  (0x6aa9), so steal_advance's re-choice of the new city finds a defender (0xb13f; E2 t140);
+  a revolt goes through capture_city too (o 0x1e3eb -> 0x13d76): its production is left to a
+  human captor and re-chosen by a computer after the steal, no Militia. move_units' view test
+  compares the columns unwrapped (vx < x <= vx + 14, 0x4357 / 0x4372; `exe_quirks`): with the
+  view at the east edge the units at the west end count as hidden, the loop's first round
+  passes every unit, each looking, before it takes one, which explains C7 t336's MET bits
+  (set again by those looks after civ_turn_politics cleared them, 0x14b38). A save keeps a
+  city's specialist count in its worked word (0xcce3), which the import clamps to the citizens
+  not working; a city that shrank in an attack (0x618a, the size alone) keeps its specialists
+  in civrs until its next worker assignment, so the state dump shows it clamped the same way
+  (D7 t351). Runs (all draws and fields agree; local 0x16e94 overrides in w105/size-*.txt, one
+  with the ship's record for a Transport built that turn, D7 t379): G4 1999 t166-t225, H4
+  2718 t124-t183, E4 6161 t247-t291 (game over; its first turn's releases are 0x16e94's,
+  a ship in Babylon), D6 4242 t331-t341 (game over), D7 (D6's t341 rescued, w105/st2/
+  D341R.SVE, the Militia left idle) t342-t391, C8y CIVIL8 t462-t491; w104's runs re-diffed
+  (cmp104.sh) as before but C7e, now all t311-t350, and D5 now all. Open: CW2b t432 (MET
+  bits again: CIV.EXE's view at t432's start is at Tenochtitlan, shot444/445, civrs's at
+  (4,12) after civ 3's watched Settlers step at t431; what moves CIV.EXE's view back east
+  is not found), CW2b t411 civ 5's score_acc 21 against 20 (Ayotzinco's advisor run after
+  its Settlers, size 16 to 15 with nine specialists: one happy citizen more in civrs).
+
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
