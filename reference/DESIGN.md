@@ -1586,6 +1586,35 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   civrs buys the 36 missing; untraced; the game ends at t394); J t237-276, t277-308 (game over); P
   t102-121 (game over); Q t101-140, t141-180.
 
+  Round w112 (scratchpad w112; gexe/ builds a CIV.EXE whose add_goal (0x187e3) jumps to a
+  hook in the dead ai_find_goal (0x18ae4, its two relocations dropped) that appends a
+  record ffff, civ, x, y, type, priority, return ip/cs to RANDOM.LOG among the draws;
+  gexe/goals.py lists them and writes the draws alone for sve_diff). Both w111 open items
+  are fixed and K t319-358 and t359-394 now agree in every field and draw. K t390:
+  Tenochtitlan's status byte was exactly 0x19 (disorder, hydro site, alert), and 0xeeab
+  buys up to gold/4 of the "unit cost" at 0x1142 + 0x22 * production without testing
+  for a unit. For Cathedral (-11) that is ds:0xfcc = 40 (improvement-table entry 35's
+  cost), times the cost factor: 400 - 124 = 276 shields (`exe_quirks`,
+  `city_ai::EXE_COST_BEFORE_UNITS` from civ.bin). The Palace purchase (0xee8f) multiplies
+  its 127 by the cost factor, not by 10. K t357: CIV.EXE's goal log shows that the human's
+  Settlers look at t356 opened civ 7's emissary audience in place, and the rest of the
+  square read the human in ds:0xd7f0. The defend goal (32, 29) therefore went to the
+  human (add_goal from 0x8136), and civ 7 kept only (39, 26). The w103 reading of a
+  computer look's audience now covers the human's own looks (`exe_quirks`).
+  Audit of normal play against the asm (three read-only passes):
+  - Growth caps, famine, Settlers food, shield support, disbanding, units abroad, martial
+    law, Women's Suffrage, Michelangelo's, Magellan's, the Great Wall (diplomacy only),
+    caravan bonus and routes, barbarian ransom, pollution chance and square, global warming,
+    fallout and meltdown all match.
+  - Civ1 has no Sewer, Police Station or King Richard's.
+  - Fixed: the nuclear attack walks ds:0x1882 from index 8 down to 0, so the target square
+    comes last (0x1a4be..0x1a5c2).
+  - Not copied: the unwrapped x of the nuclear ring (0x1a4c9), the pollution square
+    (0x12e61) and the warming Ocean count (o 0xaa1f).
+  - Not modelled: the nuclear kills matrix ds:0xe418 (0x1a58c).
+  AI statistics unchanged (10.3 / 14.8, 48 overseas). The stored fresh-game runs (all.sh
+  J..Q4) agree as before (N4 t228 as in w111).
+
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
