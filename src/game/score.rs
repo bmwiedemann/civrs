@@ -161,7 +161,8 @@ impl Game {
         for c in self.all_cities() {
             let o = c.owner as usize & 7;
             let n = c.size as i32;
-            let y = self.city_yield(c.id);
+            // the routine's totals in mode -1, disorder or not (o 0x10d6d reads ds:0x70da..)
+            let y = self.city_yield_raw(c.id);
             let h = self.city_happiness(c.id);
             size[o] += n;
             approval[o] += n + h.happy - h.unhappy;

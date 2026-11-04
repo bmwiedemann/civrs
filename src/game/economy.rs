@@ -144,10 +144,11 @@ impl Game {
         if matches!(t.terrain, Terrain::Grassland | Terrain::River) {
             s = t.shield as i32;
         }
-        let is_centre = city.is_some() && t.city == city;
-        // irrigation / mines (the city centre counts as irrigated where irrigation is possible)
-        let irrigated = t.has(tile_flags::IRRIGATION) || (is_centre && info.irrigate != rules::Terraform::No);
-        if irrigated {
+        // irrigation / mines from the square's bits alone, the city centre's too: founding
+        // sets its irrigation (o 0x1b525), a mine or a new terrain under the city clears it,
+        // and tile_yield's own centre rule (0x1343e..0x13455) runs only with bit 1 of ds:0xe3c4
+        // clear, which every game has set (0x13437)
+        if t.has(tile_flags::IRRIGATION) {
             if let rules::Terraform::Bonus(b) = info.irrigate {
                 f += b as i32;
             }
@@ -157,8 +158,9 @@ impl Game {
                 s += b as i32;
             }
         }
-        // roads: +1 trade on desert/grassland/plains (the centre always has a road)
-        if (t.has(tile_flags::ROAD) || t.has(tile_flags::RAILROAD) || is_centre)
+        // roads: +1 trade on desert/grassland/plains (a city's square has its road bit, o
+        // 0x1b4f2)
+        if (t.has(tile_flags::ROAD) || t.has(tile_flags::RAILROAD))
             && matches!(t.terrain, Terrain::Desert | Terrain::Grassland | Terrain::Plains)
         {
             tr += 1;
@@ -363,7 +365,10 @@ impl Game {
         y.corruption = self.corruption(c, y.trade, false);
         let net = y.trade - y.corruption;
         y.lux = ((net * (lux.unwrap_or(p.lux) / 10) as i32 + 5) / 10).clamp(0, y.trade);
-        y.tax = ((net * (p.tax / 10) as i32 + 5) / 10).clamp(0, (net - y.lux).max(0));
+        // clamp 0x1d4a2 takes the lower bound first: under Anarchy far from the Palace the
+        // corruption passes the trade (below), the bound turns negative and so do the taxes,
+        // which leaves science 0
+        y.tax = ((net * (p.tax / 10) as i32 + 5) / 10).max(0).min(net - y.lux);
         y.sci = net - y.lux - y.tax;
         // specialists: 2 each. CIV.EXE counts the kinds over the eight 2-bit codes alone
         // (0xf2c0 -> 0xc91:0x6dc2, k < 8), so with `exe_quirks` the taxmen past the eighth
@@ -478,7 +483,9 @@ impl Game {
     /// Trade lost to corruption (CIV.EXE 0xf0c4 / 0xf1df): `trade * distance * 3 / (20 *
     /// government + 80)`, none under Democracy, halved by a Courthouse. The first pass over the
     /// tiles' trade (`tiles_only`, for the city's visible trade) also halves it with a Palace,
-    /// which only matters under Communism.
+    /// which only matters under Communism. Nothing caps it at the trade (0xf0e5, 0xf200):
+    /// under Anarchy (divisor 80) a city 27 or more from a Palace, or with none (32), loses
+    /// more than its trade, and the stored trade (0xf13d) goes negative.
     pub fn corruption(&self, c: CityId, trade: i32, tiles_only: bool) -> i32 {
         let city = self.city(c);
         let govt = self.player(city.owner).govt;
@@ -489,7 +496,7 @@ impl Game {
         if city.has_improvement(imp::COURTHOUSE) || tiles_only && city.has_improvement(imp::PALACE) {
             corr /= 2;
         }
-        corr.clamp(0, trade)
+        corr.max(0)
     }
 
     /// Gold per turn for the city's improvements.
@@ -1959,6 +1966,47 @@ mod tests {
         g.map.set_claim(x, y, 0);
         g.build_advice(c).unwrap();
         assert_eq!(g.map.claim_at(x, y), human, "the production advisor's mode -1");
+    }
+
+    #[test]
+    fn the_city_square_yields_by_its_bits() {
+        // tile_yield 0x13437: bit 1 of ds:0xe3c4 set, the square's own bits count; a mine on
+        // the city square clears its irrigation (0x570a), and so does a new terrain
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        let (x, y) = g.city(c).pos();
+        let t = g.map.get_mut(x, y).unwrap();
+        t.terrain = Terrain::Plains;
+        t.special = false;
+        t.set(tile_flags::IRRIGATION, true);
+        let with = g.tile_yield(slot, x, y, Some(c));
+        g.map.get_mut(x, y).unwrap().set(tile_flags::IRRIGATION, false);
+        let without = g.tile_yield(slot, x, y, Some(c));
+        assert_eq!(with.0, without.0 + 1);
+        // no road bit, no road trade (Plains: 0 + 1)
+        g.map.get_mut(x, y).unwrap().set(tile_flags::ROAD, false);
+        assert_eq!(g.tile_yield(slot, x, y, Some(c)).2 + 1, without.2);
+    }
+
+    #[test]
+    fn anarchy_far_from_a_palace_loses_more_than_its_trade() {
+        // 0xf0c4 / 0xf1df: no cap; the tax clamp's bound turns negative (0x1d4a2), science 0
+        let (mut g, c) = fixture();
+        let slot = g.city(c).owner;
+        g.city_mut(c).improvements &= !(1 << imp::PALACE);
+        g.player_mut(slot).govt = Govt::Anarchy;
+        assert_eq!(g.corruption(c, 100, false), 120);
+        assert_eq!(g.corruption(c, 100, true), 120);
+        let y = g.city_yield(c);
+        if y.trade > 0 {
+            assert_eq!(y.corruption, y.trade * 96 / 80);
+            assert_eq!((y.lux, y.sci), (0, 0));
+            assert!(y.tax <= 0, "{y:?}");
+            assert_eq!(g.visible_trade(c), g.raw_trade(c) - g.raw_trade(c) * 96 / 80);
+        }
+        // with a Courthouse half of it: never past the trade
+        g.city_mut(c).improvements |= 1 << imp::COURTHOUSE;
+        assert_eq!(g.corruption(c, 100, false), 60);
     }
 
     #[test]

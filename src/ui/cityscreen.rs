@@ -664,7 +664,9 @@ impl CityScreen {
         panel(fb, ctx, P_RES);
         header(fb, ctx, Rect::new(P_RES.x, P_RES.y, P_RES.w, 9), "CITY RESOURCES");
         let g = ctx.game();
-        let y = g.city_yield(self.city);
+        // the city routine's totals (ds:0x70da.., 0x10a6f, 0x10b97..): a city in disorder
+        // shows its shields, taxes and science
+        let y = g.city_yield_raw(self.city);
         // CIV.EXE 0x10a1b..0x10b80: food, shields and trade in rows 8 px apart from (4, 33),
         // 116 / (n + 1) px apart (at most 8), a 4 px gap after the food the citizens eat and
         // after the shields that go to units, 2 px between the trade kept and the corruption
