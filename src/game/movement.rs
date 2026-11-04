@@ -245,6 +245,8 @@ impl Game {
                     MoveOutcome::Attacked { won: true, at: (tx, ty), defender: unit_ids::NUCLEAR }
                 } else {
                     let out = self.attack(id, tx, ty);
+                    // every fight ends the attacker's goto (0x60a9)
+                    self.clear_goto(id);
                     // the human sees what is left of a city he attacked or that was attacked
                     // on his square (0x61f8: the attacker, or ds:0xd20a, the defender's owner
                     // as unit_at found it, 0x5a91 and the sweep 0x1a15d that ends on the

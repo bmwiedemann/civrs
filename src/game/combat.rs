@@ -21,7 +21,8 @@ impl Game {
 
     /// Defence strength x8 as `combat` (CIV.EXE 0x19724) computes it: land units defence x
     /// terrain (in halves) x 8 in a fortress, x 6 fortified (unit flag 0x08: neither a unit
-    /// still fortifying nor one merely standing in a city), else x 4; aircraft and ships
+    /// still fortifying nor one merely standing in a city; bit 0x08 counts under the sentry
+    /// bit too, `Unit::sentry_job`), else x 4; aircraft and ships
     /// defence x 8 whatever the square; City Walls (0x198ca) defence x terrain x 12 for every
     /// unit but aircraft, except against the units with attack 12, Artillery and Bombers;
     /// then +50% veteran. `attacker` None counts the walls.
@@ -33,7 +34,7 @@ impl Game {
             def * 8
         } else if t.has(tile_flags::FORTRESS) {
             def * terrain * 8
-        } else if u.order == UnitOrder::Fortified {
+        } else if u.order_under_sentry() == UnitOrder::Fortified {
             def * terrain * 12 / 2
         } else {
             def * terrain * 4
@@ -99,7 +100,7 @@ impl Game {
             return None;
         }
         let def = u.info().def as i32;
-        let mut v = if u.is_land() { def * if u.order == UnitOrder::Fortified { 3 } else { 2 } * t.info().defense as i32 * 8 } else { def << 4 };
+        let mut v = if u.is_land() { def * if u.order_under_sentry() == UnitOrder::Fortified { 3 } else { 2 } * t.info().defense as i32 * 8 } else { def << 4 };
         if u.veteran {
             v += v / 2;
         }
@@ -1745,6 +1746,34 @@ mod tests {
         g.player_mut(foe).human = true;
         let s = g.add_unit(me, unit_ids::SETTLERS, 10, 10);
         assert_eq!(g.try_move(s, crate::game::Dir8::E), Ok(MoveOutcome::Blocked));
+    }
+
+    #[test]
+    fn a_fortified_unit_under_the_sentry_bit_keeps_its_bonus() {
+        // combat 0x197d2 and defence_value 0x9032 test status bit 0x08 alone
+        let mut g = flat_game();
+        let d = g.add_unit(2, unit_ids::PHALANX, 11, 10);
+        let plain = g.defense_strength(g.unit(d), None);
+        g.unit_mut(d).order = UnitOrder::Fortified;
+        let fortified = (g.defense_strength(g.unit(d), None), g.defence_value(d));
+        g.unit_mut(d).sentry_keeping_job(true);
+        assert_eq!(g.unit(d).order, UnitOrder::Sentry);
+        assert_eq!((g.defense_strength(g.unit(d), None), g.defence_value(d)), fortified);
+        assert!(fortified.0 > plain);
+    }
+
+    #[test]
+    fn a_fight_ends_the_attacker_s_goto() {
+        // 0x60a9 after combat (0x608e), won or lost
+        let mut g = flat_game();
+        g.add_unit(2, unit_ids::MILITIA, 11, 10);
+        let a = g.add_unit(1, unit_ids::ARMOR, 10, 10);
+        g.unit_mut(a).goto = Some((14, 10));
+        g.unit_mut(a).order = crate::game::UnitOrder::Goto;
+        assert!(matches!(g.try_move(a, crate::game::Dir8::E), Ok(MoveOutcome::Attacked { .. })));
+        if let Some(u) = g.unit_opt(a) {
+            assert_eq!((u.goto, u.order), (None, crate::game::UnitOrder::None));
+        }
     }
 
     #[test]
