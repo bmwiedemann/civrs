@@ -121,10 +121,24 @@ impl Game {
     /// `nuclear_fallout` (CIV.EXE 0x1a5d9): every city on the 3x3 squares around (cx, cy)
     /// loses half its size (rounded down) and the other land squares are polluted two times in
     /// three. Returns the cities hit.
+    ///
+    /// CIV.EXE wraps x but adds dy without a bound (0x1a647), so a blast on row 0 or 49 looks
+    /// at rows -1 and 50 too. There the city bit of the improvement flags (0x1bc0b) comes from
+    /// other bands of map page 2: row -1 reads pixel (x, 99), the body number of (x, 49), and
+    /// row 50 pixel (x, 150), the railroad bit of (x, 0). Without it the square rolls its
+    /// random(3); with `exe_quirks` that draw is made (`exe_fallout_offmap_city`). What it then
+    /// writes (the terrain of row -1 lies before the page; a city of record -1 at 0x1a685;
+    /// pollution bits into rows 49 and 0) is not copied.
     pub fn nuclear_fallout(&mut self, cx: i32, cy: i32) -> Vec<CityId> {
         let mut hit_cities = Vec::new();
-        for (x, y) in std::iter::once((super::Map::wrap_x(cx), cy)).chain(super::Map::neighbours8(cx, cy)) {
-            let Some(t) = self.map.get(x, y) else { continue };
+        let ring = std::iter::once((0, 0)).chain(super::map::Dir8::ALL.iter().map(|d| d.delta()));
+        for (x, y) in ring.map(|(dx, dy)| (super::Map::wrap_x(cx + dx), cy + dy)).collect::<Vec<_>>() {
+            let Some(t) = self.map.get(x, y) else {
+                if self.exe_quirks && !self.exe_fallout_offmap_city(x, y) {
+                    self.rng.random(0x1a5eb, 3);
+                }
+                continue;
+            };
             if let Some(hit) = t.city {
                 let loss = self.city(hit).size as i32 / 2;
                 if loss > 0 {
@@ -139,6 +153,20 @@ impl Game {
             }
         }
         hit_cities
+    }
+
+    /// The city bit CIV.EXE's fallout (0x1a655 -> 0x1bc0b) reads for row -1 or 50: bit 0 of
+    /// pixel (x, 99), the body number of (x, 49) (land or water), or of pixel (x, 150), the
+    /// high nibble of (x, 0)'s improvements, whose bit 0 is the railroad.
+    fn exe_fallout_offmap_city(&self, x: i32, y: i32) -> bool {
+        let rows = crate::rules::MAP_H as i32;
+        if y < 0 {
+            let t = self.map.tile(x, rows - 1);
+            let body = if t.is_land() { t.continent } else { self.map.ocean_numbers().0[super::Map::idx(x, rows - 1)] };
+            body & 1 != 0
+        } else {
+            self.map.tile(x, 0).has(tile_flags::RAILROAD)
+        }
     }
 
     /// The end-of-turn warming step (CIV.EXE 0x3ae7): `warming_counter` moves one step
@@ -248,6 +276,37 @@ mod tests {
         assert_eq!(g.city(c).size, 4);
         assert!(!g.city(c).has_improvement(imp::NUCLEAR_PLANT));
         assert!(g.take_events().iter().any(|e| *e == GameEvent::Meltdown { city: c }));
+    }
+
+    #[test]
+    fn exe_quirks_fallout_on_the_polar_rows_rolls_for_the_squares_off_the_map() {
+        // 0x1a5d9 adds dy unbounded: rows -1 / 50 read the city bit from (x, 99) / (x, 150)
+        let mut g = Game::new(GameSetup { seed: 42, ..Default::default() }, None);
+        let count = |g: &mut Game, x: i32, y: i32| {
+            crate::game::rng::trace_start();
+            g.nuclear_fallout(x, y);
+            crate::game::rng::trace_take().iter().filter(|d| d.at == 0x1a5eb).count()
+        };
+        for x in 0..3 {
+            g.map.get_mut(x, 0).unwrap().terrain = Terrain::Arctic;
+            g.map.get_mut(x, 0).unwrap().set(tile_flags::RAILROAD, false);
+            g.map.get_mut(x, 0).unwrap().city = None;
+            g.map.get_mut(x, 1).unwrap().city = None;
+            g.map.get_mut(x, 49).unwrap().terrain = Terrain::Arctic;
+            g.map.get_mut(x, 49).unwrap().continent = 2;
+            g.map.get_mut(x, 49).unwrap().city = None;
+            g.map.get_mut(x, 48).unwrap().city = None;
+        }
+        assert_eq!(count(&mut g, 1, 0), 6, "as meant only the squares on the map");
+        g.exe_quirks = true;
+        assert_eq!(count(&mut g, 1, 0), 9);
+        // an odd body number on row 49 is a city on row -1: no roll there
+        g.map.get_mut(0, 49).unwrap().continent = 3;
+        assert_eq!(count(&mut g, 1, 0), 8);
+        // row 50 reads the railroad bit of row 0
+        assert_eq!(count(&mut g, 1, 49), 9);
+        g.map.get_mut(2, 0).unwrap().set(tile_flags::RAILROAD, true);
+        assert_eq!(count(&mut g, 1, 49), 8);
     }
 
     #[test]
