@@ -555,21 +555,24 @@ impl Game {
         self.end_game(EndReason::Spaceship(slot));
     }
 
-    /// The "SpaceShip: (N[ possible])" line of `civ_score` (o 0x1c3cc..0x1c43f): once the
-    /// human's ship is launched, success % * colonists / 2, "possible" until it has landed.
-    /// CIV.EXE takes the success % ds:0x4cd4 of the last ship launched by any civ (0x18850)
-    /// with the human's colonists, so an AI launch shows a line for the human's unlaunched
-    /// ship; civrs uses the human's own ship only.
+    /// The "SpaceShip: (N[ possible])" line of `civ_score` (o 0x1c3cc..0x1c43f): success % *
+    /// colonists / 2 of the human's ship as soon as it has colonists and a success chance,
+    /// launched or not, "possible" until it has landed. CIV.EXE keeps the success % in
+    /// ds:0x4cd4, written only when the human adds a part (ship_human_add_part 0x18850), and
+    /// the colonists ds:0xdeec[human] from the last ship_draw (0x18179), so after a capital
+    /// capture they are stale until the next part; civrs reads the ship as it is.
     pub fn spaceship_score_line(&self) -> Option<(i32, bool)> {
         let me = self.human_slot;
         let s = self.player(me).spaceship;
         let st = self.spaceship_stats(me);
-        (s.launched() && st.habitation() != 0 && st.success != 0).then(|| ((st.success * st.habitation() / 2).max(0), !s.landed))
+        (st.habitation() != 0 && st.success != 0).then(|| ((st.success * st.habitation() / 2).max(0), !s.landed))
     }
 
     /// Spaceship score (o 0x1c3cc): success % * colonists / 2 (colonists = habitation modules)
     /// for the human's ship once it has landed. CIV.EXE adds the human's ship to every civ's
-    /// score and tests "arrival year == current year"; civrs counts it for the human only.
+    /// score and tests "arrival year == current year" (0x1c436) without the launched bit, so
+    /// an unlaunched ship whose projected year comes round counts for that year (not copied);
+    /// civrs counts it for the human only.
     pub fn spaceship_score(&self, slot: Slot) -> i32 {
         let s = self.player(slot).spaceship;
         if !self.is_human(slot) || !s.landed {
@@ -718,7 +721,9 @@ mod tests {
         // 1770 AD: two years a turn until a ship is in flight, then one
         g.set_turn(360);
         assert_eq!((g.year(), g.next_year()), (1770, 1772));
-        assert_eq!(g.spaceship_score_line(), None, "no line before the launch");
+        // the line shows from the first colonists on, launched or not (o 0x1c3cc)
+        let points = st.success * st.habitation() / 2;
+        assert_eq!(g.spaceship_score_line(), (st.success != 0).then_some((points, true)));
         g.launch_spaceship(slot).unwrap();
         let s = g.player(slot).spaceship;
         assert_eq!((s.launch_year, s.launched_turn), (Some(1770), Some(360)));
@@ -727,7 +732,6 @@ mod tests {
         assert_eq!(s.arrival_year, Some(arrival));
         assert_eq!(g.spaceship_score(slot), 0);
         // F9 shows the points as "possible" while the ship is in flight (o 0x1c3fb)
-        let points = st.success * st.habitation() / 2;
         assert_eq!(g.spaceship_score_line(), (st.success != 0).then_some((points, true)));
         // the year the turn loop compares is the coming one (0x2a13 after 0x26ed)
         while g.next_year() < arrival {
