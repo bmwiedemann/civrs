@@ -185,7 +185,8 @@ impl Game {
     /// where nothing else happens); then the research count (ds:0xe898) rises, a wonder made
     /// obsolete by the first civilization to learn it is announced (0xc774), Gunpowder and
     /// Combustion make the civ's Barracks obsolete (0xc69a: all are sold off, the human is
-    /// told), and the Great Library's owner gets the advance free once two civs 1..7 know it
+    /// told unless ds:0x3934 is set, 0xc6e3: not in an audience, nor after an offer's
+    /// `diplomacy_close` until the next audience ends), and the Great Library's owner gets the advance free once two civs 1..7 know it
     /// (0xc7fa, a recursive grant from -2). The research goal is left alone.
     pub fn grant_advance(&mut self, slot: Slot, a: AdvanceId, source: AdvanceSource) -> bool {
         // Future Technology (0x47) has no bit or source (0xc31b) and goes on like any other
@@ -238,7 +239,7 @@ impl Game {
             for c in self.cities_of(slot) {
                 self.city_mut(c).remove_improvement(imp::BARRACKS);
             }
-            if self.player(slot).human {
+            if self.player(slot).human && self.diplo_latch == -1 {
                 self.push_event(GameEvent::BarracksObsolete { slot, adv: a });
             }
         }
@@ -256,10 +257,13 @@ impl Game {
     /// The Great Library (CIV.EXE 0xc7fa, at the end of every `grant_advance`): the owner of
     /// its city, while the wonder works for it, gets `a` when two or more of civs 1..7 know it.
     /// Advances known by two civs when the Library is built only come with the next civ to
-    /// learn them.
+    /// learn them. Barbarians holding the Library get nothing: CIV.EXE asks `knows_advance`,
+    /// 0 for civ 0 (0xc897), both here (0xc81a) and at the start of the grant (0xc303), so its
+    /// grant to them calls this check again and again until the stack overflows; civrs
+    /// leaves them knowing no advance, which is what every `knows_advance` reads.
     fn great_library_check(&mut self, a: AdvanceId) {
         let Some(owner) = self.wonders_built[won::GREAT_LIBRARY as usize].and_then(|c| self.city_opt(c)).map(|c| c.owner) else { return };
-        if self.player(owner).knows(a) || !self.owner_has_wonder(owner, won::GREAT_LIBRARY) {
+        if owner == 0 || self.player(owner).knows(a) || !self.owner_has_wonder(owner, won::GREAT_LIBRARY) {
             return;
         }
         if (1..8).filter(|s| self.player(*s).knows(a)).count() >= 2 && self.grant_advance(owner, a, AdvanceSource::GreatLibrary) {
@@ -454,6 +458,25 @@ mod tests {
     }
 
     #[test]
+    fn barbarians_holding_the_great_library_learn_nothing() {
+        // CIV.EXE's knows_advance is 0 for civ 0 (0xc897), so its grant recurses (0xc81a ->
+        // 0xc86f -> 0xc303); civrs gives the barbarians nothing
+        let (mut g, c, ai) = fixture();
+        let me = g.human_slot;
+        let a = rules::advance_ids::CURRENCY;
+        for s in 0..8 {
+            g.player_mut(s).forget(a);
+        }
+        g.city_mut(c).add_wonder(won::GREAT_LIBRARY);
+        g.wonders_built[won::GREAT_LIBRARY as usize] = Some(c);
+        g.city_mut(c).owner = 0;
+        g.grant_advance(ai, a, AdvanceSource::Discovered);
+        g.grant_advance(me, a, AdvanceSource::Discovered);
+        assert!(!g.player(0).knows(a));
+        assert!(!g.knows_advance(0, a));
+    }
+
+    #[test]
     fn gunpowder_makes_the_barracks_obsolete() {
         let (mut g, c, _) = fixture();
         let me = g.human_slot;
@@ -462,6 +485,13 @@ mod tests {
         g.grant_advance(me, rules::advance_ids::GUNPOWDER, AdvanceSource::Discovered);
         assert!(!g.city(c).has_improvement(imp::BARRACKS));
         assert!(g.take_events().contains(&GameEvent::BarracksObsolete { slot: me, adv: rules::advance_ids::GUNPOWDER }));
+        // in an audience (ds:0x3934 != -1) the Barracks go without the note (0xc6e3)
+        g.city_mut(c).add_improvement(imp::BARRACKS);
+        g.player_mut(me).forget(rules::advance_ids::COMBUSTION);
+        g.diplo_latch = 0;
+        g.grant_advance(me, rules::advance_ids::COMBUSTION, AdvanceSource::Discovered);
+        assert!(!g.city(c).has_improvement(imp::BARRACKS));
+        assert!(!g.take_events().iter().any(|e| matches!(e, GameEvent::BarracksObsolete { .. })));
     }
 
     #[test]

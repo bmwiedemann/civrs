@@ -230,6 +230,8 @@ impl Game {
         let um = self.unit_mut(id);
         um.order = o;
         um.moves_left = 0;
+        // 'p', 'i' and 'm' write 0xff to +6/+8 (0x50d1, 0x54ec, 0x5687) and 'r', 'f' do not,
+        // but no key reaches the dispatch with a goto: 0x4bce turns it into a step first
         um.goto = None;
         um.order_turns = um.order_turns.saturating_add(1);
         let done = um.order_turns >= turns;
