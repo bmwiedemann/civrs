@@ -80,6 +80,8 @@ impl Game {
         }
         let (dx, dy) = POLLUTION_SQUARES[self.rng.random(0x12e4f, 20) as usize];
         let (cx, cy) = self.city(c).pos();
+        // (CIV.EXE adds the offset without the east-west wrap, 0x12e61..0x12e69, and reads and
+        // pollutes off the map for a city by the seam: not copied)
         let (x, y) = (super::Map::wrap_x(cx + dx as i32), cy + dy as i32);
         let Some(t) = self.map.get(x, y) else { return };
         if t.has(tile_flags::POLLUTION) || t.is_ocean() || t.city.is_some() {
@@ -172,6 +174,8 @@ impl Game {
                 if !matches!(t, Terrain::Desert | Terrain::Plains | Terrain::Grassland | Terrain::Forest) {
                     continue;
                 }
+                // (o 0xaa1f counts the Ocean neighbours without the east-west wrap, reading
+                // off the map at x 0 and 79: not copied)
                 let oceans = super::Map::neighbours8(x, y).filter(|&(nx, ny)| self.map.is_ocean(nx, ny)).count() as i32;
                 let tm = self.map.get_mut(x, y).unwrap();
                 let nt = if oceans >= 7 - n {

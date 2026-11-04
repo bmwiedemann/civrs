@@ -355,7 +355,11 @@ impl Game {
         // the announcement and the explosion come before the SDI messages (0x1a463..0x1a4a0)
         let city = self.city_at(x, y);
         self.push_event(GameEvent::NuclearStrike { at: (x, y), by, city });
-        for (xx, yy) in std::iter::once((Map::wrap_x(x), y)).chain(Map::neighbours8(x, y)) {
+        // the neighbour table ds:0x1882 backwards, from 8 (north-west) down to 0, the target
+        // square last (0x1a4be..0x1a5c2). CIV.EXE adds the offsets without the east-west wrap
+        // (0x1a4c9), so across the seam the units of a neighbour survive: not copied.
+        let ring = super::map::Dir8::ALL.iter().rev().map(|d| (Map::wrap_x(x + d.delta().0), y + d.delta().1)).filter(|&(nx, ny)| Map::in_bounds(nx, ny));
+        for (xx, yy) in ring.chain(std::iter::once((Map::wrap_x(x), y))).collect::<Vec<_>>() {
             if let Some(c) = self.city_at(xx, yy).filter(|c| self.city(*c).has_improvement(imp::SDI_DEFENSE)) {
                 self.push_event(GameEvent::SdiProtects { city: c });
                 continue;
@@ -2104,6 +2108,22 @@ mod tests {
             ransomed += won as usize;
         }
         assert!(ransomed > 0);
+    }
+
+    #[test]
+    fn a_nuclear_attack_kills_from_the_north_west_round_to_the_target_last() {
+        // 0x1a4be..0x1a5c2: the neighbour table ds:0x1882 from index 8 down to 0
+        let mut g = flat_game();
+        g.add_unit(2, unit_ids::MUSKETEERS, 20, 20);
+        g.add_unit(2, unit_ids::MUSKETEERS, 20, 19);
+        g.add_unit(2, unit_ids::MUSKETEERS, 19, 19);
+        g.add_unit(2, unit_ids::MUSKETEERS, 21, 20);
+        let n = g.add_unit(1, unit_ids::NUCLEAR, 17, 20);
+        g.nukes_enabled = true;
+        g.events.clear();
+        g.nuke(n, 20, 20);
+        let order: Vec<(i32, i32)> = g.events.iter().filter_map(|e| match e { GameEvent::UnitLost { at, .. } => Some(*at), _ => None }).collect();
+        assert_eq!(order, vec![(19, 19), (21, 20), (20, 19), (20, 20)]);
     }
 
     #[test]
