@@ -1730,6 +1730,51 @@ mod tests {
     }
 
     #[test]
+    fn the_human_s_units_without_attack_fight_and_lose() {
+        // 0x5f1b: only the computer's attack-0 units are refused; random(0) = 0 never wins
+        let mut g = flat_game();
+        let h = g.human_slot;
+        let (me, foe) = if h == 1 { (1, 2) } else { (2, 1) };
+        g.set_relation(me, foe, Relation::War);
+        g.add_unit(foe, unit_ids::MILITIA, 11, 10);
+        let s = g.add_unit(me, unit_ids::SETTLERS, 10, 10);
+        assert!(matches!(g.try_move(s, crate::game::Dir8::E), Ok(MoveOutcome::Attacked { won: false, .. })));
+        assert!(g.unit_opt(s).is_none());
+        g.player_mut(me).human = false;
+        g.human_slot = foe;
+        g.player_mut(foe).human = true;
+        let s = g.add_unit(me, unit_ids::SETTLERS, 10, 10);
+        assert_eq!(g.try_move(s, crate::game::Dir8::E), Ok(MoveOutcome::Blocked));
+    }
+
+    #[test]
+    fn only_fighters_attack_a_square_whose_first_unit_is_an_aircraft() {
+        // 0x5f5f..0x5f9f: the domain of unit_at's unit, not of the whole stack
+        let mut g = flat_game();
+        let (me, foe) = (1, 2);
+        g.add_unit(foe, unit_ids::BOMBER, 11, 10);
+        g.add_unit(foe, unit_ids::PHALANX, 11, 10);
+        let first_air = g.unit(g.unit_at(11, 10).unwrap()).is_air();
+        let a = g.add_unit(me, unit_ids::LEGION, 10, 10);
+        g.unit_mut(a).goto = Some((12, 10));
+        let r = g.try_move(a, crate::game::Dir8::E);
+        if first_air {
+            assert_eq!(r, Err(crate::game::RuleError::Fighter));
+            assert_eq!(g.unit(a).goto, None, "the refusal drops the goto (0x5ef3)");
+        } else {
+            assert!(matches!(r, Ok(MoveOutcome::Attacked { .. })), "{r:?}");
+        }
+        // the other order of the same stack
+        let mut g = flat_game();
+        g.add_unit(foe, unit_ids::PHALANX, 11, 10);
+        g.add_unit(foe, unit_ids::BOMBER, 11, 10);
+        assert_ne!(g.unit(g.unit_at(11, 10).unwrap()).is_air(), first_air);
+        let a = g.add_unit(me, unit_ids::LEGION, 10, 10);
+        let r = g.try_move(a, crate::game::Dir8::E);
+        assert_eq!(matches!(r, Err(crate::game::RuleError::Fighter)), !first_air, "{r:?}");
+    }
+
+    #[test]
     fn capturing_a_size_3_city_transfers_ownership_and_plunders() {
         let mut g = flat_game();
         let c = g.add_city(2, "Loot".into(), 20, 20);

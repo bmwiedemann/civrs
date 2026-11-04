@@ -190,16 +190,8 @@ impl Game {
             }
             // At war: attack if there are units; capture empty city with a ground unit.
             if !units_here.is_empty() {
-                if u.info().att == 0 {
-                    if city_here.is_some() && matches!(u.kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN) {
-                        return Ok(MoveOutcome::EnteredForeignCity(city_here.unwrap()));
-                    }
-                    return Ok(MoveOutcome::Blocked);
-                }
-                // only fighters may attack air units (unless the air unit is in a city/carrier)
-                let all_air = units_here.iter().all(|t| self.unit(*t).is_air());
-                if all_air && city_here.is_none() && u.kind != unit_ids::FIGHTER {
-                    return Err(RuleError::Fighter);
+                if u.info().att == 0 && city_here.is_some() && matches!(u.kind, unit_ids::DIPLOMAT | unit_ids::CARAVAN) {
+                    return Ok(MoveOutcome::EnteredForeignCity(city_here.unwrap()));
                 }
                 if u.is_land() && target.is_ocean() {
                     return Ok(MoveOutcome::Blocked);
@@ -213,6 +205,20 @@ impl Game {
                     // the refusal drops the goto (0x5ef3)
                     self.clear_goto(id);
                     return Err(RuleError::Amphib);
+                }
+                // only a computer's unit without attack is refused (0x5f1b..0x5f42): the
+                // human's Settlers, Caravan or Transport fights with attack 0 and loses
+                // (random(0) is 0, 0x19a3a)
+                if u.info().att == 0 && !self.is_human(slot) {
+                    return Ok(MoveOutcome::Blocked);
+                }
+                // only Fighters may attack where the square's first unit (unit_at, [bp-0x18])
+                // is an aircraft, outside cities; the refusal drops the goto (0x5f5f..0x5f9f
+                // -> 0x5ef3)
+                let air_first = self.unit_at(tx, ty).is_some_and(|f| self.unit(f).is_air());
+                if air_first && city_here.is_none() && u.kind != unit_ids::FIGHTER {
+                    self.clear_goto(id);
+                    return Err(RuleError::Fighter);
                 }
                 // below one full move the human is asked to confirm the weakened attack, and
                 // a computer's unit attacks only with two thirds of a move or more (CIV.EXE
