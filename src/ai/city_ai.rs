@@ -54,23 +54,35 @@ pub fn manage(g: &mut Game, c: CityId) {
 /// - for a unit while nobody stands in the city square, or on alert: what is missing, at most
 ///   gold/3;
 /// - for the Palace (production -1): what is missing of the "unit cost" at 0x1142 + 0x22 * -1 =
-///   ds:0x1120, a word of the table before the unit table (127, wonder obsolescence), at most
-///   gold/3;
+///   ds:0x1120, a word of the table before the unit table (127, wonder obsolescence), times the
+///   cost factor (0xee8f), at most gold/3;
 /// - when the city status byte is exactly 0x19 (disorder, hydro site, alert and nothing else)
 ///   and the civilization has no Nuclear unit: what is missing of the unit, at most gold/4
-///   (0xeeab; with an improvement CIV.EXE reads its "cost" from unrelated data, left out).
+///   (0xeeab). CIV.EXE does not test for a unit there: for an improvement or wonder it reads
+///   the "unit cost" word at 0x1142 + 0x22 * production from the tables before the unit table
+///   (`EXE_COST_BEFORE_UNITS`), times the cost factor; only with `exe_quirks` (K t390:
+///   Tenochtitlan's Cathedral reads 40, the cost of improvement-table entry 35, and buys 276
+///   shields).
 ///
 /// Then gold/512 more above 2000 gold. The alert is cleared.
 ///
-/// Not modelled: CIV.EXE reads the policy stored at the start of the civilization's turn
-/// (ds:0xe698), civrs computes it now; its shield costs carry the computer's cost factor
-/// (16 - 2 * difficulty, [bp-0x4a] at 0xccf7) that civrs does not have.
+/// Shield costs carry the owner's cost factor ([bp-0x4a], `Game::cost_factor`).
 pub fn city_turn_purchase(g: &mut Game, c: CityId, net_shields: i32) {
     let slot = g.city(c).owner;
     if g.city(c).auto_build {
         let p = g.ai_rechoose(c);
         g.city_mut(c).production = p;
     }
+    let amount = purchase_amount(g, c, net_shields);
+    let cm = g.city_mut(c);
+    cm.shields += amount;
+    cm.auto_build = false;
+    g.player_mut(slot).gold -= 2 * amount;
+}
+
+/// The shields `city_turn_purchase` buys (after the alert's re-choice).
+fn purchase_amount(g: &Game, c: CityId, net_shields: i32) -> i32 {
+    let slot = g.city(c).owner;
     let city = g.city(c).clone();
     let gold = g.player(slot).gold;
     let missing = g.production_cost(c, city.production) - city.shields;
@@ -96,20 +108,40 @@ pub fn city_turn_purchase(g: &mut Game, c: CityId, net_shields: i32) {
     if (g.unit_owner_at(city.x, city.y).is_none() || city.auto_build) && unit && city.shields != 0 {
         amount = missing.max(0).min(gold / 3);
     }
+    let factor = g.cost_factor(slot);
     if city.production == Production::Improvement(imp::PALACE) && city.shields != 0 {
-        amount = (127 * 10 - city.shields).max(0).min(gold / 3);
+        amount = (EXE_COST_BEFORE_UNITS[1] as i32 * factor - city.shields).max(0).min(gold / 3);
     }
-    if unit && exe_status(g, c) == 0x19 && !g.all_units().any(|u| u.owner == slot && u.kind == unit_ids::NUCLEAR) && city.shields != 0 {
-        amount = missing.max(0).min(gold / 4);
+    if exe_status(g, c) == 0x19 && !g.all_units().any(|u| u.owner == slot && u.kind == unit_ids::NUCLEAR) && city.shields != 0 {
+        let byte = match city.production {
+            Production::Unit(_) => None,
+            Production::Improvement(i) => Some(i as usize),
+            Production::Wonder(w) => Some(24 + w as usize),
+        };
+        match byte {
+            None => amount = missing.max(0).min(gold / 4),
+            Some(k) if g.exe_quirks => {
+                // 16-bit imul and sub (0xef0b, 0xef0e)
+                let v = (EXE_COST_BEFORE_UNITS[k] as i32 * factor) as i16 as i32 - city.shields;
+                amount = (v as i16 as i32).max(0).min(gold / 4);
+            }
+            Some(_) => {}
+        }
     }
     if gold > 2000 {
         amount += gold / 512;
     }
-    let cm = g.city_mut(c);
-    cm.shields += amount;
-    cm.auto_build = false;
-    g.player_mut(slot).gold -= 2 * amount;
+    amount
 }
+
+/// The words CIV.EXE's purchase reads as a unit's cost (ds:0x1142 + 0x22 * production) for
+/// minus an improvement (1..24) or minus 24 plus a wonder (25..45): the cost field of the unit
+/// table read backwards into the improvement table and its names (data segment of civ.bin,
+/// constant). Entry 1 is the Palace's 127 (0xee8b); entry 0 is the Settlers' cost.
+const EXE_COST_BEFORE_UNITS: [i16; 46] = [
+    4, 127, -1, 0, 0, 0, 25445, 26214, 17440, 30578, 51, 40, 29295, 24936, 28792, 27756, 25964, 29255, 0, 0, 0, 0, 29806, 25461,
+    27747, 55, 20, 0, 0, 0, 109, 21536, 28245, 3, 0, 0, 0, 0, 27728, 28781, -1, 20, 0, -252, -506, -252,
+];
 
 /// CIV.EXE's city status byte (+6) as far as civrs keeps its bits: 0x1 disorder, 0x2 coastal,
 /// 0x4 garrison out, 0x8 Hydro Plant site, 0x10 AUTO / alert, 0x20 advance stolen, 0x40
@@ -210,6 +242,34 @@ mod tests {
         g.exe_unit_bit_lost[crate::game::Map::idx(x, y)] = true;
         city_turn_purchase(&mut g, c, 0);
         assert_eq!((g.city(c).shields, g.player(slot).gold), (10, 288));
+    }
+
+    #[test]
+    fn a_status_0x19_city_buys_improvements_by_the_word_before_the_unit_table_only_with_exe_quirks() {
+        // K t390: Tenochtitlan in disorder (status 0x19 with its hydro site and the alert),
+        // Cathedral (11, 160 shields) with 124 stored, 1807 gold
+        let (mut g, c) = empty_ai_city();
+        let slot = g.city(c).owner;
+        let cm = g.city_mut(c);
+        cm.production = Production::Improvement(imp::CATHEDRAL);
+        cm.shields = 124;
+        cm.disorder = true;
+        cm.hydro_site = true;
+        cm.auto_build = true;
+        cm.coastal = false;
+        cm.garrison_out = false;
+        g.player_mut(slot).gold = 1807;
+        assert_eq!(g.cost_factor(slot), 10);
+        // the disorder rule: what is missing, at most gold/8
+        assert_eq!(purchase_amount(&g, c, 0), 36);
+        // CIV.EXE reads the word 40 at ds:0xfcc: 400 - 124, at most gold/4
+        g.exe_quirks = true;
+        assert_eq!(purchase_amount(&g, c, 0), 276);
+        g.player_mut(slot).gold = 400;
+        assert_eq!(purchase_amount(&g, c, 0), 100);
+        // a negative word buys nothing (Barracks reads -1)
+        g.city_mut(c).production = Production::Improvement(imp::BARRACKS);
+        assert_eq!(purchase_amount(&g, c, 0), 0);
     }
 
     #[test]
