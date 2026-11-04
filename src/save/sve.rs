@@ -744,7 +744,10 @@ fn import_slot_with(data: &[u8], map_pic: &[u8], moves_back: bool, resume: bool)
     g.history.units_built = (0..28).filter(|t| s.w(off::FIRST + 2 * t) & 8 != 0).fold(0, |m, t| m | 1 << t);
 
     g.refresh_all_sight();
-    g.update_research_catch_up();
+    // CIV.EXE keeps the research catch-up ds:0xd2de out of its saves and sets it only at the
+    // 50-turn marks (game_turn 0x27e0): a game loaded into a freshly started CIV.EXE has none
+    // until the next mark
+    g.catch_up = 0;
     if !resume {
         g.derive_pop_milestone();
         g.active_unit = None;
@@ -1254,6 +1257,16 @@ mod tests {
             assert_eq!(back.turn, g.turn);
             let _ = std::fs::remove_file(path);
         }
+    }
+
+    #[test]
+    fn a_loaded_save_has_no_research_catch_up_until_the_next_mark() {
+        // ds:0xd2de is not in the save; game_turn sets it at turn % 50 == 0 (0x27e0)
+        let dir = crate::save::sve::samples_dir().join("late");
+        let mut g = import(&slot_file(&dir, 0).expect("late save")).expect("import");
+        assert_eq!(g.catch_up, 0);
+        g.update_research_catch_up();
+        assert!(g.catch_up > 0, "the lead of turn {} gives a bonus once computed", g.turn);
     }
 
     #[test]
