@@ -506,8 +506,9 @@ fn import_slot_with(data: &[u8], map_pic: &[u8], moves_back: bool, resume: bool)
             hydro_site: st & 0x08 != 0,
             name_index: r[0x16],
             // +0xa: the trade less corruption of the city's last run of process_city (0xf13d),
-            // read signed as CIV.EXE does (0xf195): under Anarchy the corruption can pass the
-            // trade (a city's trade stays far below 128)
+            // read signed as CIV.EXE does (0xf195): its uncapped corruption under Anarchy
+            // stores a negative trade (kept with `exe_quirks`; a city's trade stays far
+            // below 128)
             trade: r[0xa] as i8 as i32,
         };
         if st & 0x80 != 0 {

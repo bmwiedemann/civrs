@@ -365,10 +365,11 @@ impl Game {
         y.corruption = self.corruption(c, y.trade, false);
         let net = y.trade - y.corruption;
         y.lux = ((net * (lux.unwrap_or(p.lux) / 10) as i32 + 5) / 10).clamp(0, y.trade);
-        // clamp 0x1d4a2 takes the lower bound first: under Anarchy far from the Palace the
-        // corruption passes the trade (below), the bound turns negative and so do the taxes,
-        // which leaves science 0
-        y.tax = ((net * (p.tax / 10) as i32 + 5) / 10).max(0).min(net - y.lux);
+        // with `exe_quirks`, as clamp 0x1d4a2 takes the lower bound first: where CIV.EXE's
+        // uncapped corruption passes the trade (below) the bound turns negative and so do
+        // the taxes, which leaves science 0. Not copied in normal play (taxes >= 0)
+        let tax = (net * (p.tax / 10) as i32 + 5) / 10;
+        y.tax = if self.exe_quirks { tax.max(0).min(net - y.lux) } else { tax.clamp(0, (net - y.lux).max(0)) };
         y.sci = net - y.lux - y.tax;
         // specialists: 2 each. CIV.EXE counts the kinds over the eight 2-bit codes alone
         // (0xf2c0 -> 0xc91:0x6dc2, k < 8), so with `exe_quirks` the taxmen past the eighth
@@ -483,9 +484,11 @@ impl Game {
     /// Trade lost to corruption (CIV.EXE 0xf0c4 / 0xf1df): `trade * distance * 3 / (20 *
     /// government + 80)`, none under Democracy, halved by a Courthouse. The first pass over the
     /// tiles' trade (`tiles_only`, for the city's visible trade) also halves it with a Palace,
-    /// which only matters under Communism. Nothing caps it at the trade (0xf0e5, 0xf200):
-    /// under Anarchy (divisor 80) a city 27 or more from a Palace, or with none (32), loses
-    /// more than its trade, and the stored trade (0xf13d) goes negative.
+    /// which only matters under Communism. Capped at the trade. CIV.EXE caps nothing (0xf0e5,
+    /// 0xf200): under Anarchy (divisor 80) a city 27 or more from a Palace, or with none
+    /// (32), loses more than its trade, its stored trade (0xf13d) goes negative, partners'
+    /// routes read it signed (0xf195) and its taxes turn negative (0x1d4a2). A bug, not
+    /// copied but with `exe_quirks`.
     pub fn corruption(&self, c: CityId, trade: i32, tiles_only: bool) -> i32 {
         let city = self.city(c);
         let govt = self.player(city.owner).govt;
@@ -496,7 +499,7 @@ impl Game {
         if city.has_improvement(imp::COURTHOUSE) || tiles_only && city.has_improvement(imp::PALACE) {
             corr /= 2;
         }
-        corr.max(0)
+        if self.exe_quirks { corr.max(0) } else { corr.clamp(0, trade) }
     }
 
     /// Gold per turn for the city's improvements.
@@ -1995,6 +1998,13 @@ mod tests {
         let slot = g.city(c).owner;
         g.city_mut(c).improvements &= !(1 << imp::PALACE);
         g.player_mut(slot).govt = Govt::Anarchy;
+        // normal play caps it at the trade: no negative stored trade or taxes
+        assert_eq!(g.corruption(c, 100, false), 100);
+        let y = g.city_yield(c);
+        assert_eq!(y.corruption, y.trade);
+        assert_eq!((y.lux, y.tax, y.sci), (0, 0, 0));
+        assert_eq!(g.visible_trade(c), 0);
+        g.exe_quirks = true;
         assert_eq!(g.corruption(c, 100, false), 120);
         assert_eq!(g.corruption(c, 100, true), 120);
         let y = g.city_yield(c);

@@ -1676,10 +1676,13 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
     terraforming table and times, road / railroad / Bridge Building, fortress, pollution
     clean-up, the work counter, move costs, the partial-move roll, ZOC, ship bonus moves.
     Civ1 has no Statue of Zeus, Harbour or Coastal Fortress.
-  - Fixed: corruption is not capped at the trade (0xf0e5, 0xf200): under Anarchy a city 27
-    or more from a Palace (32 without one) loses more than its trade, the stored trade +0xa
-    goes negative (read signed, 0xf195, also on import) and the tax clamp's bound with it
-    (0x1d4a2 takes the lower bound first), science 0; the city square yields by its bits
+  - `exe_quirks`: corruption is not capped at the trade (0xf0e5, 0xf200): under Anarchy a
+    city 27 or more from a Palace (32 without one) loses more than its trade, the stored
+    trade +0xa goes negative (read signed, 0xf195; the SVE import always reads it signed)
+    and the tax clamp's bound with it (0x1d4a2 takes the lower bound first), science 0.
+    Normal play caps corruption at the trade (no negative stored trade or taxes). Staged
+    run ANAR (w114/mk.sh) agrees in every draw and field over 3 turns.
+  - Fixed: the city square yields by its bits
     alone (tile_yield's centre rule 0x1343e runs only with ds:0xe3c4 bit 1 clear, set in every
     game, 0x13437), so a mine or a new terrain under a city loses the irrigation; a city
     founded on a railroad keeps it (o 0x1b4f2 clears 0x24) and moves out of it are free
