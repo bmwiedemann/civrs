@@ -1241,6 +1241,26 @@ mod tests {
     }
 
     #[test]
+    fn exe_quirks_a_human_look_that_opens_an_audience_gives_its_square_to_the_human() {
+        // K t356: the human's look meets a computer, its emissary audience opens there, and
+        // the rest of the square reads the human in ds:0xd7f0: the defend goal on his square
+        // goes to him (add_goal from 0x8136), not to the computer
+        use crate::game::goals::goal;
+        let defend = |g: &Game, s: Slot| g.ai_memory.goals[s as usize].iter().any(|o| o.kind == goal::DEFEND && o.pos() == (15, 15));
+        for quirks in [false, true] {
+            let (mut g, human, ai) = meeting_game();
+            g.exe_quirks = quirks;
+            g.reset_goals(ai);
+            g.reset_goals(human);
+            let h = g.units_of(human)[0];
+            g.unit_look(h);
+            assert_eq!(decisions(&mut g).len(), 1, "the emissary audience");
+            assert_eq!(defend(&g, ai), !quirks);
+            assert_eq!(defend(&g, human), quirks);
+        }
+    }
+
+    #[test]
     fn exe_quirks_the_rest_of_a_looks_square_after_its_audience_reads_the_lookers_civ() {
         // the audience redraws the looker's square (o 0x6391 -> 0x1b85a -> unit_at 0x1bb3c),
         // which leaves the looker's civ in ds:0xd7f0 for 0x84a7..0x8525

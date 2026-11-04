@@ -377,10 +377,12 @@ impl Game {
                     // the two civilizations meet here, square by square, before the treaty
                     // test of this square's goals (0x8491 before 0x84a7; the city goals of
                     // the square came before the meeting, 0x82e3)
+                    let mut opened = false;
                     if !resumed {
                         let before = self.audience_pending;
                         self.civs_meet(civ, o2, u.x, u.y);
-                        if self.ai_memory.moving == Some(civ) && !self.is_human(civ) && self.audience_pending & !before != 0 {
+                        opened = self.audience_pending & !before != 0;
+                        if self.ai_memory.moving == Some(civ) && !self.is_human(civ) && opened {
                             self.deferred_look = Some((id, k));
                             return;
                         }
@@ -398,7 +400,10 @@ impl Game {
                     // question redraws the whole map view, o 0x7a7a, the last unit drawn leaves
                     // its owner there instead: not modelled.)
                     let fortified_defender = |w: &super::Unit| w.order == super::UnitOrder::Fortified && w.info().role == AiRole::Defend;
-                    let clobbered = resumed && self.exe_quirks && !peace(self, civ, o2);
+                    // (the human's own look holds its emissary audience in place too, so the
+                    // same reading follows it: K t356, the human's Settlers meets civ 7 and
+                    // the defend goal of the square goes to the human, add_goal from 0x8136)
+                    let clobbered = (resumed || (opened && self.is_human(civ))) && self.exe_quirks && !peace(self, civ, o2);
                     let (o2, diplomat, defender) = match self.unit_at(u.x, u.y).map(|l| self.unit(l).owner).filter(|_| clobbered) {
                         Some(o) => {
                             let w = self.all_units().find(|w| w.owner == o && w.record == fu.record);
