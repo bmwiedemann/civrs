@@ -1615,6 +1615,50 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   AI statistics unchanged (10.3 / 14.8, 48 overseas). The stored fresh-game runs (all.sh
   J..Q4) agree as before (N4 t228 as in w111).
 
+  Round w113 (scratchpad w113): rules audit of normal play against the asm, second part
+  (three read-only passes, every difference re-read in civ.asm / civ-overlays.asm).
+  - Match: civ_score (citizens size + happy - unhappy at 40% luxuries, 20 per wonder, 5 per
+    Future Tech, peace 3 per turn to 100 in AD, -10 per polluted square, conquest bonus),
+    the rating and Hall of Fame weights, retirement 2080 - 20d and game over 2100 - 20d, the
+    per-turn score accumulator, palace growth; spaceship counting, support/energy/fuel,
+    success, flight time, arrival, launch, the AI's slot scan and launch rules, capital
+    capture; hut outcomes and odds (random(4), distance 4, site bits, turn 0 and 1000 AD,
+    mercenaries, horde step clamp(4 - cities, 1, 4)); barbarian start (5 - d) * 30, sea raids
+    every 8th turn until Automobile, Sail/Frigate and Legion/Knights, uprisings and their
+    units by Industrialization; research multiplier (14 - d computer, 2d + 6 human, catch-up,
+    11 - count minimum), doubling from 1 AD, Chieftain extras, choose_research, Great
+    Library, Future Tech, conquest / Diplomat / exchange theft; combat strengths, walls,
+    fortress, terrain, veteran rolls, difficulty factors, barbarians against cities, stack
+    deaths, city shrink, fuel, Carrier, Trireme; the audience (tribute, exchange, threats,
+    Senate, peace), civs_meet, ai_wants_war. Civ1 has no Coastal Defense or SAM Battery, and
+    the Great Wall is diplomatic only.
+  - Fixed: the human's units without attack (Settlers, Caravan, Transport) fight and lose
+    where the computer's are refused (0x5f1b..0x5f42; random(0) = 0); the Fighter rule reads
+    the square's first unit (unit_at, 0x5f5f..0x5f9f) and its refusal drops the goto
+    (0x5ef3), after *AMPHIB; every fight ends the attacker's goto (0x60a9); fortification
+    under the sentry bit keeps its bonus (bit 0x08 alone, 0x197d2, 0x9032); a refused
+    spaceship part switches the computer city to the next kind without testing its advance
+    (0xe7f9..0xe82d); F9 shows the human's ship points as "possible" before the launch (o
+    0x1c3cc; ds:0x4cd4 is the success % at the human's last added part, 0x18850); an
+    imported CIV.EXE save has no research catch-up ds:0xd2de until the next 50-turn mark.
+  - `exe_quirks`: the fallout (0x1a5d9) adds dy without a bound, so a blast on row 0 or 49
+    rolls random(3) for rows -1 / 50 unless the band read there has bit 0 (pixel (x, 99), the
+    body number of (x, 49); pixel (x, 150), the railroad of (x, 0)); what it writes there
+    (terrain of row -1 before the page, a "city" of record -1, pollution bits in rows 49 / 0
+    and the polluted count) is not copied.
+  - Not copied: the spaceship score counts the human's ship whenever its projected arrival
+    year is the current year, launched or not (o 0x1c436).
+  - Open: the computer's last launch rule reads ds:0xb1d6 + 2 * ds:0x6b8a (the active mask
+    as a gold index, 0xe8e6), unknown memory, taken as false; whether CIV.EXE's computer
+    units ever step onto a treaty partner's units (the move code fights them, civrs blocks
+    the step; the chooser 0x16433 not traced); the leader portrait animation draws
+    random(12) from the game's generator (o 0x8011, unread) while civrs uses its own.
+  Staged runs (w113/mk.sh, pl.sh): SETA (CIVIL0, a Roman Settlers attacks a German
+  Militia: lost in both, rolls 0x19a2d / 0x19a3a with attack 0), NUKP (CIVIL7, Nuclear on
+  a unit at (10, 0): the row -1 body is odd, no extra rolls) and NUKS (at (10, 49): three
+  rolls for row 50) agree in every draw and field over 2 turns. AI statistics unchanged
+  (10.3 / 14.8, 48 overseas).
+
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
