@@ -6,13 +6,17 @@
 //! presses the order's key again for it (0x4492); each press re-checks the job, zeroes the
 //! moves, adds one to the work counter (unit +5, `Unit::order_turns` here) and finishes the
 //! job once the counter reaches the job's time — so the turn of the order is the first turn
-//! of work. The counter goes back to 0 when a job is done or refused and when the unit moves
-//! (0x6d00), but not when the unit is given another job.
+//! of work. The counter goes back to 0 when a job is done or refused, but not when the unit
+//! moves (unit +5 is written on a move only as an aircraft's fuel, 0x6d00) or is given
+//! another job.
 
 use super::map::{tile_flags, Map, UnitId, CityId};
 use super::unit::UnitOrder;
 use super::{AutoStop, Game, RuleError};
 use crate::rules::{self, unit_ids, Terraform, Terrain};
+
+/// The refusal of a road on a River without Bridge Building (0x5304..0x531c).
+const BRIDGE_REFUSAL: &str = "Bridge Building is required to build roads across rivers.";
 
 impl UnitOrder {
     /// Settlers jobs, which the unit loop repeats until they are done (`run_auto_unit`).
@@ -105,7 +109,10 @@ impl Game {
             UnitOrder::Pillage => self.pillage(id),
             _ => {
                 let r = self.work_step(id, o);
-                if r.is_err() && is_settlers {
+                // a road on a River without Bridge Building leaves the key at once (0x531c ->
+                // 0x5869): the job bits and the counter stay
+                let bridge = matches!(r, Err(RuleError::Other(m)) if m == BRIDGE_REFUSAL);
+                if r.is_err() && is_settlers && !bridge {
                     // a refused job drops the order bits and the counter (0x5091)
                     self.refuse_job(id, o);
                 }
@@ -170,7 +177,7 @@ impl Game {
                 }
                 // roads and railroads on a River need Bridge Building (0x5304)
                 if t.terrain == Terrain::River && !knows(self, rules::advance_ids::BRIDGE_BUILDING) {
-                    return Err(RuleError::Other("Bridge Building is required to build roads across rivers."));
+                    return Err(RuleError::Other(BRIDGE_REFUSAL));
                 }
                 if road {
                     rules::railroad_turns(t.terrain)
@@ -203,6 +210,8 @@ impl Game {
                 if !knows(self, rules::advance_ids::CONSTRUCTION) {
                     return Err(RuleError::Other("Construction is required to build fortresses."));
                 }
+                // (CIV.EXE tests only the city and fortress bits, 0x51be..0x520b, so Settlers
+                // woken aboard a ship build a fortress on the ocean; not copied, as roads at sea)
                 if t.city.is_some() || t.has(tile_flags::FORTRESS) || t.is_ocean() {
                     return Err(RuleError::Other("A fortress cannot be built here."));
                 }
@@ -899,7 +908,13 @@ mod tests {
         let slot = g.human_slot;
         g.player_mut(slot).learn(adv::RAILROAD);
         g.map.get_mut(30, 20).unwrap().set(tile_flags::ROAD, true);
+        // the refusal leaves the key at once (0x531c -> 0x5869): job and counter stay
+        g.unit_mut(s).order = UnitOrder::Irrigate;
+        g.unit_mut(s).order_turns = 3;
         assert!(g.give_order(s, UnitOrder::Road).is_err());
+        assert_eq!((g.unit(s).order, g.unit(s).order_turns), (UnitOrder::Irrigate, 3));
+        g.unit_mut(s).order = UnitOrder::None;
+        g.unit_mut(s).order_turns = 0;
         g.player_mut(slot).learn(adv::BRIDGE_BUILDING);
         g.give_order(s, UnitOrder::Road).unwrap();
         // 4x move cost 1

@@ -20,9 +20,11 @@ impl Game {
     ///
     /// As move_units has it (CIV.EXE 0x62dd..0x6334): a road on both squares (a city square
     /// has one, found_city 0x1b375) costs 1; it is free when the square left has a railroad
-    /// and the unit is the human's and not on a goto. Only the square left needs the railroad
-    /// (so rail into a city or onto a road is free, out of a city never, as cities get no
-    /// railroad); computer units and goto moves pay the road's 1 on railroads.
+    /// and the unit is the human's and not on a goto (bit 0x10 of the square left, 0x6307).
+    /// Only the square left needs the railroad (so rail into a city or onto a road is free);
+    /// Settlers lay none on a city square (0x52b6), but a city founded on a railroad keeps it
+    /// (o 0x1b4f2 clears 0x24 only), and moves out of it are free. Computer units and goto
+    /// moves pay the road's 1 on railroads.
     pub fn move_cost(&self, unit: &super::Unit, from: (i32, i32), to: (i32, i32)) -> u8 {
         let ft = self.map.tile(from.0, from.1);
         let tt = self.map.tile(to.0, to.1);
@@ -31,7 +33,7 @@ impl Game {
         }
         let road = |t: &super::map::Tile| t.has(tile_flags::ROAD) || t.has(tile_flags::RAILROAD) || t.city.is_some();
         if road(&ft) && road(&tt) {
-            let free = ft.has(tile_flags::RAILROAD) && ft.city.is_none() && self.is_human(unit.owner) && unit.goto.is_none();
+            let free = ft.has(tile_flags::RAILROAD) && self.is_human(unit.owner) && unit.goto.is_none();
             return if free { 0 } else { 1 };
         }
         if tt.is_ocean() {
@@ -150,6 +152,12 @@ impl Game {
             if let Some(c) = city_here.filter(|_| u.kind == unit_ids::DIPLOMAT) {
                 return Ok(MoveOutcome::EnteredForeignCity(c));
             }
+            // the move code drops the Diplomat's goto after bribe_unit, which refuses a stack
+            // silently, whatever bribe_unit did (0x5dc9), also from a ship (the *AMPHIB test
+            // at 0x5ec3 comes after it)
+            if u.kind == unit_ids::DIPLOMAT && city_here.is_none() && !units_here.is_empty() {
+                self.clear_goto(id);
+            }
             if u.kind == unit_ids::DIPLOMAT && city_here.is_none() && units_here.len() == 1 {
                 let target_id = units_here[0];
                 if self.is_human(slot) {
@@ -179,7 +187,12 @@ impl Game {
                 // treaty, and the territory rule (0x6523..0x6530) guards the human's land alone
                 // (the capture at 0x6a65 -> 0x13d76)
                 let grab = !self.is_human(slot) && o != self.human_slot && units_here.is_empty() && city_here.is_some() && u.is_land();
-                if !(acts && self.is_human(slot) && self.treaty(slot, o)) && !grab {
+                // the move code has no treaty test for a computer's unit (0x5da5..0x6093, none
+                // reads ds:0xe498) and combat asks only the human (0x199f5): a computer's step
+                // onto a treaty partner's units is an attack (an audience still pending in a
+                // loop that runs to its end keeps the peace, `Game::may_fight`)
+                let fights = !self.is_human(slot) && !units_here.is_empty() && !self.hostile(slot, o);
+                if !(acts && self.is_human(slot) && self.treaty(slot, o)) && !grab && !fights {
                     return Ok(MoveOutcome::Blocked);
                 }
                 // an attack asks in combat, after the move code's questions (below); taking
@@ -230,7 +243,7 @@ impl Game {
                     return Ok(MoveOutcome::WeakAttack(u.moves_left));
                 }
                 // then combat's senate_check_attack (0x199fd) asks about a treaty partner
-                if !hostile && self.treaty_break_ok != Some(o) {
+                if !hostile && self.is_human(slot) && self.treaty_break_ok != Some(o) {
                     return Ok(MoveOutcome::BreakTreaty(o));
                 }
                 self.weak_attack_ok = false;
@@ -1774,6 +1787,46 @@ mod zoc_tests {
         g.add_city(g.human_slot, "Rome".into(), 42, 25);
         assert_eq!(g.move_cost(&u, (42, 25), (41, 25)), 1);
         assert_eq!(g.move_cost(&u, (41, 25), (42, 25)), 1);
+        // a city founded on a railroad keeps it (o 0x1b4f2 clears 0x24 only): out of it free
+        g.map.get_mut(40, 25).unwrap().set(tf::RAILROAD, true);
+        g.add_city(g.human_slot, "Veii".into(), 40, 25);
+        assert!(g.map.tile(40, 25).has(tf::RAILROAD));
+        assert_eq!(g.move_cost(&u, (40, 25), (41, 25)), 0);
+    }
+
+    #[test]
+    fn a_computer_unit_attacks_a_treaty_partner_s_unit_it_steps_onto() {
+        // the move code reads no treaty for a computer's unit and combat asks only the human
+        // (0x199f5); the fight ends the treaty (0x19f2c)
+        let (mut g, id) = open_field();
+        let human = g.human_slot;
+        let other = if human == 2 { 3 } else { 2 };
+        let third = (1..8u8).find(|s| *s != human && *s != other).unwrap();
+        g.remove_unit(id);
+        g.make_peace(other, third);
+        assert!(g.treaty(third, other));
+        g.add_unit(other, unit_ids::PHALANX, 41, 25);
+        let a = g.add_unit(third, unit_ids::LEGION, 40, 25);
+        assert!(matches!(g.try_move(a, Dir8::E), Ok(MoveOutcome::Attacked { .. })));
+        assert!(!g.treaty(third, other));
+    }
+
+    #[test]
+    fn a_diplomat_meeting_a_stack_loses_its_goto() {
+        // 0x5da5..0x5dc9: bribe_unit refuses the stack, the move code drops the goto
+        let (mut g, id) = open_field();
+        let human = g.human_slot;
+        let other = if human == 2 { 3 } else { 2 };
+        let third = (1..8u8).find(|s| *s != human && *s != other).unwrap();
+        g.remove_unit(id);
+        for _ in 0..2 {
+            g.add_unit(other, unit_ids::PHALANX, 41, 25);
+        }
+        let dip = g.add_unit(third, unit_ids::DIPLOMAT, 40, 25);
+        g.unit_mut(dip).goto = Some((45, 25));
+        assert_eq!(g.try_move(dip, Dir8::E), Ok(MoveOutcome::Blocked));
+        assert_eq!(g.unit(dip).goto, None);
+        assert_eq!(g.unit(dip).pos(), (40, 25));
     }
 
     #[test]
