@@ -1545,6 +1545,47 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   as if no unit stood next to it (no zone of control, no fight), the Diplomat is gone at
   t187; why unit_owner_at (0x1bb66) misses it there is not found.
 
+  Round w111 (scratchpad w111: plays.sh pln.sh continuations with CIVFAST, all.sh diffs every
+  stored fresh-game run with the diag build, diag/diag_patch.py builds a CIV.EXE whose
+  RANDOM.LOG words 4..7 carry four [bp+d] of the caller's frame (DIAGOFFS, e.g. 06,08 the
+  civ and unit of ai_unit_command), tsz.sh / ts.sh try SIZE16E94 / SKIPFF values, wd.sh /
+  gd.sh print worker picks and goal additions, diagpatch9..11.py those local hooks). None of
+  w110's four open items is a rule: R t186 is not unit_owner_at (CIV.EXE's Chariot scores
+  the Diplomat as civrs does; the draws before it are civ 5's Trireme): Boston's production
+  advisor run after its Settlers (size 3 -> 2, 0xe3b1 -> 0x18c4c -> 0xa9fd -> 0xaa1b)
+  skipped the food-first pass, [bp-0x108] == -1 at 0xd81d, so the city works Plains and
+  Ocean, has 4 shields and keeps its Trireme and Phalanx; L t215 Peking (8 -> 7) is the same
+  skip (SKIPFF 66,12,215,0 gives CIV.EXE's two Forests). Skipping it in every run after a
+  unit (or after Settlers) breaks J, K, L, N, R from turn 13..46, so it stays an override.
+  N t216 is a 0x16e94 release of a Trireme built in Kashgar that turn (2,65,10,216,0); the
+  Sail's unload order is the same in both. N t246 likewise (3,73,41,245,10). K t212 / t229
+  (one-turn goto fields) are the emissary map redraw's ds:0xd7f0 (AUDD7F0 210,27,13,1 and
+  227,34,13,1: the human, as in L t213); of the 11 looks resumed after an audience in all
+  runs the other 8 agree with the looker's civ, so the w103 reading stays. In
+  ai_unit_command the 0x16e94 slot [bp-0xc] is first written at the Nuclear search and the
+  unit loop at 0x16f12, and on entry holds what the previous call at that depth left (for
+  the first command unit_look's [bp-0x4], the type of a foreign unit two squares away,
+  0x858a): not modelled. Fixed (K t339, three ships and nine land units in one ring at
+  sea): a ship lost at sea drowns what for_each_in_stack (0x92a7, from the ship, ten records
+  at most) reaches with kill_land_cb (0x946c; a Carrier's kill_air_cb 0x94d2), so the
+  eleventh and twelfth records of the ring stay at sea and are later picked up by another
+  ship (`exe_quirks`; as meant, every land unit of the owner on the square). autofix.py
+  grows a run's SIZE16E94 file greedily (first differing save T: every computer city
+  square with a transport there, or with a fortified unit that lost its bit, tried at T-1
+  and T-2 with sizes 0..20, "keep" and, for several ships, each ship's record): nearly all
+  stops of the new stretches were 0x16e94 releases, ships built that turn and two or three
+  ships on one square among them (the releasing ship's record matters: a release by an
+  earlier record is undone by the released unit's own fortify). Runs (all draws and
+  fields agree unless noted): R t151-190 (SKIPFF 21,27,186,0), t191-230, t231-253 (game
+  over); N t218-247, t248-268 (game over); L t187-216 (SKIPFF 66,12,215,0), t260-299,
+  t300-339; K t201-250 (AUDD7F0), t319-358 (t357 one Militia goto: civ 7's defend goals
+  (32, 29) and (39, 26) tie at score 4, CIV.EXE takes the second; the first comes from the
+  human's look in his turn), t359-389 (t390: civ 4's Tenochtitlan, in disorder building
+  Improvement 11 with 124 of 160 shields, has 400 shields in CIV.EXE and 450 gold less,
+  more than the disorder purchase min(missing, gold / 8) at 0xed4a..0xedb5 explains;
+  civrs buys the 36 missing; untraced; the game ends at t394); J t237-276, t277-308 (game over); P
+  t102-121 (game over); Q t101-140, t141-180.
+
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
