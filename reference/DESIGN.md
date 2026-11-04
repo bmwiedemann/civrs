@@ -1659,6 +1659,55 @@ CIV.EXE and civrs play on from the same original save and their states are diffe
   rolls for row 50) agree in every draw and field over 2 turns. AI statistics unchanged
   (10.3 / 14.8, 48 overseas).
 
+  Round w114 (scratchpad w114): rules audit of normal play, third part (three read-only
+  passes; every difference re-read in civ.asm), and w113's open items.
+  - Match: Palace distance (32 without one, 10 under Communism), corruption divisor 20 gov +
+    80, Courthouse / Palace halving in the two passes, routes (partner + own + 4) / 8 or / 16,
+    the lux / tax / science rounding, Marketplace / Bank, Library / University / Newton /
+    Copernicus / SETI, the Despotism penalty and the Republic trade bonus (celebration for
+    Monarchy / Communism), base content (14 - 2d) / 2 x (gov / 2 + 2) per city count, Temple
+    (Ceremonial Burial / Mysticism, Oracle), Colosseum, Cathedral (Religion, Michelangelo),
+    Hanging Gardens, Cure for Cancer, Shakespeare, J.S. Bach, the stage order, disorder and
+    We Love the King Day (size > 2, no unhappy, half happy), the wonder and improvement
+    tables and obsolescence, Factory / Mfg Plant / power plants / Hoover, pollution divisors
+    (Recycling 3, Hydro / Nuclear / Hoover 2, Mass Transit zeroes the population part), SDI,
+    City Walls, Barracks (veterans, obsolete with Gunpowder / Combustion, upkeep), upkeep
+    order and selling, revolution and Anarchy (turn & 3, Pyramids), AI governments,
+    terraforming table and times, road / railroad / Bridge Building, fortress, pollution
+    clean-up, the work counter, move costs, the partial-move roll, ZOC, ship bonus moves.
+    Civ1 has no Statue of Zeus, Harbour or Coastal Fortress.
+  - Fixed: corruption is not capped at the trade (0xf0e5, 0xf200): under Anarchy a city 27
+    or more from a Palace (32 without one) loses more than its trade, the stored trade +0xa
+    goes negative (read signed, 0xf195, also on import) and the tax clamp's bound with it
+    (0x1d4a2 takes the lower bound first), science 0; the city square yields by its bits
+    alone (tile_yield's centre rule 0x1343e runs only with ds:0xe3c4 bit 1 clear, set in every
+    game, 0x13437), so a mine or a new terrain under a city loses the irrigation; a city
+    founded on a railroad keeps it (o 0x1b4f2 clears 0x24) and moves out of it are free
+    (0x6307); a road on a River without Bridge Building leaves the key at once, job and
+    counter kept (0x531c -> 0x5869); the city screen's resources and the demographics show
+    the routine's totals in disorder (0x10a6f, o 0x10d6d); a Diplomat meeting foreign units
+    outside a city loses its goto after bribe_unit (0x5dc9), a stack included; a computer's
+    unit stepping onto a treaty partner's units attacks (the move code reads no treaty for
+    it, combat asks only the human, 0x199f5; the fight ends the treaty).
+  - `exe_quirks`: the AI's last launch rule reads the word at ds:0xb1d6 + 2 * ds:0x6b8a
+    (0xe8e6), the active mask as a gold index: gold below mask 8, the site counts ds:0xb1ee,
+    the year (mask 0x25), the transient goal priorities ds:0xb2be (masks 0x75..0xf3: two
+    neighbouring priorities of one civ, > 1000 when the second is 4 or more) and from mask
+    0xf5 the barbarians' unit counts ds:0xb3be (never above 1000, so a full seven-civ game
+    never launches by it); UI globals in between count as 0
+    (`Game::exe_gold_at_active_mask`).
+  - Not modelled: the leader portrait's random(12) (o 0x7fe4) and random(2) (o 0x804b) draw
+    from the game's generator once per tick of menu_select's loop while a face shows
+    (0x1c983..0x1c98a), so their count is the human's reaction time; the seeded harness
+    diverts them (civ_seed_patch.py QUIET_OVL).
+  - Not copied: Settlers aboard a ship build a fortress on the ocean (0x51be..0x520b test
+    only the city and fortress bits), as roads at sea.
+  - Open: CIV.EXE's 'r' and 'f' keep the goto ('p', 'i', 'm' clear it, 0x50d1/0x54ec/0x5687;
+    civrs clears it for all, the computer drops it before any non-goto command anyway); the
+    Barracks obsolete note shows only outside an audience (ds:0x3934 == -1, 0xc6e8);
+    knows_advance is 0 for the barbarians (0xc87b), so their Temples and Cathedrals would do
+    nothing (civrs reads their advance bits, which they never get in play).
+
 ### Map screen pixel comparison (reference/tools/mapshot.py)
 - `python3 -I reference/tools/mapshot.py GAME_DIR SLOT OUT [N] [KEYS...]` loads CIVIL<SLOT>.SVE in
   CIV.EXE (dosciv.py, `CIVDISPLAY`), takes N shots 0.25 s apart and writes 320x200 PPMs to diff
