@@ -441,12 +441,13 @@ impl Game {
         // ds:0x4cd6: cleared on entry, the success chance of the redrawn ship once placed
         let success = if ret == 0 { self.spaceship_stats(slot).success } else { 0 };
         // refused structural/component: the shields come back and a city still set to a
-        // spaceship part switches to the next kind (0xe7d1..0xe831)
+        // spaceship part switches to the next kind (0xe7d1..0xe831), whether or not its
+        // advance is known (nothing tests it)
         if ret != 0 && kind < 2 {
             let part = imp::SS_STRUCTURAL + kind;
             let refund = self.production_cost(c, Production::Improvement(part));
             self.city_mut(c).shields += refund;
-            if matches!(self.city(c).production, Production::Improvement(i) if (imp::SS_STRUCTURAL..=imp::SS_MODULE).contains(&i)) && self.can_build_improvement(c, part + 1) {
+            if matches!(self.city(c).production, Production::Improvement(i) if (imp::SS_STRUCTURAL..=imp::SS_MODULE).contains(&i)) {
                 self.city_mut(c).production = Production::Improvement(part + 1);
             }
             ret -= 1;
@@ -763,6 +764,27 @@ mod tests {
         assert_eq!(g.ended, None);
         assert!(!g.player(slot).spaceship.landed);
         assert_eq!(g.year(), 1750 + 30);
+    }
+
+    #[test]
+    fn a_refused_part_switches_the_city_even_to_a_part_it_cannot_build() {
+        // 0xe7f9..0xe82d: production -22..-24 becomes the next kind, no advance tested
+        use crate::game::science::AdvanceSource;
+        let mut g = Game::new(GameSetup { seed: 7, ..Default::default() }, None);
+        let ai = (1..8u8).find(|s| *s != g.human_slot && g.player(*s).alive && !g.units_of(*s).is_empty()).unwrap();
+        let settler = g.units_of(ai).into_iter().find(|id| g.unit(*id).kind == unit_ids::SETTLERS).unwrap();
+        let c = g.found_city(settler).unwrap();
+        g.apollo_built = true;
+        g.grant_advance(ai, crate::rules::advance_ids::SPACE_FLIGHT, AdvanceSource::Discovered);
+        assert!(!g.player(ai).knows(crate::rules::advance_ids::PLASTICS));
+        for i in (0..PLACEMENT.len()).filter(|i| kind_of(PLACEMENT[*i].2) == 0) {
+            place(&mut g.player_mut(ai).spaceship, i);
+        }
+        g.city_mut(c).production = Production::Improvement(imp::SS_STRUCTURAL);
+        g.city_mut(c).shields = 0;
+        g.spaceship_part_built(c, 0);
+        assert_eq!(g.city(c).shields, g.production_cost(c, Production::Improvement(imp::SS_STRUCTURAL)));
+        assert_eq!(g.city(c).production, Production::Improvement(imp::SS_COMPONENT));
     }
 
     #[test]
