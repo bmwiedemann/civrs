@@ -480,10 +480,34 @@ impl Game {
                 return true;
             }
         }
-        // the last rule (0xe8cb) launches when the human has started a ship and
-        // gold[ds:0x6b8a] > 1000, indexing the gold table with the active-civ *mask*: that
-        // reads unit counts or other globals past the table, so it is treated as never true
-        false
+        // the last rule (0xe8cb) launches when the human has started a ship (ds:0x4cd8 bit
+        // 8 + human) and gold[ds:0x6b8a] > 1000, indexing the gold table with the active-civ
+        // *mask*: a CIV.EXE slip, so only `exe_quirks` reads what lies there
+        self.exe_quirks && hs.parts() > 0 && self.exe_gold_at_active_mask() > 1000
+    }
+
+    /// The signed word at ds:0xb1d6 + 2 * ds:0x6b8a (0xe8e0..0xe8e6), the gold table indexed
+    /// by the active-civ mask (bit 0, the barbarians, always set, so the offset is 2 mod 4).
+    /// Data segment from ds:0xb1d6: gold (8 words), ds:0xb1e8 / 0xb1ea flags, the site counts
+    /// ds:0xb1ee (16 words, `AiMemory::world_counts`), science rates ds:0xb210, the year
+    /// ds:0xb220, palace styles, UI globals (sprite handles ds:0xb23c, menu mask ds:0xb276,
+    /// ...), the transient goal priorities ds:0xb2be (32 bytes per civ: masks 0x75..0xf3
+    /// read two neighbouring priorities of one civ) and from ds:0xb3be the barbarians' unit
+    /// counts per type (masks 0xf5..0xff, never above 1000). The UI globals count as 0.
+    pub(crate) fn exe_gold_at_active_mask(&self) -> i32 {
+        let mask = (0..8usize).filter(|&c| c == 0 || self.players[c].alive).fold(0usize, |m, c| m | 1 << c);
+        let off = 2 * mask;
+        match off {
+            0..=0x0f => self.players[off / 2].gold as i16 as i32,
+            0x18..=0x37 => self.ai_memory.world_counts.map_or(0, |(_, sites)| sites[(off - 0x18) / 2] as i16 as i32),
+            0x4a => self.year(),
+            0xe8..=0x1e7 => {
+                let (c, i) = ((off - 0xe8) / 32, (off - 0xe8) % 32);
+                let p = &self.ai_memory.goals[c];
+                (p[i + 1].priority as i32) * 256 + (p[i].priority as u8) as i32
+            }
+            _ => 0,
+        }
     }
 
     /// ds:0x803c[civ]: the civ's place in the last power ranking (`Game::rank_powers`), 7 for
@@ -827,6 +851,30 @@ mod tests {
         assert!(s.launched());
         assert!(s.modules > 0 && s.components > 0);
         assert!(g.take_events().iter().any(|e| matches!(e, GameEvent::SpaceshipLaunched(x) if *x == ai)));
+    }
+
+    #[test]
+    fn exe_launch_rule_reads_the_gold_table_at_the_active_mask() {
+        let mut g = Game::new(GameSetup { seed: 7, ..Default::default() }, None);
+        let set = |g: &mut Game, mask: usize| (1..8).for_each(|c| g.players[c].alive = mask & 1 << c != 0);
+        // all seven: the barbarians' count of unit type 11 (ds:0xb3d4), never above 1000
+        set(&mut g, 0xff);
+        assert_eq!(g.exe_gold_at_active_mask(), 0);
+        // civ 7 gone (0x7f): ds:0xb2d4, the barbarians' transient goal priorities 22 and 23
+        set(&mut g, 0x7f);
+        g.ai_memory.goals[0][22].priority = 1;
+        g.ai_memory.goals[0][23].priority = 4;
+        assert_eq!(g.exe_gold_at_active_mask(), 4 * 256 + 1);
+        // 0xbf: civ 4's priorities 22 and 23
+        set(&mut g, 0xbf);
+        g.ai_memory.goals[4][23].priority = 3;
+        assert_eq!(g.exe_gold_at_active_mask(), 3 * 256);
+        // civs 2 and 5 (0x25): the year ds:0xb220; civs 1 and 2 (0x07): civ 7's gold
+        set(&mut g, 0x25);
+        assert_eq!(g.exe_gold_at_active_mask(), g.year());
+        set(&mut g, 0x07);
+        g.players[7].gold = 1234;
+        assert_eq!(g.exe_gold_at_active_mask(), 1234);
     }
 
     #[test]
