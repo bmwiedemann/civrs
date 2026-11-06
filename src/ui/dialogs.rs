@@ -733,9 +733,11 @@ pub fn screen_for_decision(ctx: &mut UiContext, d: &Decision) -> Box<dyn Screen>
                 None => menu,
             })
         }
+        // set_government (CIV.EXE 0x14e1c..0x14f01, ds:0x29af) at (100, 64): an even y, so the
+        // menu gets its framed stone box (centring put it at an odd y, drawn bare over the map)
         Decision::ChooseGovernment { options, .. } => {
             let items: Vec<String> = options.iter().map(|gv| rules::GOVERNMENTS[*gv as usize].name.to_string()).collect();
-            Box::new(MenuDialog::new(vec!["Select type of government:".into()], items).no_cancel())
+            Box::new(MenuDialog::new(vec!["Select type of".into(), "Government...".into()], items).with_pos(100, 64).no_cancel())
         }
         // the map view opens the city screen once this is answered
         Decision::ProductionChoice { .. } => Box::new(Proceed),

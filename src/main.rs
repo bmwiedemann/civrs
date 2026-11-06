@@ -378,6 +378,12 @@ fn dump(assets: &AssetDir, target: &str, out: &Path, zoom: usize, sve: Option<&P
                 g.player_mut(me).govt = govt;
                 civrs::ui::eventpics::over_map(civrs::ui::govtscreen::govt_screen(&ctx, govt).unwrap())
             }
+            // screen:choosegov: the revolution's government menu (all five) over the map
+            "choosegov" => {
+                use civrs::rules::Govt::*;
+                let d = civrs::game::Decision::ChooseGovernment { slot: ctx.game().human_slot, options: vec![Despotism, Monarchy, Communism, Republic, Democracy] };
+                civrs::ui::eventpics::over_map(civrs::ui::dialogs::screen_for_decision(&mut ctx, &d))
+            }
             "diplomacy" => {
                 use civrs::game::diplomacy::{DiplomacyState, Proposal};
                 // screen:diplomacy:SEED:TURNS[:SLOT][:SECTION]: the audience of computer player
