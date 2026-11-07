@@ -107,3 +107,7 @@ with no usable `ASOUND.CVL` the game runs silent.
 `CIV.EXE` and the design of this reimplementation. `reference/original-screens/` holds
 320x200 captures of the original game (made with dosbox-staging, see `REPORT.md` there)
 that the screens were measured against.
+
+## License
+
+[GPL-2.0](COPYING)
